@@ -164,14 +164,21 @@ type ScopeError struct {
 
 func (e *ScopeError) Error() string { return e.Message }
 
-// scopeCTE is the recursive CTE SQL that collects all group IDs in a subtree.
-const scopeCTE = `WITH RECURSIVE scope_tree(id, depth) AS (
-	SELECT id, 0 FROM groups WHERE id = ?
-	UNION ALL
-	SELECT g.id, st.depth + 1 FROM groups g
+// SubtreeCTE selects every group ID in the subtree rooted at its one bind
+// value, the root included, at any depth. It is the one definition of a
+// subtree: SCOPE, the MRQL visibility of a confined principal, and the
+// principal's own allow-list (application_context collectSubtreeGroupIDs) all
+// use it, so they cannot disagree. UNION, not UNION ALL, deduplicates inside
+// the recursion, so a group-tree cycle (which write-time guards prevent, but
+// a direct DB edit or an import could introduce) terminates.
+const SubtreeCTE = `WITH RECURSIVE scope_tree(id) AS (
+	SELECT id FROM groups WHERE id = ?
+	UNION
+	SELECT g.id FROM groups g
 	INNER JOIN scope_tree st ON g.owner_id = st.id
-	WHERE st.depth < 50
 ) SELECT id FROM scope_tree`
+
+const scopeCTE = SubtreeCTE
 
 // ApplyScopeCTE injects an inline recursive CTE into a GORM query.
 // For EntityGroup: WHERE groups.id IN (CTE) — includes the scoped group itself.

@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"fmt"
+	"mahresources/mrql"
 
 	"mahresources/models/query_models"
 )
@@ -90,15 +91,10 @@ func (ctx *MahresourcesContext) collectSubtreeGroupIDs(rootID uint) ([]uint, err
 	// cycle (which write-time guards prevent, but a direct DB edit or import could
 	// introduce) terminates instead of looping to the 1M-row ceiling and injecting
 	// a giant IN-list into every scoped query.
-	err := ctx.db.Raw(`
-		WITH RECURSIVE tree AS (
-			SELECT id FROM groups WHERE id = ?
-			UNION
-			SELECT g.id FROM groups g JOIN tree ON g.owner_id = tree.id
-		)
-		SELECT id FROM tree
-		LIMIT 1000000
-	`, rootID).Scan(&ids).Error
+	//
+	// The CTE is mrql.SubtreeCTE, the one the MRQL translator restricts a
+	// confined principal's joins with, so both see the same subtree.
+	err := ctx.db.Raw(mrql.SubtreeCTE+" LIMIT 1000000", rootID).Scan(&ids).Error
 	if err != nil {
 		return nil, fmt.Errorf("collectSubtreeGroupIDs(%d): %w", rootID, err)
 	}

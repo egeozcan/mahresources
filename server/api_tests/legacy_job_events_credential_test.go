@@ -286,7 +286,8 @@ func TestAnOpenJobEventStreamDoesNotRematerializeAnUnchangedSubtree(t *testing.T
 			var mu sync.Mutex
 			subtreeReads := 0
 			if err := tc.DB.Callback().Row().Before("gorm:row").Register("test:count_subtree_reads", func(db *gorm.DB) {
-				if strings.Contains(db.Statement.SQL.String(), "WITH RECURSIVE tree") {
+				// The subtree read is mrql.SubtreeCTE.
+				if strings.Contains(db.Statement.SQL.String(), "WITH RECURSIVE scope_tree") {
 					mu.Lock()
 					subtreeReads++
 					mu.Unlock()
@@ -322,6 +323,9 @@ func TestAnOpenJobEventStreamDoesNotRematerializeAnUnchangedSubtree(t *testing.T
 			}
 
 			before := reads()
+			if before == 0 {
+				t.Fatalf("%s: binding the account read no subtree, so the counter matches nothing", path)
+			}
 			time.Sleep(3500 * time.Millisecond)
 			if extra := reads() - before; extra > 0 {
 				t.Fatalf("%s materialized an unchanged subtree %d more times in 3.5s", path, extra)

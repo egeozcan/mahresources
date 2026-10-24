@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"mahresources/application_context"
 	"mahresources/auth"
@@ -64,6 +65,8 @@ var mrqlDifferentialQueries = map[string][]string{
 		`type = resource GROUP BY contentType COUNT()`, `type = resource GROUP BY contentType`, `type = note GROUP BY created.month COUNT() ORDER BY created.month ASC`,
 		`type = resource GROUP BY hash COUNT() HAVING COUNT() > 1`, `type = resource GROUP BY contentType COUNT() SUM(fileSize) AVG(width)`,
 		`type = group GROUP BY parent.meta.secret COUNT()`, `type = resource GROUP BY owner.parent.name COUNT()`, `name = "x" GROUP BY name`,
+		`type = resource GROUP BY contentType MIN(fileSize) MAX(fileSize)`, `type = note GROUP BY name MIN(meta.score) MAX(meta.score)`,
+		`type = note GROUP BY name MIN(created) MAX(updated)`,
 	},
 	"errors": {
 		`type = resource AND`, `type = "book"`, `type = group AND parent = $self`, `type = resource AND width = "wide"`,
@@ -73,7 +76,7 @@ var mrqlDifferentialQueries = map[string][]string{
 
 // mrqlDifferentialFeatures are language features the corpus must exercise.
 var mrqlDifferentialFeatures = []string{
-	"GROUP BY", "COUNT()", "HAVING", "SUM(", "AVG(", "created.month", "BETWEEN", "NOT BETWEEN", "RANDOM()", "RANK", "SIMILAR TO", "WITHIN",
+	"GROUP BY", "COUNT()", "HAVING", "SUM(", "AVG(", "MIN(", "MAX(", "created.month", "BETWEEN", "NOT BETWEEN", "RANDOM()", "RANK", "SIMILAR TO", "WITHIN",
 	"ancestors.", "descendants.", "parent.", "owner.", "children.", ".count", "IS EMPTY", "IS NOT EMPTY", "IS NULL", " IN (", "NOT IN (",
 	"~*", "!~", "TEXT ~", "meta.", " OR ", "NOT ", "ORDER BY", "LIMIT", "OFFSET", "SCOPE",
 }
@@ -248,4 +251,50 @@ func sortedCorpusKeys() []string {
 		}
 	}
 	return keys
+}
+
+func TestMRQLMinMaxReturnTheValues(t *testing.T) {
+	runMRQLMinMaxReturnTheValues(t, SetupTestEnv(t))
+}
+
+// runMRQLMinMaxReturnTheValues pins what MIN() and MAX() return over a
+// number, a Meta number and a datetime, through the same execution the
+// shortcodes and the API use.
+func runMRQLMinMaxReturnTheValues(t *testing.T, tc *TestContext) {
+	owner := &models.Group{Name: "minmax"}
+	if err := tc.DB.Create(owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	for i, r := range []struct {
+		size  int64
+		score string
+		at    time.Time
+	}{
+		{10, `{"score":7}`, time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)},
+		{30, `{"score":2}`, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)},
+		{20, `{"score":4}`, time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC)},
+	} {
+		res := &models.Resource{Name: fmt.Sprintf("mm-%d", i), OwnerId: &owner.ID, Hash: fmt.Sprint("mm", i), Location: fmt.Sprint("mm", i),
+			ContentType: "image/png", FileSize: r.size, Meta: types.JSON(r.score), CreatedAt: r.at, UpdatedAt: r.at}
+		if err := tc.DB.Create(res).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := runConfinedMRQL(t, tc.AppCtx, `type = resource GROUP BY contentType MIN(fileSize) MAX(fileSize) MIN(meta.score) MAX(meta.score)`)
+	if got != "contentType=image/png max_fileSize=30 max_meta.score=7 min_fileSize=10 min_meta.score=2" {
+		t.Errorf("number and Meta MIN/MAX: %q", got)
+	}
+	dates := runConfinedMRQL(t, tc.AppCtx, `type = resource GROUP BY contentType MIN(created) MAX(created)`)
+	minAt, maxAt := "", ""
+	for _, kv := range strings.Fields(dates) {
+		if v, ok := strings.CutPrefix(kv, "min_created="); ok {
+			minAt = v
+		}
+		if v, ok := strings.CutPrefix(kv, "max_created="); ok {
+			maxAt = v
+		}
+	}
+	if !strings.HasPrefix(minAt, "2026-01-02") || !strings.HasPrefix(maxAt, "2026-03-04") {
+		t.Errorf("datetime MIN/MAX: %q", dates)
+	}
 }

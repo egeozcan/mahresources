@@ -664,8 +664,9 @@ var recursiveRoots = map[string]bool{
 	"ancestors": true, "descendants": true,
 }
 
-// recursiveDepthGuard bounds the recursive CTE against cyclic owner_id data,
-// mirroring scope.go's scopeCTE limit.
+// recursiveDepthGuard bounds the ancestors./descendants. walks against cyclic
+// owner_id data. These walks carry a depth column, so UNION cannot end a cycle
+// for them as it does for SubtreeCTE.
 const recursiveDepthGuard = 50
 
 // translateRecursiveComparison handles ancestors.X / descendants.X predicates.
@@ -2043,6 +2044,16 @@ func (tc *translateContext) rankOrderExpr() (string, error) {
 	// it cannot contain a quote — inlining inside '...' is injection-safe by
 	// construction (same string the TEXT predicate binds).
 	lit := "'" + sanitized + "'"
+	if tc.visibleRoot != 0 {
+		// bm25 weighs a match by document frequency and average length over the
+		// whole FTS table, so rows a confined principal cannot see would change
+		// its order. FTS5 has no corpus-independent score, so a confined
+		// principal gets matches first, newest ID first: an order that depends
+		// on each row alone.
+		return fmt.Sprintf(
+			"COALESCE((SELECT -%s.id FROM %s WHERE rowid = %s.id AND %s MATCH %s), 1e18)",
+			tc.tableName, ftsTable, tc.tableName, ftsTable, lit), nil
+	}
 	return fmt.Sprintf(
 		"COALESCE((SELECT bm25(%s) FROM %s WHERE rowid = %s.id AND %s MATCH %s), 1e9)",
 		ftsTable, ftsTable, tc.tableName, ftsTable, lit), nil

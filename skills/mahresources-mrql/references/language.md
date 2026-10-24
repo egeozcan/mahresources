@@ -296,7 +296,9 @@ type = note AND TEXT ~ "kubernetes migration" ORDER BY RANK LIMIT 10
 - `RANK` -- full-text relevance; most relevant first (no direction needed;
   `RANK DESC` reverses to least-relevant first). Requires exactly one `TEXT ~`
   predicate, a single entity type, and no `GROUP BY`. Errors if the server was
-  started with full-text search disabled (`-skip-fts`).
+  started with full-text search disabled (`-skip-fts`). On SQLite, a user confined to a
+  group's subtree gets matching rows newest first instead, because SQLite's
+  relevance score depends on documents that user cannot see.
 
 ## Parameters -- `$name`
 

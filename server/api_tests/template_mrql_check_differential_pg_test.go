@@ -7,3 +7,7 @@ import "testing"
 func TestTemplateMRQLCheckMatchesRenderingPostgres(t *testing.T) {
 	runTemplateMRQLCheckMatchesRendering(t, SetupPostgresTestEnv(t))
 }
+
+func TestMRQLMinMaxReturnTheValuesPostgres(t *testing.T) {
+	runMRQLMinMaxReturnTheValues(t, SetupPostgresTestEnv(t))
+}

@@ -206,7 +206,7 @@ func exerciseAReCheckThatCannotFinish(t *testing.T, ctx *MahresourcesContext) {
 	}{
 		{name: "the account stalls", match: readsTable("users")},
 		{name: "the account fails", fail: true, match: readsTable("users")},
-		{name: "the subtree stalls", match: readsSQL("WITH RECURSIVE tree")},
+		{name: "the subtree stalls", match: readsSQL("WITH RECURSIVE scope_tree")},
 		{name: "the plugin's scoped access stalls", match: readsTable("plugin_states")},
 		{name: "the target stalls", match: readsTable("resources")},
 	}

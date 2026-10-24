@@ -58,6 +58,24 @@ func summarizeMRQLResult(t *testing.T, result any) string {
 	}
 	switch r := result.(type) {
 	case *application_context.MRQLResult:
+		if len(r.Order) > 0 {
+			// Cross-entity: the merged order is the result's own.
+			byID := map[string]string{}
+			for _, x := range r.Resources {
+				byID[fmt.Sprint("resource", x.ID)] = x.Name
+			}
+			for _, x := range r.Notes {
+				byID[fmt.Sprint("note", x.ID)] = x.Name
+			}
+			for _, x := range r.Groups {
+				byID[fmt.Sprint("group", x.ID)] = x.Name
+			}
+			var ordered []string
+			for _, id := range r.Order {
+				ordered = append(ordered, byID[fmt.Sprint(id.EntityType, id.ID)])
+			}
+			return "order:" + strings.Join(ordered, ",")
+		}
 		all := append(append(names(r.Resources), names(r.Notes)...), names(r.Groups)...)
 		return strings.Join(all, ",")
 	case *application_context.MRQLGroupedResult:
@@ -74,6 +92,9 @@ func summarizeMRQLResult(t *testing.T, result any) string {
 			}
 		}
 		sort.Strings(lines)
+		if r.Mode != "aggregated" {
+			lines = append(lines, fmt.Sprintf("total=%d", r.TotalGroups))
+		}
 		return strings.Join(lines, "; ")
 	}
 	t.Fatalf("unexpected result %T", result)
@@ -136,12 +157,25 @@ func runMRQLJoinsStayInsideTheSubtree(t *testing.T, tc *TestContext) {
 	scoped := tc.AppCtx.WithPrincipal(principal)
 	run := func(appCtx *application_context.MahresourcesContext, query string) string {
 		t.Helper()
+		// "count:" asks for the pagination total; "set:" for the rows as a
+		// set, for an order that is random.
+		kind := ""
+		if before, after, ok := strings.Cut(query, ":"); ok && (before == "count" || before == "set") {
+			kind, query = before, after
+		}
 		parsed, err := mrql.Parse(query)
 		if err == nil {
 			err = mrql.Validate(parsed)
 		}
 		if err != nil {
 			t.Fatalf("%s: %v", query, err)
+		}
+		if kind == "count" {
+			total, err := appCtx.CountMRQLScoped(context.Background(), parsed, 0)
+			if err != nil {
+				t.Fatalf("%s: %v", query, err)
+			}
+			return fmt.Sprintf("total=%d", total)
 		}
 		var result any
 		if parsed.GroupBy != nil {
@@ -153,52 +187,97 @@ func runMRQLJoinsStayInsideTheSubtree(t *testing.T, tc *TestContext) {
 		if err != nil {
 			t.Fatalf("%s: %v", query, err)
 		}
-		return summarizeMRQLResult(t, result)
+		summary := summarizeMRQLResult(t, result)
+		if kind == "set" || (parsed.GroupBy == nil && len(parsed.OrderBy) == 0) {
+			rows := strings.Split(summary, ",")
+			sort.Strings(rows)
+			summary = strings.Join(rows, ",")
+		}
+		return summary
 	}
 
 	const allRes = "inside-res,inside-res2,inside-res3,inside-res4"
-	cases := []struct{ query, want string }{
+	cases := []struct{ query, want, unscoped string }{
 		// Joined rows named by GROUP BY; hidden ones fall in the NULL bucket,
 		// and a hidden junction row adds no row of its own.
-		{`type = group GROUP BY parent COUNT()`, "count=1 parent=<nil>; count=1 parent=inside-root"},
-		{`type = group GROUP BY parent`, fmt.Sprintf("parent=<nil> parent_id=<nil>: inside-root; parent=inside-root parent_id=%d: inside-child", root.ID)},
-		{`type = group GROUP BY parent.name COUNT()`, "count=1 parent.name=<nil>; count=1 parent.name=inside-root"},
-		{`type = group GROUP BY parent.meta.secret COUNT()`, "count=1 parent.meta.secret=<nil>; count=1 parent.meta.secret=inside"},
-		{`type = resource GROUP BY owner.parent.name COUNT()`, "count=4 owner.parent.name=<nil>"},
-		{`type = resource GROUP BY groups COUNT()`, "count=4 groups=<nil>"},
-		{`type = resource GROUP BY groups`, "groups=<nil> groups_id=<nil>: " + allRes},
-		{`type = note GROUP BY groups COUNT()`, "count=1 groups=<nil>"},
-		{`type = resource GROUP BY notes COUNT()`, "count=4 notes=<nil>"},
-		{`type = resource GROUP BY notes`, "notes=<nil> notes_id=<nil>: " + allRes},
-		{`type = note GROUP BY resources COUNT()`, "count=1 resources=<nil>"},
+		{`type = group GROUP BY parent COUNT()`,
+			"count=1 parent=<nil>; count=1 parent=inside-root",
+			"count=1 parent=OUTSIDE-P; count=1 parent=inside-root; count=3 parent=<nil>"},
+		{`type = group GROUP BY parent`,
+			fmt.Sprintf("parent=<nil> parent_id=<nil>: inside-root; parent=inside-root parent_id=%d: inside-child; total=2", root.ID),
+			fmt.Sprintf("parent=<nil> parent_id=<nil>: OUTSIDE-O,OUTSIDE-O2,OUTSIDE-P; parent=OUTSIDE-P parent_id=%d: inside-root; parent=inside-root parent_id=%d: inside-child; total=3", parent.ID, root.ID)},
+		{`type = group GROUP BY parent.name COUNT()`,
+			"count=1 parent.name=<nil>; count=1 parent.name=inside-root",
+			"count=1 parent.name=OUTSIDE-P; count=1 parent.name=inside-root; count=3 parent.name=<nil>"},
+		{`type = group GROUP BY parent.meta.secret COUNT()`,
+			"count=1 parent.meta.secret=<nil>; count=1 parent.meta.secret=inside",
+			"count=1 parent.meta.secret=OUTSIDE-SECRET; count=1 parent.meta.secret=inside; count=3 parent.meta.secret=<nil>"},
+		{`type = resource GROUP BY owner.parent.name COUNT()`,
+			"count=4 owner.parent.name=<nil>",
+			"count=1 owner.parent.name=<nil>; count=4 owner.parent.name=OUTSIDE-P"},
+		{`type = resource GROUP BY groups COUNT()`,
+			"count=4 groups=<nil>",
+			"count=1 groups=OUTSIDE-O; count=1 groups=OUTSIDE-O2; count=4 groups=<nil>"},
+		{`type = resource GROUP BY groups`,
+			"groups=<nil> groups_id=<nil>: " + allRes + "; total=1",
+			fmt.Sprintf("groups=<nil> groups_id=<nil>: OUTSIDE-res,inside-res2,inside-res3,inside-res4; groups=OUTSIDE-O groups_id=%d: inside-res; groups=OUTSIDE-O2 groups_id=%d: inside-res; total=3", other.ID, other2.ID)},
+		{`type = resource GROUP BY groups COUNT() HAVING COUNT() = 1`,
+			"",
+			"count=1 groups=OUTSIDE-O; count=1 groups=OUTSIDE-O2"},
+		{`type = note GROUP BY groups COUNT()`,
+			"count=1 groups=<nil>",
+			"count=1 groups=<nil>; count=1 groups=OUTSIDE-O"},
+		{`type = resource GROUP BY notes COUNT()`,
+			"count=4 notes=<nil>",
+			// resource_notes is one junction for both sides: inside-res links
+			// the outside note, and inside-note links the outside resource.
+			"count=1 notes=OUTSIDE-note; count=1 notes=inside-note; count=3 notes=<nil>"},
+		{`type = resource GROUP BY notes`,
+			"notes=<nil> notes_id=<nil>: " + allRes + "; total=1",
+			fmt.Sprintf("notes=<nil> notes_id=<nil>: inside-res2,inside-res3,inside-res4; notes=OUTSIDE-note notes_id=%d: inside-res; notes=inside-note notes_id=%d: OUTSIDE-res; total=3", outsideNote.ID, insideNote.ID)},
+		{`type = note GROUP BY resources COUNT()`,
+			"count=1 resources=<nil>",
+			"count=1 resources=OUTSIDE-res; count=1 resources=inside-res"},
 		// Filters as oracles: no inside row is selected by outside data.
-		{`type = group AND parent.meta.secret = "OUTSIDE-SECRET"`, ""},
-		{`type = group AND parent.name = "OUTSIDE-P"`, ""},
-		{`type = group AND parent.tags = "outside-tag"`, ""},
-		{`type = group AND ancestors.name = "OUTSIDE-P"`, ""},
-		{`type = resource AND owner.parent.name = "OUTSIDE-P"`, ""},
-		{`type = resource AND groups = "OUTSIDE-O"`, ""},
-		{`type = note AND groups = "OUTSIDE-O"`, ""},
-		{`type = resource AND notes = "OUTSIDE-note"`, ""},
-		{`type = note AND resources = "OUTSIDE-res"`, ""},
-		{`type = resource AND groups IS NOT EMPTY`, ""},
-		{`type = note AND resources IS NOT EMPTY`, ""},
-		{`type = resource AND groups.count > 0`, ""},
-		{`type = note AND groups.count > 0`, ""},
-		{`type = resource AND similarImages IS NOT EMPTY`, ""},
-		{fmt.Sprintf(`type = resource AND SIMILAR TO resource(%d)`, outsideRes.ID), ""},
+		{`type = group AND parent.meta.secret = "OUTSIDE-SECRET"`, "", "inside-root"},
+		{`type = group AND parent.name = "OUTSIDE-P"`, "", "inside-root"},
+		{`type = group AND parent.tags = "outside-tag"`, "", "inside-root"},
+		{`type = group AND ancestors.name = "OUTSIDE-P"`, "", "inside-child,inside-root"},
+		{`type = resource AND owner.parent.name = "OUTSIDE-P"`, "", allRes},
+		{`type = resource AND groups = "OUTSIDE-O"`, "", "inside-res"},
+		{`type = note AND groups = "OUTSIDE-O"`, "", "inside-note"},
+		{`type = resource AND notes = "OUTSIDE-note"`, "", "inside-res"},
+		{`type = note AND resources = "OUTSIDE-res"`, "", "inside-note"},
+		{`type = resource AND groups IS NOT EMPTY`, "", "inside-res"},
+		{`type = note AND resources IS NOT EMPTY`, "", "OUTSIDE-note,inside-note"},
+		{`type = resource AND groups.count > 0`, "", "inside-res"},
+		{`type = note AND groups.count > 0`, "", "inside-note"},
+		{`type = resource AND similarImages IS NOT EMPTY`, "", "OUTSIDE-res,inside-res"},
+		{fmt.Sprintf(`type = resource AND SIMILAR TO resource(%d)`, outsideRes.ID), "", "inside-res,inside-res3,inside-res4"},
 		// A hidden target matches nothing, so NOT SIMILAR TO keeps every row,
 		// and distance to it orders like distance to no target: by name.
-		{fmt.Sprintf(`type = resource AND NOT SIMILAR TO resource(%d) WITHIN 2 ORDER BY distance ASC, name ASC`, outsideRes.ID), allRes},
-		{fmt.Sprintf(`type = resource AND NOT SIMILAR TO resource(%d) WITHIN 2 ORDER BY distance DESC, name ASC`, outsideRes.ID), allRes},
+		{fmt.Sprintf(`type = resource AND NOT SIMILAR TO resource(%d) WITHIN 2 ORDER BY distance ASC, name ASC`, outsideRes.ID),
+			allRes, "inside-res3,inside-res4,OUTSIDE-res,inside-res2"},
+		{fmt.Sprintf(`type = resource AND NOT SIMILAR TO resource(%d) WITHIN 2 ORDER BY distance DESC, name ASC`, outsideRes.ID),
+			allRes, "OUTSIDE-res,inside-res2,inside-res4,inside-res3"},
+		// A random order, compared as a set.
+		{`set:type = resource ORDER BY RANDOM()`, allRes, "OUTSIDE-res," + allRes},
+		{`set:type = resource AND groups = "OUTSIDE-O" ORDER BY RANDOM()`, "", "inside-res"},
+		// Pagination totals.
+		{`count:type = resource`, "total=4", "total=5"},
+		{`count:type = resource AND groups IS NOT EMPTY`, "total=0", "total=1"},
+		{`count:type = note AND groups = "OUTSIDE-O"`, "total=0", "total=1"},
+		// Cross-entity: the merged order.
+		{`name ~ "inside-r*" ORDER BY name ASC`, "order:" + allRes + ",inside-root", "order:" + allRes + ",inside-root"},
+		{`name ~ "OUTSIDE*" ORDER BY name ASC`, "", "order:OUTSIDE-note,OUTSIDE-O,OUTSIDE-O2,OUTSIDE-P,OUTSIDE-res"},
 	}
 	for _, c := range cases {
 		t.Run(c.query, func(t *testing.T) {
 			if got := run(scoped, c.query); got != c.want {
 				t.Errorf("confined result:\n got %q\nwant %q", got, c.want)
 			}
-			if got := run(tc.AppCtx, c.query); got == c.want {
-				t.Errorf("mutation step: the unscoped result equals the confined one, %q", got)
+			if got := run(tc.AppCtx, c.query); got != c.unscoped {
+				t.Errorf("unconfined baseline:\n got %q\nwant %q", got, c.unscoped)
 			}
 		})
 	}
