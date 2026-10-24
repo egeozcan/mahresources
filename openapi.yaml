@@ -3853,17 +3853,25 @@ paths:
                   - siblingSlots (string) — a JSON object of the form's current slot values by
                     field name, laid over the saved ones; a key that is present wins even when
                     empty, and unknown keys are ignored. Malformed JSON is a 400.
+                  - slots      (array of strings) — target=bundle only: the sections to generate,
+                    each an HTML slot field such as CustomHeader (generated with its CSS companion,
+                    which is never named) or CustomCSS. Omitted lets the planner choose which of
+                    the carrier's sections to fill. A present list is forced: every named section
+                    is generated. Unknown names, a companion such as CustomHeaderCSS, a name the
+                    carrier does not declare, an empty list, and CustomCSS without any other
+                    section are each a 400, as is slots on any other target.
                   - dryRun     (boolean) — return the disclosure instead of generating; calls no provider
                   - groundingHash (string) — required unless dryRun: the groundingHash of the
                     disclosure the user approved
 
                 Generation takes two requests. A dry run returns the disclosure: {"sections":
-                [{"call", "role", "key", "label", "bytes", "text", "constant"}], "destination":
+                [{"call", "role", "key", "label", "bytes", "text", "constant", "shared"}], "destination":
                 {"endpoint", "host", "profiles": [{"kind", "model", "thinking", "maxTokens", "maxCalls"}]},
                 "transport": {"stream", "responseFormat", "contentType", "authorization"},
                 "continuationRule": {"version", "text"}, "groundingHash"}. "sections" are every
                 provider call's system and user messages, split into labelled parts; the
-                provider request is built only from them. "endpoint" is the URL the provider
+                provider request is built only from them. A section with "shared" true belongs to
+                every call of a whole-template request and is listed once. "endpoint" is the URL the provider
                 posts to, with each query value shown as "…". "groundingHash" is the sha256 of
                 the exact URL (escaped path and query included), the destination, the
                 transport, the continuation rule and every section. The real request repeats
@@ -3872,7 +3880,7 @@ paths:
                 longer matches (for example a new member entity became the sample), and 400
                 when it is missing. Neither calls the provider.
 
-                Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair"}.
+                Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair", "failedSlots"}.
                 "content" is set for slot/metaschema; "slots" (a field→markup map) for bundle.
                 "valid" is false with "issues" when the draft fails lint / JSON-Schema validation,
                 was cut off at the output limit, or exceeds 20,000 bytes; the draft is still
@@ -3881,10 +3889,29 @@ paths:
                 server makes one more call, the disclosed repair call, and keeps its answer only
                 if it scores better and still holds the draft's content; "repair" then reports
                 {"attempted", "applied", "reason"}, with reason one of "budget", "disabled",
-                "provider_error", "timeout" or "not_better". A repair takes no rate-limit slot. A 502 for a pair that stayed broken after a repair attempt carries the same "repair" object beside "error".
+                "provider_error", "timeout" or "not_better". A repair takes no rate-limit slot, and neither does a call of a whole-template request. A 502 for a pair that stayed broken after a repair attempt carries the same "repair" object beside "error".
                 A truncated draft is never repaired, and the field is absent when the first
                 draft needed none.
+                A whole template (target=bundle) is generated in several calls. When it names
+                more than one section, or CustomCSS, a planning call first settles one shared
+                design (class prefix, palette, layout, which sections to fill and, if CustomCSS
+                was requested, new shared CSS rules); then one call per section fills an HTML
+                slot and its CSS companion, at most 5 at a time, under one deadline of 55
+                seconds for the whole request. The planning call is never repaired, and its
+                failure is a 502 (504 on timeout) with no section call made. Each section call
+                is repaired on its own as above. A section whose pair could not be generated
+                (a provider error, a timeout, a reply cut off at the output limit, or a pair
+                still broken after its repair) is left out of "slots", named in "failedSlots"
+                (its HTML slot field, for example "CustomSidebar") and warned about in "issues";
+                the other sections are returned whole. When every section fails the request is a
+                502 (504 when all timed out) and nothing is returned. A section that was not
+                chosen is absent from "slots", not empty. CustomCSS is append-only: when it is
+                requested and the plan adds shared rules, the returned CustomCSS is the current
+                CustomCSS, byte for byte, followed by the new rules, and it is absent when
+                there is nothing to add. A single pair (one section, no CustomCSS) is one call
+                and never returns CustomCSS.
                 Rate-limited per client IP: 10 generations and, separately, 30 dry runs a minute.
+                A whole-template request takes one generation slot however many calls it makes.
                 Gated at the same capability as saving the template (admin for
                 category/resourceCategory, editor for noteType).
             operationId: generateCategoryTemplate
@@ -9275,17 +9302,25 @@ paths:
                   - siblingSlots (string) — a JSON object of the form's current slot values by
                     field name, laid over the saved ones; a key that is present wins even when
                     empty, and unknown keys are ignored. Malformed JSON is a 400.
+                  - slots      (array of strings) — target=bundle only: the sections to generate,
+                    each an HTML slot field such as CustomHeader (generated with its CSS companion,
+                    which is never named) or CustomCSS. Omitted lets the planner choose which of
+                    the carrier's sections to fill. A present list is forced: every named section
+                    is generated. Unknown names, a companion such as CustomHeaderCSS, a name the
+                    carrier does not declare, an empty list, and CustomCSS without any other
+                    section are each a 400, as is slots on any other target.
                   - dryRun     (boolean) — return the disclosure instead of generating; calls no provider
                   - groundingHash (string) — required unless dryRun: the groundingHash of the
                     disclosure the user approved
 
                 Generation takes two requests. A dry run returns the disclosure: {"sections":
-                [{"call", "role", "key", "label", "bytes", "text", "constant"}], "destination":
+                [{"call", "role", "key", "label", "bytes", "text", "constant", "shared"}], "destination":
                 {"endpoint", "host", "profiles": [{"kind", "model", "thinking", "maxTokens", "maxCalls"}]},
                 "transport": {"stream", "responseFormat", "contentType", "authorization"},
                 "continuationRule": {"version", "text"}, "groundingHash"}. "sections" are every
                 provider call's system and user messages, split into labelled parts; the
-                provider request is built only from them. "endpoint" is the URL the provider
+                provider request is built only from them. A section with "shared" true belongs to
+                every call of a whole-template request and is listed once. "endpoint" is the URL the provider
                 posts to, with each query value shown as "…". "groundingHash" is the sha256 of
                 the exact URL (escaped path and query included), the destination, the
                 transport, the continuation rule and every section. The real request repeats
@@ -9294,7 +9329,7 @@ paths:
                 longer matches (for example a new member entity became the sample), and 400
                 when it is missing. Neither calls the provider.
 
-                Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair"}.
+                Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair", "failedSlots"}.
                 "content" is set for slot/metaschema; "slots" (a field→markup map) for bundle.
                 "valid" is false with "issues" when the draft fails lint / JSON-Schema validation,
                 was cut off at the output limit, or exceeds 20,000 bytes; the draft is still
@@ -9303,10 +9338,29 @@ paths:
                 server makes one more call, the disclosed repair call, and keeps its answer only
                 if it scores better and still holds the draft's content; "repair" then reports
                 {"attempted", "applied", "reason"}, with reason one of "budget", "disabled",
-                "provider_error", "timeout" or "not_better". A repair takes no rate-limit slot. A 502 for a pair that stayed broken after a repair attempt carries the same "repair" object beside "error".
+                "provider_error", "timeout" or "not_better". A repair takes no rate-limit slot, and neither does a call of a whole-template request. A 502 for a pair that stayed broken after a repair attempt carries the same "repair" object beside "error".
                 A truncated draft is never repaired, and the field is absent when the first
                 draft needed none.
+                A whole template (target=bundle) is generated in several calls. When it names
+                more than one section, or CustomCSS, a planning call first settles one shared
+                design (class prefix, palette, layout, which sections to fill and, if CustomCSS
+                was requested, new shared CSS rules); then one call per section fills an HTML
+                slot and its CSS companion, at most 5 at a time, under one deadline of 55
+                seconds for the whole request. The planning call is never repaired, and its
+                failure is a 502 (504 on timeout) with no section call made. Each section call
+                is repaired on its own as above. A section whose pair could not be generated
+                (a provider error, a timeout, a reply cut off at the output limit, or a pair
+                still broken after its repair) is left out of "slots", named in "failedSlots"
+                (its HTML slot field, for example "CustomSidebar") and warned about in "issues";
+                the other sections are returned whole. When every section fails the request is a
+                502 (504 when all timed out) and nothing is returned. A section that was not
+                chosen is absent from "slots", not empty. CustomCSS is append-only: when it is
+                requested and the plan adds shared rules, the returned CustomCSS is the current
+                CustomCSS, byte for byte, followed by the new rules, and it is absent when
+                there is nothing to add. A single pair (one section, no CustomCSS) is one call
+                and never returns CustomCSS.
                 Rate-limited per client IP: 10 generations and, separately, 30 dry runs a minute.
+                A whole-template request takes one generation slot however many calls it makes.
                 Gated at the same capability as saving the template (admin for
                 category/resourceCategory, editor for noteType).
             operationId: generateNoteTypeTemplate
@@ -11755,17 +11809,25 @@ paths:
                   - siblingSlots (string) — a JSON object of the form's current slot values by
                     field name, laid over the saved ones; a key that is present wins even when
                     empty, and unknown keys are ignored. Malformed JSON is a 400.
+                  - slots      (array of strings) — target=bundle only: the sections to generate,
+                    each an HTML slot field such as CustomHeader (generated with its CSS companion,
+                    which is never named) or CustomCSS. Omitted lets the planner choose which of
+                    the carrier's sections to fill. A present list is forced: every named section
+                    is generated. Unknown names, a companion such as CustomHeaderCSS, a name the
+                    carrier does not declare, an empty list, and CustomCSS without any other
+                    section are each a 400, as is slots on any other target.
                   - dryRun     (boolean) — return the disclosure instead of generating; calls no provider
                   - groundingHash (string) — required unless dryRun: the groundingHash of the
                     disclosure the user approved
 
                 Generation takes two requests. A dry run returns the disclosure: {"sections":
-                [{"call", "role", "key", "label", "bytes", "text", "constant"}], "destination":
+                [{"call", "role", "key", "label", "bytes", "text", "constant", "shared"}], "destination":
                 {"endpoint", "host", "profiles": [{"kind", "model", "thinking", "maxTokens", "maxCalls"}]},
                 "transport": {"stream", "responseFormat", "contentType", "authorization"},
                 "continuationRule": {"version", "text"}, "groundingHash"}. "sections" are every
                 provider call's system and user messages, split into labelled parts; the
-                provider request is built only from them. "endpoint" is the URL the provider
+                provider request is built only from them. A section with "shared" true belongs to
+                every call of a whole-template request and is listed once. "endpoint" is the URL the provider
                 posts to, with each query value shown as "…". "groundingHash" is the sha256 of
                 the exact URL (escaped path and query included), the destination, the
                 transport, the continuation rule and every section. The real request repeats
@@ -11774,7 +11836,7 @@ paths:
                 longer matches (for example a new member entity became the sample), and 400
                 when it is missing. Neither calls the provider.
 
-                Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair"}.
+                Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair", "failedSlots"}.
                 "content" is set for slot/metaschema; "slots" (a field→markup map) for bundle.
                 "valid" is false with "issues" when the draft fails lint / JSON-Schema validation,
                 was cut off at the output limit, or exceeds 20,000 bytes; the draft is still
@@ -11783,10 +11845,29 @@ paths:
                 server makes one more call, the disclosed repair call, and keeps its answer only
                 if it scores better and still holds the draft's content; "repair" then reports
                 {"attempted", "applied", "reason"}, with reason one of "budget", "disabled",
-                "provider_error", "timeout" or "not_better". A repair takes no rate-limit slot. A 502 for a pair that stayed broken after a repair attempt carries the same "repair" object beside "error".
+                "provider_error", "timeout" or "not_better". A repair takes no rate-limit slot, and neither does a call of a whole-template request. A 502 for a pair that stayed broken after a repair attempt carries the same "repair" object beside "error".
                 A truncated draft is never repaired, and the field is absent when the first
                 draft needed none.
+                A whole template (target=bundle) is generated in several calls. When it names
+                more than one section, or CustomCSS, a planning call first settles one shared
+                design (class prefix, palette, layout, which sections to fill and, if CustomCSS
+                was requested, new shared CSS rules); then one call per section fills an HTML
+                slot and its CSS companion, at most 5 at a time, under one deadline of 55
+                seconds for the whole request. The planning call is never repaired, and its
+                failure is a 502 (504 on timeout) with no section call made. Each section call
+                is repaired on its own as above. A section whose pair could not be generated
+                (a provider error, a timeout, a reply cut off at the output limit, or a pair
+                still broken after its repair) is left out of "slots", named in "failedSlots"
+                (its HTML slot field, for example "CustomSidebar") and warned about in "issues";
+                the other sections are returned whole. When every section fails the request is a
+                502 (504 when all timed out) and nothing is returned. A section that was not
+                chosen is absent from "slots", not empty. CustomCSS is append-only: when it is
+                requested and the plan adds shared rules, the returned CustomCSS is the current
+                CustomCSS, byte for byte, followed by the new rules, and it is absent when
+                there is nothing to add. A single pair (one section, no CustomCSS) is one call
+                and never returns CustomCSS.
                 Rate-limited per client IP: 10 generations and, separately, 30 dry runs a minute.
+                A whole-template request takes one generation slot however many calls it makes.
                 Gated at the same capability as saving the template (admin for
                 category/resourceCategory, editor for noteType).
             operationId: generateResourceCategoryTemplate

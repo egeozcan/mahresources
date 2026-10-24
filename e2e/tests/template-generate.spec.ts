@@ -617,17 +617,17 @@ test.describe('Generated drafts do not run before Apply', () => {
     release();
 
     await page.getByTestId('template-bundle-apply').click();
-    const dialog = page.getByRole('alertdialog', { name: 'Replace your edits?' });
+    const dialog = page.getByRole('alertdialog', { name: 'Replace your content?' });
     await expect(dialog).toContainText('CustomHeader');
     await expect(dialog).not.toContainText('CustomCSS');
-    await dialog.getByRole('button', { name: 'Keep my edits' }).click();
+    await dialog.getByRole('button', { name: 'Keep my content' }).click();
     await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<p>mine</p>');
     await expect(page.locator('input[name="CustomCSS"]')).toHaveValue('');
     await expect(page.getByTestId('template-bundle-review')).toBeVisible();
     await expect(page.getByTestId('template-bundle-apply')).toBeFocused();
 
     await page.getByTestId('template-bundle-apply').click();
-    await page.getByRole('alertdialog', { name: 'Replace your edits?' }).getByRole('button', { name: 'Replace' }).click();
+    await page.getByRole('alertdialog', { name: 'Replace your content?' }).getByRole('button', { name: 'Replace' }).click();
     await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<h1>Draft</h1>');
     await expect(page.getByTestId('template-bundle-generate-button')).toBeFocused();
   });
@@ -1001,4 +1001,178 @@ test.describe('Draft review panels and the keyboard', () => {
       await expect(page.getByTestId('template-bundle-status')).toBeFocused();
     });
   }
+});
+
+
+// Phase 4: a whole template is planned and then written section by section. The
+// picker chooses the sections; a section that could not be generated is named;
+// Apply asks one question about the fields it would change.
+test.describe('Whole-template sections, failed slots and Apply', () => {
+  const carriers = [
+    { path: '/category/new', carrier: 'category', own: 'CustomOwnEntities', other: 'CustomPreview' },
+    { path: '/resourceCategory/new', carrier: 'resourceCategory', own: 'CustomPreview', other: 'CustomOwnEntities' },
+    { path: '/noteType/new', carrier: 'noteType', own: 'CustomHeader', other: 'CustomPreview' },
+  ];
+
+  for (const { path, carrier, own, other } of carriers) {
+    test(`${carrier}: the picker offers this carrier's sections and sends the ticked ones`, async ({ page }) => {
+      const bodies: Record<string, unknown>[] = [];
+      await page.route(`**/v1/${carrier}/generateTemplate`, withDisclosure(async (route) => {
+        bodies.push(route.request().postDataJSON());
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ target: 'bundle', valid: true, explanation: 'x', slots: { CustomHeader: '<h1>x</h1>', CustomHeaderCSS: '' } }),
+        });
+      }));
+      await page.goto(path);
+      const header = page.getByTestId('template-bundle-section-CustomHeader');
+      await expect(header).toBeVisible({ timeout: 10000 });
+      await expect(page.getByTestId(`template-bundle-section-${own}`)).toBeVisible();
+      await expect(page.getByTestId(`template-bundle-section-${other}`)).toHaveCount(0);
+      // A companion is not a section of its own.
+      await expect(page.getByTestId('template-bundle-section-CustomHeaderCSS')).toHaveCount(0);
+
+      // Labelled and grouped for assistive technology.
+      const group = page.getByRole('group', { name: /Sections to generate/ });
+      await expect(group).toBeVisible();
+      await expect(group.getByRole('checkbox', { name: 'Header', exact: true })).toBeVisible();
+      await expect(group.getByRole('checkbox', { name: /Shared CSS/ })).toBeVisible();
+
+      // None ticked: the generator chooses, so no slots field.
+      await page.getByTestId('template-bundle-generate-prompt').fill('a card');
+      await page.getByTestId('template-bundle-generate-button').click();
+      await sendDisclosure(page);
+      await expect(page.getByTestId('template-bundle-review')).toBeVisible({ timeout: 10000 });
+      expect(bodies.at(-1)).not.toHaveProperty('slots');
+      await page.getByTestId('template-bundle-discard').click();
+
+      // Ticked: exactly those are sent.
+      await header.check();
+      await page.getByTestId(`template-bundle-section-${own}`).check();
+      await page.getByTestId('template-bundle-section-CustomCSS').check();
+      await page.getByTestId('template-bundle-generate-button').click();
+      await sendDisclosure(page);
+      await expect(page.getByTestId('template-bundle-review')).toBeVisible({ timeout: 10000 });
+      const expected = [...new Set(['CustomHeader', own, 'CustomCSS'])];
+      expect((bodies.at(-1) as { slots: string[] }).slots.sort()).toEqual(expected.sort());
+    });
+  }
+
+  test('the status line says it can take up to a minute while sections are written', async ({ page }) => {
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/v1/category/generateTemplate', withDisclosure(async (route) => {
+      await released;
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ target: 'bundle', valid: true, explanation: 'x', slots: { CustomHeader: '<h1>x</h1>', CustomHeaderCSS: '' } }) });
+    }));
+    await page.goto('/category/new');
+    await page.getByTestId('template-bundle-generate-prompt').fill('a card');
+    await page.getByTestId('template-bundle-generate-button').click();
+    await sendDisclosure(page);
+    await expect(page.getByTestId('template-bundle-status')).toContainText('up to a minute');
+    release();
+    await expect(page.getByTestId('template-bundle-review')).toBeVisible({ timeout: 10000 });
+  });
+
+  test('failed slots are named beside the draft and the rest can be applied', async ({ page }) => {
+    await page.route('**/v1/category/generateTemplate', withDisclosure(async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          target: 'bundle', valid: true, explanation: 'x',
+          slots: { CustomHeader: '<h1>Card</h1>', CustomHeaderCSS: '.card{}' },
+          failedSlots: ['CustomSidebar'],
+          issues: [{ severity: 'warning', message: 'CustomSidebar could not be generated and was left unchanged: the request ran out of time' }],
+        }),
+      });
+    }));
+    await page.goto('/category/new');
+    await page.getByTestId('template-bundle-generate-prompt').fill('a card');
+    await page.getByTestId('template-bundle-generate-button').click();
+    await sendDisclosure(page);
+    const review = page.getByTestId('template-bundle-review');
+    await expect(review).toBeVisible({ timeout: 10000 });
+    await expect(review.getByTestId('template-bundle-failed-slots')).toContainText('CustomSidebar');
+    await expect(page.getByTestId('template-bundle-status')).toContainText('CustomSidebar');
+    // Not repeated as a red issue, and not listed as a returned slot.
+    await expect(review.getByTestId('template-bundle-review-issues')).toBeHidden();
+    await expect(review.getByTestId('template-bundle-review-slot-CustomSidebar')).toHaveCount(0);
+    await page.getByTestId('template-bundle-apply').click();
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<h1>Card</h1>');
+    await expect(page.locator('input[name="CustomSidebar"]')).toHaveValue('');
+  });
+
+  const headerOnly = { target: 'bundle', valid: true, explanation: 'x', slots: { CustomHeader: '<h1>Draft</h1>', CustomHeaderCSS: '.draft{}' } };
+
+  async function typeInto(page: Page, label: string, text: string) {
+    const editor = page.locator(`.cm-content[aria-label="${label}"]`);
+    await expect(editor).toBeVisible({ timeout: 10000 });
+    await editor.click();
+    await page.keyboard.type(text);
+  }
+
+  test('Apply asks once, names only the returned fields that hold something, and Cancel changes nothing', async ({ page }) => {
+    await page.route('**/v1/category/generateTemplate', withDisclosure(async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(headerOnly) });
+    }));
+    await page.goto('/category/new');
+    await typeInto(page, 'Custom Header', '<p>mine</p>');
+    await typeInto(page, 'Custom Sidebar', '<p>not touched</p>');
+    await page.getByTestId('template-bundle-generate-prompt').fill('a header');
+    await page.getByTestId('template-bundle-generate-button').click();
+    await sendDisclosure(page);
+    await expect(page.getByTestId('template-bundle-review')).toBeVisible({ timeout: 10000 });
+
+    await page.getByTestId('template-bundle-apply').click();
+    const dialog = page.getByRole('alertdialog', { name: 'Replace your content?' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('CustomHeader');
+    // The empty companion is not replaced; untouched fields are not mentioned.
+    await expect(dialog).not.toContainText('CustomHeaderCSS');
+    await expect(dialog).not.toContainText('CustomSidebar');
+    await expect(dialog).not.toContainText('MetaSchema');
+    await expect(dialog).not.toContainText('edited since');
+    await dialog.getByRole('button', { name: 'Keep my content' }).click();
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<p>mine</p>');
+    await expect(page.locator('input[name="CustomHeaderCSS"]')).toHaveValue('');
+    await expect(page.getByTestId('template-bundle-apply')).toBeFocused();
+
+    await page.getByTestId('template-bundle-apply').click();
+    await page.getByRole('alertdialog', { name: 'Replace your content?' }).getByRole('button', { name: 'Replace' }).click();
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<h1>Draft</h1>');
+    await expect(page.locator('input[name="CustomHeaderCSS"]')).toHaveValue('.draft{}');
+    await expect(page.locator('input[name="CustomSidebar"]')).toHaveValue('<p>not touched</p>');
+  });
+
+  test('a returned field the user cleared while the request ran still makes Apply ask, and is marked', async ({ page }) => {
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/v1/category/generateTemplate', withDisclosure(async (route) => {
+      await released;
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(headerOnly) });
+    }));
+    await page.goto('/category/new');
+    await typeInto(page, 'Custom Header', '<p>mine</p>');
+    await page.getByTestId('template-bundle-generate-prompt').fill('a header');
+    await page.getByTestId('template-bundle-generate-button').click();
+    await sendDisclosure(page);
+    // Clear the authored header while the request runs.
+    const editor = page.locator('.cm-content[aria-label="Custom Header"]');
+    await editor.click();
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.press('Delete');
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('');
+    release();
+
+    await expect(page.getByTestId('template-bundle-review')).toBeVisible({ timeout: 10000 });
+    await page.getByTestId('template-bundle-apply').click();
+    const dialog = page.getByRole('alertdialog', { name: 'Replace your content?' });
+    await expect(dialog).toContainText('CustomHeader');
+    await expect(dialog).toContainText('edited since');
+    await dialog.getByRole('button', { name: 'Keep my content' }).click();
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('');
+    await expect(page.getByTestId('template-bundle-apply')).toBeFocused();
+  });
 });

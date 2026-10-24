@@ -54,14 +54,16 @@ describe('templateBundle.entityToBundle', () => {
 // Pair completeness is checked before touching any editor, including valid
 // earlier pairs, and no generated slot reaches an editor before Apply.
 describe('whole-template generation pairs', () => {
-  function bundle(reply: unknown) {
+  function bundle(reply: unknown, editors: Record<string, string> | null = null) {
     const tb = templateBundle({ carrier: 'category' }) as ReturnType<typeof templateBundle> & Record<string, unknown>;
     tb.generationPrompt = 'restyle';
-    tb.getEditor = () => 'existing';
+    tb.getEditor = editors ? (name: string) => editors[name] ?? '' : () => 'existing';
     tb.setEditor = vi.fn();
     tb.notify = vi.fn();
     Object.assign(tb, { $refs: {}, $nextTick: () => Promise.resolve() });
-    const stores: Record<string, unknown> = { generationDisclosure: { open: vi.fn(async () => true) }, templatePreview: {} };
+    const ask = vi.fn(async (_message: string, _options?: unknown) => true);
+    (tb as Record<string, unknown>).ask = ask;
+    const stores: Record<string, unknown> = { generationDisclosure: { open: vi.fn(async () => true) }, templatePreview: {}, confirmDialog: { ask } };
     vi.stubGlobal('window', { Alpine: { store: (name: string) => stores[name] } });
     vi.stubGlobal('Alpine', { store: (name: string) => stores[name] });
     vi.stubGlobal('fetch', vi.fn(async (_url: string, init: { body: string }) => (JSON.parse(init.body).dryRun
@@ -79,7 +81,7 @@ describe('whole-template generation pairs', () => {
   });
 
   it('holds complete pairs, including empty CSS, until Apply', async () => {
-    const tb = bundle({ valid: true, slots: { CustomHeader: '<h1>New</h1>', CustomHeaderCSS: '' } });
+    const tb = bundle({ valid: true, slots: { CustomHeader: '<h1>New</h1>', CustomHeaderCSS: '' } }, {});
     await tb.generateBundle();
     expect(tb.setEditor).not.toHaveBeenCalled();
     expect(tb.pendingDraft?.fields).toEqual(['CustomHeader', 'CustomHeaderCSS']);
@@ -92,7 +94,7 @@ describe('whole-template generation pairs', () => {
   it('lists a truncated half pair for review but applies only complete pairs', async () => {
     const issue = { severity: 'error', message: 'CustomMRQLResult came back without CustomMRQLResultCSS before the reply was cut off, so this pair cannot be applied.' };
     const tb = bundle({ valid: false, slots: { CustomHeader: '<h1>New</h1>', CustomHeaderCSS: '', CustomMRQLResult: '<p>Half</p>' },
-      issues: [{ severity: 'error', message: "The model's reply was cut off at its output limit" }, issue], slotIssues: { CustomMRQLResult: [issue] } });
+      issues: [{ severity: 'error', message: "The model's reply was cut off at its output limit" }, issue], slotIssues: { CustomMRQLResult: [issue] } }, {});
     await tb.generateBundle();
     expect(tb.pendingDraft?.fields).toEqual(['CustomHeader', 'CustomHeaderCSS', 'CustomMRQLResult']);
     expect(tb.pendingDraft?.blocked).toEqual(['CustomMRQLResult']);
@@ -111,4 +113,87 @@ describe('whole-template generation pairs', () => {
     expect(tb.setEditor).not.toHaveBeenCalled();
   });
   afterEach(() => vi.unstubAllGlobals());
+
+  // The section picker and the fan-out's failed slots.
+  describe('sections and failed slots', () => {
+    function body(tb: Record<string, unknown>) {
+      const calls = (fetch as unknown as { mock: { calls: [string, { body: string }][] } }).mock.calls;
+      return JSON.parse(calls[calls.length - 1][1].body);
+    }
+
+    it('sends slots only when at least one section is ticked', async () => {
+      const tb = bundle({ valid: true, slots: { CustomHeader: '<h1>New</h1>', CustomHeaderCSS: '' } }, {}) as Record<string, any>;
+      await tb.generateBundle();
+      expect('slots' in body(tb)).toBe(false);
+
+      tb.selectedSections = ['CustomSidebar', 'CustomCSS'];
+      await tb.generateBundle();
+      expect(body(tb).slots).toEqual(['CustomSidebar', 'CustomCSS']);
+    });
+
+    it('names the sections that failed beside the draft', async () => {
+      const tb = bundle({ valid: true, slots: { CustomHeader: '<h1>New</h1>', CustomHeaderCSS: '' }, failedSlots: ['CustomSidebar'],
+        issues: [{ severity: 'warning', message: 'CustomSidebar could not be generated and was left unchanged: the request ran out of time' }] }, {}) as Record<string, any>;
+      await tb.generateBundle();
+      expect(tb.pendingDraft.failedSlots).toEqual(['CustomSidebar']);
+      expect(tb.pendingDraft.issues).toEqual([]);
+      expect(tb.notify).toHaveBeenLastCalledWith(expect.stringContaining('CustomSidebar'), 'warn');
+      expect(tb.pendingDraft.fields).toEqual(['CustomHeader', 'CustomHeaderCSS']);
+    });
+
+    it('offers the sections the form has an editor for', () => {
+      const tb = templateBundle({ carrier: 'category' }) as Record<string, any>;
+      const present = new Set(['CustomHeader', 'CustomSidebar', 'CustomOwnEntities', 'CustomCSS', 'CustomHeaderCSS']);
+      vi.stubGlobal('document', { querySelector: (selector: string) => (present.has(selector.slice(7, -2)) ? {} : null) });
+      expect(tb.sectionOptions().map((o: { field: string }) => o.field)).toEqual(['CustomHeader', 'CustomSidebar', 'CustomOwnEntities', 'CustomCSS']);
+      expect(tb.sectionOptions().map((o: { label: string }) => o.label)).toEqual(['Header', 'Sidebar', 'Own Entities', 'Shared CSS (CustomCSS)']);
+    });
+  });
+
+  // Apply asks one combined question, naming only the fields it would change.
+  describe('applying a draft', () => {
+    const headerOnly = { valid: true, slots: { CustomHeader: '<h1>New</h1>', CustomHeaderCSS: '.n{}' } };
+
+    it('does not ask when every field it writes is empty', async () => {
+      const tb = bundle(headerOnly, { MetaSchema: '{"type":"object"}', CustomSidebar: '<p>mine</p>' }) as Record<string, any>;
+      await tb.generateBundle();
+      await tb.applyPendingDraft();
+      expect(tb.ask).not.toHaveBeenCalled();
+      expect(tb.setEditor).toHaveBeenCalledTimes(2);
+    });
+
+    it('names only the returned fields that hold something, and nothing else', async () => {
+      const tb = bundle(headerOnly, { CustomHeader: '<h1>Old</h1>', MetaSchema: '{"type":"object"}', CustomSidebar: '<p>mine</p>' }) as Record<string, any>;
+      await tb.generateBundle();
+      await tb.applyPendingDraft();
+      expect(tb.ask).toHaveBeenCalledTimes(1);
+      const message = tb.ask.mock.calls[0][0] as string;
+      expect(message).toContain('CustomHeader');
+      expect(message).not.toMatch(/MetaSchema|CustomSidebar|CustomHeaderCSS/);
+      expect(tb.setEditor).toHaveBeenCalledTimes(2);
+    });
+
+    it('names a returned field the user cleared while the request ran, and marks edits', async () => {
+      const editors: Record<string, string> = { CustomHeader: '<h1>Old</h1>', CustomHeaderCSS: '.old{}' };
+      const tb = bundle(headerOnly, editors) as Record<string, any>;
+      await tb.generateBundle();
+      editors.CustomHeader = '';
+      editors.CustomHeaderCSS = '.typed{}';
+      await tb.applyPendingDraft();
+      expect(tb.ask).toHaveBeenCalledTimes(1);
+      const message = tb.ask.mock.calls[0][0] as string;
+      expect(message).toContain('CustomHeader');
+      expect(message).toContain('CustomHeaderCSS');
+      expect(message).toMatch(/edited since/i);
+    });
+
+    it('writes nothing when the question is declined', async () => {
+      const tb = bundle(headerOnly, { CustomHeader: '<h1>Old</h1>' }) as Record<string, any>;
+      await tb.generateBundle();
+      tb.ask.mockResolvedValueOnce(false);
+      await tb.applyPendingDraft();
+      expect(tb.setEditor).not.toHaveBeenCalled();
+      expect(tb.pendingDraft).not.toBeNull();
+    });
+  });
 });

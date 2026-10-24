@@ -44,7 +44,21 @@
 
     <div class="border-t border-stone-200 pt-4">
         <label class="block text-sm font-mono font-medium text-stone-700 mb-1" for="tb-generate-prompt">Generate whole template from a description</label>
-        <p class="text-xs text-stone-500 mb-2">First shows exactly what would go to the configured AI provider (this description, the metadata schema, a sample entity), and sends it only when you approve. The draft then waits for review; nothing is filled until you press Apply.</p>
+        <p class="text-xs text-stone-500 mb-2">First shows exactly what would go to the configured AI provider (this description, the metadata schema, a sample entity), and sends it only when you approve. A planning step settles one design, then each section is written separately, so this can take up to a minute. The draft then waits for review; nothing is filled until you press Apply.</p>
+        <fieldset class="mb-3 rounded-md border border-stone-200 p-3" data-testid="template-bundle-sections" x-show="sections.length">
+            <legend class="px-1 text-xs font-mono font-medium text-stone-700">Sections to generate (leave all unticked to let the generator choose)</legend>
+            <div class="mt-1 grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
+                <template x-for="section in sections" :key="section.field">
+                    <label class="flex min-w-0 items-center gap-2 text-sm text-stone-700">
+                        <input type="checkbox" :value="section.field" x-model="selectedSections"
+                               :data-testid="'template-bundle-section-' + section.field"
+                               class="shrink-0 rounded border-stone-300 text-amber-700 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-amber-600">
+                        <span class="min-w-0 break-words" x-text="section.label"></span>
+                    </label>
+                </template>
+            </div>
+            <p class="mt-2 text-xs text-stone-500">Each section is written together with its CSS companion. Shared CSS only gains new rules after your existing CSS.</p>
+        </fieldset>
         <div class="flex flex-wrap gap-2">
             <textarea id="tb-generate-prompt" x-model="generationPrompt" rows="2" x-ref="bundlePrompt"
                       data-testid="template-bundle-generate-prompt"
@@ -63,6 +77,8 @@
             <section class="mt-3 rounded-md border border-stone-300 bg-white p-3 space-y-3" data-testid="template-bundle-review" aria-labelledby="tb-review-heading">
                 <p id="tb-review-heading" class="text-sm font-semibold font-mono text-stone-800">Generated draft (not applied)</p>
                 <p x-show="pendingDraft.explanation" class="text-xs text-stone-600" x-text="pendingDraft.explanation"></p>
+                <p x-show="pendingDraft.failedSlots.length" data-testid="template-bundle-failed-slots" role="status" class="text-xs font-mono text-amber-800"
+                   x-text="'Could not generate: ' + pendingDraft.failedSlots.join(', ') + '. ' + (pendingDraft.failedSlots.length === 1 ? 'It was' : 'They were') + ' left as ' + (pendingDraft.failedSlots.length === 1 ? 'it is' : 'they are') + '; generate ' + (pendingDraft.failedSlots.length === 1 ? 'it' : 'them') + ' on their own.'"></p>
                 <ul x-show="pendingDraft.issues.length" class="text-xs font-mono text-red-700 list-disc pl-5" data-testid="template-bundle-review-issues">
                     <template x-for="(issue, i) in pendingDraft.issues" :key="i">
                         <li x-text="issue.message"></li>

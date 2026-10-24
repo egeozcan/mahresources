@@ -12,7 +12,7 @@
 //
 // Slot key -> hidden-input field name on the form.
 import { askToConfirm } from './confirmDialog.js';
-import { changedSince, draftSegments, draftWarnings } from './templateDraftReview.js';
+import { draftSegments, draftWarnings } from './templateDraftReview.js';
 import { afterDialogTeardown, returnFocusToGenerate, reviewDisclosure } from './generationDisclosure.js';
 
 // One map for all three carriers, not three. Carrier-specific slots (preview,
@@ -54,6 +54,19 @@ const SLOT_FIELDS = {
   entityPickerResultCSS: 'CustomEntityPickerResultCSS',
   css: 'CustomCSS',
 };
+
+// The sections a whole-template request can name: every HTML slot (each is
+// generated with its CSS companion) and CustomCSS, which only gains new rules.
+const SECTION_FIELDS = [...Object.values(SLOT_FIELDS).filter((field) => !field.endsWith('CSS')), 'CustomCSS'];
+
+// sectionLabel is a field name as words: CustomMRQLResult -> "MRQL Result".
+export function sectionLabel(field) {
+  if (field === 'CustomCSS') return 'Shared CSS (CustomCSS)';
+  return field
+    .replace(/^Custom/, '')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
+}
 
 // Carrier -> display label + list endpoint used to populate the "Copy from" picker.
 const CARRIERS = {
@@ -116,6 +129,10 @@ export function templateBundle({ carrier } = {}) {
     loading: false,
     generationPrompt: '',
     generating: false,
+    // The sections this form has an editor for, and the ones ticked. Nothing
+    // ticked lets the generator choose.
+    sections: [],
+    selectedSections: [],
     // A generated draft waiting for review: { slots, fields, issues, slotIssues,
     // explanation, valid, snapshot }. Nothing reaches an editor until
     // applyPendingDraft; snapshot is every editor as the request sent it.
@@ -127,7 +144,16 @@ export function templateBundle({ carrier } = {}) {
     draftWarnings,
 
     async init() {
+      this.sections = this.sectionOptions();
       await Promise.all([this.loadSources(), this.loadPresets()]);
+    },
+
+    // sectionOptions lists the sections the form can take: the carrier's slot
+    // editors are server-rendered, so an editor's input says the carrier has it.
+    sectionOptions() {
+      return SECTION_FIELDS
+        .filter((field) => document.querySelector(`[name="${field}"]`))
+        .map((field) => ({ field, label: sectionLabel(field) }));
     },
 
     notify(msg, kind = 'info') {
@@ -243,7 +269,21 @@ export function templateBundle({ carrier } = {}) {
     // slots alone meant a form whose *only* authored content was the section
     // layout scored zero fields at risk, returned true without prompting, and had
     // that layout replaced silently — finding 154 surviving for exactly one field.
-    async confirmOverwrite(sourceLabel, bundle = null) {
+    //
+    // `fields` is for a caller that knows exactly which fields it writes (Apply on
+    // a generated draft): the question then names those and no others. `edited`
+    // marks the ones changed since the request began, and `options` goes to the
+    // dialog.
+    async confirmOverwrite(sourceLabel, bundle = null, { fields = null, edited = [], appended = [], options = undefined } = {}) {
+      if (fields) {
+        if (fields.length === 0) return true;
+        const named = fields.map((field) => (appended.includes(field) ? `${field} (new rules are added after your current CSS)` : field));
+        const marked = edited.length ? ` ${edited.join(', ')} ${edited.length === 1 ? 'was' : 'were'} edited since you asked for this draft.` : '';
+        return askToConfirm(
+          `Replace ${fields.length === 1 ? '1 template field' : `${fields.length} template fields`} with ${sourceLabel}? This changes ${named.join(', ')}.${marked} Undo in the editor still works, and nothing is saved until you press Save.`,
+          options,
+        );
+      }
       const filled = Object.values(SLOT_FIELDS)
         .filter((field) => this.getEditor(field).trim() !== '');
       if (this.getEditor('MetaSchema').trim() !== '') filled.push('MetaSchema');
@@ -459,6 +499,8 @@ export function templateBundle({ carrier } = {}) {
         description: this.getEditor('Description'),
         sectionConfig: this.getEditor('SectionConfig'),
       };
+      // Ticked sections are forced; none ticked lets the generator choose.
+      if (this.selectedSections.length) body.slots = [...this.selectedSections];
       const post = (extra) => fetch(generatePath, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -483,7 +525,7 @@ export function templateBundle({ carrier } = {}) {
         if (requestId !== this._generationRequestId || !approved) return;
 
         this.generating = true;
-        this.notify('Generating the whole template…', 'info');
+        this.notify('Generating the whole template… this can take up to a minute.', 'info');
         afterDialogTeardown().then(() => {
           if (requestId === this._generationRequestId && this.generating) bundleStatus?.focus();
         });
@@ -529,19 +571,26 @@ export function templateBundle({ carrier } = {}) {
         const slotIssues = (data && data.slotIssues) || {};
         // Issues about the reply as a whole (truncation) belong to no slot.
         const slotIssueKeys = new Set(Object.values(slotIssues).flat().map((i) => `${i.severity}:${i.message}`));
+        // Sections whose pair could not be generated are named in their own
+        // warning; their per-section issue would repeat it.
+        const failedSlots = data && Array.isArray(data.failedSlots) ? data.failedSlots.filter((name) => typeof name === 'string') : [];
+        const isFailedSlotIssue = (i) => failedSlots.some((name) => String(i.message).startsWith(`${name} could not be generated`));
         this.pendingDraft = {
           slots: Object.fromEntries(returned.map((field) => [field, slots[field]])),
           fields: returned,
           valid: !(data && data.valid === false),
           explanation: (data && data.explanation) || '',
-          issues: issues.filter((i) => !slotIssueKeys.has(`${i.severity}:${i.message}`)),
+          issues: issues.filter((i) => !slotIssueKeys.has(`${i.severity}:${i.message}`) && !isFailedSlotIssue(i)),
           slotIssues,
           snapshot,
           blocked,
+          failedSlots,
         };
         // Display only: Apply depends on the pending draft, never on this text.
         const repairedNote = data?.repair?.applied ? ' (auto-repaired)' : '';
-        if (this.pendingDraft.valid) {
+        if (failedSlots.length) {
+          this.notify(`Generated ${returned.length} slot(s)${repairedNote}, but ${failedSlots.join(', ')} could not be generated and ${failedSlots.length === 1 ? 'was' : 'were'} left as ${failedSlots.length === 1 ? 'it is' : 'they are'}. Review the draft below, then Apply.`, 'warn');
+        } else if (this.pendingDraft.valid) {
           this.notify(`Generated ${returned.length} slot(s)${repairedNote}. Review the draft below, then Apply.`, 'info');
         } else {
           this.notify(`Generated ${returned.length} slot(s)${repairedNote}, but the draft has issues. Review it below before applying.`, 'warn');
@@ -566,14 +615,31 @@ export function templateBundle({ carrier } = {}) {
       if (!draft) return;
       if (!this.canApplyDraft()) return;
       const fields = draft.fields.filter((field) => !draft.blocked.includes(field));
-      const changed = changedSince(draft.snapshot, fields, (field) => this.getEditor(field));
-      if (changed.length) {
+      // One question, before any editor is written: the fields the draft would
+      // change that hold something or were edited since the request began, the
+      // latter marked. A field the user cleared meanwhile is named too.
+      const replaced = [];
+      const edited = [];
+      const appended = [];
+      for (const field of fields) {
+        const current = this.getEditor(field);
+        const next = draft.slots[field] || '';
+        if (current.trim() === next.trim()) continue;
+        const editedSince = Object.prototype.hasOwnProperty.call(draft.snapshot, field) && current !== draft.snapshot[field];
+        if (current.trim() === '' && !editedSince) continue;
+        replaced.push(field);
+        if (editedSince) edited.push(field);
+        else if (field === 'CustomCSS' && next.startsWith(current)) appended.push(field);
+      }
+      if (replaced.length) {
         // Apply is removed with the panel once the draft is written, so the
         // dialog's own focus return needs somewhere stable to land.
-        const confirmed = await askToConfirm(
-          `${changed.join(', ')} changed since you asked for this draft. Replace ${changed.length === 1 ? 'it' : 'them'} with the draft?`,
-          { title: 'Replace your edits?', confirmLabel: 'Replace', cancelLabel: 'Keep my edits', fallbackFocus: () => this._focusChain().find((el) => el?.isConnected && !el.disabled && el.getClientRects().length > 0) },
-        );
+        const confirmed = await this.confirmOverwrite('the generated draft', null, {
+          fields: replaced,
+          edited,
+          appended,
+          options: { title: 'Replace your content?', confirmLabel: 'Replace', cancelLabel: 'Keep my content', fallbackFocus: () => this._focusChain().find((el) => el?.isConnected && !el.disabled && el.getClientRects().length > 0) },
+        });
         if (!confirmed || this.pendingDraft !== draft) return;
       }
       for (const field of fields) this.setEditor(field, draft.slots[field] || '');
