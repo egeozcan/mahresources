@@ -6,23 +6,11 @@ import (
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
-	"gorm.io/gorm/schema"
 )
 
-// mockPostgresDialector is a minimal gorm.Dialector that reports its name as "postgres"
-// without requiring an actual database connection.
-type mockPostgresDialector struct{}
-
-func (mockPostgresDialector) Name() string                                          { return "postgres" }
-func (mockPostgresDialector) Initialize(*gorm.DB) error                             { return nil }
-func (mockPostgresDialector) Migrator(*gorm.DB) gorm.Migrator                       { return nil }
-func (mockPostgresDialector) DataTypeOf(*schema.Field) string                       { return "" }
-func (mockPostgresDialector) DefaultValueOf(*schema.Field) clause.Expression        { return nil }
-func (mockPostgresDialector) BindVarTo(clause.Writer, *gorm.Statement, interface{}) {}
-func (mockPostgresDialector) QuoteTo(clause.Writer, string)                         {}
-func (mockPostgresDialector) Explain(string, ...interface{}) string                 { return "" }
+// mockPostgresDialector reports the "postgres" dialect without a connection.
+var mockPostgresDialector = staticDialector{name: "postgres"}
 
 // ---- Minimal model structs for test DB (mirrors models/ but avoids import cycles) ----
 
@@ -1430,7 +1418,7 @@ func TestTranslate_GroupByBucketed_NilValue(t *testing.T) {
 
 // newMockPostgresTC creates a translateContext whose isPostgres() returns true.
 func newMockPostgresTC(tableName string) *translateContext {
-	db := &gorm.DB{Config: &gorm.Config{Dialector: mockPostgresDialector{}}}
+	db := &gorm.DB{Config: &gorm.Config{Dialector: mockPostgresDialector}}
 	return &translateContext{db: db, tableName: tableName}
 }
 

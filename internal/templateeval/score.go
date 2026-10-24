@@ -163,7 +163,7 @@ type Env struct {
 	// ValidateMRQL is the handler's ValidateMRQL seam
 	// (server/api_handlers/template_generation_api_handlers.go). It must change
 	// whenever the server's does.
-	ValidateMRQL func(query string) error
+	ValidateMRQL func(query string, opts shortcodes.MRQLCheckOptions) error
 }
 
 // Score measures one run. calls are the provider calls the recorder saw for

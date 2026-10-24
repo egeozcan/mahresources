@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strings"
 
+	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/models"
-	"mahresources/mrql"
 	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
 	"mahresources/shortcodes"
@@ -144,7 +144,7 @@ type shortcodeLintResponse struct {
 
 // GetShortcodeLintHandler handles POST /v1/shortcodes/lint — pure-parse linting
 // of shortcode markup. It never executes shortcodes, plugin code, or the DB;
-// only the MRQL parser is invoked to syntax-check query attributes. Listed in
+// query attributes are checked by building their SQL without a connection. Listed in
 // isReadViaPost so read-only principals may lint while authoring templates.
 func GetShortcodeLintHandler(ctx ShortcodeLintContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
@@ -155,14 +155,9 @@ func GetShortcodeLintHandler(ctx ShortcodeLintContext) func(http.ResponseWriter,
 		}
 
 		known := buildKnownShortcodes(ctx)
-		validateMRQL := func(query string) error {
-			_, err := mrql.Parse(query)
-			return err
-		}
-
 		issues := shortcodes.Lint(req.Content, shortcodes.LintOptions{
 			Known:         known,
-			ValidateMRQL:  validateMRQL,
+			ValidateMRQL:  templateMRQLValidator(ctx.MRQLStaticEnv()),
 			PartialExists: partialExistsFn(ctx),
 			CSSMode:       strings.EqualFold(req.Mode, "css"),
 		})
@@ -172,6 +167,15 @@ func GetShortcodeLintHandler(ctx ShortcodeLintContext) func(http.ResponseWriter,
 
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(shortcodeLintResponse{Issues: issues})
+	}
+}
+
+// templateMRQLValidator is the lint seam every template surface shares: the
+// editor gutter, the preview and generation. It gives a query the verdict
+// rendering would, without a database (application_context.CheckTemplateMRQL).
+func templateMRQLValidator(env application_context.MRQLStaticEnv) func(string, shortcodes.MRQLCheckOptions) error {
+	return func(query string, opts shortcodes.MRQLCheckOptions) error {
+		return application_context.CheckTemplateMRQL(query, opts, env)
 	}
 }
 

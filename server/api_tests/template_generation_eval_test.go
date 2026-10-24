@@ -20,7 +20,6 @@ import (
 
 	"mahresources/application_context"
 	"mahresources/internal/templateeval"
-	"mahresources/mrql"
 	"mahresources/shortcodes"
 )
 
@@ -84,16 +83,20 @@ func TestTemplateGenerationEval(t *testing.T) {
 		&http.Client{Transport: recorder},
 	)
 	tc.AppCtx.SetTemplateGenerator(application_context.NewTemplateGenerator(provider, application_context.TemplateGenerationConfig{
-		APIKey:  apiKey,
-		Model:   model,
-		Timeout: timeout,
+		APIKey:   apiKey,
+		Model:    model,
+		Timeout:  timeout,
+		Postgres: tc.AppCtx.MRQLStaticEnv().Postgres,
 	}))
 	// SetupTestEnv runs no plugin manager, so the server lints against the
 	// built-ins alone, and so does the scorer. ValidateMRQL is the generate
 	// handler's seam; keep it in step when the handler's changes.
+	mrqlEnv := tc.AppCtx.MRQLStaticEnv()
 	env := templateeval.Env{
-		Known:        shortcodes.KnownFromBuiltins(),
-		ValidateMRQL: func(q string) error { _, err := mrql.Parse(q); return err },
+		Known: shortcodes.KnownFromBuiltins(),
+		ValidateMRQL: func(q string, opts shortcodes.MRQLCheckOptions) error {
+			return application_context.CheckTemplateMRQL(q, opts, mrqlEnv)
+		},
 	}
 
 	report := templateeval.RunReport{

@@ -5,33 +5,34 @@ import (
 	"strings"
 	"testing"
 
-	"mahresources/mrql"
+	"mahresources/application_context"
 	"mahresources/shortcodes"
 )
 
 // TestBuiltinDocMRQLExamplesParse guards against documenting invalid MRQL in the
-// built-in shortcode examples. Every [mrql query='…'] (and any [conditional
-// mrql='…']) example embedded in BuiltinDocs must be a syntactically valid MRQL
-// query — a user copying an example verbatim must not hit a parse error.
+// built-in shortcode examples. Every query an example would run, [mrql]
+// queries, [conditional] sources and [elseif] guards alike, gets the verdict
+// rendering would give it (application_context.CheckTemplateMRQL, with the
+// example's own params, limit and buckets): a user copying an example
+// verbatim must not hit an MRQL error, on SQLite or PostgreSQL.
 func TestBuiltinDocMRQLExamplesParse(t *testing.T) {
-	for _, d := range shortcodes.BuiltinDocs() {
-		for _, ex := range d.Examples {
-			for _, sc := range shortcodes.Parse(ex.Code) {
-				var query string
-				switch sc.Name {
-				case "mrql":
-					query = sc.Attrs["query"]
-				case "conditional":
-					query = sc.Attrs["mrql"]
-				}
-				if query == "" {
-					continue
-				}
-				if _, err := mrql.Parse(query); err != nil {
-					t.Errorf("shortcode %q example %q: embedded MRQL %q does not parse: %v",
-						d.Name, ex.Title, query, err)
+	for _, env := range []application_context.MRQLStaticEnv{{FTS: true}, {Postgres: true, FTS: true}} {
+		checked := 0
+		validate := func(query string, opts shortcodes.MRQLCheckOptions) error {
+			checked++
+			return application_context.CheckTemplateMRQL(query, opts, env)
+		}
+		for _, d := range shortcodes.BuiltinDocs() {
+			for _, ex := range d.Examples {
+				for _, issue := range shortcodes.Lint(ex.Code, shortcodes.LintOptions{Known: shortcodes.KnownFromBuiltins(), ValidateMRQL: validate}) {
+					if strings.HasPrefix(issue.Message, "MRQL error") {
+						t.Errorf("shortcode %q example %q (postgres=%t): %s", d.Name, ex.Title, env.Postgres, issue.Message)
+					}
 				}
 			}
+		}
+		if checked < 5 {
+			t.Fatalf("only %d example queries were checked", checked)
 		}
 	}
 }

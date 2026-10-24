@@ -3,9 +3,12 @@ package application_context
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"mahresources/mrql"
 )
 
 type fakeMRQLDraftProvider struct {
@@ -131,9 +134,9 @@ func TestMRQLGeneratorPromptIncludesCompactSyntaxGuide(t *testing.T) {
 		"Prefer the simplest valid query that answers the request.",
 		"Start with type = resource, type = note, or type = group when using entity-specific fields.",
 		"Common fields: id, name, description, created, updated, tags, guid, meta.<key>, TEXT.",
-		"Resource fields: contentType, fileSize, width, height, originalName, hash, category, owner, groups/group, notes.",
-		"Note fields: noteType, owner, groups/group, resources.",
-		"Group fields: category, parent, children, resources, notes.",
+		"Resource fields: groups/group, owner, category, contentType, fileSize, width, height, originalName, originalLocation, hash, notes, similarImages.",
+		"Note fields: groups/group, owner, noteType, startDate, endDate, shared, resources.",
+		"Group fields: category, url, parent, children, resources, notes.",
 		"Relations use names with =, !=, ~, !~; use IS EMPTY/IS NOT EMPTY for missing/present relations.",
 		`Use tags/groups IN ("a", "b") only for tags, groups, or group; do not use IN for owner, parent, or children.`,
 		"Use meta.<key> for metadata only when the user names the key.",
@@ -184,5 +187,23 @@ func TestMahresourcesContextMRQLGeneratorSeam(t *testing.T) {
 
 	if ctx.MRQLGenerator() != gen {
 		t.Fatalf("MRQLGenerator seam returned %#v, want %#v", ctx.MRQLGenerator(), gen)
+	}
+}
+
+// TestMRQLGenerationPromptListsEveryField: the field lists come from
+// mrql/fields.go, so a field added there reaches the prompt.
+func TestMRQLGenerationPromptListsEveryField(t *testing.T) {
+	prompt := buildMRQLGenerationPrompt("x", false)
+	for label, et := range map[string]mrql.EntityType{"Common": mrql.EntityUnspecified, "Resource": mrql.EntityResource, "Note": mrql.EntityNote, "Group": mrql.EntityGroup} {
+		i := strings.Index(prompt, label+" fields: ")
+		if i < 0 {
+			t.Fatalf("no %s field line", label)
+		}
+		line := prompt[i : i+strings.Index(prompt[i:], "\n")]
+		for _, name := range mrql.FieldNames(et) {
+			if !regexp.MustCompile(`[ /]` + regexp.QuoteMeta(name) + `[,./]`).MatchString(line) {
+				t.Errorf("%s field %q is missing from %q", label, name, line)
+			}
+		}
 	}
 }

@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"mahresources/constants"
-	"mahresources/mrql"
 	"mahresources/server/http_utils"
 	"mahresources/server/template_handlers/template_filters"
 	"mahresources/shortcodes"
@@ -115,7 +114,7 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 		// same buffers, so they have to reach the same verdict on them.
 		lintOpts := shortcodes.LintOptions{
 			Known:        buildKnownShortcodes(ctx),
-			ValidateMRQL: func(q string) error { _, e := mrql.Parse(q); return e },
+			ValidateMRQL: templateMRQLValidator(ctx.MRQLStaticEnv()),
 			// Finding 155: the preview pane's issue list reports an unknown
 			// [partial] too, so the diagnostic is there whether the author is
 			// reading the editor gutter or the preview.

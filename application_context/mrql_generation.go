@@ -129,12 +129,35 @@ func buildMRQLGenerationPrompt(userPrompt string, postgres bool) string {
 		"Use only MRQL syntax rules and values explicitly present in the user request.",
 		"Do not use local tags, categories, note types, group names, filenames, metadata keys, or other local vocabulary unless the user typed them.",
 		"Prefer the simplest valid query that answers the request.",
+	}
+	lines = append(lines, mrqlLanguageReferenceLines()...)
+	lines = append(lines, "Add LIMIT 50 for broad queries unless the user asks for another small limit.")
+	lines = append(lines, mrqlExampleLines()...)
+
+	// Regex match (~*) is PostgreSQL-only; only teach it on Postgres deployments.
+	if postgres {
+		lines = append(lines, mrqlRegexReferenceLine, "resources whose name matches regex <regex> -> type = resource AND name ~* \"<regex>\" LIMIT 50")
+	}
+
+	lines = append(lines, "User request: "+userPrompt)
+	return strings.Join(lines, "\n")
+}
+
+// mrqlRegexReferenceLine teaches the regex operator, which only PostgreSQL
+// deployments accept.
+const mrqlRegexReferenceLine = "Use field ~* \"<regex>\" (or !~* for negation) for a case-insensitive POSIX regex match on string or meta fields (e.g. name ~* \"^IMG_[0-9]{4}\"). The pattern is a real regex: no * or ? wildcard shortcuts."
+
+// mrqlLanguageReferenceLines are the MRQL syntax rules, shared by the
+// standalone MRQL generator and the template generation prompt. Neither
+// dialect-specific syntax nor any instruction about the reply is here.
+func mrqlLanguageReferenceLines() []string {
+	return []string{
 		"Clause order: expression, SCOPE, GROUP BY, ORDER BY, LIMIT, OFFSET.",
 		"Start with type = resource, type = note, or type = group when using entity-specific fields.",
-		"Common fields: id, name, description, created, updated, tags, guid, meta.<key>, TEXT.",
-		"Resource fields: contentType, fileSize, width, height, originalName, hash, category, owner, groups/group, notes.",
-		"Note fields: noteType, owner, groups/group, resources.",
-		"Group fields: category, parent, children, resources, notes.",
+		"Common fields: " + mrqlFieldList(mrql.EntityUnspecified) + ", meta.<key>, TEXT.",
+		"Resource fields: " + mrqlFieldList(mrql.EntityResource) + ".",
+		"Note fields: " + mrqlFieldList(mrql.EntityNote) + ".",
+		"Group fields: " + mrqlFieldList(mrql.EntityGroup) + ".",
 		"Strings must be double-quoted.",
 		"Valid operators are =, !=, ~, !~, >, >=, <, <=, IN, NOT IN, IS EMPTY, IS NOT EMPTY, IS NULL, and IS NOT NULL.",
 		"Never use HAS, CONTAINS, LIKE, MATCH, includes, or other natural-language operators.",
@@ -156,7 +179,30 @@ func buildMRQLGenerationPrompt(userPrompt string, postgres bool) string {
 		"Use field BETWEEN <lo> AND <hi> (or field NOT BETWEEN <lo> AND <hi>) for an inclusive range on dates, numbers (including size units like 1mb), or strings. Bounds may be dates, numbers, relative dates, or functions.",
 		"Use ORDER BY RANDOM() for a random order or random sample (often with LIMIT). RANDOM() takes no direction and cannot be used with GROUP BY.",
 		"Use ORDER BY RANK to sort by full-text relevance (most relevant first). RANK requires exactly one TEXT ~ predicate, a single entity type, and no GROUP BY.",
-		"Add LIMIT 50 for broad queries unless the user asks for another small limit.",
+	}
+}
+
+// mrqlFieldList lists an entity's MRQL fields from mrql/fields.go, so a new
+// field reaches the prompt. An alias, a field over the same column as one
+// before it, is written beside it: groups/group.
+func mrqlFieldList(entityType mrql.EntityType) string {
+	var names []string
+	column := map[string]int{}
+	for _, name := range mrql.FieldNames(entityType) {
+		def, _ := mrql.LookupField(entityType, name)
+		if i, ok := column[def.Column]; ok {
+			names[i] += "/" + name
+			continue
+		}
+		column[def.Column] = len(names)
+		names = append(names, name)
+	}
+	return strings.Join(names, ", ")
+}
+
+// mrqlExampleLines map requests to queries, with placeholders.
+func mrqlExampleLines() []string {
+	return []string{
 		"Example mappings use <placeholders>; replace them with user-provided values and never emit the placeholder tokens.",
 		"images with tag <tag> -> type = resource AND contentType ~ \"image/*\" AND tags = \"<tag>\" LIMIT 50",
 		"resources whose owner has tag <tag> -> type = resource AND owner.tags = \"<tag>\" LIMIT 50",
@@ -175,15 +221,4 @@ func buildMRQLGenerationPrompt(userPrompt string, postgres bool) string {
 		"<n> random untagged resources -> type = resource AND tags.count = 0 ORDER BY RANDOM() LIMIT <n>",
 		"most relevant notes about <text> -> type = note AND TEXT ~ \"<text>\" ORDER BY RANK LIMIT 50",
 	}
-
-	// Regex match (~*) is PostgreSQL-only; only teach it on Postgres deployments.
-	if postgres {
-		lines = append(lines,
-			"Use field ~* \"<regex>\" (or !~* for negation) for a case-insensitive POSIX regex match on string or meta fields (e.g. name ~* \"^IMG_[0-9]{4}\"). The pattern is a real regex: no * or ? wildcard shortcuts.",
-			"resources whose name matches regex <regex> -> type = resource AND name ~* \"<regex>\" LIMIT 50",
-		)
-	}
-
-	lines = append(lines, "User request: "+userPrompt)
-	return strings.Join(lines, "\n")
 }

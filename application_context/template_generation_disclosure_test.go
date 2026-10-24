@@ -30,6 +30,7 @@ var templateInputDisclosure = map[string]struct{ section, reason string }{
 	"Partials":            {section: "partials"},
 	"PartialCount":        {section: "partials"},
 	"BundleSlots":         {section: "task"},
+	"Postgres":            {reason: "chooses the dialect lines of the constant MRQL reference; the generator sets it from its configuration"},
 	"Known":               {reason: "validates the reply only"},
 	"ValidateMRQL":        {reason: "validates the reply only"},
 }

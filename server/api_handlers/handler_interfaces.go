@@ -57,6 +57,14 @@ type PluginManagerProvider interface {
 type ShortcodeLintContext interface {
 	PluginManagerProvider
 	partialNameResolver
+	mrqlStaticEnvProvider
+}
+
+// mrqlStaticEnvProvider gives the dialect and full-text availability that
+// template MRQL is checked against, so the editor gutter, the preview and
+// generation give a query the verdict rendering would.
+type mrqlStaticEnvProvider interface {
+	MRQLStaticEnv() application_context.MRQLStaticEnv
 }
 
 // MRQLAPIContext serves the /v1/mrql surface: execution, validation,
@@ -240,6 +248,7 @@ type TemplatePreviewContext interface {
 	// seam that renders plugin code needs the name to ask about.
 	PluginAllowsScopedPrincipals(pluginName string) bool
 	templateRenderContext
+	mrqlStaticEnvProvider
 	GetGroup(id uint) (*models.Group, error)
 	GetNote(id uint) (*models.Note, error)
 	GetResource(id uint) (*models.Resource, error)

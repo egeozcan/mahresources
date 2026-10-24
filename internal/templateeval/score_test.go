@@ -676,7 +676,7 @@ func wantFlags(flags ...string) func(t *testing.T, got Checks, details Details) 
 func TestLintMessagePrefixesStayClassified(t *testing.T) {
 	opts := shortcodes.LintOptions{
 		Known:        shortcodes.KnownFromBuiltins(),
-		ValidateMRQL: func(q string) error { _, err := mrql.Parse(q); return err },
+		ValidateMRQL: func(q string, _ shortcodes.MRQLCheckOptions) error { _, err := mrql.Parse(q); return err },
 	}
 	cases := []struct {
 		markup string
@@ -824,7 +824,7 @@ func TestQueryProbesCarryWhatTheRuntimeReads(t *testing.T) {
 }
 
 func testEnv() Env {
-	return Env{Known: shortcodes.KnownFromBuiltins(), ValidateMRQL: func(q string) error { _, err := mrql.Parse(q); return err }}
+	return Env{Known: shortcodes.KnownFromBuiltins(), ValidateMRQL: func(q string, _ shortcodes.MRQLCheckOptions) error { _, err := mrql.Parse(q); return err }}
 }
 
 // TestQueryProbesRoundTripThroughTheParser checks that a probe hands the

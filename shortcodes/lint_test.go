@@ -240,7 +240,7 @@ func TestLint(t *testing.T) {
 
 func TestLintMRQLSyntax(t *testing.T) {
 	known := KnownFromBuiltins()
-	validate := func(q string) error {
+	validate := func(q string, _ MRQLCheckOptions) error {
 		if strings.Contains(q, "BAD") {
 			return errors.New("syntax error near BAD")
 		}
@@ -271,7 +271,7 @@ func TestLintMRQLSyntax(t *testing.T) {
 
 func TestLintMRQLErrorAnchorsToAttr(t *testing.T) {
 	known := KnownFromBuiltins()
-	validate := func(q string) error {
+	validate := func(q string, _ MRQLCheckOptions) error {
 		if strings.Contains(q, "BAD") {
 			return errors.New("syntax error near BAD")
 		}
@@ -3610,4 +3610,61 @@ func TestLintAttributeContextRoundTwentyFour(t *testing.T) {
 			t.Errorf("B's unquoted injection must be seen independently of A, got %q", lintWarnings(src))
 		}
 	})
+}
+
+// TestLintMRQLSeamGetsTheRuntimeOptions: the validator sees each query with
+// the options the runtime applies to it, from the shortcode's own attributes,
+// for every source the runtime executes.
+func TestLintMRQLSeamGetsTheRuntimeOptions(t *testing.T) {
+	type call struct {
+		query string
+		opts  MRQLCheckOptions
+	}
+	lint := func(input string) ([]call, []LintIssue) {
+		var calls []call
+		issues := Lint(input, LintOptions{Known: KnownFromBuiltins(), ValidateMRQL: func(q string, opts MRQLCheckOptions) error {
+			calls = append(calls, call{q, opts})
+			if strings.Contains(q, "BAD") {
+				return errors.New("bad query")
+			}
+			return nil
+		}})
+		return calls, issues
+	}
+
+	calls, _ := lint(`[mrql query="type = note AND name = $n" param-n="x" limit="7" buckets="3"]`)
+	want := call{`type = note AND name = $n`, MRQLCheckOptions{Params: map[string]string{"n": "x"}, Limit: 7, Buckets: 3}}
+	if len(calls) != 1 || calls[0].query != want.query || calls[0].opts.Limit != 7 || calls[0].opts.Buckets != 3 || calls[0].opts.Params["n"] != "x" {
+		t.Fatalf("calls %+v, want %+v", calls, want)
+	}
+	if calls, _ := lint(`[mrql query="type = note"]`); len(calls) != 1 || calls[0].opts.Limit != 20 || calls[0].opts.Buckets != 5 || calls[0].opts.Params != nil {
+		t.Fatalf("defaults: %+v", calls)
+	}
+
+	// A saved query alone is not linted; an inline query beside it runs at
+	// render time, so it is.
+	if calls, _ := lint(`[mrql saved="recent"]`); len(calls) != 0 {
+		t.Fatalf("saved-only query was linted: %+v", calls)
+	}
+	if _, issues := lint(`[mrql saved="recent" query="BAD"]`); findIssue(issues, "MRQL error in query") == nil {
+		t.Fatalf("an inline query beside saved= lost its diagnostic: %+v", issues)
+	}
+
+	// Numbered conditional sources, each with its own limit and buckets.
+	calls, issues := lint(`[conditional mrql="type = note" gt="0" mrql2="BAD" limit2="9" buckets2="2" gt2="1"]x[/conditional]`)
+	if len(calls) != 2 || calls[1].opts.Limit != 9 || calls[1].opts.Buckets != 2 || calls[0].opts.Limit != 20 {
+		t.Fatalf("numbered sources: %+v", calls)
+	}
+	if findIssue(issues, "MRQL error in mrql2") == nil {
+		t.Fatalf("mrql2 error not reported: %+v", issues)
+	}
+
+	// [elseif] guards run at render time, numbered sources included.
+	calls, issues = lint(`[conditional path="x" eq="a"]A[elseif mrql="BAD" gt="0"]B[elseif path="y" eq="b" mrql2="type = group" limit2="4" gt2="0"]C[else]D[/conditional]`)
+	if len(calls) != 2 || calls[0].query != "BAD" || calls[1].query != "type = group" || calls[1].opts.Limit != 4 {
+		t.Fatalf("elseif guards: %+v", calls)
+	}
+	if findIssue(issues, "MRQL error in [elseif] mrql") == nil {
+		t.Fatalf("elseif error not reported: %+v", issues)
+	}
 }

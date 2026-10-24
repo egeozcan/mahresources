@@ -82,7 +82,7 @@ func TestDateBucketExprsSQLite(t *testing.T) {
 }
 
 func TestDateBucketExprsPostgres(t *testing.T) {
-	db, err := gorm.Open(mockPostgresDialector{}, &gorm.Config{})
+	db, err := gorm.Open(mockPostgresDialector, &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to open mock postgres db: %v", err)
 	}

@@ -803,7 +803,7 @@ Preview executes MRQL and plugin shortcodes, so it is gated at the same permissi
 
 ### Linting
 
-The template editors underline problems as you type -- unclosed `[conditional]` blocks, closing tags on inline shortcodes, unknown attributes, missing required attributes, `[mrql]` without a `query`/`saved`, invalid MRQL syntax inside a `query`/`mrql` attribute, and likely shortcode typos. Diagnostics are colored by severity (error, warning, info). Linting never blocks saving: if a slot still has errors when you submit, a confirmation asks whether to save anyway. This preserves the trust model, which allows arbitrary HTML and must tolerate false positives.
+The template editors underline problems as you type -- unclosed `[conditional]` blocks, closing tags on inline shortcodes, unknown attributes, missing required attributes, `[mrql]` without a `query`/`saved`, MRQL that rendering would reject, and likely shortcode typos. MRQL is checked in every query a template runs: `[mrql query]`, `[conditional mrql]` with its numbered `mrql2`, `mrql3`, … sources, and `[elseif]` guards. Each query is checked with its shortcode's `param-*`, `limit` and `buckets` attributes applied as rendering applies them, so an unbound `$name`, an unused `param-`, a field the entity does not have, a regex match on SQLite or a `limit` above 10,000 is underlined. The check never touches the database: whether a `SCOPE` group or a saved query exists is only known when the template renders. Diagnostics are colored by severity (error, warning, info). Linting never blocks saving: if a slot still has errors when you submit, a confirmation asks whether to save anyway. This preserves the trust model, which allows arbitrary HTML and must tolerate false positives.
 
 ### Autocomplete and hover docs
 
@@ -833,7 +833,7 @@ These editor tools are backed by these API endpoints:
 | Endpoint | Purpose |
 |----------|---------|
 | `GET /v1/shortcodes/docs` | Machine-readable catalogue of the built-in shortcodes plus enabled plugin shortcodes. Powers lint and autocomplete. |
-| `POST /v1/shortcodes/lint` | Pure-parse linting of shortcode markup (no shortcode/plugin execution; only the MRQL parser runs). |
+| `POST /v1/shortcodes/lint` | Linting of shortcode markup with no shortcode or plugin execution and no database access; MRQL queries are parsed and their SQL is built without a connection. |
 | `POST /v1/{category\|resourceCategory\|noteType}/previewTemplate` | Renders a slot against an entity. Gated like the corresponding template save. |
 | `POST /v1/{category\|resourceCategory\|noteType}/generateTemplate` | Drafts a slot, the Meta JSON Schema, or a whole template from a natural-language prompt. Requires `DEEPSEEK_API_KEY`; gated like the corresponding template save. |
 

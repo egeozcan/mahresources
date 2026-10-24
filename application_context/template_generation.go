@@ -51,6 +51,9 @@ type TemplateGenerationConfig struct {
 	APIKey  string
 	Model   string
 	Timeout time.Duration
+	// Postgres gates dialect-specific MRQL in the prompt's reference, as
+	// MRQLGenerationConfig.Postgres does for the MRQL generator.
+	Postgres bool
 	// Logf receives one line per provider call (log.Printf when nil).
 	Logf func(format string, args ...any)
 }
@@ -88,9 +91,14 @@ type TemplateGenerationInput struct {
 	PartialCount int
 	BundleSlots  []string // target=bundle: which slot fields to fill
 
+	// Postgres chooses the dialect the MRQL reference teaches (regex is
+	// PostgreSQL-only). The generator sets it from
+	// TemplateGenerationConfig.Postgres, so a caller cannot change it.
+	Postgres bool
+
 	// Validation seams (keep the generator plugin-agnostic and DB-free).
 	Known        shortcodes.KnownShortcodes
-	ValidateMRQL func(query string) error
+	ValidateMRQL func(query string, opts shortcodes.MRQLCheckOptions) error
 }
 
 type TemplateGenerationResult struct {
@@ -203,6 +211,7 @@ func (g *defaultTemplateGenerator) disclose(in TemplateGenerationInput, prompt s
 	if in.Target == "" {
 		in.Target = TemplateTargetSlot
 	}
+	in.Postgres = g.config.Postgres
 
 	// Settle "is this slot CSS?" once, here, so the prompt and the linter cannot
 	// answer it differently. The handler validates Slot and does not validate

@@ -3,6 +3,7 @@ package shortcodes
 import (
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -34,6 +35,26 @@ type KnownShortcode struct {
 	Documented bool
 }
 
+// MRQLCheckOptions are what a shortcode's own attributes do to its query at
+// render time: param-<name> binds $name, limit replaces any LIMIT in the
+// query, and buckets caps the buckets of a GROUP BY.
+type MRQLCheckOptions struct {
+	Params  map[string]string
+	Limit   int
+	Buckets int
+}
+
+// mrqlCheckOptions reads a query source's options the way the runtime does
+// (RenderMRQLShortcode, resolveConditionalValue): suffix is "" for the base
+// source and "2", "3", … for a conditional's numbered sources.
+func mrqlCheckOptions(attrs map[string]string, suffix string) MRQLCheckOptions {
+	return MRQLCheckOptions{
+		Params:  collectShortcodeParams(attrs),
+		Limit:   parseIntAttr(attrs["limit"+suffix], defaultMRQLShortcodeLimit),
+		Buckets: parseIntAttr(attrs["buckets"+suffix], defaultMRQLShortcodeBuckets),
+	}
+}
+
 // KnownShortcodes maps a shortcode name to its descriptor.
 type KnownShortcodes map[string]KnownShortcode
 
@@ -42,9 +63,10 @@ type LintOptions struct {
 	// Known is the shortcode catalogue (built-ins plus enabled plugins). When
 	// nil, only structural checks that don't need the catalogue run.
 	Known KnownShortcodes
-	// ValidateMRQL, when non-nil, validates the query/mrql attribute values and
-	// its error is surfaced as a lint issue. nil skips MRQL syntax checks.
-	ValidateMRQL func(query string) error
+	// ValidateMRQL, when non-nil, validates every query the runtime would
+	// execute, with the options the runtime applies to it, and its error is
+	// surfaced as a lint issue. nil skips MRQL checks.
+	ValidateMRQL func(query string, opts MRQLCheckOptions) error
 	// PartialName, when non-empty, is the name of the partial whose content is
 	// being linted. A [partial name="<PartialName>"] reference inside it is a
 	// direct self-reference and is flagged as a warning.
@@ -353,16 +375,42 @@ func Lint(input string, opts LintOptions) []LintIssue {
 			}
 		}
 
-		// MRQL syntax check on query-bearing attributes.
+		// MRQL check on every query the runtime executes, with its options.
 		if opts.ValidateMRQL != nil {
-			for _, attr := range []string{"query", "mrql"} {
-				q, ok := tk.attrs[attr]
-				if !ok || strings.TrimSpace(q) == "" {
-					continue
+			check := func(query string, checkOpts MRQLCheckOptions, start, end int, label string) {
+				if strings.TrimSpace(query) == "" {
+					return
 				}
-				if err := opts.ValidateMRQL(q); err != nil {
+				if err := opts.ValidateMRQL(query, checkOpts); err != nil {
+					add(start, end, SeverityError, "MRQL error in "+label+": "+err.Error())
+				}
+			}
+			switch tk.name {
+			case "mrql":
+				// The runtime prefers a non-empty inline query over saved=, so a
+				// saved query alone is the only one left unchecked.
+				start, end := attrOffset(tk, "query")
+				check(tk.attrs["query"], mrqlCheckOptions(tk.attrs, ""), start, end, "query")
+			case "conditional":
+				forEachConditionalQuery(tk.attrs, func(attr, suffix string) {
 					start, end := attrOffset(tk, attr)
-					add(start, end, SeverityError, "MRQL error in "+attr+": "+err.Error())
+					check(tk.attrs[attr], mrqlCheckOptions(tk.attrs, suffix), start, end, attr)
+				})
+				// [elseif] is a divider, not a token, but its guard runs.
+				if inner, ok := condInner[tk.start]; ok {
+					for i, branch := range SplitBranches(inner) {
+						if i == 0 || branch.IsElse {
+							continue
+						}
+						forEachConditionalQuery(branch.Attrs, func(attr, suffix string) {
+							check(branch.Attrs[attr], mrqlCheckOptions(branch.Attrs, suffix), tk.start, tk.end, "[elseif] "+attr)
+						})
+					}
+				}
+			default:
+				for _, attr := range []string{"query", "mrql"} {
+					start, end := attrOffset(tk, attr)
+					check(tk.attrs[attr], MRQLCheckOptions{Params: collectShortcodeParams(tk.attrs)}, start, end, attr)
 				}
 			}
 		}
@@ -621,4 +669,22 @@ func countTopLevelElse(content string) int {
 		i++
 	}
 	return count
+}
+
+// forEachConditionalQuery visits the mrql sources a condition set runs, in
+// the order evaluateConditionSet runs them: the base condition, then the
+// numbered ones until the first number with no source of any kind.
+func forEachConditionalQuery(attrs map[string]string, visit func(attr, suffix string)) {
+	for i := 1; ; i++ {
+		suffix := ""
+		if i >= 2 {
+			suffix = strconv.Itoa(i)
+			if !hasConditionSource(attrs, suffix) {
+				return
+			}
+		}
+		if attrs["mrql"+suffix] != "" {
+			visit("mrql"+suffix, suffix)
+		}
+	}
 }

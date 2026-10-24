@@ -61,7 +61,7 @@ func slotInput() TemplateGenerationInput {
 		DocsBlock:     "meta · [meta path=\"...\"] · renders a Meta value",
 		PluginContext: "Active plugins and their registered note blocks:\n- Plugin: project-management (version 1.0)\n  Note blocks:\n  - plugin:project-management:subtasks (label: Subtasks)\n    Usage: Add this structured block to a Note with the note block editor; its type is plugin:project-management:subtasks. It is not template shortcode markup.",
 		Known:         shortcodes.KnownFromBuiltins(),
-		ValidateMRQL:  func(string) error { return nil },
+		ValidateMRQL:  func(string, shortcodes.MRQLCheckOptions) error { return nil },
 	}
 }
 

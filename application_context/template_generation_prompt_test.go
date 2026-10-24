@@ -142,7 +142,7 @@ func TestReferenceBlocksFenceUntrustedData(t *testing.T) {
 	metaschema.Target = TemplateTargetMetaSchema
 
 	labels := map[string][]string{
-		"bundle":     {"shortcode reference", "plugin reference", "partials", "metadata schema", "samples", "current content", "included partials", "category identity", "section layout", "sibling styles"},
+		"bundle":     {"shortcode reference", "plugin reference", "partials", "metadata schema", "samples", "current content", "included partials", "category identity", "section layout", "sibling styles", "MRQL reference"},
 		"metaschema": {"category identity", "metadata schema", "samples"},
 	}
 	for name, input := range map[string]TemplateGenerationInput{"bundle": in, "metaschema": metaschema} {
@@ -180,6 +180,8 @@ func TestReferencePrefixPlacementIsIndependentOfTheBuilder(t *testing.T) {
 		"<<<BEGIN shortcode reference>>>",
 		"Enabled plugin and note-block reference:",
 		"<<<BEGIN plugin reference>>>",
+		"<<<BEGIN MRQL reference>>>",
+		"<<<BEGIN partials>>>",
 		"End of reference.",
 	}
 	for name, in := range promptCases() {
@@ -200,5 +202,65 @@ func TestReferencePrefixPlacementIsIndependentOfTheBuilder(t *testing.T) {
 				at = i
 			}
 		})
+	}
+}
+
+// TestTemplatePrefixCarriesTheMRQLReference: every docs-bearing prompt
+// teaches MRQL from the same reference as the standalone generator, plus the
+// template rules, and regex only where the deployment accepts it.
+func TestTemplatePrefixCarriesTheMRQLReference(t *testing.T) {
+	sqlite := buildTemplateReferencePrefix(sentinelPromptInput("group"))
+	pgInput := sentinelPromptInput("group")
+	pgInput.Postgres = true
+	postgres := buildTemplateReferencePrefix(pgInput)
+	for _, prefix := range []string{sqlite, postgres} {
+		for _, want := range append(mrqlLanguageReferenceLines(), templateMRQLRuleLines()...) {
+			if !strings.Contains(prefix, want) {
+				t.Errorf("prefix is missing %q", want)
+			}
+		}
+		for _, want := range []string{"<<<BEGIN MRQL reference>>>", `scope="entity"`, "$self", "type takes only resource, note or group", "param-", "[lazy]", "limit="} {
+			if !strings.Contains(prefix, want) {
+				t.Errorf("prefix is missing %q", want)
+			}
+		}
+	}
+	if strings.Contains(sqlite, "~*") || !strings.Contains(postgres, mrqlRegexReferenceLine) {
+		t.Error("regex must be taught on PostgreSQL only")
+	}
+	// The reference's size is pinned, so growth is a decision, not an accident.
+	for _, postgres := range []bool{false, true} {
+		var p promptSections
+		in := sentinelPromptInput("group")
+		in.Postgres = postgres
+		addTemplateReferencePrefix(&p, in)
+		got := len(sectionText(p, "mrql"))
+		if want := map[bool]int{false: 6781, true: 6983}[postgres]; got != want {
+			t.Errorf("postgres=%t: the MRQL reference is %d bytes, pinned at %d", postgres, got, want)
+		}
+	}
+}
+
+// TestTemplateGeneratorTeachesItsOwnDialect: the dialect comes from the
+// generator's configuration, whatever the input says.
+func TestTemplateGeneratorTeachesItsOwnDialect(t *testing.T) {
+	in := disclosureKinds()["pair"]
+	in.Postgres = true
+	sqlite, err := NewTemplateGenerator(&fakeTemplateDraftProvider{}, templateGenConfig()).DiscloseTemplate(in, "make it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sectionText(sqlite.Sections, "mrql"), "~*") {
+		t.Error("a SQLite generator taught regex")
+	}
+	cfg := templateGenConfig()
+	cfg.Postgres = true
+	in.Postgres = false
+	pg, err := NewTemplateGenerator(&fakeTemplateDraftProvider{}, cfg).DiscloseTemplate(in, "make it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sectionText(pg.Sections, "mrql"), mrqlRegexReferenceLine) {
+		t.Error("a PostgreSQL generator did not teach regex")
 	}
 }

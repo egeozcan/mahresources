@@ -32,22 +32,11 @@ func resolveScope(q *Query, db *gorm.DB, allowedRoot uint) (uint, error) {
 		groups = ApplyScopeCTE(groups, EntityGroup, allowedRoot)
 	}
 
+	if err := CheckScopeLiteral(q); err != nil {
+		return 0, err
+	}
 	switch v := q.Scope.Value.(type) {
 	case *NumberLiteral:
-		if v.Unit != "" {
-			return 0, &ScopeError{
-				Message: fmt.Sprintf("SCOPE does not accept unit suffixes, got %q", v.Token.Value),
-				Pos:     v.Token.Pos,
-				Length:  v.Token.Length,
-			}
-		}
-		if v.Value != float64(int64(v.Value)) {
-			return 0, &ScopeError{
-				Message: fmt.Sprintf("SCOPE requires an integer group ID, got %v", v.Value),
-				Pos:     v.Token.Pos,
-				Length:  v.Token.Length,
-			}
-		}
 		id := uint(v.Value)
 		if id == 0 {
 			return 0, nil
@@ -71,6 +60,34 @@ func resolveScope(q *Query, db *gorm.DB, allowedRoot uint) (uint, error) {
 	default:
 		return 0, fmt.Errorf("unexpected scope value type: %T", q.Scope.Value)
 	}
+}
+
+// CheckScopeLiteral checks the parts of a SCOPE clause that do not depend on
+// stored groups: a numeric scope is a plain integer ID. Whether that group, or
+// a group with a named scope, exists is decided only by ResolveScope.
+func CheckScopeLiteral(q *Query) error {
+	if q.Scope == nil {
+		return nil
+	}
+	v, ok := q.Scope.Value.(*NumberLiteral)
+	if !ok {
+		return nil
+	}
+	if v.Unit != "" {
+		return &ScopeError{
+			Message: fmt.Sprintf("SCOPE does not accept unit suffixes, got %q", v.Token.Value),
+			Pos:     v.Token.Pos,
+			Length:  v.Token.Length,
+		}
+	}
+	if v.Value != float64(int64(v.Value)) {
+		return &ScopeError{
+			Message: fmt.Sprintf("SCOPE requires an integer group ID, got %v", v.Value),
+			Pos:     v.Token.Pos,
+			Length:  v.Token.Length,
+		}
+	}
+	return nil
 }
 
 // ScopeContains reports whether candidate is allowedRoot or one of its

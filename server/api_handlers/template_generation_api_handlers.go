@@ -15,7 +15,6 @@ import (
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
-	"mahresources/mrql"
 	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
 	"mahresources/shortcodes"
@@ -211,7 +210,7 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			DocsBlock:           pluginReferences.DocsBlock,
 			PluginContext:       pluginReferences.PluginContext,
 			Known:               pluginReferences.Known,
-			ValidateMRQL:        func(q string) error { _, e := mrql.Parse(q); return e },
+			ValidateMRQL:        templateMRQLValidator(ctx.MRQLStaticEnv()),
 			Partials:            partials,
 			PartialCount:        partialCount,
 		}
