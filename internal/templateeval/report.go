@@ -15,7 +15,7 @@ import (
 
 // ReportSchemaVersion is the shape of RunReport. Bump it on any change a
 // reader of an older report would misread.
-const ReportSchemaVersion = 1
+const ReportSchemaVersion = 2
 
 // RegressionThresholdPP is the pass-rate drop, in percentage points, beyond
 // which Compare reports a kind as regressed.
@@ -46,6 +46,7 @@ type CaseResult struct {
 	Pass       bool               `json:"pass"`
 	Checks     Checks             `json:"checks"`
 	Calls      []Call             `json:"calls,omitempty"`
+	Details    *Details           `json:"details,omitempty"`
 	Draft      *Draft             `json:"draft,omitempty"`
 	Previews   map[string]Preview `json:"previews,omitempty"`
 }
@@ -75,6 +76,8 @@ type GroupSummary struct {
 	PassRate             float64 `json:"passRate"`
 	ProviderErrorRate    float64 `json:"providerErrorRate"`
 	TruncationRate       float64 `json:"truncationRate"`
+	MalformedRate        float64 `json:"malformedRate"`
+	WrongShapeRate       float64 `json:"wrongShapeRate"`
 	LintErrorRate        float64 `json:"lintErrorRate"`
 	UnknownShortcodeRate float64 `json:"unknownShortcodeRate"`
 	MRQLErrorRate        float64 `json:"mrqlErrorRate"`
@@ -93,9 +96,9 @@ type GroupSummary struct {
 // Summarize groups results by kind and by kind and carrier.
 func Summarize(results []CaseResult) Summary {
 	type acc struct {
-		g                                                                   GroupSummary
-		provider, trunc, lint, unknown, mrql, pairs, empty, preview, markup int
-		latency                                                             int64
+		g                                                                                     GroupSummary
+		provider, trunc, malformed, shape, lint, unknown, mrql, pairs, empty, preview, markup int
+		latency                                                                               int64
 	}
 	groups := map[string]*acc{}
 	add := func(key string, r CaseResult) {
@@ -112,15 +115,17 @@ func Summarize(results []CaseResult) Summary {
 			}
 		}
 		count(&a.g.Passed, r.Pass)
-		count(&a.provider, c.ProviderError != "")
+		count(&a.provider, c.HTTPStatus != 200)
 		count(&a.trunc, c.Truncated)
+		count(&a.malformed, c.Malformed)
+		count(&a.shape, c.WrongShape)
 		count(&a.lint, c.LintErrors > 0)
-		count(&a.unknown, len(c.UnknownShortcodes) > 0)
+		count(&a.unknown, c.UnknownShortcodeCount > 0)
 		count(&a.mrql, c.MRQLErrors > 0)
 		count(&a.pairs, c.IncompletePairs > 0)
 		count(&a.empty, len(c.RenderEmptySlots) > 0)
 		count(&a.preview, c.PreviewErrors > 0)
-		count(&a.markup, len(c.ExecutableMarkup) > 0)
+		count(&a.markup, len(c.ExecutableMarkup) > 0 || len(c.RenderedExecutableMarkup) > 0)
 		for _, call := range r.Calls {
 			a.g.Calls++
 			a.g.Usage = a.g.Usage.add(call.Usage)
@@ -151,6 +156,7 @@ func Summarize(results []CaseResult) Summary {
 		rate := func(n int) float64 { return float64(n) / float64(a.g.Runs) }
 		a.g.PassRate = rate(a.g.Passed)
 		a.g.ProviderErrorRate, a.g.TruncationRate, a.g.LintErrorRate = rate(a.provider), rate(a.trunc), rate(a.lint)
+		a.g.MalformedRate, a.g.WrongShapeRate = rate(a.malformed), rate(a.shape)
 		a.g.UnknownShortcodeRate, a.g.MRQLErrorRate, a.g.IncompletePairRate = rate(a.unknown), rate(a.mrql), rate(a.pairs)
 		a.g.RenderEmptyRate, a.g.PreviewErrorRate, a.g.ExecutableMarkupRate = rate(a.empty), rate(a.preview), rate(a.markup)
 		if cached := a.g.Usage.CacheHit + a.g.Usage.CacheMiss; cached > 0 {
@@ -168,10 +174,10 @@ func Summarize(results []CaseResult) Summary {
 func FormatSummary(s Summary) string {
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "group\truns\tpass\tprovider err\ttruncated\tlint err\tunknown sc\tmrql err\trender empty\tpreview err\texec markup\tcalls\tprompt tok\tcache hit\tmean ms")
+	fmt.Fprintln(w, "group\truns\tpass\tprovider err\ttruncated\tmalformed\twrong shape\tlint err\tunknown sc\tmrql err\trender empty\tpreview err\texec markup\tcalls\tprompt tok\tcache hit\tmean ms")
 	for _, g := range s.Groups {
-		fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%d\n",
-			g.Key, g.Runs, pct(g.PassRate), pct(g.ProviderErrorRate), pct(g.TruncationRate), pct(g.LintErrorRate),
+		fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%d\n",
+			g.Key, g.Runs, pct(g.PassRate), pct(g.ProviderErrorRate), pct(g.TruncationRate), pct(g.MalformedRate), pct(g.WrongShapeRate), pct(g.LintErrorRate),
 			pct(g.UnknownShortcodeRate), pct(g.MRQLErrorRate), pct(g.RenderEmptyRate), pct(g.PreviewErrorRate),
 			pct(g.ExecutableMarkupRate), g.Calls, g.Usage.Prompt, pct(g.CacheHitRatio), g.MeanLatencyMS)
 	}
@@ -227,6 +233,16 @@ func Compare(base, candidate RunReport) Comparison {
 	// passing case against one of a failing case would read as a gain.
 	if b, c := caseCounts(base), caseCounts(candidate); b != c {
 		fail("the runs differ in cases or repeats: [%s] vs [%s]", b, c)
+	}
+	for _, r := range []struct {
+		name   string
+		report RunReport
+	}{{"baseline", base}, {"candidate", candidate}} {
+		for _, res := range r.report.Results {
+			if res.Pass != res.Checks.Pass() {
+				fail("the %s's stored verdict for %s #%d disagrees with its checks", r.name, res.Case, res.Repeat)
+			}
+		}
 	}
 	baseSummary, candidateSummary := Summarize(base.Results), Summarize(candidate.Results)
 	if !reflect.DeepEqual(base.Summary, baseSummary) {
@@ -308,13 +324,15 @@ func FormatComparison(c Comparison) string {
 	return b.String()
 }
 
-// AggregateOnly drops drafts, previews and raw model replies, keeping checks,
-// usage and the summary. Use it for committed baselines.
+// AggregateOnly drops every piece of free text (details, drafts, previews and
+// raw model replies), keeping checks, usage and the summary, which hold only
+// numbers, booleans, IDs, fixed enums and the harness's own config. Use it
+// for committed baselines. TestAggregateKeepsNoFreeText walks the result.
 func AggregateOnly(report RunReport) RunReport {
 	report.Results = append([]CaseResult(nil), report.Results...)
 	for i := range report.Results {
 		r := &report.Results[i]
-		r.Draft, r.Previews = nil, nil
+		r.Details, r.Draft, r.Previews = nil, nil, nil
 		r.Calls = append([]Call(nil), r.Calls...)
 		for j := range r.Calls {
 			r.Calls[j].Content = ""

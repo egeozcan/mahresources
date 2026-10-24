@@ -8,8 +8,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"reflect"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,20 +37,21 @@ const (
 	ErrorClassDecode     = "decode"
 )
 
-// maxRecordedErrorBytes bounds the redacted error text kept per call.
-const maxRecordedErrorBytes = 200
+// knownFinishReasons are the finish_reason values DeepSeek documents. Any other
+// value is recorded as "other", so the field never carries upstream text.
+var knownFinishReasons = map[string]bool{"": true, "stop": true, "length": true, "content_filter": true, "tool_calls": true, "insufficient_system_resource": true, "other": true}
 
-// Call is what the recorder saw of one provider round trip. It holds no
-// headers, and every string in it is redacted, so a credential the upstream
-// echoes back (in a body, or in a status line the transport quotes in its
-// error) cannot reach a report.
+// Call is what the recorder saw of one provider round trip. It keeps no
+// headers and no upstream error text: a failure is its class and, for an HTTP
+// error, the status code. An upstream can echo the Authorization header back
+// in an error body or a broken status line, in any encoding, so the only safe
+// amount of that text to keep is none.
 type Call struct {
 	Model        string `json:"model"`
 	Thinking     bool   `json:"thinking"`
 	MaxTokens    int    `json:"maxTokens"`
 	Status       int    `json:"status"`
 	ErrorClass   string `json:"errorClass,omitempty"`
-	Error        string `json:"error,omitempty"`
 	FinishReason string `json:"finishReason,omitempty"`
 	Usage        Usage  `json:"usage"`
 	LatencyMS    int64  `json:"latencyMs"`
@@ -101,7 +102,7 @@ func (r *Recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := r.base.RoundTrip(req)
 	if err != nil {
 		call.LatencyMS = time.Since(start).Milliseconds()
-		call.ErrorClass, call.Error = transportErrorClass(req.Context(), err), err.Error()
+		call.ErrorClass = transportErrorClass(req.Context(), err)
 		r.record(call)
 		return nil, err
 	}
@@ -111,12 +112,12 @@ func (r *Recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 	call.Status = resp.StatusCode
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	if readErr != nil {
-		call.ErrorClass, call.Error = transportErrorClass(req.Context(), readErr), readErr.Error()
+		call.ErrorClass = transportErrorClass(req.Context(), readErr)
 		r.record(call)
 		return resp, nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		call.ErrorClass, call.Error = ErrorClassHTTPStatus, "HTTP "+strconv.Itoa(resp.StatusCode)+": "+string(body)
+		call.ErrorClass = ErrorClassHTTPStatus
 		r.record(call)
 		return resp, nil
 	}
@@ -139,13 +140,16 @@ func (r *Recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(body, &decoded); err != nil {
-		call.ErrorClass, call.Error = ErrorClassDecode, err.Error()
+		call.ErrorClass = ErrorClassDecode
 		r.record(call)
 		return resp, nil
 	}
 	if len(decoded.Choices) > 0 {
 		call.Content = decoded.Choices[0].Message.Content
 		call.FinishReason = decoded.Choices[0].FinishReason
+		if !knownFinishReasons[call.FinishReason] {
+			call.FinishReason = "other"
+		}
 	}
 	u := decoded.Usage
 	call.Usage = Usage{u.PromptTokens, u.CompletionTokens, u.CompletionTokensDetails.ReasoningTokens, u.PromptCacheHitTokens, u.PromptCacheMissTokens}
@@ -162,10 +166,7 @@ func transportErrorClass(ctx context.Context, err error) string {
 }
 
 func (r *Recorder) record(c Call) {
-	c.Error = Redact(c.Error, r.secrets...)
-	if len(c.Error) > maxRecordedErrorBytes {
-		c.Error = c.Error[:maxRecordedErrorBytes]
-	}
+	// The reply stays in the full report for diagnosis; AggregateOnly drops it.
 	c.Content = Redact(c.Content, r.secrets...)
 	r.mu.Lock()
 	r.calls = append(r.calls, c)
@@ -181,11 +182,12 @@ func (r *Recorder) Take() []Call {
 	return calls
 }
 
-var bearerToken = regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+`)
+var bearerToken = regexp.MustCompile(`(?i)\bbearer\s+[^\s"'<>]+`)
 
 const redacted = "[redacted]"
 
-// Redact removes every secret value and every "Bearer <token>" from s.
+// Redact removes every secret value and every "Bearer <token>" from s. It is
+// applied to decoded strings, never to an encoding of them.
 func Redact(s string, secrets ...string) string {
 	for _, secret := range secrets {
 		if secret != "" {
@@ -195,24 +197,50 @@ func Redact(s string, secrets ...string) string {
 	return bearerToken.ReplaceAllString(s, "Bearer "+redacted)
 }
 
-// RedactReport returns a copy of report with Redact applied to every string in
-// it: drafts, previews, checks and calls alike. It works on the JSON encoding,
-// which is the form a report is written in; the secrets are matched both raw
-// and JSON-escaped.
+// RedactReport returns a deep copy of report with Redact applied to every
+// string value and map key in it. It is for the full report, which keeps
+// drafts and replies and stays out of git; the committed aggregate holds no
+// free text at all (AggregateOnly).
 func RedactReport(report RunReport, secrets ...string) RunReport {
-	encoded, err := json.Marshal(report)
-	if err != nil {
-		panic(err)
-	}
-	all := append([]string(nil), secrets...)
-	for _, secret := range secrets {
-		if quoted, err := json.Marshal(secret); err == nil {
-			all = append(all, string(quoted[1:len(quoted)-1]))
+	return redactValue(reflect.ValueOf(report), secrets).Interface().(RunReport)
+}
+
+func redactValue(v reflect.Value, secrets []string) reflect.Value {
+	switch v.Kind() {
+	case reflect.String:
+		return reflect.ValueOf(Redact(v.String(), secrets...)).Convert(v.Type())
+	case reflect.Struct:
+		out := reflect.New(v.Type()).Elem()
+		for i := 0; i < v.NumField(); i++ {
+			out.Field(i).Set(redactValue(v.Field(i), secrets))
 		}
+		return out
+	case reflect.Pointer:
+		if v.IsNil() {
+			return v
+		}
+		out := reflect.New(v.Type().Elem())
+		out.Elem().Set(redactValue(v.Elem(), secrets))
+		return out
+	case reflect.Slice:
+		if v.IsNil() {
+			return v
+		}
+		out := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
+		for i := 0; i < v.Len(); i++ {
+			out.Index(i).Set(redactValue(v.Index(i), secrets))
+		}
+		return out
+	case reflect.Map:
+		if v.IsNil() {
+			return v
+		}
+		out := reflect.MakeMapWithSize(v.Type(), v.Len())
+		iter := v.MapRange()
+		for iter.Next() {
+			out.SetMapIndex(redactValue(iter.Key(), secrets), redactValue(iter.Value(), secrets))
+		}
+		return out
 	}
-	var out RunReport
-	if err := json.Unmarshal([]byte(Redact(string(encoded), all...)), &out); err != nil {
-		panic(err)
-	}
-	return out
+	return v
 }

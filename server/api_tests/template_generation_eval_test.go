@@ -112,12 +112,12 @@ func TestTemplateGenerationEval(t *testing.T) {
 			draft := evalGenerate(tc, c, ids.category, ids.sample)
 			calls := recorder.Take()
 			previews := evalPreviews(tc, c, draft, ids.category, ids.sample)
-			checks := templateeval.Score(c, draft, calls, previews, known)
+			checks, details := templateeval.Score(c, draft, calls, previews, known)
 			result := templateeval.CaseResult{
 				Case: c.ID, Kind: c.Kind, Carrier: c.Carrier, Repeat: repeat,
 				DurationMS: time.Since(start).Milliseconds(),
 				Pass:       checks.Pass(), Checks: checks, Calls: calls,
-				Draft: &draft, Previews: previews,
+				Details: &details, Draft: &draft, Previews: previews,
 			}
 			report.Results = append(report.Results, result)
 			t.Logf("%s #%d: pass=%t status=%d calls=%d %dms", c.ID, repeat, result.Pass, draft.Status, len(calls), result.DurationMS)

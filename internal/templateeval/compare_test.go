@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"mahresources/shortcodes"
 )
 
 func reportWith(results ...CaseResult) RunReport {
@@ -14,8 +16,13 @@ func reportWith(results ...CaseResult) RunReport {
 	return r
 }
 
+// result builds a run whose checks agree with pass, as Compare requires.
 func result(id string, kind Kind, carrier string, pass bool) CaseResult {
-	return CaseResult{Case: id, Kind: kind, Carrier: carrier, Pass: pass}
+	checks := Checks{Kind: kind, HTTPStatus: 200, SchemaProperties: 1}
+	if !pass {
+		checks.HTTPStatus = 502
+	}
+	return CaseResult{Case: id, Kind: kind, Carrier: carrier, Pass: pass, Checks: checks}
 }
 
 func TestCompareRefusesIncompatibleReports(t *testing.T) {
@@ -82,10 +89,11 @@ func TestAggregateOnlyDropsDraftsAndRawContent(t *testing.T) {
 	r := result("a", KindPair, "group", true)
 	r.Draft = &Draft{Content: "secret draft"}
 	r.Previews = map[string]Preview{"CustomHeader": {HTML: "x"}}
+	r.Details = &Details{ProviderError: "x"}
 	r.Calls = []Call{{Content: "raw", Usage: Usage{Prompt: 3}}}
 	report := reportWith(r)
 	got := AggregateOnly(report)
-	if got.Results[0].Draft != nil || got.Results[0].Previews != nil || got.Results[0].Calls[0].Content != "" {
+	if got.Results[0].Draft != nil || got.Results[0].Previews != nil || got.Results[0].Details != nil || got.Results[0].Calls[0].Content != "" {
 		t.Fatalf("aggregate kept per-run detail: %#v", got.Results[0])
 	}
 	if got.Results[0].Calls[0].Usage.Prompt != 3 || report.Results[0].Calls[0].Content != "raw" || report.Results[0].Draft == nil {
@@ -212,5 +220,120 @@ func TestBundleRequestSendsTheBrowsersWholeFieldMap(t *testing.T) {
 	f, _ := FixtureForCase(c)
 	if body["metaSchema"] != f.MetaSchema {
 		t.Fatalf("the bundle request does not carry the editor's schema: %v", body["metaSchema"])
+	}
+}
+
+func TestCompareRefusesAStoredPassThatDisagreesWithItsChecks(t *testing.T) {
+	base := reportWith(result("a", KindPair, "group", true))
+	lying := result("a", KindPair, "group", true)
+	lying.Checks.LintErrors = 1 // Checks.Pass() is false
+	candidate := reportWith(lying)
+	if got := Compare(base, candidate); got.Compatible {
+		t.Fatalf("a result whose Pass disagrees with its checks was compared: %#v", got)
+	}
+}
+
+// TestAggregateKeepsNoFreeText plants a secret in every free-text field a full
+// report can hold, then walks the aggregate's JSON: every string must sit under
+// a known config key, be a known enum value, or be a corpus case ID.
+func TestAggregateKeepsNoFreeText(t *testing.T) {
+	const secret = "sk-planted-0123456789"
+	c := Corpus()[0]
+	checks := Checks{Kind: c.Kind, HTTPStatus: 502, MissingSlots: []string{"CustomHeader"}, RenderEmptySlots: []string{"CustomHeader"},
+		LeftoverShortcodeText: []string{"CustomHeader"}, MissingExpectFields: []string{"isbn"}, ExecutableMarkup: []string{"script"}, RenderedExecutableMarkup: []string{"embed"}}
+	r := CaseResult{Case: c.ID, Kind: c.Kind, Carrier: c.Carrier, Repeat: 1, Pass: checks.Pass(), Checks: checks,
+		Details:  &Details{ProviderError: secret, SchemaCompileError: secret, UnknownShortcodes: []string{secret}},
+		Draft:    &Draft{Error: secret, Content: secret, Explanation: secret, Slots: map[string]string{secret: secret}, Issues: []shortcodes.LintIssue{{Message: secret}}},
+		Previews: map[string]Preview{secret: {HTML: secret, Error: secret, Issues: []shortcodes.LintIssue{{Message: secret}}}},
+		Calls:    []Call{{Model: "deepseek-flash", ErrorClass: ErrorClassHTTPStatus, FinishReason: "stop", Content: secret}},
+	}
+	report := reportWith(r)
+	report.Commit, report.Model, report.Timeout, report.StartedAt, report.FinishedAt = "abc123+dirty", "deepseek-flash", "20s", "2026-10-24T00:00:00Z", "2026-10-24T00:01:00Z"
+
+	encoded, err := json.Marshal(AggregateOnly(report))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "planted") {
+		t.Fatalf("the aggregate carries planted text: %s", encoded)
+	}
+	ids := map[string]bool{}
+	expectFields := map[string]bool{}
+	for _, cc := range Corpus() {
+		ids[cc.ID] = true
+		for _, f := range cc.ExpectFields {
+			expectFields[f] = true
+		}
+	}
+	slots := map[string]bool{}
+	for _, s := range browserBundleFields {
+		slots[s] = true
+	}
+	flags := map[string]bool{}
+	for _, f := range flagOrder {
+		flags[f] = true
+	}
+	enum := func(values ...string) map[string]bool {
+		m := map[string]bool{}
+		for _, v := range values {
+			m[v] = true
+		}
+		return m
+	}
+	allowed := map[string]func(string) bool{
+		"case":    func(v string) bool { return ids[v] },
+		"kind":    func(v string) bool { return enum("slot", "pair", "bundle", "metaschema")[v] },
+		"carrier": func(v string) bool { return enum("group", "resource", "note")[v] },
+		"errorClass": func(v string) bool {
+			return enum(ErrorClassTimeout, ErrorClassHTTPStatus, ErrorClassTransport, ErrorClassDecode)[v]
+		},
+		"finishReason":             func(v string) bool { return knownFinishReasons[v] },
+		"missingSlots":             func(v string) bool { return slots[v] },
+		"renderEmptySlots":         func(v string) bool { return slots[v] },
+		"leftoverShortcodeText":    func(v string) bool { return slots[v] },
+		"missingExpectFields":      func(v string) bool { return expectFields[v] },
+		"executableMarkup":         func(v string) bool { return flags[v] },
+		"renderedExecutableMarkup": func(v string) bool { return flags[v] },
+		"key":                      func(v string) bool { return v == "all" || strings.Count(v, "/") <= 1 },
+		// Config the harness sets, never text from upstream.
+		"corpusVersion": func(string) bool { return true }, "fixtureChecksum": func(string) bool { return true },
+		"commit": func(string) bool { return true }, "startedAt": func(string) bool { return true },
+		"finishedAt": func(string) bool { return true }, "model": func(string) bool { return true }, "timeout": func(string) bool { return true },
+	}
+	var generic any
+	if err := json.Unmarshal(encoded, &generic); err != nil {
+		t.Fatal(err)
+	}
+	var walk func(key string, n any)
+	walk = func(key string, n any) {
+		switch x := n.(type) {
+		case string:
+			check, ok := allowed[key]
+			if !ok || !check(x) {
+				t.Errorf("free text in the aggregate under %q: %q", key, x)
+			}
+		case []any:
+			for _, e := range x {
+				walk(key, e)
+			}
+		case map[string]any:
+			for k, e := range x {
+				walk(k, e)
+			}
+		}
+	}
+	walk("", generic)
+}
+
+func TestRequestContentMatchesJSONStringify(t *testing.T) {
+	pair := Case{ID: "p", Kind: KindPair, Carrier: "group", Slot: "CustomHeader", Prompt: "x",
+		Current: map[string]string{"CustomHeader": `<p class="a">&</p>`}}
+	if got := pair.Request(1, 2)["content"]; got != `{"CustomHeader":"<p class=\"a\">&</p>","CustomHeaderCSS":""}` {
+		t.Fatalf("pair content = %s", got)
+	}
+	bundle := Case{ID: "b", Kind: KindBundle, Carrier: "note", Prompt: "x", Current: map[string]string{"CustomCSS": "a>b{}"}}
+	content := bundle.Request(1, 2)["content"].(string)
+	if !strings.HasPrefix(content, `{"CustomHeader":"","CustomHeaderCSS":"","CustomDetailFooter":""`) || !strings.HasSuffix(content, `"CustomCSS":"a>b{}"}`) {
+		t.Fatalf("bundle content is not in SLOT_FIELDS order or escapes HTML: %s", content)
 	}
 }

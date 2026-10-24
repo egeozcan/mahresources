@@ -103,24 +103,62 @@ func assertRedacted(t *testing.T, calls []Call, wantClass string) {
 	if calls[0].ErrorClass != wantClass {
 		t.Fatalf("error class = %q, want %q (%#v)", calls[0].ErrorClass, wantClass, calls[0])
 	}
-	encoded, _ := json.Marshal(calls)
-	if strings.Contains(string(encoded), echoedSecret) || strings.Contains(string(encoded), "Bearer sk-") {
-		t.Fatalf("the recording carries the credential: %s", encoded)
+	if leaked := decodedStringsContaining(t, calls, echoedSecret); len(leaked) > 0 {
+		t.Fatalf("the recording carries the credential: %q", leaked)
 	}
 }
 
-func TestRecorderRedactsACredentialEchoedInAnErrorBody(t *testing.T) {
+// decodedStringsContaining encodes v, decodes it generically, and returns every
+// decoded string value or key that contains needle, so an escaped form in the
+// encoding cannot hide it.
+func decodedStringsContaining(t *testing.T, v any, needle string) []string {
+	t.Helper()
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var generic any
+	if err := json.Unmarshal(encoded, &generic); err != nil {
+		t.Fatal(err)
+	}
+	var found []string
+	var walk func(any)
+	walk = func(n any) {
+		switch x := n.(type) {
+		case string:
+			if strings.Contains(x, needle) {
+				found = append(found, x)
+			}
+		case []any:
+			for _, e := range x {
+				walk(e)
+			}
+		case map[string]any:
+			for k, e := range x {
+				walk(k)
+				walk(e)
+			}
+		}
+	}
+	walk(generic)
+	return found
+}
+
+func TestRecorderKeepsNoErrorBody(t *testing.T) {
+	// The body echoes the key JSON-escaped and on a new line after "Bearer":
+	// encodings no redaction pattern should be trusted to chase.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = io.WriteString(w, `{"error":"bad key `+r.Header.Get("Authorization")+`"}`)
+		_, _ = io.WriteString(w, `{"error":"bad key \u0073k-echoed-secret-0123456789 Bearer\n`+echoedSecret+`"}`)
 	}))
 	defer server.Close()
 	recorder := NewRecorder(nil, echoedSecret)
 	sendWithAuth(t, recorder, &http.Client{Transport: recorder}, server.URL)
 	calls := recorder.Take()
 	assertRedacted(t, calls, ErrorClassHTTPStatus)
-	if calls[0].Status != http.StatusUnauthorized || !strings.Contains(calls[0].Error, "[redacted]") {
-		t.Fatalf("recorded %#v", calls[0])
+	encoded, _ := json.Marshal(calls)
+	if calls[0].Status != http.StatusUnauthorized || strings.Contains(string(encoded), "bad key") {
+		t.Fatalf("recorded %s", encoded)
 	}
 }
 
@@ -184,15 +222,15 @@ func TestRecorderClassifiesTimeoutsAndUndecodableReplies(t *testing.T) {
 
 func TestRedactReportCoversEveryStringField(t *testing.T) {
 	report := RunReport{Results: []CaseResult{{
-		Checks:   Checks{ProviderError: "Bearer " + echoedSecret},
-		Draft:    &Draft{Error: echoedSecret, Slots: map[string]string{"CustomHeader": "x " + echoedSecret}},
-		Previews: map[string]Preview{"CustomHeader": {HTML: "bearer abc.def-ghi", Error: echoedSecret}},
-		Calls:    []Call{{Error: "Authorization: Bearer xyz123", Content: echoedSecret}},
+		Details:  &Details{ProviderError: "Bearer\n" + "xyz123"},
+		Draft:    &Draft{Error: echoedSecret, Slots: map[string]string{"CustomHeader": "x " + echoedSecret, echoedSecret: "key"}},
+		Previews: map[string]Preview{"CustomHeader": {HTML: "bearer abc.def-ghi", Error: "<" + echoedSecret + ">"}},
+		Calls:    []Call{{Content: "Authorization: Bearer\t" + echoedSecret}},
 	}}}
-	encoded, _ := json.Marshal(RedactReport(report, echoedSecret))
+	redactedReport := RedactReport(report, echoedSecret)
 	for _, leaked := range []string{echoedSecret, "abc.def-ghi", "xyz123"} {
-		if strings.Contains(string(encoded), leaked) {
-			t.Fatalf("redacted report still contains %q: %s", leaked, encoded)
+		if found := decodedStringsContaining(t, redactedReport, leaked); len(found) > 0 {
+			t.Fatalf("redacted report still contains %q: %q", leaked, found)
 		}
 	}
 	if report.Results[0].Draft.Error != echoedSecret {

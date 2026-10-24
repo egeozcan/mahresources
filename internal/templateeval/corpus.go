@@ -1,6 +1,7 @@
 package templateeval
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -8,7 +9,7 @@ import (
 
 // CorpusVersion identifies the case list. Bump it whenever a case is added,
 // removed or reworded: Compare refuses reports from different versions.
-const CorpusVersion = "2026-10-24.2"
+const CorpusVersion = "2026-10-24.3"
 
 // Kind is how a case is scored and summarised.
 type Kind string
@@ -166,13 +167,31 @@ func (c Case) Request(categoryID, entityID uint) map[string]any {
 	return body
 }
 
+// currentJSON is what the browser's JSON.stringify gives for an object built
+// from fields in this order: keys in insertion order and no HTML escaping.
+// (encoding/json still escapes U+2028 and U+2029, which JSON.stringify does
+// not; no case uses them.)
 func (c Case) currentJSON(fields []string) string {
-	current := map[string]string{}
-	for _, field := range fields {
-		current[field] = c.Current[field]
+	var b bytes.Buffer
+	b.WriteByte('{')
+	for i, field := range fields {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		writeJSONString(&b, field)
+		b.WriteByte(':')
+		writeJSONString(&b, c.Current[field])
 	}
-	encoded, _ := json.Marshal(current)
-	return string(encoded)
+	b.WriteByte('}')
+	return b.String()
+}
+
+func writeJSONString(b *bytes.Buffer, s string) {
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	_ = encoder.Encode(s)
+	b.Write(bytes.TrimSuffix(encoded.Bytes(), []byte("\n")))
 }
 
 // FilterCases keeps the cases named in ids, in corpus order. An empty ids keeps
