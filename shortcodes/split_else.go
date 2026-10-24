@@ -8,9 +8,10 @@ import (
 const elseTag = "[else]"
 
 // elseifDividerPattern matches an [elseif ...] divider and captures its
-// attribute string. [elseif] is a divider inside conditional inner content,
+// attribute string. The name must end at whitespace or the closing bracket, so
+// [elseiffoo] is not a divider. [elseif] is a divider inside conditional inner content,
 // never a block opener, so it is deliberately absent from shortcodePattern.
-var elseifDividerPattern = regexp.MustCompile(`^\[elseif\s*([^\]]*)\]`)
+var elseifDividerPattern = regexp.MustCompile(`^\[elseif(?:\s+([^\]]*))?\]`)
 
 // Branch is one arm of a conditional: its guard attributes and the content it
 // renders when selected. Branch 0 (the "if" arm) carries nil Attrs and is
@@ -93,7 +94,10 @@ func SplitBranches(content string) []Branch {
 			continue
 		}
 		if m := elseifDividerPattern.FindStringSubmatchIndex(content[i:]); m != nil {
-			attrStr := content[i+m[2] : i+m[3]]
+			attrStr := ""
+			if m[2] >= 0 {
+				attrStr = content[i+m[2] : i+m[3]]
+			}
 			current.Content = content[segStart:i]
 			branches = append(branches, current)
 			segStart = i + m[1]

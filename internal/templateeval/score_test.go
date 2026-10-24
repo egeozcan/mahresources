@@ -950,6 +950,9 @@ func TestUnknownShortcodeScanReadsSlotTagsWhereTheRuntimeDoes(t *testing.T) {
 		{"attributed header stays literal", `[mrql query="type = note"][header class="x"]A[/header][/mrql]`, []string{"header"}},
 		{"else inside an extracted header stays literal", `[mrql query="type = note"][header]A[else]B[/header][/mrql]`, []string{"else"}},
 		{"second else in a conditional is still a divider", `[conditional mrql="type = note"]A[else]B[else]C[/conditional]`, nil},
+		{"header pair inside a style element is the one consumed", `[mrql query="type = note"]<style>[header]X[/header]</style>[header]H[/header][/mrql]`, []string{"header"}},
+		{"elseiffoo is not a divider", `[conditional mrql="type = note"]A[elseiffoo]B[/conditional]`, []string{"elseiffoo"}},
+		{"bare elseif divider", `[conditional mrql="type = note"]A[elseif]B[/conditional]`, nil},
 		{"invented shortcode beside real slots", `[mrql query="type = note"][header]H[/header][star-rating value="4"][/mrql]`, []string{"star-rating"}},
 	}
 	for _, tt := range tests {

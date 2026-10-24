@@ -151,3 +151,25 @@ func sortedBytes(s string) string {
 	sort.Slice(b, func(i, j int) bool { return b[i] < b[j] })
 	return string(b)
 }
+
+func TestElseifDividerNeedsASeparatorAfterItsName(t *testing.T) {
+	for _, tc := range []struct {
+		content  string
+		branches int
+	}{
+		{`A[elseif x="1"]B`, 2},
+		{`A[elseif   x="1"]B`, 2},
+		{"A[elseif\tx=\"1\"]B", 2},
+		{`A[elseif]B`, 2},
+		{`A[elseiffoo]B`, 1},
+		{`A[elseif_x="1"]B`, 1},
+		{`A[elseif-x]B`, 1},
+	} {
+		if got := len(SplitBranches(tc.content)); got != tc.branches {
+			t.Errorf("%q: %d branches, want %d", tc.content, got, tc.branches)
+		}
+		if got := len(SlotTagSpans("conditional", tc.content)); got != tc.branches-1 {
+			t.Errorf("%q: %d spans, want %d", tc.content, got, tc.branches-1)
+		}
+	}
+}

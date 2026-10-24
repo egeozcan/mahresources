@@ -692,28 +692,20 @@ var (
 // [name] is a selector in a stylesheet, so in CSS, and in the <style> elements
 // of a markup slot, only a name with attributes counts.
 func unknownShortcodeNames(text string, known shortcodes.KnownShortcodes, css bool) []string {
+	// The runtime reads slot tags from the source as written, <style> included,
+	// so consumption is computed here, before the stylesheets are set aside.
+	consumed := consumedSlotTags(text, 0, map[int]bool{})
+	if css {
+		return scanShortcodeNames(text, 0, known, true, consumed)
+	}
 	var names []string
-	if !css {
-		for _, m := range styleElement.FindAllStringSubmatch(text, -1) {
-			names = append(names, scanShortcodeNames(m[1], known, true)...)
-		}
-		text = styleElement.ReplaceAllString(text, " ")
+	for _, m := range styleElement.FindAllStringSubmatchIndex(text, -1) {
+		names = append(names, scanShortcodeNames(text[m[2]:m[3]], m[2], known, true, consumed)...)
 	}
-	return append(names, scanShortcodeNames(text, known, css)...)
+	// Blank each stylesheet to spaces of the same length, so offsets still match.
+	masked := styleElement.ReplaceAllStringFunc(text, func(s string) string { return strings.Repeat(" ", len(s)) })
+	return append(names, scanShortcodeNames(masked, 0, known, false, consumed)...)
 }
-
-// slotTagNames is every tag some block's handler reads out of its body
-// (shortcodes.SlotTags). They are not registered shortcodes, so they are known
-// only inside the block that reads them.
-var slotTagNames = func() map[string]bool {
-	names := map[string]bool{}
-	for _, parent := range []string{"mrql", "conditional", "each"} {
-		for _, tag := range shortcodes.SlotTags(parent) {
-			names[tag] = true
-		}
-	}
-	return names
-}()
 
 // consumedSlotTags returns the offsets in text where a block's handler
 // consumes a slot tag: the delimiters shortcodes.SlotTagSpans reports for each
@@ -734,10 +726,15 @@ func consumedSlotTags(text string, base int, consumed map[int]bool) map[int]bool
 	return consumed
 }
 
-func scanShortcodeNames(text string, known shortcodes.KnownShortcodes, css bool) []string {
+// scanShortcodeNames scans text, which starts at offset base in the source the
+// consumed offsets refer to. A bracket the runtime consumes as a slot tag is
+// known whatever its name parses to.
+func scanShortcodeNames(text string, base int, known shortcodes.KnownShortcodes, css bool, consumed map[int]bool) []string {
 	var names []string
-	var consumed map[int]bool
 	for _, m := range shortcodeShaped.FindAllStringSubmatchIndex(text, -1) {
+		if consumed[base+m[0]] {
+			continue
+		}
 		closing, name, attrs := m[3] > m[2], text[m[4]:m[5]], strings.TrimSpace(text[m[6]:m[7]])
 		bare := attrs == ""
 		if (closing && !bare) || (!bare && !attrList.MatchString(attrs)) || (css && bare) {
@@ -745,14 +742,6 @@ func scanShortcodeNames(text string, known shortcodes.KnownShortcodes, css bool)
 		}
 		if _, ok := known[name]; ok {
 			continue
-		}
-		if slotTagNames[name] {
-			if consumed == nil {
-				consumed = consumedSlotTags(text, 0, map[int]bool{})
-			}
-			if consumed[m[0]] {
-				continue
-			}
 		}
 		names = append(names, name)
 	}
