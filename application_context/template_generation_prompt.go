@@ -75,7 +75,7 @@ func buildTemplatePromptSections(in TemplateGenerationInput, userPrompt string) 
 			"You may use \"enum\" for closed choice sets and \"format\" (date, date-time, email, uri) where appropriate.",
 		)
 		p.add(promptRoleUser, "schema", "Metadata schema", false, schemaLines(in.MetaSchema)...)
-		p.add(promptRoleUser, "samples", "Sample values", false, sampleLines(in.SampleMeta)...)
+		p.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamples(in.Samples, in.Target)...)
 		p.add(promptRoleUser, "output", "Output format", true, "Return the JSON Schema document as the content value (a JSON string).")
 		p.add(promptRoleUser, "request", "Your request", false, "User request: "+userPrompt)
 		return p, DefaultTemplateGenerationMaxTokens
@@ -84,7 +84,7 @@ func buildTemplatePromptSections(in TemplateGenerationInput, userPrompt string) 
 		addTemplateReferencePrefix(&p, in)
 		p.add(promptRoleUser, "carrier", "Carrier runtime", true, carrierRuntimeLines(in.EntityType)...)
 		p.add(promptRoleUser, "schema", "Metadata schema", false, schemaLines(in.MetaSchema)...)
-		p.add(promptRoleUser, "samples", "Sample values", false, sampleLines(in.SampleMeta)...)
+		p.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamples(in.Samples, in.Target)...)
 		p.add(promptRoleUser, "request", "Your request", false, "User request: "+userPrompt)
 		task := []string{
 			"Task: fill these slot fields, each as a value in the slots object: " + strings.Join(in.BundleSlots, ", ") + ".",
@@ -108,7 +108,7 @@ func buildTemplatePromptSections(in TemplateGenerationInput, userPrompt string) 
 		addTemplateReferencePrefix(&p, in)
 		p.add(promptRoleUser, "carrier", "Carrier", true, "This request is for a "+in.EntityType+" template.")
 		p.add(promptRoleUser, "schema", "Metadata schema", false, schemaLines(in.MetaSchema)...)
-		p.add(promptRoleUser, "samples", "Sample values", false, sampleLines(in.SampleMeta)...)
+		p.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamples(in.Samples, in.Target)...)
 		p.add(promptRoleUser, "request", "Your request", false, "User request: "+userPrompt)
 		task := []string{
 			"Task: generate the " + in.Slot + " slot of a " + in.EntityType + " template.",
@@ -334,13 +334,6 @@ func schemaLines(metaSchema string) []string {
 		return []string{"No metadata JSON Schema is defined for this category; avoid [meta] paths unless the user names them."}
 	}
 	return append([]string{"The entity metadata follows this JSON Schema (use [meta path=\"...\"] for its fields):"}, referenceBlock("metadata schema", metaSchema)...)
-}
-
-func sampleLines(sampleMeta string) []string {
-	if strings.TrimSpace(sampleMeta) == "" {
-		return nil
-	}
-	return append([]string{"Here is one example entity's metadata (Meta JSON) for reference only — do not hard-code its values:"}, referenceBlock("samples", sampleMeta)...)
 }
 
 func currentContentLines(current, kind string) []string {

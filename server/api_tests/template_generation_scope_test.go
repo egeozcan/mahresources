@@ -63,7 +63,7 @@ func TestTemplateGenerateAndPreviewAreScopedToTheCaller(t *testing.T) {
 		if code != http.StatusOK {
 			t.Fatalf("generate: want 200, got %d (%s)", code, body)
 		}
-		return fake.seen.SampleMeta
+		return samplesJSON(t, fake.seen.Samples)
 	}
 	preview := func(appCtx *application_context.MahresourcesContext, entityID uint) (int, string) {
 		return run(appCtx, api_handlers.GetPreviewTemplateHandler(appCtx, "note"), fmt.Sprintf(`{"entityId":%d,"content":"[meta path=\"secret\"]"}`, entityID))
@@ -114,5 +114,68 @@ func TestTemplateGenerateDefaultRateLimitHoldsPerIP(t *testing.T) {
 	}
 	if fake.calls != 10 {
 		t.Fatalf("generator calls = %d, want 10", fake.calls)
+	}
+}
+
+// TestTemplateSamplesConfineRelatedNames: a sampled member inside the
+// subtree must not carry the names of entities outside it through its owner,
+// its groups or its relations. The mutation step samples the same members on
+// the unscoped context and must see the outside names.
+func TestTemplateSamplesConfineRelatedNames(t *testing.T) {
+	tc := SetupTestEnv(t)
+	fake := &fakeAPITemplateGenerator{result: slotResult()}
+	tc.AppCtx.SetTemplateGenerator(fake)
+	create := func(v any) {
+		if err := tc.DB.Create(v).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	outside := &models.Group{Name: "OUTSIDE-owner"}
+	create(outside)
+	category := &models.Category{Name: "Projects"}
+	create(category)
+	// The scope root is owned by a group outside the subtree.
+	inside := &models.Group{Name: "Inside", OwnerId: &outside.ID, CategoryId: &category.ID}
+	create(inside)
+	relType := &models.GroupRelationType{Name: "depends on", FromCategoryId: &category.ID}
+	create(relType)
+	create(&models.GroupRelation{FromGroupId: &inside.ID, ToGroupId: &outside.ID, RelationTypeId: &relType.ID})
+
+	resourceCategory := &models.ResourceCategory{Name: "Scans"}
+	create(resourceCategory)
+	resource := &models.Resource{Name: "scan", OwnerId: &inside.ID, ResourceCategoryId: resourceCategory.ID, Groups: []*models.Group{outside}}
+	create(resource)
+
+	noteType := &models.NoteType{Name: "Minutes"}
+	create(noteType)
+	create(&models.Note{Name: "minutes", OwnerId: &inside.ID, NoteTypeId: &noteType.ID, Groups: []*models.Group{outside}, Resources: []*models.Resource{resource}})
+
+	principal := &auth.Principal{UserID: 1, Username: "confined", Role: models.RoleEditor, ScopeGroupID: &inside.ID}
+	scoped := tc.AppCtx.WithPrincipal(principal)
+	sample := func(appCtx *application_context.MahresourcesContext, entityType string, categoryID uint) string {
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(fmt.Sprintf(`{"target":"cluster","slot":"CustomHeader","prompt":"x","categoryId":%d,"dryRun":true}`, categoryID)))
+		req.Header.Set("Content-Type", "application/json")
+		req = req.WithContext(auth.WithPrincipal(req.Context(), principal))
+		rr := httptest.NewRecorder()
+		api_handlers.GetGenerateTemplateHandler(appCtx, entityType)(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", entityType, rr.Code, rr.Body.String())
+		}
+		return samplesJSON(t, fake.seen.Samples)
+	}
+	// A note carries counts, not names, so the outside group shows as a count.
+	for _, c := range []struct {
+		entityType string
+		categoryID uint
+		leak       string
+	}{{"group", category.ID, "OUTSIDE"}, {"resource", resourceCategory.ID, "OUTSIDE"}, {"note", noteType.ID, `"GroupCount":1`}} {
+		t.Run(c.entityType, func(t *testing.T) {
+			if got := sample(scoped, c.entityType, c.categoryID); strings.Contains(got, c.leak) || !strings.Contains(got, `"Name"`) {
+				t.Fatalf("a scoped sample reflects an entity outside the subtree: %s", got)
+			}
+			if got := sample(tc.AppCtx, c.entityType, c.categoryID); !strings.Contains(got, c.leak) {
+				t.Fatalf("mutation step: the unscoped sample should show %s: %s", c.leak, got)
+			}
+		})
 	}
 }

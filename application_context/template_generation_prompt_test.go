@@ -21,7 +21,7 @@ func sentinelPromptInput(entityType string) TemplateGenerationInput {
 	in := slotInput()
 	in.EntityType = entityType
 	in.MetaSchema = `{"type":"object","properties":{"` + promptSentinel + `-schema":{"type":"string"}}}`
-	in.SampleMeta = `{"` + promptSentinel + `-sample":"value"}`
+	in.Samples = []TemplateSample{{"Meta": map[string]any{promptSentinel + "-sample": "value"}}}
 	in.CurrentContent = promptSentinel + "-current"
 	in.Partials = []TemplatePartialSummary{{Name: "card", Description: "A card.", Reads: "meta path=rating"}, {Name: "badge"}}
 	return in
@@ -131,7 +131,7 @@ func TestReferenceBlocksFenceUntrustedData(t *testing.T) {
 	in.Target, in.Slot = TemplateTargetBundle, ""
 	in.BundleSlots = []string{"CustomHeader", "CustomHeaderCSS"}
 	in.MetaSchema = `{"description":"` + attack + `"}`
-	in.SampleMeta = `{"Name":"` + attack + `"}`
+	in.Samples = []TemplateSample{{"Name": attack}}
 	in.DocsBlock = "doc " + attack
 	in.PluginContext = "plugin " + attack
 	in.Partials = []TemplatePartialSummary{{Name: "p", Description: attack, Reads: "meta path=" + attack}}

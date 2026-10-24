@@ -205,18 +205,18 @@ Each item is its own commit, each with prompt tests red first. They all touch `t
 
 ### 2b. Samples (item 4)
 
-- [ ] `loadTemplateSamples` selects up to five members. The client's `entityId` comes first (a full load, so relations are available) when it loads through the scoped context **and** belongs to this category; an entity from another category is ignored and sampling falls back to the list. The rest come from one list call, newest first, deduplicated. It replaces `loadSampleMeta` and `firstCategoryMember`.
-- [ ] `ProjectTemplateSample(entity, full)` projects an explicit allow-list per carrier and never marshals a model (to keep `ShareToken`, `Location`, `StorageLocation` and `Hash` out):
+- [x] `loadTemplateSamples` selects up to five members. The client's `entityId` comes first (a full load, so relations are available) when it loads through the scoped context **and** belongs to this category; an entity from another category is ignored and sampling falls back to the list. The rest come from one list call, newest first, deduplicated. It replaces `loadSampleMeta` and `firstCategoryMember`.
+- [x] `ProjectTemplateSample(entity, full)` projects an explicit allow-list per carrier and never marshals a model (to keep `ShareToken`, `Location`, `StorageLocation` and `Hash` out):
   - **Group:** Name, Description (160 B), URL present, Owner, Tags (8). Sample 0 only: relations, at most 5.
   - **Resource:** Name, ContentType, Width, Height, FileSize, Description, Tags, Owner. Sample 0 only: groups (5) and the notes count.
   - **Note:** Name, Description, StartDate, EndDate, Tags, Owner. Sample 0 only: resource and group counts.
   - **Meta:** strings over 120 B become `…(N chars)`; arrays keep 5 elements plus a count; depth stops at 4.
-- [ ] `DescribeTemplateSamples` gives:
+- [x] `DescribeTemplateSamples` gives:
   - a summary first: presence and type per field and per Meta path (40 paths, one nested level), plus `values seen: "draft"×3, "done"×1` when the values look enum-like;
   - then up to 3 whole raw samples.
   - Budgets: 3 KiB summary, 10 KiB total, fenced.
   - The wording keeps "do not hard-code values" and adds "guard optional fields". For metaschema, it says fields present in samples but missing from the schema are candidates to add.
-- [ ] Tests:
+- [x] Tests:
   - presence and enum detection, caps, and secrets excluded;
   - five members drawn only from this category, with the chosen `entityId` first; a visible `entityId` from another category is not sampled;
   - subtree respected for a synthetic scoped principal (pattern: `relation_scope_test.go:89-94`, `entity_picker_test.go:68-72`), including the mutation step against the unscoped context;

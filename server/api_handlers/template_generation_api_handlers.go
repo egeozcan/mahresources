@@ -18,7 +18,6 @@ import (
 	"mahresources/mrql"
 	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
-	"mahresources/server/template_handlers/template_filters"
 	"mahresources/shortcodes"
 )
 
@@ -180,7 +179,7 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			EntityType:     entityType,
 			CurrentContent: req.Content,
 			MetaSchema:     metaSchema,
-			SampleMeta:     loadSampleMeta(ctx, entityType, req.CategoryID, req.EntityID),
+			Samples:        loadTemplateSamples(ctx, entityType, req.CategoryID, req.EntityID),
 			DocsBlock:      pluginReferences.DocsBlock,
 			PluginContext:  pluginReferences.PluginContext,
 			Known:          pluginReferences.Known,
@@ -260,27 +259,40 @@ func carrierMetaSchema(carrier any) string {
 	return ""
 }
 
-// loadSampleMeta returns the Meta JSON of the chosen sample entity (the client's
-// entityId, else the first member of the category), or "" when none is available
-// (e.g. the create form). Failures degrade to schema-only.
-func loadSampleMeta(ctx TemplateGenerationContext, entityType string, categoryID, entityID uint) string {
-	var entity any
+// loadTemplateSamples projects up to five members of the category for the
+// prompt: the client's entityId first, when it loads through the (scoped)
+// context and belongs to this category, then the newest members, without
+// repeats. Only the first sample carries relations. Failures degrade to
+// fewer samples, and the create form (no category) has none.
+func loadTemplateSamples(ctx TemplateGenerationContext, entityType string, categoryID, entityID uint) []application_context.TemplateSample {
+	if categoryID == 0 {
+		return nil
+	}
+	var entities []any
+	seen := map[uint]bool{}
 	if entityID != 0 {
-		if e, _, err := loadPreviewEntity(ctx, entityType, entityID); err == nil {
-			entity = e
+		if entity, entityCategory, err := loadPreviewEntity(ctx, entityType, entityID); err == nil && entityCategory == categoryID {
+			entities = append(entities, entity)
+			seen[entityID] = true
 		}
 	}
-	if entity == nil && categoryID != 0 {
-		entity = firstCategoryMember(ctx, entityType, categoryID)
+	for _, id := range categoryMemberIDs(ctx, entityType, categoryID) {
+		if len(entities) == application_context.MaxTemplateSamples {
+			break
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if entity, _, err := loadPreviewEntity(ctx, entityType, id); err == nil {
+			entities = append(entities, entity)
+		}
 	}
-	if entity == nil {
-		return ""
+	samples := make([]application_context.TemplateSample, 0, len(entities))
+	for i, entity := range entities {
+		samples = append(samples, application_context.ProjectTemplateSample(entity, i == 0))
 	}
-	metaCtx := template_filters.BuildMetaContextForEntity(entity, ctx)
-	if metaCtx == nil || len(metaCtx.Meta) == 0 {
-		return ""
-	}
-	return string(metaCtx.Meta)
+	return samples
 }
 
 // templateSampleOrder orders sample candidates canonically: newest first, the
@@ -288,32 +300,32 @@ func loadSampleMeta(ctx TemplateGenerationContext, entityType string, categoryID
 // dry run and the request that follows it and change the grounding hash.
 var templateSampleOrder = []string{"created_at desc", "id desc"}
 
-// firstCategoryMember loads the first member entity of a category, fully
-// preloaded via the preview loader.
-func firstCategoryMember(ctx TemplateGenerationContext, entityType string, categoryID uint) any {
-	var id uint
+// categoryMemberIDs lists the newest members of a category, enough to fill
+// the samples after skipping the client's own entity.
+func categoryMemberIDs(ctx TemplateGenerationContext, entityType string, categoryID uint) []uint {
+	limit := application_context.MaxTemplateSamples + 1
+	var ids []uint
 	switch entityType {
 	case "group":
-		if list, err := ctx.GetGroups(0, 1, &query_models.GroupQuery{CategoryId: categoryID, SortBy: templateSampleOrder}); err == nil && len(list) > 0 {
-			id = list[0].ID
+		if list, err := ctx.GetGroups(0, limit, &query_models.GroupQuery{CategoryId: categoryID, SortBy: templateSampleOrder}); err == nil {
+			for _, e := range list {
+				ids = append(ids, e.ID)
+			}
 		}
 	case "resource":
-		if list, err := ctx.GetResources(0, 1, &query_models.ResourceSearchQuery{ResourceCategoryId: categoryID, SortBy: templateSampleOrder}); err == nil && len(list) > 0 {
-			id = list[0].ID
+		if list, err := ctx.GetResources(0, limit, &query_models.ResourceSearchQuery{ResourceCategoryId: categoryID, SortBy: templateSampleOrder}); err == nil {
+			for _, e := range list {
+				ids = append(ids, e.ID)
+			}
 		}
 	case "note":
-		if list, err := ctx.GetNotes(0, 1, &query_models.NoteQuery{NoteTypeId: categoryID, SortBy: templateSampleOrder}); err == nil && len(list) > 0 {
-			id = list[0].ID
+		if list, err := ctx.GetNotes(0, limit, &query_models.NoteQuery{NoteTypeId: categoryID, SortBy: templateSampleOrder}); err == nil {
+			for _, e := range list {
+				ids = append(ids, e.ID)
+			}
 		}
 	}
-	if id == 0 {
-		return nil
-	}
-	entity, _, err := loadPreviewEntity(ctx, entityType, id)
-	if err != nil {
-		return nil
-	}
-	return entity
+	return ids
 }
 
 // templatePartialSummaries summarises the first maxTemplatePartialsForPrompt

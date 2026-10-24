@@ -64,8 +64,10 @@ type TemplateGenerationInput struct {
 	EntityType     string // group | resource | note
 	CurrentContent string // current editor content of the slot being refined
 	MetaSchema     string // the (possibly unsaved) MetaSchema being authored
-	SampleMeta     string // an example entity's Meta JSON, or "" (schema-only)
-	DocsBlock      string // pre-serialized built-in + plugin shortcode docs
+	// Samples are up to five projected members of the category, the
+	// client's chosen entity first; none on the create form.
+	Samples   []TemplateSample
+	DocsBlock string // pre-serialized built-in + plugin shortcode docs
 	// PluginContext describes the enabled plugins and their note block types.
 	// It is separate from DocsBlock because blocks are selected in the note
 	// editor, not invoked as shortcodes in template markup.

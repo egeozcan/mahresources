@@ -247,8 +247,8 @@ func TestTemplateGenerateGroundsOnSchemaAndSampleEntity(t *testing.T) {
 	if !strings.Contains(fake.seen.MetaSchema, "calories") {
 		t.Fatalf("handler did not load the carrier MetaSchema: %q", fake.seen.MetaSchema)
 	}
-	if !strings.Contains(fake.seen.SampleMeta, "120") {
-		t.Fatalf("handler did not auto-pick a sample entity's Meta: %q", fake.seen.SampleMeta)
+	if samples := samplesJSON(t, fake.seen.Samples); !strings.Contains(samples, `"calories":120`) {
+		t.Fatalf("handler did not auto-pick a sample entity's Meta: %s", samples)
 	}
 	if fake.seen.DocsBlock == "" {
 		t.Fatalf("handler did not assemble the shortcode docs block")
@@ -379,5 +379,67 @@ func TestTemplateGeneratePassesPartialSummaries(t *testing.T) {
 	want := application_context.TemplatePartialSummary{Name: "rating-badge", Description: "A star badge.", Reads: "conditional path=rating; meta path=rating"}
 	if len(fake.seen.Partials) != 1 || fake.seen.Partials[0] != want || fake.seen.PartialCount != 1 {
 		t.Fatalf("partials %+v count %d, want %+v", fake.seen.Partials, fake.seen.PartialCount, want)
+	}
+}
+
+func samplesJSON(t *testing.T, samples []application_context.TemplateSample) string {
+	t.Helper()
+	b, err := json.Marshal(samples)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// The handler samples up to five members of this category only, newest
+// first, with the client's chosen entity first when it belongs to the
+// category; a chosen entity from another category is not sampled.
+func TestTemplateGenerateSamplesFiveMembersOfThisCategory(t *testing.T) {
+	tc := SetupTestEnv(t)
+	fake := &fakeAPITemplateGenerator{result: slotResult()}
+	tc.AppCtx.SetTemplateGenerator(fake)
+	cat := &models.Category{Name: "Books"}
+	other := &models.Category{Name: "Films"}
+	for _, c := range []*models.Category{cat, other} {
+		if err := tc.DB.Create(c).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var members []*models.Group
+	for i := 0; i < 7; i++ {
+		g := &models.Group{Name: fmt.Sprintf("book-%d", i), CategoryId: &cat.ID, CreatedAt: base.Add(time.Duration(i) * time.Hour)}
+		if err := tc.DB.Create(g).Error; err != nil {
+			t.Fatal(err)
+		}
+		members = append(members, g)
+	}
+	film := &models.Group{Name: "film", CategoryId: &other.ID, CreatedAt: base.Add(time.Hour * 100)}
+	if err := tc.DB.Create(film).Error; err != nil {
+		t.Fatal(err)
+	}
+	names := func(entityID uint) []string {
+		resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": "cluster", "slot": "CustomHeader", "prompt": "x", "categoryId": cat.ID, "entityId": entityID})
+		if resp.Code != http.StatusOK {
+			t.Fatalf("%d %s", resp.Code, resp.Body.String())
+		}
+		var out []string
+		for _, s := range fake.seen.Samples {
+			out = append(out, s["Name"].(string))
+		}
+		return out
+	}
+	if got := strings.Join(names(0), ","); got != "book-6,book-5,book-4,book-3,book-2" {
+		t.Fatalf("newest five: %s", got)
+	}
+	if got := strings.Join(names(members[1].ID), ","); got != "book-1,book-6,book-5,book-4,book-3" {
+		t.Fatalf("chosen entity first: %s", got)
+	}
+	if got := strings.Join(names(film.ID), ","); got != "book-6,book-5,book-4,book-3,book-2" {
+		t.Fatalf("an entity from another category was sampled: %s", got)
+	}
+	if _, ok := fake.seen.Samples[0]["Relations"]; ok {
+		// No relations exist; the key is simply absent.
+		t.Fatal("unexpected relations")
 	}
 }

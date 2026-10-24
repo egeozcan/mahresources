@@ -20,7 +20,7 @@ var templateInputDisclosure = map[string]struct{ section, reason string }{
 	"EntityType":     {section: "carrier"},
 	"CurrentContent": {section: "current"},
 	"MetaSchema":     {section: "schema"},
-	"SampleMeta":     {section: "samples"},
+	"Samples":        {section: "samples"},
 	"DocsBlock":      {section: "shortcodes"},
 	"PluginContext":  {section: "plugins"},
 	"Partials":       {section: "partials"},
@@ -51,7 +51,7 @@ func TestTemplateGenerationInputFieldsAreClassified(t *testing.T) {
 
 	bundle := TemplateGenerationInput{
 		Target: TemplateTargetBundle, EntityType: "resource",
-		CurrentContent: "SENTINEL-current", MetaSchema: `{"SENTINEL-schema":1}`, SampleMeta: `{"SENTINEL-sample":1}`,
+		CurrentContent: "SENTINEL-current", MetaSchema: `{"SENTINEL-schema":1}`, Samples: []TemplateSample{{"Name": "SENTINEL-sample"}},
 		DocsBlock: "SENTINEL-docs", PluginContext: "SENTINEL-plugins", Partials: []TemplatePartialSummary{{Name: "sentinel-partial", Description: "SENTINEL-partial-description", Reads: "meta path=SENTINEL-reads"}},
 		PartialCount: 7,
 		BundleSlots:  []string{"CustomPreview", "CustomPreviewCSS"},
@@ -66,7 +66,7 @@ func TestTemplateGenerationInputFieldsAreClassified(t *testing.T) {
 		"EntityType":     {bundle, "resource"},
 		"CurrentContent": {bundle, "SENTINEL-current"},
 		"MetaSchema":     {bundle, "SENTINEL-schema"},
-		"SampleMeta":     {bundle, "SENTINEL-sample"},
+		"Samples":        {bundle, `Sample 1: {"Name":"SENTINEL-sample"}`},
 		"DocsBlock":      {bundle, "SENTINEL-docs"},
 		"PluginContext":  {bundle, "SENTINEL-plugins"},
 		"Partials":       {bundle, "- sentinel-partial: SENTINEL-partial-description (reads meta path=SENTINEL-reads)"},
@@ -102,7 +102,7 @@ func disclosureKinds() map[string]TemplateGenerationInput {
 	metaschema := slotInput()
 	metaschema.Target, metaschema.Slot, metaschema.Mode = TemplateTargetMetaSchema, "", "json"
 	for _, in := range []*TemplateGenerationInput{&css, &pair, &bundle, &metaschema} {
-		in.SampleMeta = `{"rating":4}`
+		in.Samples = []TemplateSample{{"Name": "a", "Meta": map[string]any{"rating": 4}}}
 		in.CurrentContent = `{"CustomHeader":"<h1>old</h1>"}`
 		in.Partials = []TemplatePartialSummary{{Name: "card", Description: "A card.", Reads: "meta path=rating"}}
 	}
@@ -211,7 +211,7 @@ func TestGroundingHashCoversDestinationAndIsStable(t *testing.T) {
 		t.Errorf("transport = %+v, want %+v", d.Transport, want)
 	}
 	changed := in
-	changed.SampleMeta = `{"rating":5}`
+	changed.Samples = []TemplateSample{{"Name": "a", "Meta": map[string]any{"rating": 5}}}
 	c, _ := NewTemplateGenerator(&fakeTemplateDraftProvider{endpoint: deepseek}, base).DiscloseTemplate(changed, "make it")
 	if c.GroundingHash == hash(base, deepseek) {
 		t.Error("changing a sample did not change the hash")
@@ -239,7 +239,7 @@ func TestGenerateRefusesAMissingOrStaleGroundingHash(t *testing.T) {
 		t.Fatalf("missing hash: %v", err)
 	}
 	stale := in
-	stale.SampleMeta = `{"rating":5}`
+	stale.Samples = []TemplateSample{{"Name": "a", "Meta": map[string]any{"rating": 5}}}
 	if _, err := gen.GenerateTemplate(context.Background(), stale, "make it", disclosure.GroundingHash); !errors.Is(err, ErrTemplateGenerationGroundingChanged) {
 		t.Fatalf("stale hash: %v", err)
 	}
