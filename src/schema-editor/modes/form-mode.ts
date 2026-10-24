@@ -27,6 +27,7 @@ import {
   compilePattern,
   countSchemaWork,
   sameValue,
+  valueKey,
 } from '../schema-core';
 import { isLeafSchema, stripStaleKeys } from '../form-mode-helpers';
 import { schemaFallback, guardSchemaAction, schemaActionError, clearSchemaActionError } from '../schema-fallback';
@@ -88,6 +89,9 @@ function isMultipleOf(n: number, m: number): boolean {
   if (Number.isInteger(m)) return n % m === 0;
   return Math.abs(quotient - Math.round(quotient)) <= 4 * Number.EPSILON * Math.abs(quotient);
 }
+
+/** An automatic assignment producing the same value this many times stops: a loop. */
+const MAX_AUTOMATIC_REPEATS = 2;
 
 /**
  * A variant default queued this many times while no queued default anywhere
@@ -273,13 +277,20 @@ export class SchemaFormMode extends LitElement {
       }
     }
     if (changed.has('schema')) {
-      this._schemaError = null;
       this._initAttempts = new Map();
     }
+    // A new schema is a fresh start for the loop guard on automatic assignments.
+    if (changed.has('schema')) this._resetAutomaticStates();
     if (changed.has('value') || changed.has('schema')) {
+      // Recomputed for every value: a failure caused by one value (a strip
+      // overflowing on it, a value that cannot be copied) never outlives it.
       this._valueError = null;
       try {
         this._data = this.value != null ? (typeof this.value === 'string' ? this._safeParse(this.value) : structuredClone(this.value)) : {};
+        // So is a value from outside, but not an echo of the value this form
+        // just emitted (a wrapper such as schema-editor passes it back as
+        // text): that echo is how an automatic loop keeps going.
+        if (changed.has('value') && !sameValue(this._data, this._emittedValue)) this._resetAutomaticStates();
 
         // When the schema changes, recursively strip keys from _data that aren't
         // in the new schema's properties and aren't allowed by
@@ -291,8 +302,9 @@ export class SchemaFormMode extends LitElement {
           try {
             withSchemaBudget(() => stripStaleKeys(this._data, this.schema, this.schema));
           } catch (error) {
-            // The data is kept as it was; render shows the fallback.
-            this._schemaError = error;
+            // The data is kept as it was; render shows the fallback until
+            // the next value.
+            this._valueError = error;
           }
           const after = JSON.stringify(this._data);
 
@@ -335,6 +347,28 @@ export class SchemaFormMode extends LitElement {
   }
 
   private _emitChange(newValue: any) {
+    if (this._automaticDepth > 0) {
+      // An automatic assignment that recreates a state it already produced
+      // MAX_AUTOMATIC_REPEATS times is a loop (a conditional whose branches
+      // set the same field back and forth, as base did forever): stop
+      // assigning, keep the current value. A single repeat is not enough:
+      // sibling initialisations composing on stale parent values revisit a
+      // state on their way to the settled value. User input, a new value or
+      // a new schema start afresh.
+      const key = valueKey(newValue);
+      const produced = this._automaticStates.get(key) ?? 0;
+      if (produced >= MAX_AUTOMATIC_REPEATS) {
+        if (!this._warnedAutomaticLoop) {
+          console.warn('schema-form-mode: automatic assignments repeat a previous value; stopped');
+          this._warnedAutomaticLoop = true;
+        }
+        return;
+      }
+      this._automaticStates.set(key, produced + 1);
+    } else {
+      this._resetAutomaticStates();
+    }
+    this._emittedValue = newValue;
     this._data = newValue;
     // Keep the public `value` property in sync so that a subsequent schema
     // change (which triggers willUpdate → rehydrate from `this.value`) does
@@ -374,7 +408,33 @@ export class SchemaFormMode extends LitElement {
    * throw as an action can, and must fall back the same way.
    */
   private _defer(callback: () => unknown): void {
-    queueMicrotask(this._act(callback));
+    queueMicrotask(this._act(() => this._automatically(callback)));
+  }
+
+  /** How deep in automatic (not user-driven) assignments the form is. */
+  private _automaticDepth = 0;
+  /**
+   * How often automatic assignments produced each value (by value key)
+   * since the last user action, outside value or schema change.
+   */
+  private _automaticStates = new Map<string, number>();
+  private _warnedAutomaticLoop = false;
+  /** The last value this form emitted, to tell its own value from one set from outside. */
+  private _emittedValue: unknown = undefined;
+
+  /** Run callback as an automatic assignment (initialisation, a const put in place). */
+  private _automatically<T>(callback: () => T): T {
+    this._automaticDepth++;
+    try {
+      return callback();
+    } finally {
+      this._automaticDepth--;
+    }
+  }
+
+  private _resetAutomaticStates(): void {
+    this._automaticStates = new Map();
+    this._warnedAutomaticLoop = false;
   }
 
   /**
@@ -438,7 +498,6 @@ export class SchemaFormMode extends LitElement {
       return nothing;
     }
 
-    if (this._schemaError) return schemaFallback('schema-form-mode', this._schemaError, this._data);
     if (this._valueError) return schemaFallback('schema-form-mode', this._valueError, this._data);
     try {
       return withSchemaBudget(() => this._renderField(this.schema, this._data, (val: any) => {
@@ -449,9 +508,7 @@ export class SchemaFormMode extends LitElement {
     }
   }
 
-  /** Set when processing the schema in willUpdate threw; render shows the fallback. */
-  private _schemaError: unknown = null;
-  /** Set when copying the incoming value threw; render shows the fallback until the next value. */
+  /** Set when processing the incoming value (copying it, stripping stale keys) threw; render shows the fallback until the next value. */
   private _valueError: unknown = null;
 
 
@@ -530,7 +587,7 @@ export class SchemaFormMode extends LitElement {
       // Compared by value and assigned as a copy: the schema's own const
       // object must never become editable data.
       if (!sameValue(data, schema.const)) {
-        onChange(copyDefault(schema.const));
+        this._automatically(() => onChange(copyDefault(schema.const)));
       }
       return html`<input type="text" .value=${valueText(schema.const)} disabled
         id=${fieldId || nothing}

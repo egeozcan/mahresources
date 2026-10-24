@@ -2159,7 +2159,9 @@ describe('round 22: variant initialisation composes, keys on full paths, never t
       const before = JSON.stringify(schema);
       const head = await settledForm('schema-form-mode', schema, JSON.parse(JSON.stringify(value ?? {})));
       const base = await settledForm('base-schema-form-mode', JSON.parse(before), JSON.parse(JSON.stringify(value ?? {})));
-      if (JSON.stringify(head.final) !== JSON.stringify(base.final)) {
+      // Compared by value: key order may differ where a repeated automatic
+      // state was skipped.
+      if (!sameValue(head.final, base.final)) {
         failures.push(`case ${i}\n  schema ${before}\n  head ${JSON.stringify(head.final)}\n  base ${JSON.stringify(base.final)}`);
       }
       if (JSON.stringify(schema) !== before) failures.push(`case ${i}: head changed the schema\n  ${before}\n  ${JSON.stringify(schema)}`);
@@ -2302,6 +2304,100 @@ describe('round 24: initialisation stops only without progress, one ancestry for
     const alias: any = { $defs: { A: { $ref: '#/$defs/A' } }, $ref: '#/$defs/A' };
     expect(withSchemaBudget(() => resolveSchema(alias, alias))).toBeNull();
     expect(schemaWorkDone()).toBeLessThan(100);
+  });
+});
+
+describe('round 25: automatic assignments that cycle stop, value errors clear with the value', () => {
+  const contradictory = {
+    type: 'object',
+    properties: { flag: { type: 'boolean' } },
+    required: ['flag'],
+    if: { properties: { flag: { const: true } }, required: ['flag'] },
+    then: { properties: { flag: { const: false } } },
+    else: { properties: { flag: { const: true } } },
+  };
+
+  it('a contradictory conditional settles instead of flipping forever', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    const el: any = document.createElement('schema-form-mode');
+    let emits = 0;
+    el.addEventListener('value-change', () => { emits++; });
+    el.schema = contradictory;
+    el.value = {};
+    document.body.append(el);
+    const settled = await Promise.race([
+      (async () => { for (let i = 0; i < 10; i++) { await el.updateComplete; await new Promise(r => setTimeout(r, 0)); } return true; })(),
+      new Promise(resolve => setTimeout(() => resolve(false), 2000)),
+    ]);
+    expect(settled).toBe(true);
+    expect(el.isUpdatePending).toBe(false);
+    expect(emits).toBeLessThan(6);
+    // User input starts afresh: the form still responds.
+    const before = emits;
+    el.value = { flag: true };
+    for (let i = 0; i < 6; i++) { await el.updateComplete; await new Promise(r => setTimeout(r, 0)); }
+    expect(el.isUpdatePending).toBe(false);
+    expect(emits - before).toBeLessThan(6);
+    el.remove();
+  });
+
+  it('automatic assignments cycling between states stop, warn once, and restart after user input', async () => {
+    // The contradictory conditional loops forever in a browser; happy-dom's
+    // update scheduling lets it end after a few flips, so the guard itself
+    // is driven here: the assignments the form makes on its own, alternating.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    const el: any = await mountEl('schema-form-mode', { schema: contradictory, value: {} });
+    await new Promise(r => setTimeout(r, 0));
+    await settle(el);
+    const values: unknown[] = [];
+    el.addEventListener('value-change', (e: CustomEvent) => { values.push(e.detail.value); });
+    for (let i = 0; i < 20; i++) el._automatically(() => el._emitChange({ flag: i % 2 === 0 }));
+    expect(values.length).toBeLessThan(6);
+    expect(warn).toHaveBeenCalledTimes(1);
+    // Deferred initialisations are automatic too.
+    el._emitChange({ flag: true, user: 1 });
+    const beforeDeferred = values.length;
+    for (let i = 0; i < 20; i++) el._defer(() => el._emitChange({ flag: i % 2 === 0 }));
+    await new Promise(r => setTimeout(r, 0));
+    expect(values.length - beforeDeferred).toBeLessThan(6);
+    // A user change starts afresh.
+    el._emitChange({ flag: true });
+    const afterUser = values.length;
+    el._automatically(() => el._emitChange({ flag: false }));
+    expect(values.length).toBe(afterUser + 1);
+    // An echo of the form's own value (schema-editor passes it back as text)
+    // is not a value from outside: the loop stays stopped.
+    for (let i = 0; i < 20; i++) el._automatically(() => el._emitChange({ flag: i % 2 === 0 }));
+    const beforeEcho = values.length;
+    el.value = JSON.stringify(el._emittedValue);
+    await settle(el);
+    el._automatically(() => el._emitChange({ flag: true }));
+    el._automatically(() => el._emitChange({ flag: false }));
+    expect(values.length).toBe(beforeEcho);
+    // A value set from outside starts afresh.
+    const stopped = values.length;
+    el.value = { flag: false };
+    await settle(el);
+    el._automatically(() => el._emitChange({ flag: true }));
+    expect(values.length).toBeGreaterThan(stopped);
+  });
+
+  it('a usable value after a value-triggered failure renders the form again', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const schema = { $defs: { N: { type: 'object', additionalProperties: false, properties: { name: { type: 'string', title: 'Name' }, child: { $ref: '#/$defs/N' } } } }, $ref: '#/$defs/N' };
+    // As text, the way Alpine passes it: parsing is iterative, so the deep
+    // value reaches the stale-key strip, whose recursion overflows.
+    const deepText = '{"child":'.repeat(6000) + '{"name":"leaf"}' + '}'.repeat(6000);
+    const el: any = await mountEl('schema-form-mode', { schema, value: deepText });
+    const fellBack = snapshot(el).includes('showing the raw value');
+    el.value = '{"name":"n0"}';
+    await settle(el);
+    expect(snapshot(el)).not.toContain('showing the raw value');
+    expect(el.querySelector('input:not([type="hidden"])')?.value).toBe('n0');
+    // The deep value really did fail (or the test proves nothing).
+    expect(fellBack).toBe(true);
   });
 });
 
