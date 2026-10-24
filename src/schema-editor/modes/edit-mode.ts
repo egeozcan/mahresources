@@ -48,11 +48,10 @@ export class SchemaEditMode extends LitElement {
       // Internal edits mutate the tree in-place and then emit; the parent echoes
       // the schema back as a prop change, which would reparse and regenerate IDs,
       // causing the selected node to become unfindable.
-      const incoming = JSON.stringify(this.schema);
-      if (incoming === this._lastEmittedSchema) {
-        return;
-      }
+      // Serialising the whole schema is inside the boundary too: a schema
+      // nested thousands of levels deep overflows JSON.stringify.
       try {
+        if (JSON.stringify(this.schema) === this._lastEmittedSchema) return;
         this._root = withSchemaBudget(() => schemaToTree(this.schema));
         this._schemaError = null;
       } catch (error) {

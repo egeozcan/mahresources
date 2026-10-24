@@ -66,9 +66,17 @@ export function resolveRef(ref: unknown, root: JSONSchema): JSONSchema | null {
 
 // ─── Schema merging ──────────────────────────────────────────────────────────
 
-export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'intersect' | 'union' = 'intersect'): JSONSchema {
+/**
+ * base with extension merged over it. Neither argument is changed, except
+ * that a chain of merges (merged = mergeSchemas(merged, next, mode, owned))
+ * passes one owned set: the result and its properties object, both created by
+ * an earlier merge of the chain, are then updated in place instead of copied
+ * at every step, which made a long allOf quadratic.
+ */
+export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'intersect' | 'union' = 'intersect', owned?: WeakSet<object>): JSONSchema {
   countSchemaWork();
-  const merged: JSONSchema = { ...base };
+  const merged: JSONSchema = owned?.has(base) ? base : { ...base };
+  owned?.add(merged);
   for (const key in extension) {
     // A keyword value of a type no draft allows (an x-display of 7, a title
     // of {}) never erases the valid value the base already has.
@@ -76,7 +84,10 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'int
     if (key === 'properties') {
       const baseProps = base.properties || {};
       const extProps = extension.properties || {};
-      merged.properties = { ...baseProps };
+      if (!(owned?.has(baseProps) && merged.properties === baseProps)) {
+        merged.properties = { ...baseProps };
+        owned?.add(merged.properties);
+      }
       for (const propKey in extProps) {
         const baseProp = ownValue(baseProps, propKey);
         const extProp = extProps[propKey];
@@ -134,6 +145,9 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'int
         }
       }
     } else if (key === 'required') {
+      // Charged like the composition copy below: a long chain of required
+      // lists is copied at every step.
+      countSchemaWork(Math.ceil(((base.required?.length ?? 0) + (extension.required?.length ?? 0)) / 64));
       merged.required = [...new Set([...(base.required || []), ...(extension.required || [])])];
     } else if (key === '$ref') {
       // $ref is never copied — it must be resolved before merging
@@ -328,6 +342,7 @@ export function onFreshRefPath<T>(walk: () => T): T {
 export function mergeAllOf(schema: JSONSchema, rootSchema?: JSONSchema): { merged: JSONSchema; followed: unknown[] } {
   let merged: JSONSchema = { ...schema };
   delete merged.allOf;
+  const owned = new WeakSet<object>([merged]);
   const followed: unknown[] = [];
   for (const sub of schema.allOf) {
     countSchemaWork();
@@ -341,7 +356,7 @@ export function mergeAllOf(schema: JSONSchema, rootSchema?: JSONSchema): { merge
     } else {
       resolved = sub;
     }
-    if (resolved) merged = mergeSchemas(merged, resolved);
+    if (resolved) merged = mergeSchemas(merged, resolved, 'intersect', owned);
   }
   return { merged, followed };
 }
@@ -358,13 +373,19 @@ export function withinDepth<T>(atLimit: T, walk: () => T): T {
   try {
     if (outermost) {
       walkMemo = new Map();
-      if (budgetScopes === 0) workDone = 0;
+      if (budgetScopes === 0) {
+        workDone = 0;
+        canonicalKeys = new WeakMap();
+      }
     }
     countSchemaWork();
     return walk();
   } finally {
     schemaDepth--;
-    if (schemaDepth === 0) walkMemo = null;
+    if (schemaDepth === 0) {
+      walkMemo = null;
+      if (budgetScopes === 0) canonicalKeys = null;
+    }
   }
 }
 
@@ -399,10 +420,14 @@ let budgetScopes = 0;
 export function withSchemaBudget<T>(operation: () => T): T {
   const outermost = budgetScopes === 0;
   // The walk state as the operation found it: restored afterwards whatever
-  // happened, so a budget error thrown mid-walk leaves no depth, memo or
-  // reference path behind for the next render.
+  // happened, so a budget error thrown mid-walk leaves no depth, memo,
+  // reference path or cached value key behind for the next render.
   const savedDepth = schemaDepth, savedMemo = walkMemo, savedPath = outermost ? new Set(refPath) : refPath;
-  if (outermost) workDone = 0;
+  const savedKeys = canonicalKeys;
+  if (outermost) {
+    workDone = 0;
+    canonicalKeys = new WeakMap();
+  }
   budgetScopes++;
   try {
     return operation();
@@ -412,6 +437,7 @@ export function withSchemaBudget<T>(operation: () => T): T {
       schemaDepth = savedDepth;
       walkMemo = savedMemo;
       refPath = savedPath;
+      canonicalKeys = savedKeys;
     }
   }
 }
@@ -447,6 +473,9 @@ export function distinctBranches<T>(branches: readonly T[]): T[] {
 }
 
 let walkMemo: Map<string, Map<object, Map<unknown, unknown>>> | null = null;
+
+/** canonicalJSON's text per object, within one top-level operation only. */
+let canonicalKeys: WeakMap<object, string> | null = null;
 
 /**
  * compute's result for (kind, target, data), computed once per top-level walk.
@@ -504,6 +533,7 @@ function resolveSchemaUnguarded(schema: JSONSchema | null, rootSchema: JSONSchem
       }
       let merged: JSONSchema = { ...schema };
       delete merged[keyword];
+      const owned = new WeakSet<object>([merged]);
       const followed: unknown[] = [];
       for (const sub of schema[keyword]) {
         countSchemaWork();
@@ -521,7 +551,7 @@ function resolveSchemaUnguarded(schema: JSONSchema | null, rootSchema: JSONSchem
           // For oneOf/anyOf, branches are alternatives — union their enums.
           // For allOf, branches are constraints — intersect (the default).
           const branchMode = keyword === 'allOf' ? 'intersect' : 'union' as const;
-          merged = mergeSchemas(merged, resolved, branchMode);
+          merged = mergeSchemas(merged, resolved, branchMode, owned);
         }
       }
 
@@ -782,11 +812,12 @@ function scoreSchemaMatchUnguarded(schema: JSONSchema, data: unknown, rootSchema
   if (schema.allOf && Array.isArray(schema.allOf)) {
     let merged: JSONSchema = { ...schema };
     delete merged.allOf;
+    const owned = new WeakSet<object>([merged]);
     for (const sub of schema.allOf) {
       const resolved = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
       if (resolved) {
         const siblings = sub.$ref ? (() => { const s = {...sub}; delete s.$ref; return s; })() : {};
-        merged = mergeSchemas(merged, sub.$ref ? mergeSchemas(resolved, siblings) : resolved);
+        merged = mergeSchemas(merged, sub.$ref ? mergeSchemas(resolved, siblings) : resolved, 'intersect', owned);
       }
     }
     schema = merged;
@@ -874,11 +905,12 @@ function scoreSchemaMatchUnguarded(schema: JSONSchema, data: unknown, rootSchema
         // allOf: merge all (all constraints apply simultaneously)
         let merged: JSONSchema = { ...resolvedProp };
         delete merged.allOf;
+        const owned = new WeakSet<object>([merged]);
         for (const sub of resolvedProp.allOf) {
           const r = sub.$ref ? resolveRef(sub.$ref, rootSchema) : sub;
           if (r) {
             const siblings = sub.$ref ? (() => { const s = {...sub}; delete s.$ref; return s; })() : {};
-            merged = mergeSchemas(merged, sub.$ref ? mergeSchemas(r, siblings) : r);
+            merged = mergeSchemas(merged, sub.$ref ? mergeSchemas(r, siblings) : r, 'intersect', owned);
           }
         }
         resolvedProp = merged;
@@ -956,7 +988,9 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
 
 function getDefaultValueUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): any {
   if (schema.$ref) {
-    if (onRefPath(schema.$ref, rootSchema || schema)) return undefined;
+    // A repeat of a reference on the path is not expanded again, but its own
+    // default still applies, as it would over the expanded target.
+    if (onRefPath(schema.$ref, rootSchema || schema)) return ownValue(schema, 'default');
     const resolved = resolveRef(schema.$ref, rootSchema || schema);
     if (resolved) {
       const siblings: JSONSchema = { ...schema };
@@ -1047,7 +1081,9 @@ export function getPreviewDefaultValue(schema: JSONSchema, rootSchema?: JSONSche
 
 function getPreviewDefaultValueUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): any {
   if (schema.$ref) {
-    if (onRefPath(schema.$ref, rootSchema || schema)) return undefined;
+    // A repeat of a reference on the path is not expanded again, but its own
+    // default still applies, as it would over the expanded target.
+    if (onRefPath(schema.$ref, rootSchema || schema)) return ownValue(schema, 'default');
     const resolved = resolveRef(schema.$ref, rootSchema || schema);
     if (resolved) {
       const siblings: JSONSchema = { ...schema };
@@ -1262,24 +1298,46 @@ export function inputText(value: unknown): string {
  * Compare, sort and dedupe raw values through this, never directly.
  */
 export function valueKey(value: unknown): string {
-  const kind = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
-  return `${kind}:${canonicalJSON(value)}`;
+  return `${jsonKind(value)}:${canonicalJSON(value)}`;
 }
 
-/** JSON with every object's keys sorted, recursively; array order is kept. */
+function jsonKind(value: unknown): string {
+  return value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+}
+
+/**
+ * JSON with every object's keys sorted, recursively; array order is kept.
+ * Each node counts as work, and within one operation an object's text is
+ * computed once (canonicalKeys); outside one nothing is cached, so a value
+ * mutated between calls is read afresh.
+ */
 function canonicalJSON(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJSON).join(',')}]`;
-  if (value !== null && typeof value === 'object') {
+  countSchemaWork();
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? String(value);
+  const cached = canonicalKeys?.get(value);
+  if (cached !== undefined) return cached;
+  let text: string;
+  if (Array.isArray(value)) {
+    text = `[${value.map(canonicalJSON).join(',')}]`;
+  } else {
     const entries = Object.keys(value).sort()
       .map(key => `${JSON.stringify(key)}:${canonicalJSON((value as Record<string, unknown>)[key])}`);
-    return `{${entries.join(',')}}`;
+    text = `{${entries.join(',')}}`;
   }
-  return JSON.stringify(value) ?? String(value);
+  canonicalKeys?.set(value, text);
+  return text;
 }
 
-/** Deep, type-aware equality of two JSON values. */
+/**
+ * Deep, type-aware equality of two JSON values. Values of different JSON
+ * types and arrays of different lengths are unequal without reading further.
+ */
 export function sameValue(a: unknown, b: unknown): boolean {
-  return a === b || valueKey(a) === valueKey(b);
+  if (a === b) return true;
+  const kind = jsonKind(a);
+  if (kind !== jsonKind(b)) return false;
+  if (kind === 'array' && (a as unknown[]).length !== (b as unknown[]).length) return false;
+  return canonicalJSON(a) === canonicalJSON(b);
 }
 
 // ─── Enum choices ────────────────────────────────────────────────────────────

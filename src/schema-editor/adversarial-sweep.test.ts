@@ -14,7 +14,8 @@ import './schema-editor';
 import './tree/detail-panel';
 import './modes/edit-mode';
 import '../webcomponents/meta-shortcode';
-import { flattenSchema, intersectFields, resolveSchema, safeColor, getLabeledEnumEntries, withTypedKeywords, sameValue, mergeSchemas, getDefaultValue, getPreviewDefaultValue, evaluateCondition, scoreSchemaMatch, visitSubschemas, withSchemaBudget, schemaWorkDone, SchemaTooComplexError, SCHEMA_WORK_BUDGET } from './schema-core';
+import { flattenSchema, intersectFields, resolveSchema, safeColor, getLabeledEnumEntries, withTypedKeywords, sameValue, mergeSchemas, getDefaultValue, getPreviewDefaultValue, evaluateCondition, scoreSchemaMatch, visitSubschemas, withSchemaBudget, schemaWorkDone, SchemaTooComplexError, SCHEMA_WORK_BUDGET, mergeAllOf } from './schema-core';
+import * as baseCore from './__base__/schema-core';
 import { isLeafSchema, stripStaleKeys } from './form-mode-helpers';
 import { schemaToTree, treeToSchema } from './schema-tree-model';
 import { renderJsonTable } from '../tableMaker.js';
@@ -1070,6 +1071,152 @@ describe('round 13: linear reference analysis, no state after a fallback, scorin
       .toBe(scoreSchemaMatch({ properties: { p: { const: 1 } } } as any, { p: 1 }, {}));
     expect(scoreSchemaMatch({ properties: { p: { enum: [[1]] } } } as any, { p: [1] }, {}))
       .toBe(scoreSchemaMatch({ properties: { p: { enum: [1] } } } as any, { p: 1 }, {}));
+  });
+});
+
+describe('round 14: cycle defaults, budgeted equality, deep schemas, linear merging', () => {
+  it('a repeated reference still contributes its own default, as at base', () => {
+    const node = { type: 'object', properties: { name: { default: 'branch' }, child: { $ref: '#/$defs/node', default: { name: 'leaf' } } } };
+    const root: any = { $defs: { node }, $ref: '#/$defs/node' };
+    const expected = { name: 'branch', child: { name: 'leaf' } };
+    expect(getDefaultValue(root, root)).toEqual(expected);
+    expect(getPreviewDefaultValue(root, root)).toEqual(expected);
+    expect(baseCore.getDefaultValue(root, root)).toEqual(expected);
+    expect(baseCore.getPreviewDefaultValue(root, root)).toEqual(expected);
+    // Without a default of its own the repeat still stops.
+    const bare: any = { $defs: { node: { type: 'object', properties: { child: { $ref: '#/$defs/node' } } } }, $ref: '#/$defs/node' };
+    expect(getDefaultValue(bare, bare)).toEqual({});
+  });
+
+  it('values of different JSON types are unequal without canonicalising either', () => {
+    const big: Record<string, number> = {};
+    for (let i = 0; i < 20000; i++) big[`k${i}`] = i;
+    withSchemaBudget(() => {
+      expect(sameValue(big, 1)).toBe(false);
+      expect(sameValue([1], { 0: 1 })).toBe(false);
+      expect(sameValue('1', 1)).toBe(false);
+      expect(sameValue(null, {})).toBe(false);
+    });
+    expect(schemaWorkDone()).toBeLessThan(10);
+  });
+
+  it('canonical keys are charged per node and computed once per value within a render', () => {
+    const make = () => { const o: Record<string, number> = {}; for (let i = 0; i < 20000; i++) o[`k${i}`] = i; return o; };
+    const a = make(), b = make();
+    withSchemaBudget(() => expect(sameValue(a, b)).toBe(true));
+    expect(schemaWorkDone()).toBeGreaterThanOrEqual(40000);
+    withSchemaBudget(() => { for (let i = 0; i < 100; i++) sameValue(a, b); });
+    expect(schemaWorkDone()).toBeLessThan(3 * 40000);
+    // The cache lives for one render only: a value mutated between renders
+    // compares by its new content.
+    b.k0 = -1;
+    withSchemaBudget(() => expect(sameValue(a, b)).toBe(false));
+    expect(sameValue(a, b)).toBe(false);
+    b.k0 = 0;
+    expect(sameValue(a, b)).toBe(true);
+  });
+
+  it('an enum of numbers scored against a 20,000-key value canonicalises it once', () => {
+    // pi's repro. Rendering 20,000 keys is slow in the test DOM whatever the
+    // schema says, so this times the scoring, which was the cost: every enum
+    // member canonicalised the whole value.
+    const big: Record<string, number> = {};
+    for (let i = 0; i < 20000; i++) big[`k${i}`] = i;
+    const v = { oneOf: [
+      { title: 'Numbers', properties: { p: { enum: Array.from({ length: 1000 }, (_, i) => i) } } },
+      { title: 'Object', properties: { p: { const: big } } },
+    ] };
+    const started = Date.now();
+    const score = withSchemaBudget(() => scoreSchemaMatch(v as any, { p: { ...big } }, { type: 'object', properties: { v } }));
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(score).toBeGreaterThan(50);
+    // The value and the const, 20,001 nodes each, and nothing per number.
+    expect(schemaWorkDone()).toBeLessThan(2 * 20001 + 100);
+  });
+
+  it('a 10,000-level schema falls back or renders in every entry point instead of throwing', async () => {
+    const depth = 10000;
+    const deepText = '{"not":'.repeat(depth) + '{"type":"string"}' + '}'.repeat(depth);
+    const rootText = `{"type":"object","properties":{"v":${deepText}}}`;
+    const mounts: Array<[string, () => Promise<HTMLElement>]> = [
+      ['display', () => mountEl('schema-display-mode', { schema: JSON.parse(rootText), value: { v: 'x' } })],
+      ['form', () => mountEl('schema-form-mode', { schema: JSON.parse(rootText), value: { v: 'x' } })],
+      ['form-string', () => mountEl('schema-form-mode', { schema: rootText, value: { v: 'x' } })],
+      ['search', () => mountEl('schema-search-mode', { schema: rootText, metaQuery: '[]' })],
+      ['tree', () => mountEl('schema-edit-mode', { schema: JSON.parse(rootText) })],
+      ['tree-root', () => mountEl('schema-edit-mode', { schema: JSON.parse(deepText) })],
+      ['meta', () => mountEl('meta-shortcode', {}, { 'data-path': 'v', 'data-schema': deepText, 'data-value': '"x"' })],
+    ];
+    for (const [name, mount] of mounts) {
+      const el = await mount();
+      expect(el.isConnected, name).toBe(true);
+      // The tree editor serialises the whole schema, which overflows here.
+      if (name.startsWith('tree')) expect(snapshot(el), name).toContain('showing the raw value');
+      document.body.replaceChildren();
+    }
+  });
+
+  it('a schema JSON.stringify cannot serialise falls back in the tree editor', async () => {
+    // Node's JSON.stringify survives depths that overflow it in a browser
+    // (pi's 8,000 nested not), so the overflow is simulated.
+    const schema: any = { type: 'object', properties: { v: { type: 'string' } } };
+    Object.defineProperty(schema, 'toJSON', { enumerable: false, value: () => { throw new RangeError('Maximum call stack size exceeded'); } });
+    const el = await mountEl('schema-edit-mode', { schema });
+    expect(snapshot(el)).toContain('Schema could not be used; showing the raw value.');
+    expect(snapshot(el)).toContain('too deeply nested to show');
+  });
+
+  it('a value the form cannot copy falls back, and the next value renders', async () => {
+    const schema = { type: 'object', properties: { v: { type: 'string', title: 'Vee' } } };
+    // structuredClone refuses a function where JSON.stringify skips it.
+    const el: any = await mountEl('schema-form-mode', { schema, value: { v: 'x', f: () => 1 } });
+    expect(snapshot(el)).toContain('showing the raw value');
+    el.value = { v: 'y' };
+    await settle(el);
+    expect(snapshot(el)).not.toContain('showing the raw value');
+    expect(el.querySelector('input:not([type="hidden"])')?.value).toBe('y');
+  });
+
+  it('a fallback whose raw value cannot be serialised still renders', async () => {
+    let deep: any = { type: 'string' };
+    for (let i = 0; i < 10000; i++) deep = { not: deep };
+    const el = await mountEl('schema-edit-mode', { schema: deep });
+    expect(snapshot(el)).toMatch(/showing the raw value|Root|object|string/i);
+  });
+
+  it('5,000 allOf branches of one property each merge in linear time, without touching the input', async () => {
+    const allOf = Array.from({ length: 5000 }, (_, i) => ({ properties: { [`p${i}`]: { type: 'string', title: `P${i}` } } }));
+    const schema: any = { type: 'object', properties: { v: { type: 'object', allOf } } };
+    const before = JSON.stringify(schema);
+    const started = Date.now();
+    const resolved = withSchemaBudget(() => resolveSchema(schema.properties.v, schema))!;
+    expect(Date.now() - started).toBeLessThan(300);
+    expect(Object.keys(resolved.properties)).toHaveLength(5000);
+    expect(withSchemaBudget(() => resolveSchema(schema.properties.v, schema))).toEqual(resolved);
+    expect(JSON.stringify(schema)).toBe(before);
+    const value = { v: { p0: 'zero', p4999: 'last' } };
+    const panelStarted = Date.now();
+    const panel = await mountEl('schema-display-mode', { schema, value });
+    expect(Date.now() - panelStarted).toBeLessThan(1000);
+    expect(panel.textContent).toContain('P4999');
+    expect(JSON.stringify(schema)).toBe(before);
+  });
+
+  it('merging in place never writes into a property object the caller owns', () => {
+    const shared = { type: 'object', properties: { a: { type: 'string' } } };
+    const schema: any = { allOf: [shared, { properties: { b: { type: 'string' } } }, { properties: { c: { type: 'string' } } }] };
+    const resolved = resolveSchema(schema, schema)!;
+    expect(Object.keys(resolved.properties).sort()).toEqual(['a', 'b', 'c']);
+    expect(Object.keys(shared.properties)).toEqual(['a']);
+    const merged = mergeAllOf(schema, schema).merged;
+    expect(Object.keys(merged.properties).sort()).toEqual(['a', 'b', 'c']);
+    expect(Object.keys(shared.properties)).toEqual(['a']);
+    // The schema's own properties, beside its allOf, are the caller's too.
+    const own: any = { properties: { a: { type: 'string' } }, allOf: [{ properties: { b: { type: 'string' } } }, { properties: { c: { type: 'string' } } }] };
+    expect(Object.keys(resolveSchema(own, own)!.properties).sort()).toEqual(['a', 'b', 'c']);
+    expect(Object.keys(mergeAllOf(own, own).merged.properties).sort()).toEqual(['a', 'b', 'c']);
+    expect(scoreSchemaMatch(own, { a: 'x', b: 'y', c: 'z' }, own)).toBeGreaterThan(0);
+    expect(Object.keys(own.properties)).toEqual(['a']);
   });
 });
 

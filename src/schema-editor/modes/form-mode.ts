@@ -226,47 +226,55 @@ export class SchemaFormMode extends LitElement {
     }
     if (changed.has('schema')) this._schemaError = null;
     if (changed.has('value') || changed.has('schema')) {
-      this._data = this.value != null ? (typeof this.value === 'string' ? this._safeParse(this.value) : structuredClone(this.value)) : {};
+      this._valueError = null;
+      try {
+        this._data = this.value != null ? (typeof this.value === 'string' ? this._safeParse(this.value) : structuredClone(this.value)) : {};
 
-      // When the schema changes, recursively strip keys from _data that aren't
-      // in the new schema's properties and aren't allowed by
-      // additionalProperties.  This prevents stale keys from a previous schema
-      // (e.g. after a category switch) from being silently submitted via the
-      // hidden input — including nested objects with additionalProperties:false.
-      if (changed.has('schema') && this._data && typeof this._data === 'object') {
-        const before = JSON.stringify(this._data);
-        try {
-          withSchemaBudget(() => stripStaleKeys(this._data, this.schema, this.schema));
-        } catch (error) {
-          // The data is kept as it was; render shows the fallback.
-          this._schemaError = error;
-        }
-        const after = JSON.stringify(this._data);
-
-        // If keys were actually stripped, notify the Alpine wrapper so its
-        // currentMeta stays in sync. Without this, the stale keys persist in
-        // currentMeta and get rehydrated when the schema changes again (or
-        // when x-if recreates the component).
-        if (before !== after) {
-          if (this._hiddenInput) {
-            this._hiddenInput.value = after;
+        // When the schema changes, recursively strip keys from _data that aren't
+        // in the new schema's properties and aren't allowed by
+        // additionalProperties.  This prevents stale keys from a previous schema
+        // (e.g. after a category switch) from being silently submitted via the
+        // hidden input — including nested objects with additionalProperties:false.
+        if (changed.has('schema') && this._data && typeof this._data === 'object') {
+          const before = JSON.stringify(this._data);
+          try {
+            withSchemaBudget(() => stripStaleKeys(this._data, this.schema, this.schema));
+          } catch (error) {
+            // The data is kept as it was; render shows the fallback.
+            this._schemaError = error;
           }
-          // Dispatch after the current Lit update cycle completes to avoid
-          // side-effects during willUpdate.
-          this.updateComplete.then(() => {
-            this.dispatchEvent(new CustomEvent('value-change', {
-              detail: { value: this._data },
-              bubbles: true,
-              composed: true,
-            }));
-          });
-        }
-      }
+          const after = JSON.stringify(this._data);
 
-      // Keep hidden input in sync when value/schema change externally
-      // (e.g. when Alpine passes currentMeta with pre-existing edits).
-      if (this._hiddenInput) {
-        this._hiddenInput.value = JSON.stringify(this._data);
+          // If keys were actually stripped, notify the Alpine wrapper so its
+          // currentMeta stays in sync. Without this, the stale keys persist in
+          // currentMeta and get rehydrated when the schema changes again (or
+          // when x-if recreates the component).
+          if (before !== after) {
+            if (this._hiddenInput) {
+              this._hiddenInput.value = after;
+            }
+            // Dispatch after the current Lit update cycle completes to avoid
+            // side-effects during willUpdate.
+            this.updateComplete.then(() => {
+              this.dispatchEvent(new CustomEvent('value-change', {
+                detail: { value: this._data },
+                bubbles: true,
+                composed: true,
+              }));
+            });
+          }
+        }
+
+        // Keep hidden input in sync when value/schema change externally
+        // (e.g. when Alpine passes currentMeta with pre-existing edits).
+        if (this._hiddenInput) {
+          this._hiddenInput.value = JSON.stringify(this._data);
+        }
+      } catch (error) {
+        // Cloning or serialising the whole value (too deep, not cloneable)
+        // failed: render shows the fallback instead of the update throwing.
+        this._data = this.value;
+        this._valueError = error;
       }
     }
   }
@@ -315,6 +323,7 @@ export class SchemaFormMode extends LitElement {
     }
 
     if (this._schemaError) return schemaFallback('schema-form-mode', this._schemaError, this._data);
+    if (this._valueError) return schemaFallback('schema-form-mode', this._valueError, this._data);
     try {
       return withSchemaBudget(() => this._renderField(this.schema, this._data, (val: any) => {
         this._emitChange(val);
@@ -326,6 +335,8 @@ export class SchemaFormMode extends LitElement {
 
   /** Set when processing the schema in willUpdate threw; render shows the fallback. */
   private _schemaError: unknown = null;
+  /** Set when copying the incoming value threw; render shows the fallback until the next value. */
+  private _valueError: unknown = null;
 
 
   // ─── Recursive field renderer (port of generateFormElement) ──────────────

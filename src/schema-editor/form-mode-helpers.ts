@@ -95,6 +95,7 @@ export function stripStaleKeys(data: any, schema: JSONSchema, rootSchema?: JSONS
     if (resolved[keyword] && Array.isArray(resolved[keyword])) {
       let merged: JSONSchema = { ...resolved };
       delete merged[keyword];
+      const owned = new WeakSet<object>([merged]);
       for (const sub of resolved[keyword]) {
         let s: JSONSchema;
         if (sub.$ref && rootSchema) {
@@ -105,7 +106,7 @@ export function stripStaleKeys(data: any, schema: JSONSchema, rootSchema?: JSONS
         } else {
           s = sub;
         }
-        merged = mergeSchemas(merged, s);
+        merged = mergeSchemas(merged, s, 'intersect', owned);
       }
       resolved = merged;
       break; // Only process the first composition keyword found

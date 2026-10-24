@@ -11,7 +11,7 @@ import { SchemaTooComplexError } from './schema-core';
 export function schemaFallback(element: string, error: unknown, value?: unknown): TemplateResult {
   const tooComplex = error instanceof SchemaTooComplexError;
   console.error(`${element}: schema ${tooComplex ? 'too complex' : 'could not be used'}`, error);
-  const raw = value === undefined ? '' : JSON.stringify(value, null, 2);
+  const raw = value === undefined ? '' : rawText(value);
   return html`
     <div class="schema-fallback text-sm" role="note">
       <p class="text-xs text-amber-800">${tooComplex
@@ -20,4 +20,13 @@ export function schemaFallback(element: string, error: unknown, value?: unknown)
       ${raw ? html`<pre class="whitespace-pre-wrap break-all text-xs">${raw}</pre>` : ''}
     </div>
   `;
+}
+
+/** value as indented JSON, or a note when it cannot be serialised (too deep, a cycle). */
+function rawText(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2) ?? String(value);
+  } catch {
+    return '(The raw value is too large or too deeply nested to show.)';
+  }
 }
