@@ -614,6 +614,24 @@ func (ctx *MahresourcesContext) executeMRQLGrouped(reqCtx context.Context, parse
 	return result, nil
 }
 
+// derefMRQLRows replaces the *interface{} cells GORM's map scan leaves in
+// aggregated rows with their values. JSON encoding follows the pointers, so
+// the API never showed them, but the [mrql] table printed "0x…" addresses
+// and a [conditional] aggregate compared a pointer with its operand.
+func derefMRQLRows(rows []map[string]any) {
+	for _, row := range rows {
+		for key, value := range row {
+			if pointer, ok := value.(*interface{}); ok {
+				if pointer == nil {
+					row[key] = nil
+				} else {
+					row[key] = *pointer
+				}
+			}
+		}
+	}
+}
+
 func (ctx *MahresourcesContext) executeAggregatedQuery(reqCtx context.Context, parsed *mrql.Query, opts mrql.TranslateOptions) (*MRQLGroupedResult, error) {
 	db := ctx.db.WithContext(reqCtx)
 	built, err := mrql.BuildAggregatedGroupBy(parsed, db, opts)
@@ -624,6 +642,7 @@ func (ctx *MahresourcesContext) executeAggregatedQuery(reqCtx context.Context, p
 	if err := ctx.executeMRQLFind(built, &rows, parsed, "aggregated group select"); err != nil {
 		return nil, err
 	}
+	derefMRQLRows(rows)
 
 	// Ensure Rows is never nil for consistent JSON
 	if rows == nil {
@@ -1782,6 +1801,7 @@ func (ctx *MahresourcesContext) executeAggregatedQueryScoped(reqCtx context.Cont
 	if err := ctx.executeMRQLFind(built, &rows, parsed, "scoped aggregated group select"); err != nil {
 		return nil, err
 	}
+	derefMRQLRows(rows)
 
 	if rows == nil {
 		rows = []map[string]any{}
