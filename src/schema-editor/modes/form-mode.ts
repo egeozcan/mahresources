@@ -60,6 +60,8 @@ function formatNumericForInput(data: any, schema: JSONSchema): string {
 function isMultipleOf(n: number, m: number): boolean {
   if (!(m > 0)) return true;
   const quotient = n / m;
+  // Past the float range (1e308 / 0.5) the tolerance is NaN; keep base's check.
+  if (!Number.isFinite(quotient)) return n % m === 0;
   return Math.abs(quotient - Math.round(quotient)) <= 1e-9 * Math.max(1, Math.abs(quotient));
 }
 
@@ -346,7 +348,7 @@ export class SchemaFormMode extends LitElement {
     // Handle $ref
     if (schema.$ref) {
       // A reference already being expanded on this path is a cycle.
-      const resolved = onRefPath(schema.$ref) ? null : resolveRef(schema.$ref, rootSchema);
+      const resolved = onRefPath(schema.$ref, rootSchema) ? null : resolveRef(schema.$ref, rootSchema);
       if (resolved) {
         const siblings: JSONSchema = { ...schema };
         delete siblings.$ref;
@@ -784,8 +786,9 @@ export class SchemaFormMode extends LitElement {
           const propData = ownValue(data, key);
           const hasData = propData !== undefined && propData !== null;
           const childParentRequired = isRequired || hasData;
-          // Stored data bounds the recursion, so a child with data starts a
-          // fresh reference path (a recursive schema follows the data).
+          // Stored data (null included) bounds the recursion, so a child with
+          // a stored value starts a fresh reference path (a recursive schema
+          // follows the data).
           const renderChild = () => this._renderFieldWithAttributes(propSchema, propData, (val: any) => {
             onChange({ ...data, [key]: val });
           }, rootSchema, fieldId, propSchema.description ? `${fieldId}-desc` : null, isRequired, fullPath, childParentRequired);
@@ -799,7 +802,7 @@ export class SchemaFormMode extends LitElement {
                 ? html`<p class="text-xs text-gray-500" id="${fieldId}-desc">${propSchema.description}</p>`
                 : nothing}
               <div>
-                ${hasData ? onFreshRefPath(renderChild) : renderChild()}
+                ${propData !== undefined ? onFreshRefPath(renderChild) : renderChild()}
               </div>
             </div>
           `;

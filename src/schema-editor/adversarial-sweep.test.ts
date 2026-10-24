@@ -600,6 +600,11 @@ describe('submission checks', () => {
     return { el, submit };
   }
 
+  it('multipleOf accepts a value whose quotient overflows, as base did', async () => {
+    const { submit } = await mountInForm({ type: 'number', multipleOf: 0.5 }, 1e308);
+    expect(await submit()).toBe(false);
+  });
+
   it('multipleOf tolerates floating-point remainders', async () => {
     for (const [m, v, blocked] of [[0.1, 0.3, false], [0.01, 1.23, false], [0.1, 0.35, true], [2, 3, true], [2, 4, false]] as const) {
       const { submit } = await mountInForm({ type: 'number', multipleOf: m }, v);
@@ -702,6 +707,39 @@ describe('branching reference cycles', () => {
       expect(Date.now() - started).toBeLessThan(2000);
     });
   }
+});
+
+describe('round 10 repros', () => {
+  it('an anyOf chain of doubled references resolves quickly in [meta]', async () => {
+    const $defs: Record<string, any> = {};
+    for (let i = 0; i < 17; i++) $defs[`a${i}`] = { anyOf: [{ $ref: `#/$defs/a${i + 1}` }, { $ref: `#/$defs/a${i + 1}` }] };
+    $defs.a17 = { type: 'object' };
+    const started = Date.now();
+    const el = await mountEl('meta-shortcode', {}, {
+      'data-path': 'v', 'data-schema': JSON.stringify({ $defs, $ref: '#/$defs/a0' }), 'data-value': JSON.stringify({ width: 3, height: 4 }),
+    });
+    expect(el.textContent).toContain('3 \u00D7 4');
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it('a reference reached through a sibling allOf branch is not a cycle', async () => {
+    const root = {
+      $defs: {
+        A: { type: 'object', properties: { x: { $ref: '#/$defs/B' } } },
+        B: { type: 'object', properties: { y: { type: 'string' } } },
+      },
+      allOf: [{ $ref: '#/$defs/A' }, { $ref: '#/$defs/B' }],
+    };
+    expect(getDefaultValue(root, root)).toEqual({ x: { y: '' }, y: '' });
+    const el = await mountEl('schema-form-mode', { schema: root, value: {} });
+    expect(el.textContent).not.toContain('Unresolvable reference');
+  });
+
+  it('a stored null is data: a nullable recursive schema follows it', async () => {
+    const root = { $defs: { N: { type: ['object', 'null'], properties: { child: { $ref: '#/$defs/N' } } } }, $ref: '#/$defs/N' };
+    const el = await mountEl('schema-form-mode', { schema: root, value: { child: null } });
+    expect(el.textContent).not.toContain('Unresolvable reference');
+  });
 });
 
 describe('large acyclic schemas behave as at base', () => {

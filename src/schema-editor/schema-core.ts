@@ -141,10 +141,11 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'int
       // Otherwise copy from extension. This preserves nested constraints
       // like spec.allOf:[{required:['height']}] during deep property merge.
       if (merged[key] && Array.isArray(merged[key])) {
-        // allOf [A, A] is allOf [A]: dropping repeats keeps repeated merges of
-        // the same branch from growing the list at every level. (oneOf/anyOf
-        // repeats are kept: they change "exactly one" counting.)
-        merged[key] = key === 'allOf'
+        // allOf [A, A] is allOf [A] and anyOf [A, A] is anyOf [A]: dropping
+        // repeats keeps repeated merges of the same branch from doubling the
+        // list at every level. (oneOf repeats are kept: they change "exactly
+        // one" counting.)
+        merged[key] = key !== 'oneOf'
           ? uniqueBranches([...merged[key], ...extension[key]])
           : [...merged[key], ...extension[key]];
       } else {
@@ -171,20 +172,69 @@ function uniqueBranches(branches: unknown[]): unknown[] {
 
 // ─── Reference cycles ────────────────────────────────────────────────────────
 // A $ref cycle (a definition that refers to itself, directly, through another
-// definition or through allOf) is valid JSON Schema. Every walker that follows
-// references carries the set of references being expanded along the current
-// path, and meeting one again on that path is a cycle: that reference is left
+// definition or through allOf) is valid JSON Schema.
+//
+// Which references can recur at all is decided once per root, statically: a
+// reference is recursive when its target reaches it again through the schema's
+// $ref graph. A walker treats a reference as a cycle only when it is recursive
+// and already being expanded on the current path; that reference is then left
 // unresolved (resolveSchema: null, the default builders: undefined,
 // evaluateCondition: true, isLeafSchema: false, the form: its
-// unresolved-reference message). Expanding the same reference in sibling
-// branches is not a cycle. A walker that descends into stored data starts a
-// fresh path there, because the data's own depth bounds that recursion.
+// unresolved-reference message). A schema with no recursive reference is
+// therefore walked exactly as before cycle detection existed, siblings
+// included. A walker that descends into a stored value (null included) starts
+// a fresh path there, because the data's own depth bounds that recursion.
 
 let refPath = new Set<unknown>();
 
-/** Whether ref is being expanded on the current path. */
-export function onRefPath(ref: unknown): boolean {
-  return refPath.has(ref);
+const recursiveRefsByRoot = new WeakMap<object, Set<unknown>>();
+
+/** Every $ref string anywhere inside value. */
+function refsWithin(value: unknown, into: Set<string>): Set<string> {
+  if (Array.isArray(value)) {
+    for (const item of value) refsWithin(item, into);
+  } else if (value !== null && typeof value === 'object') {
+    for (const [key, item] of Object.entries(value)) {
+      if (key === '$ref' && typeof item === 'string') into.add(item);
+      else refsWithin(item, into);
+    }
+  }
+  return into;
+}
+
+/** The references of root that can reach themselves through its $ref graph. */
+function recursiveRefs(root: JSONSchema): Set<unknown> {
+  const cached = recursiveRefsByRoot.get(root);
+  if (cached) return cached;
+  const edges = new Map<string, Set<string>>();
+  const pending = [...refsWithin(root, new Set())];
+  while (pending.length) {
+    const ref = pending.pop()!;
+    if (edges.has(ref)) continue;
+    const next = refsWithin(resolveRef(ref, root), new Set());
+    edges.set(ref, next);
+    pending.push(...next);
+  }
+  const recursive = new Set<unknown>();
+  for (const start of edges.keys()) {
+    const seen = new Set<string>();
+    const stack = [...edges.get(start)!];
+    while (stack.length) {
+      const ref = stack.pop()!;
+      if (ref === start) { recursive.add(start); break; }
+      if (seen.has(ref)) continue;
+      seen.add(ref);
+      stack.push(...(edges.get(ref) ?? []));
+    }
+  }
+  recursiveRefsByRoot.set(root, recursive);
+  return recursive;
+}
+
+/** Whether ref, a reference of root, is a cycle here: recursive and already on the path. */
+export function onRefPath(ref: unknown, root: JSONSchema | null | undefined): boolean {
+  if (!refPath.has(ref) || !root || typeof root !== 'object') return false;
+  return recursiveRefs(root).has(ref);
 }
 
 /** Run walk with refs added to the current path. */
@@ -222,7 +272,7 @@ export function mergeAllOf(schema: JSONSchema, rootSchema?: JSONSchema): { merge
   for (const sub of schema.allOf) {
     let resolved: JSONSchema;
     if (sub.$ref) {
-      const refResult = onRefPath(sub.$ref) ? null : resolveRef(sub.$ref, rootSchema as JSONSchema);
+      const refResult = onRefPath(sub.$ref, rootSchema) ? null : resolveRef(sub.$ref, rootSchema as JSONSchema);
       const siblings: JSONSchema = { ...sub };
       delete siblings.$ref;
       resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
@@ -258,7 +308,7 @@ function resolveSchemaUnguarded(schema: JSONSchema | null, rootSchema: JSONSchem
   if (!schema) return schema;
 
   if (schema.$ref) {
-    if (onRefPath(schema.$ref)) return null;
+    if (onRefPath(schema.$ref, rootSchema)) return null;
     const resolved = resolveRef(schema.$ref, rootSchema);
     if (resolved) {
       // Use mergeSchemas to properly combine ref target with sibling keywords,
@@ -289,7 +339,7 @@ function resolveSchemaUnguarded(schema: JSONSchema | null, rootSchema: JSONSchem
       for (const sub of schema[keyword]) {
         let resolved: JSONSchema | null;
         if (sub.$ref) {
-          const refResult = onRefPath(sub.$ref) ? null : resolveRef(sub.$ref, rootSchema);
+          const refResult = onRefPath(sub.$ref, rootSchema) ? null : resolveRef(sub.$ref, rootSchema);
           const siblings: JSONSchema = { ...sub };
           delete siblings.$ref;
           resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
@@ -382,7 +432,7 @@ function evaluateConditionUnguarded(conditionSchema: JSONSchema | null | undefin
 
   // ── Resolve $ref before any checks ────────────────────────────────────
   if (conditionSchema.$ref && rootSchema) {
-    if (onRefPath(conditionSchema.$ref)) return true;
+    if (onRefPath(conditionSchema.$ref, rootSchema)) return true;
     const resolved = resolveRef(conditionSchema.$ref, rootSchema);
     if (resolved) {
       const siblings: JSONSchema = { ...conditionSchema };
@@ -574,7 +624,7 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
         let bestScore = -1;
         for (const sub of schema[kw]) {
           // A branch referring back to a reference on the path is a cycle.
-          if (sub.$ref && onRefPath(sub.$ref)) continue;
+          if (sub.$ref && onRefPath(sub.$ref, rootSchema)) continue;
           const resolved = sub.$ref ? (() => {
             const r = resolveRef(sub.$ref, rootSchema);
             const s: JSONSchema = { ...sub }; delete s.$ref;
@@ -730,7 +780,7 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
 
 function getDefaultValueUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): any {
   if (schema.$ref) {
-    if (onRefPath(schema.$ref)) return undefined;
+    if (onRefPath(schema.$ref, rootSchema || schema)) return undefined;
     const resolved = resolveRef(schema.$ref, rootSchema || schema);
     if (resolved) {
       const siblings: JSONSchema = { ...schema };
@@ -821,7 +871,7 @@ export function getPreviewDefaultValue(schema: JSONSchema, rootSchema?: JSONSche
 
 function getPreviewDefaultValueUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): any {
   if (schema.$ref) {
-    if (onRefPath(schema.$ref)) return undefined;
+    if (onRefPath(schema.$ref, rootSchema || schema)) return undefined;
     const resolved = resolveRef(schema.$ref, rootSchema || schema);
     if (resolved) {
       const siblings: JSONSchema = { ...schema };

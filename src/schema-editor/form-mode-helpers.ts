@@ -24,7 +24,7 @@ function isLeafSchemaUnguarded(schema: JSONSchema, rootSchema?: JSONSchema): boo
   // $ref: resolve and check the resolved schema
   if (schema.$ref) {
     if (!rootSchema) return false; // cannot resolve without root
-    if (onRefPath(schema.$ref)) return false; // a cycle
+    if (onRefPath(schema.$ref, rootSchema)) return false; // a cycle
     const resolved = resolveRef(schema.$ref, rootSchema);
     if (!resolved) return false;
     const siblings: JSONSchema = { ...schema };

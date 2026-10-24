@@ -1,0 +1,570 @@
+// Generated: src/schema-editor/modes/display-mode.ts at commit 207cd972, for the differential test
+// (differential-base.test.ts). Do not edit; regenerate with the script
+// named in that test. Imports and custom element names are rewritten.
+import { LitElement, html, nothing, type TemplateResult, type PropertyValues } from 'lit';
+import { customElement, property, state } from 'lit/decorators.js';
+import type { JSONSchema } from '../schema-core';
+import {
+  resolveSchema,
+  evaluateCondition,
+  mergeSchemas,
+  isLabeledEnum,
+  getLabeledEnumEntries,
+  titleCase,
+} from '../schema-core';
+import { detectShape, getBuiltinRenderer } from '../display-renderers';
+import { PluginNodeCache } from '../../../utils/pluginNodeCache';
+
+interface DisplayField {
+  path: string;
+  label: string;
+  description: string;
+  type: string;
+  format: string;
+  value: any;
+  isEmpty: boolean;
+  isLong: boolean;
+  enum: any[] | null;
+  enumLabels: string[] | null;
+  enumColors: (string | undefined)[] | null;
+  xDisplay: string;
+  rawSchema: JSONSchema;
+}
+
+function getNestedValue(obj: any, path: string): any {
+  const parts = path.split('.');
+  let current = obj;
+  for (const part of parts) {
+    if (current == null || typeof current !== 'object') return undefined;
+    current = current[part];
+  }
+  return current;
+}
+
+function isEmptyValue(val: any): boolean {
+  if (val === null || val === undefined) return true;
+  if (typeof val === 'string' && val.trim() === '') return true;
+  return false;
+}
+
+const LONG_STRING_THRESHOLD = 80;
+const MAX_RENDER_DEPTH = 3;
+
+declare global {
+  interface Window {
+    renderJsonTable?: (data: any) => HTMLElement;
+  }
+}
+
+function classifyAsLong(field: DisplayField): boolean {
+  if (field.type === 'array') return true;
+  if (typeof field.value === 'object' && field.value !== null && !Array.isArray(field.value)) return true;
+  if (typeof field.value === 'string' && field.value.length > LONG_STRING_THRESHOLD) return true;
+  return false;
+}
+
+function flattenForDisplay(
+  schema: JSONSchema,
+  value: any,
+  root: JSONSchema,
+  prefix = '',
+  labelPrefix = '',
+  depth = 0,
+): DisplayField[] {
+  if (depth > 3 || !schema) return [];
+  let resolved = resolveSchema(schema, root);
+  if (!resolved) return [];
+
+  // Apply if/then/else using the value at this nesting level.
+  if (resolved.if && value != null) {
+    const localValue = prefix ? getNestedValue(value, prefix) : value;
+    if (localValue != null) {
+      const base: JSONSchema = { ...resolved };
+      delete base.if;
+      delete base.then;
+      delete base.else;
+      const branch = evaluateCondition(resolved.if, localValue, root)
+        ? (resolved.then || {})
+        : (resolved.else || {});
+      resolved = mergeSchemas(base, branch as JSONSchema);
+    }
+  }
+
+  if (!resolved?.properties) return [];
+
+  const fields: DisplayField[] = [];
+
+  for (const [key, rawProp] of Object.entries(resolved.properties) as [string, JSONSchema][]) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    const prop = resolveSchema(rawProp, root) || rawProp;
+    const rawLabel = rawProp.title || (!isLabeledEnum(rawProp) && prop.title) || titleCase(key);
+    const label = labelPrefix ? `${labelPrefix} \u203A ${rawLabel}` : rawLabel;
+    const description = prop.description || '';
+    const format = prop.format || '';
+    const val = getNestedValue(value, path);
+
+    // Read x-display annotation
+    const xDisplay = (rawProp['x-display'] || prop['x-display'] || '') as string;
+
+    // If x-display is set on an object, do NOT flatten — emit as whole field
+    if (xDisplay && prop.properties) {
+      // fall through to emit as single field
+    } else if (prop.properties) {
+      // If the value matches a known shape, keep it whole for the renderer pipeline
+      if (val != null && typeof val === 'object' && !Array.isArray(val) && detectShape(val)) {
+        // fall through to emit as single field (shape detection in _renderValue)
+      } else {
+        // Nested object with properties — flatten recursively
+        fields.push(...flattenForDisplay(prop, value, root, path, label, depth + 1));
+        continue;
+      }
+    }
+
+    // Determine type
+    let fieldType = prop.type || 'string';
+    if (Array.isArray(fieldType)) {
+      fieldType = fieldType.find((t: string) => t !== 'null') || 'string';
+    }
+
+    // Labeled enum detection — check rawProp first (resolveSchema destroys oneOf)
+    let enumValues: any[] | null = null;
+    let enumLabels: string[] | null = null;
+    let enumColors: (string | undefined)[] | null = null;
+    const enumSource = isLabeledEnum(rawProp) ? rawProp : prop;
+    if (isLabeledEnum(enumSource)) {
+      const entries = getLabeledEnumEntries(enumSource);
+      enumValues = entries.map(e => e.value);
+      enumLabels = entries.map(e => e.label);
+      const colors = entries.map(e => e.color);
+      if (colors.some(c => c)) enumColors = colors;
+    } else if (Array.isArray(prop.enum)) {
+      enumValues = prop.enum;
+    }
+
+    const field: DisplayField = {
+      path, label, description, type: fieldType, format,
+      value: val,
+      isEmpty: isEmptyValue(val),
+      isLong: false,
+      enum: enumValues,
+      enumLabels,
+      enumColors,
+      xDisplay,
+      rawSchema: prop,
+    };
+    field.isLong = classifyAsLong(field);
+    fields.push(field);
+  }
+
+  return fields;
+}
+
+@customElement('base-schema-display-mode')
+export class SchemaDisplayMode extends LitElement {
+  @property({ type: Object }) schema: JSONSchema = {};
+  @property({ type: Object }) value: any = {};
+  @property({ type: String }) name = '';
+  // Empty / 0 when the host is not bound to a stored entity, e.g. the schema
+  // editor's own live preview.
+  @property({ type: String }) entityType = '';
+  @property({ type: Number }) entityId = 0;
+
+  @state() private _showEmpty = false;
+  @state() private _pluginHtml: Record<string, string> = {};
+  @state() private _pluginErrors: Record<string, boolean> = {};
+  private _pluginFetchVersions: Record<string, number> = {};
+  // Built wrappers, keyed by field path, held so a re-render reuses the node
+  // rather than replacing it. See PluginNodeCache.
+  private _pluginNodes = new PluginNodeCache();
+
+  private _metaUpdateHandler = (e: Event) => {
+    const meta = (e as CustomEvent).detail?.meta;
+    if (meta != null) {
+      this.value = meta;
+      // Clear plugin display cache and advance all per-key versions so
+      // in-flight responses from before the update are discarded. Assigning
+      // this.value also trips the identity guard, which does the same thing;
+      // both call one method so the two edges cannot drift apart.
+      this._invalidatePluginState();
+    }
+  };
+
+  /**
+   * The document event was the only thing that invalidated the plugin caches,
+   * so setting value, schema, entityType or entityId directly left the previous
+   * entity's plugin markup on screen. Those four are exactly what the fetch body
+   * is built from (see _fetchPluginDisplay), which is what makes them the right
+   * invalidation edge -- the same rule <meta-shortcode> already follows.
+   *
+   * `value` is compared by reference, which is only meaningful because
+   * schema-editor memoizes the parsed object; parsing it per render would make
+   * every parent re-render look like a change and drop the node cache.
+   */
+  override willUpdate(changed: PropertyValues) {
+    if (
+      changed.has('value') ||
+      changed.has('schema') ||
+      changed.has('entityType') ||
+      changed.has('entityId')
+    ) {
+      this._invalidatePluginState();
+    }
+  }
+
+  /**
+   * Alpine morph re-pointed this panel at different attributes. Same clearing as
+   * the identity guard, reached from the morph seam rather than from a property
+   * change, because morph can patch the host's attributes without Lit seeing a
+   * property transition it recognises.
+   */
+  refreshFromMorph(_toEl?: Element) {
+    this._invalidatePluginState();
+    this.requestUpdate();
+  }
+
+  private _invalidatePluginState() {
+    this._pluginHtml = {};
+    // Sticky in exactly the same way, and the half a user can hit with no morph
+    // at all: one transient fetch failure pinned "Render error" on that field
+    // until a full page reload.
+    this._pluginErrors = {};
+    this._pluginNodes.clear();
+    for (const key in this._pluginFetchVersions) {
+      this._pluginFetchVersions[key]++;
+    }
+  }
+
+  override connectedCallback() {
+    super.connectedCallback();
+    document.addEventListener('meta-shortcode-updated', this._metaUpdateHandler);
+  }
+
+  override disconnectedCallback() {
+    document.removeEventListener('meta-shortcode-updated', this._metaUpdateHandler);
+    super.disconnectedCallback();
+  }
+
+  // Light DOM to inherit Tailwind styles
+  override createRenderRoot() {
+    return this;
+  }
+
+  override render() {
+    if (!this.schema?.properties || !this.value) return nothing;
+
+    const allFields = flattenForDisplay(this.schema, this.value, this.schema);
+    const filledFields = allFields.filter(f => !f.isEmpty);
+    const emptyFields = allFields.filter(f => f.isEmpty);
+    const visibleFields = this._showEmpty ? allFields : filledFields;
+    const shortFields = visibleFields.filter(f => !f.isLong);
+    const longFields = visibleFields.filter(f => f.isLong);
+
+    if (filledFields.length === 0 && !this._showEmpty) return nothing;
+
+    return html`
+      <div class="detail-panel mb-6" aria-label="Schema metadata">
+        <div class="detail-panel-header" style="background: #fafaf9;">
+          <h2 class="detail-panel-title">Metadata</h2>
+          ${this.name ? html`<span class="text-xs font-mono text-stone-500">${this.name}</span>` : nothing}
+        </div>
+        <div class="detail-panel-body" style="padding: 1rem;">
+          ${shortFields.length > 0 ? html`
+            <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));">
+              ${shortFields.map(f => this._renderShortField(f))}
+            </div>
+          ` : nothing}
+          ${longFields.length > 0 ? html`
+            <div class="${shortFields.length > 0 ? 'mt-4 pt-4 border-t border-stone-100' : ''}">
+              ${longFields.map(f => this._renderLongField(f))}
+            </div>
+          ` : nothing}
+          ${emptyFields.length > 0 ? html`
+            <div class="mt-3 pt-3 border-t border-stone-100">
+              <button
+                class="text-xs font-mono text-stone-500 hover:text-stone-700 cursor-pointer bg-transparent border-none p-0"
+                @click=${() => { this._showEmpty = !this._showEmpty; }}
+              >${this._showEmpty
+                ? 'Hide empty fields'
+                : `Show ${emptyFields.length} hidden field${emptyFields.length !== 1 ? 's' : ''}`
+              }</button>
+            </div>
+          ` : nothing}
+        </div>
+      </div>
+    `;
+  }
+
+  private _renderShortField(field: DisplayField): TemplateResult {
+    return html`
+      <div class="group relative">
+        <div class="text-[10px] font-mono uppercase text-stone-500 tracking-wider mb-1 cursor-pointer hover:text-stone-700"
+          style="letter-spacing: 0.05em;"
+          title=${field.description || nothing}
+          @click=${() => this._copyText(field.path)}
+        >${field.label}</div>
+        <div class="text-sm text-stone-900 cursor-pointer break-all"
+          @click=${() => this._copyValue(field.value)}>${this._renderValue(field)}</div>
+      </div>
+    `;
+  }
+
+  private _renderLongField(field: DisplayField): TemplateResult {
+    return html`
+      <div class="mb-3 last:mb-0">
+        <div class="text-[10px] font-mono uppercase text-stone-500 tracking-wider mb-1 cursor-pointer hover:text-stone-700"
+          style="letter-spacing: 0.05em;"
+          title=${field.description || nothing}
+          @click=${() => this._copyText(field.path)}
+        >${field.label}</div>
+        <div class="text-sm text-stone-900 cursor-pointer break-all"
+          @click=${() => this._copyValue(field.value)}>${this._renderValue(field)}</div>
+      </div>
+    `;
+  }
+
+  private _renderValue(field: DisplayField): TemplateResult | string {
+    if (field.isEmpty) {
+      return html`<span class="text-stone-300">\u2014</span>`;
+    }
+
+    const val = field.value;
+
+    // ── Renderer pipeline ──────────────────────────────────────────────
+    const xd = field.xDisplay;
+
+    // 1. Plugin renderer (x-display: "plugin:name:type")
+    if (xd.startsWith('plugin:')) {
+      return this._renderPluginDisplay(field);
+    }
+
+    // 2. Forced built-in renderer (x-display: "url", "geo", etc.)
+    if (xd && xd !== 'raw' && xd !== 'none') {
+      const renderer = getBuiltinRenderer(xd);
+      if (renderer) return renderer.render(val);
+    }
+
+    // 3. Opt-out: x-display "raw" or "none" skips shape detection
+    // (falls through to existing object/scalar handling below)
+
+    // 4. Auto shape detection for objects (when no x-display set)
+    if (!xd && typeof val === 'object' && val !== null && !Array.isArray(val)) {
+      const detected = detectShape(val);
+      if (detected) return detected.render(val);
+    }
+    // ── End renderer pipeline ──────────────────────────────────────────
+
+    // Enum with labels — pill with tooltip
+    if (field.enumLabels && field.enum) {
+      const idx = field.enum.indexOf(val);
+      const label = idx >= 0 && field.enumLabels[idx] ? field.enumLabels[idx] : String(val);
+      const tooltip = idx >= 0 && field.enumLabels[idx] ? String(val) : '';
+      const color = idx >= 0 && field.enumColors?.[idx];
+      if (color) {
+        return html`<span
+          class="inline-block text-xs px-2.5 py-0.5 rounded-full font-medium"
+          style=${`background: color-mix(in srgb, ${color} 15%, white); color: color-mix(in srgb, ${color} 50%, black)`}
+          title=${tooltip || nothing}
+        >${label}</span>`;
+      }
+      return html`<span
+        class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-medium"
+        title=${tooltip || nothing}
+      >${label}</span>`;
+    }
+
+    // Plain enum — pill
+    if (field.enum) {
+      return html`<span
+        class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium"
+      >${String(val)}</span>`;
+    }
+
+    // Boolean
+    if (field.type === 'boolean') {
+      return val ? 'Yes' : 'No';
+    }
+
+    // Number / integer
+    if (field.type === 'number' || field.type === 'integer') {
+      return html`<span class="font-mono">${String(val)}</span>`;
+    }
+
+    // String with format
+    if (typeof val === 'string') {
+      if (field.format === 'uri' || field.format === 'url') {
+        return html`<a href=${val} target="_blank" rel="noopener noreferrer"
+          class="text-indigo-600 hover:text-indigo-800 underline decoration-indigo-300"
+          @click=${(e: Event) => e.stopPropagation()}
+        >${val}</a>`;
+      }
+      if (field.format === 'email') {
+        return html`<a href="mailto:${val}"
+          class="text-indigo-600 hover:text-indigo-800 underline decoration-indigo-300"
+          @click=${(e: Event) => e.stopPropagation()}
+        >${val}</a>`;
+      }
+      if (field.format === 'date' || field.format === 'date-time') {
+        try {
+          const d = new Date(val);
+          return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+        } catch {
+          return val;
+        }
+      }
+    }
+
+    // Array
+    if (field.type === 'array' && Array.isArray(val)) {
+      if (val.length === 0) return html`<span class="text-stone-300">\u2014</span>`;
+      const allScalar = val.every(v => typeof v !== 'object' || v === null);
+      if (allScalar) {
+        return html`${val.map((v, i) => html`<span
+          class="inline-block text-xs px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 font-medium mr-1 mb-1"
+        >${String(v)}</span>`)}`;
+      }
+      // Array of objects — render each as a key-value sub-grid
+      return html`${val.map((item, i) => html`
+        ${i > 0 ? html`<hr class="my-2 border-stone-100">` : nothing}
+        ${this._renderObjectValue(item, 0, `${field.path}[${i}]`)}
+      `)}`;
+    }
+
+    // Object — render as inline key-value grid
+    if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+      return this._renderObjectValue(val, 0, field.path);
+    }
+
+    // Default — plain string
+    if (field.isLong && typeof val === 'string') {
+      return html`<span style="white-space: pre-wrap;">${val}</span>`;
+    }
+
+    return String(val ?? '');
+  }
+
+  private _renderObjectValue(obj: Record<string, any>, depth: number, path = ''): TemplateResult {
+    const entries = Object.entries(obj).filter(([, v]) => !isEmptyValue(v));
+    if (entries.length === 0) return html`<span class="text-stone-300">\u2014</span>`;
+    return html`
+      <div class="grid gap-x-4 gap-y-1 bg-stone-50 rounded p-2" style="grid-template-columns: auto 1fr;">
+        ${entries.map(([k, v]) => {
+          const keyPath = path ? `${path}.${k}` : k;
+          return html`
+            <span class="text-[10px] font-mono uppercase text-stone-500 tracking-wider self-baseline cursor-pointer hover:text-stone-700" style="letter-spacing:0.05em;"
+              title=${keyPath}
+              @click=${(e: Event) => { e.stopPropagation(); this._copyText(keyPath); }}
+            >${titleCase(k)}</span>
+            <span class="text-sm text-stone-700 break-all self-baseline cursor-pointer"
+              @click=${(e: Event) => { e.stopPropagation(); this._copyValue(v); }}
+            >${this._renderNestedValue(v, depth, keyPath)}</span>
+          `;
+        })}
+      </div>
+    `;
+  }
+
+  private _renderNestedValue(v: any, depth: number, path: string): TemplateResult | string {
+    if (v === null || v === undefined) return html`<span class="text-stone-300">\u2014</span>`;
+
+    // Scalars
+    if (typeof v !== 'object') {
+      if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+      return String(v);
+    }
+
+    // At max depth, delegate to renderJsonTable if available, else JSON.stringify
+    if (depth >= MAX_RENDER_DEPTH) {
+      if (window.renderJsonTable) {
+        const container = document.createElement('div');
+        container.appendChild(window.renderJsonTable(v));
+        return html`${container}`;
+      }
+      return JSON.stringify(v);
+    }
+
+    // Array
+    if (Array.isArray(v)) {
+      if (v.length === 0) return html`<span class="text-stone-300">\u2014</span>`;
+      const allScalar = v.every(item => typeof item !== 'object' || item === null);
+      if (allScalar) {
+        return html`${v.map(item => html`<span
+          class="inline-block text-xs px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 font-medium mr-1 mb-1"
+        >${String(item)}</span>`)}`;
+      }
+      return html`${v.map((item, i) => html`
+        ${i > 0 ? html`<hr class="my-2 border-stone-100">` : nothing}
+        ${typeof item === 'object' && item !== null
+          ? this._renderObjectValue(item, depth + 1, `${path}[${i}]`)
+          : html`<span>${String(item)}</span>`}
+      `)}`;
+    }
+
+    // Object
+    return this._renderObjectValue(v, depth + 1, path);
+  }
+
+  private _renderPluginDisplay(field: DisplayField): TemplateResult {
+    const key = field.path;
+
+    const rendered = this._pluginHtml[key];
+    if (rendered !== undefined) {
+      return html`${this._pluginNodes.nodeFor(key, rendered)}`;
+    }
+
+    if (this._pluginErrors[key]) {
+      if (typeof field.value === 'object' && field.value !== null) {
+        return this._renderObjectValue(field.value, 0, field.path);
+      }
+      return html`<span class="text-stone-400 text-xs italic">Render error</span>`;
+    }
+
+    const parts = field.xDisplay.split(':');
+    if (parts.length < 3) {
+      // Malformed x-display (e.g., "plugin:name" missing type) — fall back to value rendering
+      return html`${this._renderValue({ ...field, xDisplay: '' })}`;
+    }
+    const pluginName = parts[1];
+    const typeName = parts[2];
+
+    this._fetchPluginDisplay(key, pluginName, typeName, field);
+    return html`<span class="text-stone-400 text-xs animate-pulse">Loading...</span>`;
+  }
+
+  private async _fetchPluginDisplay(key: string, pluginName: string, typeName: string, field: DisplayField) {
+    const version = (this._pluginFetchVersions[key] = (this._pluginFetchVersions[key] || 0) + 1);
+    try {
+      const resp = await fetch(`/v1/plugins/${pluginName}/display/render`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: typeName,
+          value: field.value,
+          schema: field.rawSchema || {},
+          field_path: field.path,
+          field_label: field.label,
+          entity_type: this.entityType,
+          entity_id: Number(this.entityId) || 0,
+        }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const htmlStr = await resp.text();
+      if (version === this._pluginFetchVersions[key]) {
+        this._pluginHtml = { ...this._pluginHtml, [key]: htmlStr };
+      }
+    } catch {
+      if (version === this._pluginFetchVersions[key]) {
+        this._pluginErrors = { ...this._pluginErrors, [key]: true };
+      }
+    }
+  }
+
+  private _copyText(text: string) {
+    navigator.clipboard?.writeText(text).catch(() => {});
+  }
+
+  private _copyValue(val: any) {
+    if (val === null || val === undefined) return;
+    const text = typeof val === 'object' ? JSON.stringify(val) : String(val);
+    navigator.clipboard?.writeText(text).catch(() => {});
+  }
+}
