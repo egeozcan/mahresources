@@ -28,15 +28,16 @@
             {# aria-hidden on siblings, which hides the page from assistive tech but    #}
             {# leaves it clickable and focusable.                                       #}
             {#                                                                          #}
-            {# .noreturn because the store owns the focus return; see the comment in    #}
-            {# src/components/confirmDialog.js and in partials/pluginActionModal.tpl.   #}
-            <div x-init="$store.confirmDialog._applyInert($el)"
+            {# No x-trap: it arms 15ms after mounting and never cancels that timer, so  #}
+            {# a confirm answered sooner left a trap on the removed dialog that ate     #}
+            {# every Tab on the page. _mount keeps focus in with containFocus instead,  #}
+            {# and the store owns the focus return.                                     #}
+            <div x-init="$store.confirmDialog._mount($el)"
                  class="relative bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden ring-1 ring-black/5"
                  role="alertdialog"
                  aria-modal="true"
                  aria-labelledby="confirm-dialog-title"
-                 aria-describedby="confirm-dialog-message"
-                 x-trap.noscroll.noreturn="$store.confirmDialog.isOpen">
+                 aria-describedby="confirm-dialog-message">
                 <div class="px-5 pt-5 pb-3">
                     <h2 id="confirm-dialog-title" class="text-lg font-medium font-mono text-stone-900"
                         x-text="$store.confirmDialog.title"></h2>

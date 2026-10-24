@@ -1,4 +1,5 @@
 import { focusedElement, restoreFocus } from '../utils/focus.js';
+import { containFocus } from '../utils/containFocus.js';
 
 /**
  * The app's destructive-confirmation dialog.
@@ -12,7 +13,9 @@ import { focusedElement, restoreFocus } from '../utils/focus.js';
  *   3. It traps focus by construction and returns focus where it came from.
  *
  * So: the dialog lives in `.overlays` (z-index 41, above the `.header` stacking
- * context at 40), it carries `x-trap`, a backdrop click does **not** dismiss it,
+ * context at 40), it keeps focus inside with `containFocus` (it used `x-trap`
+ * until a confirm answered within x-trap's 15ms arming delay was found to leave
+ * an armed trap behind), a backdrop click does **not** dismiss it,
  * and `_applyInert` makes the rest of the page genuinely inert rather than merely
  * covered. `x-trap.inert` is *not* enough for that last one — it sets
  * `aria-hidden="true"` on siblings, which hides the page from the accessibility
@@ -56,6 +59,7 @@ export function registerConfirmDialogStore(Alpine) {
         // Only the elements *this* dialog made inert, so an element that was
         // already inert for another reason is left exactly as it was found.
         _inerted: [],
+        _containment: null,
 
         /**
          * Ask the reader to confirm, and resolve true only if they accept.
@@ -108,17 +112,17 @@ export function registerConfirmDialogStore(Alpine) {
             this._resolve = null;
             this._opener = null;
             this._fallback = null;
+            this._containment?.stop();
+            this._containment = null;
             this._releaseInert();
 
             // Restore focus only once Alpine has torn the dialog down.
             //
-            // Measured, not assumed: restoring synchronously here left the reader on
-            // <body>. At this point in the tick `x-trap` is still armed and the
-            // dialog is still mounted, so focus moved now is pulled straight back
-            // inside by the trap — and then `x-if` removes the subtree and focus
-            // falls to <body>, which is precisely the defect this dialog exists to
-            // avoid. A macrotask runs after Alpine's microtask-flushed effects, so
-            // by then the trap has released and the subtree is gone.
+            // Measured, not assumed (when this dialog used x-trap): restoring
+            // synchronously left the reader on <body>, because the dialog was still
+            // mounted and focus moved now was pulled back inside, and then `x-if`
+            // removed the subtree and focus fell to <body>. A macrotask runs after
+            // Alpine's microtask-flushed effects, so by then the subtree is gone.
             setTimeout(() => {
                 if (restoreFocus(opener, null) || !fallback) return;
                 const target = typeof fallback === 'function' ? fallback() : fallback;
@@ -126,6 +130,18 @@ export function registerConfirmDialogStore(Alpine) {
             }, 0);
 
             if (resolve) resolve(value);
+        },
+
+        /**
+         * Mount: the rest of the page inert, focus kept inside (containFocus,
+         * not x-trap; see templates/partials/confirmDialog.tpl), and focus on
+         * the autofocus button, which is Cancel.
+         */
+        _mount(dialogRoot) {
+            this._applyInert(dialogRoot);
+            this._containment?.stop();
+            this._containment = containFocus(dialogRoot);
+            dialogRoot?.querySelector('[autofocus]')?.focus();
         },
 
         /**

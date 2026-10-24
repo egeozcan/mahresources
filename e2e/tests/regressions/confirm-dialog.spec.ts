@@ -172,3 +172,45 @@ test.describe('in-app destructive confirm', () => {
       .toBe(false);
   });
 });
+
+// Alpine's x-trap arms 15ms after the dialog mounts and never cancels that
+// timer, so a confirm answered sooner used to leave a trap armed on the
+// removed dialog that swallowed every Tab on the page. Answer it in the same
+// task it opens in, then check Tab still works, and that focus stays inside
+// the open dialog after a click on its backdrop or heading.
+test.describe('confirm dialog focus containment', () => {
+  test('answering at once leaves no focus trap behind', async ({ page }) => {
+    await page.goto('/dashboard');
+    await page.evaluate(async () => {
+      const store = (window as any).Alpine.store('confirmDialog');
+      const answer = store.ask('Quick?', { destructive: false });
+      while (!document.querySelector('[role="alertdialog"]')) await new Promise((r) => setTimeout(r, 0));
+      store.accept();
+      await answer;
+    });
+    await expect(page.locator(DIALOG)).toHaveCount(0);
+    await page.waitForTimeout(100);
+    const prevented = page.evaluate(() => new Promise<boolean>((resolve) => {
+      document.addEventListener('keydown', (e) => setTimeout(() => resolve(e.defaultPrevented), 0), { once: true });
+    }));
+    await page.keyboard.press('Tab');
+    expect(await prevented).toBe(false);
+  });
+
+  test('a click on the backdrop or heading does not let Tab leave the dialog', async ({ page }) => {
+    await page.goto('/dashboard');
+    await page.evaluate(() => {
+      void (window as any).Alpine.store('confirmDialog').ask('Stay?', { title: 'Stay here' });
+    });
+    const dialog = page.locator(DIALOG);
+    await expect(dialog).toBeVisible();
+    const inside = () => page.evaluate(() => !!document.activeElement?.closest('[role="alertdialog"]'));
+    for (const [click, key] of [['heading', 'Shift+Tab'], ['heading', 'Tab'], ['backdrop', 'Shift+Tab'], ['backdrop', 'Tab']] as const) {
+      if (click === 'heading') await dialog.getByRole('heading', { name: 'Stay here' }).click();
+      else await page.mouse.click(3, 3);
+      await page.keyboard.press(key);
+      expect(await inside(), `${key} after a click on the ${click}`).toBe(true);
+    }
+    await expect(dialog).toBeVisible();
+  });
+});
