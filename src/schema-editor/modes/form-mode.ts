@@ -23,6 +23,7 @@ import {
   onFreshRefPath,
   mergeAllOf,
   withSchemaBudget,
+  compilePattern,
   countSchemaWork,
 } from '../schema-core';
 import { isLeafSchema, stripStaleKeys } from '../form-mode-helpers';
@@ -55,16 +56,35 @@ function formatNumericForInput(data: any, schema: JSONSchema): string {
   return valueText(data);
 }
 
+/** The decimal places in x's shortest text, scientific notation included (1.5e-7: 8). */
+function decimalPlaces(x: number): number {
+  const [mantissa, exponent = '0'] = String(Math.abs(x)).split('e');
+  const fraction = mantissa.split('.')[1]?.length ?? 0;
+  return Math.max(0, fraction - Number(exponent));
+}
+
 /**
- * Whether n is a multiple of m, within a relative tolerance: 0.3 % 0.1 is not
- * 0 in floating point, though 0.3 is 3 × 0.1.
+ * Whether n is a multiple of m. 0.3 % 0.1 is not 0 in floating point, though
+ * 0.3 is 3 x 0.1, so the check works at m's decimal places: a value with more
+ * places than m is no multiple of it (10000000.005 of 0.01), and otherwise
+ * both are scaled to integers and divided exactly. Past exact integer range
+ * a whole m divides exactly too, and only a fractional m falls back to a
+ * rounding-error-sized tolerance.
  */
 function isMultipleOf(n: number, m: number): boolean {
   if (!(m > 0)) return true;
   const quotient = n / m;
-  // Past the float range (1e308 / 0.5) the tolerance is NaN; keep base's check.
+  // Past the float range (1e308 / 0.5) the quotient is Infinity; keep base's check.
   if (!Number.isFinite(quotient)) return n % m === 0;
-  return Math.abs(quotient - Math.round(quotient)) <= 1e-9 * Math.max(1, Math.abs(quotient));
+  const places = decimalPlaces(m);
+  if (decimalPlaces(n) > places) return false;
+  const scale = 10 ** places;
+  const scaledN = Math.round(n * scale);
+  const scaledM = Math.round(m * scale);
+  if (Number.isSafeInteger(scaledN) && Number.isSafeInteger(scaledM) && scaledM > 0) return scaledN % scaledM === 0;
+  // Past that range a float n is a whole number, and % is exact for whole m.
+  if (Number.isInteger(m)) return n % m === 0;
+  return Math.abs(quotient - Math.round(quotient)) <= 4 * Number.EPSILON * Math.abs(quotient);
 }
 
 /**
@@ -168,7 +188,8 @@ export class SchemaFormMode extends LitElement {
               const pat = el.getAttribute('pattern');
               const minLen = el instanceof HTMLInputElement ? el.minLength : -1;
               const maxLen = el instanceof HTMLInputElement ? el.maxLength : -1;
-              if (pat && val !== '' && !new RegExp(pat).test(val)) {
+              const re = pat ? compilePattern(pat) : null;
+              if (re && val !== '' && !re.test(val)) {
                 errorText = `Must match the expected format (${pat})`;
               } else if (minLen > 0 && val.length < minLen) {
                 errorText = `Must be at least ${minLen} characters`;
@@ -1218,7 +1239,7 @@ export class SchemaFormMode extends LitElement {
         error = `Must be at least ${schema.minLength} characters`;
       } else if (schema.maxLength !== undefined && val.length > schema.maxLength) {
         error = `Must be at most ${schema.maxLength} characters`;
-      } else if (schema.pattern !== undefined && val !== '' && !new RegExp(schema.pattern).test(val)) {
+      } else if (val !== '' && compilePattern(schema.pattern)?.test(val) === false) {
         error = (schema as any).patternDescription
           || `Must match the expected format (${schema.pattern})`;
       } else if (input.validity.typeMismatch) {

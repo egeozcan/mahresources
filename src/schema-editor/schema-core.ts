@@ -64,6 +64,32 @@ export function resolveRef(ref: unknown, root: JSONSchema): JSONSchema | null {
   return current;
 }
 
+// ─── Patterns ────────────────────────────────────────────────────────────────
+// The server validates patterns with Go's regexp, which accepts syntax a
+// browser's RegExp rejects. A leading (?i), the common case, becomes the i
+// flag; any other pattern this browser cannot compile is no constraint here
+// (the server still enforces it), with one warning per pattern.
+
+const compiledPatterns = new Map<string, RegExp | null>();
+const MAX_COMPILED_PATTERNS = 500;
+
+/** pattern as a RegExp, or null when this browser cannot compile it. Cached. */
+export function compilePattern(pattern: unknown): RegExp | null {
+  if (typeof pattern !== 'string') return null;
+  const cached = compiledPatterns.get(pattern);
+  if (cached !== undefined) return cached;
+  let compiled: RegExp | null;
+  try {
+    compiled = pattern.startsWith('(?i)') ? new RegExp(pattern.slice(4), 'i') : new RegExp(pattern);
+  } catch {
+    console.warn(`Ignoring a pattern this browser cannot compile: ${pattern}`);
+    compiled = null;
+  }
+  if (compiledPatterns.size >= MAX_COMPILED_PATTERNS) compiledPatterns.clear();
+  compiledPatterns.set(pattern, compiled);
+  return compiled;
+}
+
 // ─── Schema merging ──────────────────────────────────────────────────────────
 
 /**
@@ -190,7 +216,10 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'int
 
 let refPath = new Set<unknown>();
 
-const recursiveRefsByRoot = new WeakMap<object, Set<unknown>>();
+// Per root, within one top-level operation only (like canonicalKeys): the
+// tree editor edits a root in place, so a classification kept across
+// operations would describe a schema that no longer exists.
+let recursiveRefsByRoot: WeakMap<object, Set<unknown>> | null = null;
 
 // Keywords whose values are subschemas. Annotation and data keywords
 // (examples, default, const, enum, unknown x-* keywords) are never followed: a
@@ -244,7 +273,7 @@ function refsWithin(schema: unknown, into: Set<string>): Set<string> {
  * and charged to the work budget per reference and per edge.
  */
 function recursiveRefs(root: JSONSchema): Set<unknown> {
-  const cached = recursiveRefsByRoot.get(root);
+  const cached = recursiveRefsByRoot?.get(root);
   if (cached) return cached;
   const edges = new Map<string, Set<string>>();
   const pending = [...refsWithin(root, new Set())];
@@ -301,7 +330,7 @@ function recursiveRefs(root: JSONSchema): Set<unknown> {
       if (members.length > 1) members.forEach(m => recursive.add(m));
     }
   }
-  recursiveRefsByRoot.set(root, recursive);
+  recursiveRefsByRoot?.set(root, recursive);
   return recursive;
 }
 
@@ -376,6 +405,7 @@ export function withinDepth<T>(atLimit: T, walk: () => T): T {
       if (budgetScopes === 0) {
         workDone = 0;
         canonicalKeys = new WeakMap();
+        recursiveRefsByRoot = new WeakMap();
       }
     }
     countSchemaWork();
@@ -384,7 +414,10 @@ export function withinDepth<T>(atLimit: T, walk: () => T): T {
     schemaDepth--;
     if (schemaDepth === 0) {
       walkMemo = null;
-      if (budgetScopes === 0) canonicalKeys = null;
+      if (budgetScopes === 0) {
+        canonicalKeys = null;
+        recursiveRefsByRoot = null;
+      }
     }
   }
 }
@@ -423,10 +456,11 @@ export function withSchemaBudget<T>(operation: () => T): T {
   // happened, so a budget error thrown mid-walk leaves no depth, memo,
   // reference path or cached value key behind for the next render.
   const savedDepth = schemaDepth, savedMemo = walkMemo, savedPath = outermost ? new Set(refPath) : refPath;
-  const savedKeys = canonicalKeys;
+  const savedKeys = canonicalKeys, savedRecursion = recursiveRefsByRoot;
   if (outermost) {
     workDone = 0;
     canonicalKeys = new WeakMap();
+    recursiveRefsByRoot = new WeakMap();
   }
   budgetScopes++;
   try {
@@ -438,6 +472,7 @@ export function withSchemaBudget<T>(operation: () => T): T {
       walkMemo = savedMemo;
       refPath = savedPath;
       canonicalKeys = savedKeys;
+      recursiveRefsByRoot = savedRecursion;
     }
   }
 }
@@ -702,7 +737,8 @@ function evaluateConditionUnguarded(conditionSchema: JSONSchema | null | undefin
   if (conditionSchema.maxLength !== undefined && (typeof data !== 'string' || data.length > conditionSchema.maxLength)) return false;
   if (conditionSchema.pattern) {
     if (typeof data === 'string') {
-      try { if (!new RegExp(conditionSchema.pattern).test(data)) return false; } catch { /* invalid regex — skip */ }
+      const re = compilePattern(conditionSchema.pattern);
+      if (re && !re.test(data)) return false;
     }
   }
 
@@ -778,7 +814,8 @@ function evaluateConditionUnguarded(conditionSchema: JSONSchema | null | undefin
 
       // pattern for strings
       if (propSchema.pattern && typeof value === 'string') {
-        try { if (!new RegExp(propSchema.pattern).test(value)) return false; } catch { /* invalid regex — skip */ }
+        const re = compilePattern(propSchema.pattern);
+        if (re && !re.test(value)) return false;
       }
 
       // minItems/maxItems for arrays

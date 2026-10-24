@@ -1220,6 +1220,89 @@ describe('round 14: cycle defaults, budgeted equality, deep schemas, linear merg
   });
 });
 
+describe('round 15: patterns the browser cannot compile, exact multipleOf, per-operation recursion', () => {
+  async function mountInForm(prop: any, v: unknown) {
+    const form = document.createElement('form');
+    document.body.append(form);
+    const el = document.createElement('schema-form-mode') as any;
+    el.schema = { type: 'object', properties: { v: prop } };
+    el.value = { v };
+    form.append(el);
+    await settle(el);
+    const input = el.querySelector('input:not([type="hidden"])') as HTMLInputElement;
+    const submit = async () => {
+      const ev = new Event('submit', { cancelable: true });
+      form.dispatchEvent(ev);
+      await settle(el);
+      return ev.defaultPrevented;
+    };
+    return { el, input, submit };
+  }
+
+  it('a Go (?i) prefix becomes the i flag, on blur and on submit', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { el, input, submit } = await mountInForm({ type: 'string', pattern: '(?i)^[a-z]+$' }, 'Book');
+    input.dispatchEvent(new Event('blur'));
+    await settle(el);
+    expect(el.textContent).not.toContain('Must match');
+    expect(await submit()).toBe(false);
+    document.body.replaceChildren();
+    const bad = await mountInForm({ type: 'string', pattern: '(?i)^[a-z]+$' }, 'Book 2');
+    expect(await bad.submit()).toBe(true);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('a pattern JS cannot compile is no constraint, with a warning, never an exception', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const pattern = '(?P<word>[a-z]+)';
+    const { el, input, submit } = await mountInForm({ type: 'string', pattern }, 'Book');
+    input.dispatchEvent(new Event('blur'));
+    await settle(el);
+    expect(el.textContent).not.toContain('Must match');
+    expect(await submit()).toBe(false);
+    expect(warn).toHaveBeenCalled();
+    expect(evaluateCondition({ pattern }, 'Book', {})).toBe(true);
+    expect(evaluateCondition({ properties: { v: { pattern } } }, { v: 'Book' }, {})).toBe(true);
+  });
+
+  it('conditions apply a (?i) pattern case-insensitively', () => {
+    expect(evaluateCondition({ pattern: '(?i)^book$' }, 'BOOK', {})).toBe(true);
+    expect(evaluateCondition({ pattern: '(?i)^book$' }, 'BOOKS', {})).toBe(false);
+    expect(evaluateCondition({ properties: { v: { pattern: '(?i)^b' } } }, { v: 'Book' }, {})).toBe(true);
+    expect(evaluateCondition({ properties: { v: { pattern: '(?i)^b' } } }, { v: 'Cook' }, {})).toBe(false);
+  });
+
+  it('multipleOf is exact at the divisor\'s decimal places', async () => {
+    for (const [m, v, blocked] of [
+      [0.01, 10000000.005, true], [0.1, 0.35, true], [0.1, 0.3, false], [0.01, 1.23, false],
+      [1e-7, 3e-7, false], [1.5e-7, 4.5e-7, false], [1.5e-7, 4e-7, true], [0.5, 1e308, false],
+      [0.25, 0.75, false], [3, 9, false], [3, 10, true], [3, 3000000001, true],
+      // Past exact integer range: 2^62 leaves 1 when divided by 3.
+      [3, 2 ** 62, true], [4, 2 ** 62, false],
+    ] as const) {
+      const { submit } = await mountInForm({ type: 'number', multipleOf: m }, v);
+      expect(await submit(), `${v} multipleOf ${m}`).toBe(blocked);
+      document.body.replaceChildren();
+    }
+  });
+
+  it('recursion is classified afresh after the root is edited in place', () => {
+    // a repeats on its own path through the sibling p, so the first walk
+    // classifies the references (a: not recursive) before the edit.
+    const root: any = {
+      $defs: { a: { type: 'object', properties: { name: { default: 'x' } } } },
+      allOf: [{ $ref: '#/$defs/a' }, { properties: { p: { $ref: '#/$defs/a' } } }],
+    };
+    expect(withSchemaBudget(() => getDefaultValue(root, root))).toEqual({ name: 'x', p: { name: 'x' } });
+    root.$defs.a.properties.child = { $ref: '#/$defs/a' };
+    const fresh = structuredClone(root);
+    const expected = getDefaultValue(fresh, fresh);
+    expect(JSON.stringify(expected).length).toBeLessThan(60);
+    expect(withSchemaBudget(() => getDefaultValue(root, root))).toEqual(expected);
+    expect(getDefaultValue(root, root)).toEqual(expected);
+  });
+});
+
 describe('schema-bearing keywords by draft', () => {
   const ref = () => ({ $ref: '#/$defs/D' });
   const positions: Array<[string, string, () => any]> = [
