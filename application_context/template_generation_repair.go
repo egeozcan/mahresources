@@ -341,78 +341,117 @@ func repairKeepsSlot(original, repaired string, css bool) bool {
 // schemaLandmarks are what a repair of a MetaSchema must leave where it was:
 // the JSON Pointer of every key of a "properties" object, and every $ref with
 // its location and value. They are read literally, with no reference resolved
-// or followed, so collecting them is linear in the document.
+// or followed, and annotation values (default, examples, const, enum), which
+// hold data and not schema, are not walked. Pointers are joined only where one
+// is recorded, from a shared segment stack, and a document nested deeper than
+// maxSchemaLandmarkDepth is refused outright, so the cost stays linear.
 type schemaLandmarks struct {
 	properties map[string]bool
 	refs       map[string]string
 }
 
+const maxSchemaLandmarkDepth = 64
+
 var schemaPointerEscape = strings.NewReplacer("~", "~0", "/", "~1")
 
-func collectSchemaLandmarks(schema string) (schemaLandmarks, bool) {
+var (
+	schemaAnnotationKeys = map[string]bool{"default": true, "examples": true, "const": true, "enum": true}
+	// schemaNameMaps hold schemas keyed by a name the author chose, which may
+	// be any word, "default" included.
+	schemaNameMaps = map[string]bool{"properties": true, "$defs": true, "definitions": true, "patternProperties": true, "dependentSchemas": true}
+)
+
+type schemaLandmarkStatus int
+
+const (
+	schemaLandmarksOK schemaLandmarkStatus = iota
+	schemaNotJSON
+	schemaTooDeep
+)
+
+func collectSchemaLandmarks(schema string) (schemaLandmarks, schemaLandmarkStatus) {
 	var root any
 	if err := json.Unmarshal([]byte(schema), &root); err != nil {
-		return schemaLandmarks{}, false
+		return schemaLandmarks{}, schemaNotJSON
 	}
 	found := schemaLandmarks{properties: map[string]bool{}, refs: map[string]string{}}
-	var walk func(node any, pointer string)
-	walk = func(node any, pointer string) {
+	var stack []string
+	pointer := func() string { return "/" + strings.Join(stack, "/") }
+	tooDeep := false
+	var walk func(node any)
+	walk = func(node any) {
+		if tooDeep {
+			return
+		}
+		if len(stack) > maxSchemaLandmarkDepth {
+			tooDeep = true
+			return
+		}
 		switch v := node.(type) {
 		case map[string]any:
 			for key, child := range v {
-				at := pointer + "/" + schemaPointerEscape.Replace(key)
-				if key == "properties" {
-					if properties, ok := child.(map[string]any); ok {
-						for name := range properties {
-							found.properties[at+"/"+schemaPointerEscape.Replace(name)] = true
-						}
-					}
+				if schemaAnnotationKeys[key] {
+					continue
 				}
+				stack = append(stack, schemaPointerEscape.Replace(key))
 				if ref, ok := child.(string); ok && key == "$ref" {
-					found.refs[at] = ref
+					found.refs[pointer()] = ref
 				}
-				walk(child, at)
+				if names, ok := child.(map[string]any); ok && schemaNameMaps[key] {
+					for name, sub := range names {
+						stack = append(stack, schemaPointerEscape.Replace(name))
+						if key == "properties" {
+							found.properties[pointer()] = true
+						}
+						walk(sub)
+						stack = stack[:len(stack)-1]
+					}
+				} else {
+					walk(child)
+				}
+				stack = stack[:len(stack)-1]
 			}
 		case []any:
 			for i, child := range v {
-				walk(child, pointer+"/"+strconv.Itoa(i))
+				stack = append(stack, strconv.Itoa(i))
+				walk(child)
+				stack = stack[:len(stack)-1]
 			}
 		}
 	}
-	walk(root, "")
-	return found, true
+	walk(root)
+	if tooDeep {
+		return schemaLandmarks{}, schemaTooDeep
+	}
+	return found, schemaLandmarksOK
 }
 
 // repairKeepsSchemaProperties is true when the repaired MetaSchema has at least
-// one property outside $defs and definitions and, when the original parses as
-// JSON, keeps every property pointer and every $ref (same place, same value)
-// the original had. `{}` compiles as a schema and would otherwise win; turning
-// a $ref into an inline object, or dropping a property anywhere, is refused.
+// one property and, when the original parses as JSON, keeps every property
+// pointer and every $ref (present, same place, same value, an empty one
+// included) the original had. `{}` compiles as a schema and would otherwise
+// win; turning a $ref into an inline object, or dropping a property anywhere,
+// is refused. A document too deep to inventory is never accepted.
 func repairKeepsSchemaProperties(original, repaired string) bool {
-	kept, ok := collectSchemaLandmarks(repaired)
-	if !ok {
+	kept, status := collectSchemaLandmarks(repaired)
+	if status != schemaLandmarksOK || len(kept.properties) == 0 {
 		return false
 	}
-	hasProperty := false
-	for pointer := range kept.properties {
-		if !strings.HasPrefix(pointer, "/$defs/") && !strings.HasPrefix(pointer, "/definitions/") {
-			hasProperty = true
-			break
-		}
-	}
-	if !hasProperty {
+	before, status := collectSchemaLandmarks(original)
+	switch status {
+	case schemaTooDeep:
 		return false
+	case schemaNotJSON:
+		return true
 	}
-	if before, ok := collectSchemaLandmarks(original); ok {
-		for pointer := range before.properties {
-			if !kept.properties[pointer] {
-				return false
-			}
+	for pointer := range before.properties {
+		if !kept.properties[pointer] {
+			return false
 		}
-		for pointer, ref := range before.refs {
-			if kept.refs[pointer] != ref {
-				return false
-			}
+	}
+	for pointer, ref := range before.refs {
+		if got, ok := kept.refs[pointer]; !ok || got != ref {
+			return false
 		}
 	}
 	return true

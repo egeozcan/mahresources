@@ -644,3 +644,46 @@ func TestSchemaRetentionIsLinearInTheDocument(t *testing.T) {
 		t.Fatalf("retention took %s on a %d byte schema", elapsed, len(schema))
 	}
 }
+
+// A root $ref schema keeps its properties under $defs; fixing a typo in one
+// is a faithful repair.
+func TestRepairCountsPropertiesUnderDefsForAnAllRefSchema(t *testing.T) {
+	original := `{"$ref":"#/$defs/root","$defs":{"root":{"type":"object","properties":{"name":{"type":"strng"}}}}}`
+	fixed := strings.Replace(original, "strng", "string", 1)
+	provider := scripted(reply(schemaReply(original)), reply(schemaReply(fixed)))
+	got, err := disclosedGenerate(newRepairGenerator(provider, repairConfig()), metaSchemaInput(), "x")
+	if err != nil || got.Repair == nil || !got.Repair.Applied {
+		t.Fatalf("a faithful repair was refused: %#v, %v", got, err)
+	}
+}
+
+// An empty $ref is a $ref: its key must survive, not merely read as "".
+func TestRepairCannotDropAnEmptyRef(t *testing.T) {
+	original := `{"type":"object","properties":{"a":{"type":"strng","$ref":""},"b":{"type":"string"}}}`
+	fixed := `{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"string"}}}`
+	if repairKeepsSchemaProperties(original, fixed) {
+		t.Fatal("a repair dropped an empty $ref")
+	}
+	if !repairKeepsSchemaProperties(original, strings.Replace(original, "strng", "string", 1)) {
+		t.Fatal("a repair that kept the empty $ref was refused")
+	}
+}
+
+// Deep nesting must not cost quadratic time or memory: annotation values are
+// not walked, and a document too deep to inventory is refused.
+func TestSchemaRetentionDoesNotGoQuadraticOnDeepNesting(t *testing.T) {
+	const depth = 9000
+	deepDefault := strings.Repeat(`{"x":`, depth) + `1` + strings.Repeat(`}`, depth)
+	annotated := `{"type":"object","properties":{"a":{"type":"string","default":` + deepDefault + `}}}`
+	deepProps := strings.Repeat(`{"properties":{"p":`, 2000) + `{}` + strings.Repeat(`}}`, 2000)
+	start := time.Now()
+	if !repairKeepsSchemaProperties(annotated, annotated) {
+		t.Fatal("a schema with a deep default was not kept as itself")
+	}
+	if repairKeepsSchemaProperties(deepProps, deepProps) {
+		t.Fatal("a document too deep to inventory was accepted")
+	}
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Fatalf("took %s", elapsed)
+	}
+}
