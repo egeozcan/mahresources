@@ -167,6 +167,66 @@ func TestLintMetaSchemaReadsRefSiblingsByDraft(t *testing.T) {
 	}
 }
 
+// Only keywords the resolver models may decide a shape or type warning. Any
+// other keyword on the node or in its $ref/allOf chain can change what is
+// valid or rendered, so the check stays silent.
+func TestLintMetaSchemaAllowlistsModelledKeywords(t *testing.T) {
+	node := func(extra string) string {
+		return `{"type":"object","$defs":{"d":{` + extra + `}},"properties":{"a":{"type":"object","x-display":"geo","properties":{"lat":{"type":"number"}},` + extra + `}}}`
+	}
+	skip := map[string]string{
+		"dependentSchemas":      `"dependentSchemas":{"lat":{"properties":{"lng":{"type":"number"}},"required":["lng"]}}`,
+		"dependencies":          `"dependencies":{"lat":{"properties":{"lng":{"type":"number"}}}}`,
+		"dependentRequired":     `"dependentRequired":{"lat":["lng"]}`,
+		"if/then":               `"if":{"required":["lat"]},"then":{"properties":{"lng":{"type":"number"}}}`,
+		"not":                   `"not":{"required":["zzz"]}`,
+		"anyOf":                 `"anyOf":[{"properties":{"lng":{"type":"number"}}}]`,
+		"oneOf":                 `"oneOf":[{"properties":{"lng":{"type":"number"}}}]`,
+		"patternProperties":     `"patternProperties":{"^l":{"type":"number"}}`,
+		"additionalProperties":  `"additionalProperties":{"type":"number"}`,
+		"unevaluatedProperties": `"unevaluatedProperties":{"type":"number"}`,
+		"propertyNames":         `"propertyNames":{"maxLength":3}`,
+		"minProperties":         `"minProperties":2`,
+	}
+	for name, extra := range skip {
+		t.Run("skip "+name, func(t *testing.T) {
+			if issues := LintMetaSchema(node(extra), MetaSchemaLintOptions{}); len(issues) != 0 {
+				t.Fatalf("want no issues, got %+v", issues)
+			}
+		})
+	}
+	t.Run("skip keyword in the $ref chain", func(t *testing.T) {
+		schema := `{"type":"object","$defs":{"d":{"dependentSchemas":{"lat":{"properties":{"lng":{"type":"number"}}}}}},"properties":{"a":{"$ref":"#/$defs/d","x-display":"geo","properties":{"lat":{"type":"number"}}}}}`
+		if issues := LintMetaSchema(schema, MetaSchemaLintOptions{}); len(issues) != 0 {
+			t.Fatalf("want no issues, got %+v", issues)
+		}
+	})
+	t.Run("skip keyword in an allOf entry", func(t *testing.T) {
+		schema := `{"type":"object","properties":{"a":{"type":"object","x-display":"geo","properties":{"lat":{"type":"number"}},"allOf":[{"dependentRequired":{"lat":["lng"]}}]}}}`
+		if issues := LintMetaSchema(schema, MetaSchemaLintOptions{}); len(issues) != 0 {
+			t.Fatalf("want no issues, got %+v", issues)
+		}
+	})
+	t.Run("modelled keywords and annotations still warn", func(t *testing.T) {
+		extra := `"title":"Place","description":"d","default":{},"examples":[{}],"x-note":1,"$comment":"c","additionalProperties":false,"readOnly":true,"deprecated":false`
+		issues := LintMetaSchema(node(extra), MetaSchemaLintOptions{})
+		if len(issues) != 1 || !strings.Contains(issues[0].Message, "latitude and longitude") {
+			t.Fatalf("want the missing-keys warning, got %+v", issues)
+		}
+	})
+}
+
+func TestLintMetaSchemaTreatsEmptyXDisplayAsUnset(t *testing.T) {
+	for _, schema := range []string{
+		`{"type":"object","properties":{"a":{"type":"object","x-display":""}}}`,
+		`{"type":"object","properties":{"a":{"type":"string","x-display":"","properties":{"lat":{}}}}}`,
+	} {
+		if issues := LintMetaSchema(schema, MetaSchemaLintOptions{}); len(issues) != 0 {
+			t.Errorf("%s: want no issues, got %+v", schema, issues)
+		}
+	}
+}
+
 func TestLintMetaSchemaNeverReportsAnError(t *testing.T) {
 	for _, schema := range []string{
 		`{"properties":{"a":{"x-display":5},"b":{"type":"string","x-display":"geo"},"c":{"x-display":"geo","properties":{"x":{}}}}}`,

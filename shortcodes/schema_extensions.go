@@ -221,7 +221,8 @@ func (l *schemaLinter) walk(node any, path string, local bool) {
 	if ref, ok := obj["$ref"].(string); ok && !strings.HasPrefix(ref, "#") {
 		l.warn("%s: $ref %q is not local; use a \"#/$defs/name\" reference inside the document.", path, ref)
 	}
-	if v, present := obj["x-display"]; present {
+	// An empty string is unset for both consumers, which then auto-detect.
+	if v, present := obj["x-display"]; present && v != "" {
 		l.lintDisplay(obj, v, path, local)
 	}
 	l.lintLabeledEnum(obj, path)
@@ -432,10 +433,7 @@ func (l *schemaLinter) effective(node any, depth int, active map[string]bool) (*
 	if !ok || depth > 12 {
 		return nil, false
 	}
-	if _, has := obj["anyOf"]; has {
-		return nil, false
-	}
-	if _, has := obj["oneOf"]; has {
+	if !onlyModelledKeywords(obj) {
 		return nil, false
 	}
 	eff := &effectiveSchema{props: map[string][]any{}, required: map[string]bool{}}
@@ -509,6 +507,37 @@ func (l *schemaLinter) effective(node any, depth int, active map[string]bool) (*
 		}
 	}
 	return eff, true
+}
+
+// modelledKeywords are the keywords that cannot change which object shape a
+// schema has: the ones effective reads (type, properties, required, $ref,
+// allOf), annotations, and value constraints. Any other keyword (dependent*,
+// if/then/else, not, anyOf/oneOf, patternProperties, propertyNames,
+// unevaluated*, minProperties, a schema-valued additionalProperties, ...) may
+// change what is valid or drawn, so a schema using one is not decided.
+var modelledKeywords = map[string]bool{
+	"type": true, "properties": true, "required": true, "$ref": true, "allOf": true,
+	"$schema": true, "$id": true, "id": true, "$comment": true, "$defs": true, "definitions": true, "$anchor": true,
+	"title": true, "description": true, "default": true, "examples": true, "readOnly": true, "writeOnly": true, "deprecated": true,
+	"format": true, "enum": true, "const": true, "pattern": true,
+	"minimum": true, "maximum": true, "exclusiveMinimum": true, "exclusiveMaximum": true, "multipleOf": true,
+	"minLength": true, "maxLength": true, "items": true, "prefixItems": true, "minItems": true, "maxItems": true, "uniqueItems": true,
+	"contentMediaType": true, "contentEncoding": true,
+}
+
+func onlyModelledKeywords(obj map[string]any) bool {
+	for k, v := range obj {
+		switch {
+		case modelledKeywords[k], strings.HasPrefix(k, "x-"):
+		case k == "additionalProperties":
+			if _, isBool := v.(bool); !isBool {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // localRef follows a "#" or "#/a/b" JSON pointer inside the document.

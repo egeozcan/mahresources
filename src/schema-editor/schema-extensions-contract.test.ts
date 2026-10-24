@@ -145,6 +145,11 @@ describe('x-display opt-outs match the Go contract', () => {
     expect(hasMap(await meta(undefined, geoValue))).toBe(true);
   });
 
+  it('an empty x-display is unset in both consumers: the shape is still detected', async () => {
+    expect(hasMap(await panel('', geoValue))).toBe(true);
+    expect(hasMap(await meta('', geoValue))).toBe(true);
+  });
+
   for (const value of contract.optOut) {
     it(`${value} skips auto-detection in the display panel and in [meta]`, async () => {
       expect(hasMap(await panel(value, geoValue)), `the panel still detects under ${value}; see ${WHERE}`).toBe(false);
