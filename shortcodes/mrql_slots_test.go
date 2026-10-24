@@ -1,6 +1,8 @@
 package shortcodes
 
 import (
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -97,4 +99,55 @@ func TestSubstitutePlaceholdersTotalFallsBackToCount(t *testing.T) {
 	result := &QueryResult{Mode: "flat", Items: make([]QueryResultItem, 4)}
 	// No Total computed → {total} renders the count.
 	assert.Equal(t, "4 / 4", substitutePlaceholders(`{count} / {total}`, result))
+}
+
+// TestSlotTagSpansAreWhatTheHandlersConsume pins SlotTagSpans to the runtime
+// by removing the reported spans and comparing with what each handler leaves.
+func TestSlotTagSpansAreWhatTheHandlersConsume(t *testing.T) {
+	cut := func(s string, spans [][2]int) string {
+		var b strings.Builder
+		prev := 0
+		for _, sp := range spans {
+			b.WriteString(s[prev:sp[0]])
+			prev = sp[1]
+		}
+		return b.String() + s[prev:]
+	}
+	for _, inner := range []string{
+		`[header]H[/header]I[footer]F[/footer][else]E`,
+		`[header]A[/header][header]B[/header]I`,
+		`[header]A[else]B[/header]I`,
+		`[header class="x"]A[/header]I[footer]F`,
+		`I[footer]F[/footer][header]H[/header]`,
+	} {
+		spans := SlotTagSpans("mrql", inner)
+		s := parseMRQLSlots(inner)
+		want := cut(inner, spans)
+		got := s.Header + s.Item + s.Footer + s.Else
+		// Order differs in the cut text; compare as multisets of bytes.
+		if sortedBytes(want) != sortedBytes(got) {
+			t.Errorf("mrql %q: spans leave %q, handler keeps %q", inner, want, got)
+		}
+	}
+	for _, inner := range []string{`A[elseif x="1"]B[else]C`, `A[else]B[else]C`, `[lazy]a[else]b[/lazy]A`} {
+		var want string
+		for _, b := range SplitBranches(inner) {
+			want += b.Content
+		}
+		if got := cut(inner, SlotTagSpans("conditional", inner)); got != want {
+			t.Errorf("conditional %q: spans leave %q, handler keeps %q", inner, got, want)
+		}
+	}
+	for _, inner := range []string{`A[else]B[else]C`, `[lazy]a[else]b[/lazy]A`, `A`} {
+		a, b := SplitElse(inner)
+		if got := cut(inner, SlotTagSpans("each", inner)); got != a+b {
+			t.Errorf("each %q: spans leave %q, handler keeps %q", inner, got, a+b)
+		}
+	}
+}
+
+func sortedBytes(s string) string {
+	b := []byte(s)
+	sort.Slice(b, func(i, j int) bool { return b[i] < b[j] })
+	return string(b)
 }

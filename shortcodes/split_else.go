@@ -108,3 +108,28 @@ func SplitBranches(content string) []Branch {
 	branches = append(branches, current)
 	return branches
 }
+
+// branchDividerSpans returns the [start,end) offsets of the top-level [else]
+// and [elseif …] dividers SplitBranches splits on.
+func branchDividerSpans(content string) [][2]int {
+	spans := blockInnerSpans(content)
+	var out [][2]int
+	for i := 0; i < len(content); {
+		if content[i] != '[' || insideSpans(i, spans) {
+			i++
+			continue
+		}
+		if strings.HasPrefix(content[i:], elseTag) {
+			out = append(out, [2]int{i, i + len(elseTag)})
+			i += len(elseTag)
+			continue
+		}
+		if m := elseifDividerPattern.FindStringSubmatchIndex(content[i:]); m != nil {
+			out = append(out, [2]int{i, i + m[1]})
+			i += m[1]
+			continue
+		}
+		i++
+	}
+	return out
+}

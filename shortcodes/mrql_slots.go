@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -91,11 +92,22 @@ func MRQLParentBoundSlots(inner string) []string {
 // whether a pair was found. Occurrences nested inside another block shortcode
 // are skipped, mirroring SplitElse's nested-block handling.
 func extractFirstSlot(content, tag string) (slot string, rest string, found bool) {
+	openIdx, innerStart, closeIdx, closeEnd := firstSlotSpan(content, tag)
+	if openIdx < 0 {
+		return "", content, false
+	}
+	return content[innerStart:closeIdx], content[:openIdx] + content[closeEnd:], true
+}
+
+// firstSlotSpan locates the pair extractFirstSlot removes: the offsets of its
+// opening tag, the start of its content, its closing tag, and the end of that.
+// All are -1 when there is no complete top-level pair.
+func firstSlotSpan(content, tag string) (openIdx, innerStart, closeIdx, closeEnd int) {
 	openTag := "[" + tag + "]"
 	closeTag := "[/" + tag + "]"
 	spans := blockInnerSpans(content)
 
-	openIdx := -1
+	openIdx = -1
 	for i := 0; i+len(openTag) <= len(content); i++ {
 		if content[i] == '[' && strings.HasPrefix(content[i:], openTag) && !insideSpans(i, spans) {
 			openIdx = i
@@ -103,11 +115,11 @@ func extractFirstSlot(content, tag string) (slot string, rest string, found bool
 		}
 	}
 	if openIdx < 0 {
-		return "", content, false
+		return -1, -1, -1, -1
 	}
 
-	innerStart := openIdx + len(openTag)
-	closeIdx := -1
+	innerStart = openIdx + len(openTag)
+	closeIdx = -1
 	for i := innerStart; i+len(closeTag) <= len(content); i++ {
 		if content[i] == '[' && strings.HasPrefix(content[i:], closeTag) && !insideSpans(i, spans) {
 			closeIdx = i
@@ -115,12 +127,67 @@ func extractFirstSlot(content, tag string) (slot string, rest string, found bool
 		}
 	}
 	if closeIdx < 0 {
-		return "", content, false
+		return -1, -1, -1, -1
 	}
+	return openIdx, innerStart, closeIdx, closeIdx + len(closeTag)
+}
 
-	slot = content[innerStart:closeIdx]
-	rest = content[:openIdx] + content[closeIdx+len(closeTag):]
-	return slot, rest, true
+// SlotTagSpans returns, in order, the [start,end) offsets, within inner, of the tags the
+// parent block's handler consumes from its body: for [mrql] the first complete
+// [header] and [footer] pair and the top-level [else]; for [conditional] every
+// top-level [else] and [elseif …] divider; for [each] the first top-level
+// [else]. Any other occurrence of the same tag stays literal text at runtime.
+func SlotTagSpans(parent, inner string) [][2]int {
+	switch parent {
+	case "mrql":
+		return mrqlSlotTagSpans(inner)
+	case "conditional":
+		return branchDividerSpans(inner)
+	case "each":
+		if i := firstElseIndex(inner); i >= 0 {
+			return [][2]int{{i, i + len(elseTag)}}
+		}
+	}
+	return nil
+}
+
+func firstElseIndex(content string) int {
+	spans := blockInnerSpans(content)
+	for i := 0; i < len(content); i++ {
+		if content[i] == '[' && strings.HasPrefix(content[i:], elseTag) && !insideSpans(i, spans) {
+			return i
+		}
+	}
+	return -1
+}
+
+// mrqlSlotTagSpans repeats parseMRQLSlots' extraction order (header, then
+// footer from what is left, then [else] from what is left), keeping a map from
+// each remainder back to offsets in inner.
+func mrqlSlotTagSpans(inner string) [][2]int {
+	var out [][2]int
+	// origin[i] is the offset in inner of byte i of the current remainder.
+	origin := make([]int, len(inner)+1)
+	for i := range origin {
+		origin[i] = i
+	}
+	rest := inner
+	for _, tag := range []string{mrqlHeaderTag, mrqlFooterTag} {
+		o, is, ci, ce := firstSlotSpan(rest, tag)
+		if o < 0 {
+			continue
+		}
+		out = append(out, [2]int{origin[o], origin[o] + (is - o)}, [2]int{origin[ci], origin[ci] + (ce - ci)})
+		rest = rest[:o] + rest[ce:]
+		origin = append(append([]int(nil), origin[:o]...), origin[ce:]...)
+	}
+	if countTopLevelElse(rest) > 0 {
+		if i := firstElseIndex(rest); i >= 0 {
+			out = append(out, [2]int{origin[i], origin[i] + len(elseTag)})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i][0] < out[j][0] })
+	return out
 }
 
 // mentionsTotal reports whether any slot references the {total} placeholder.

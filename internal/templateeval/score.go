@@ -715,44 +715,28 @@ var slotTagNames = func() map[string]bool {
 	return names
 }()
 
-// blockSpan is the body of one block shortcode, as byte offsets into the text.
-type blockSpan struct {
-	name       string
-	start, end int
-}
-
-// blockSpans lists every block shortcode body in text, nested ones included,
-// read through the runtime's parser. base is text's offset in the outermost text.
-func blockSpans(text string, base int, spans []blockSpan) []blockSpan {
+// consumedSlotTags returns the offsets in text where a block's handler
+// consumes a slot tag: the delimiters shortcodes.SlotTagSpans reports for each
+// block body, nested blocks included. A slot tag anywhere else (a second
+// [header], an unpaired one, one with attributes, one inside an extracted slot)
+// stays literal text at runtime.
+func consumedSlotTags(text string, base int, consumed map[int]bool) map[int]bool {
 	for _, sc := range shortcodes.ParseWithBlocks(text) {
 		if !sc.IsBlock {
 			continue
 		}
-		end := sc.End - len("[/"+sc.Name+"]")
-		start := end - len(sc.InnerContent)
-		spans = append(spans, blockSpan{name: sc.Name, start: base + start, end: base + end})
-		spans = blockSpans(sc.InnerContent, base+start, spans)
-	}
-	return spans
-}
-
-// innermostBlock names the block whose body holds offset pos and is nested
-// deepest, or "" outside every block. A handler reads a slot tag only at the
-// top level of its own body, so the innermost block is the one that decides.
-func innermostBlock(spans []blockSpan, pos int) string {
-	best, name := -1, ""
-	for _, s := range spans {
-		if pos >= s.start && pos < s.end && s.start > best {
-			best, name = s.start, s.name
+		start := sc.End - len("[/"+sc.Name+"]") - len(sc.InnerContent)
+		for _, span := range shortcodes.SlotTagSpans(sc.Name, sc.InnerContent) {
+			consumed[base+start+span[0]] = true
 		}
+		consumedSlotTags(sc.InnerContent, base+start, consumed)
 	}
-	return name
+	return consumed
 }
 
 func scanShortcodeNames(text string, known shortcodes.KnownShortcodes, css bool) []string {
 	var names []string
-	var blocks []blockSpan
-	scanned := false
+	var consumed map[int]bool
 	for _, m := range shortcodeShaped.FindAllStringSubmatchIndex(text, -1) {
 		closing, name, attrs := m[3] > m[2], text[m[4]:m[5]], strings.TrimSpace(text[m[6]:m[7]])
 		bare := attrs == ""
@@ -763,10 +747,10 @@ func scanShortcodeNames(text string, known shortcodes.KnownShortcodes, css bool)
 			continue
 		}
 		if slotTagNames[name] {
-			if !scanned {
-				blocks, scanned = blockSpans(text, 0, nil), true
+			if consumed == nil {
+				consumed = consumedSlotTags(text, 0, map[int]bool{})
 			}
-			if parent := innermostBlock(blocks, m[0]); parent != "" && containsString(shortcodes.SlotTags(parent), name) {
+			if consumed[m[0]] {
 				continue
 			}
 		}

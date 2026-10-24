@@ -945,6 +945,11 @@ func TestUnknownShortcodeScanReadsSlotTagsWhereTheRuntimeDoes(t *testing.T) {
 		{"stray else", `<p>[else]</p>`, []string{"else"}},
 		{"header in a conditional", `[conditional mrql="type = note"][header]H[/header][/conditional]`, []string{"header"}},
 		{"header nested in another block inside mrql", `[mrql query="type = note"][conditional mrql="type = note"][header]H[/header][/conditional][/mrql]`, []string{"header"}},
+		{"second header stays literal", `[mrql query="type = note"][header]A[/header][header]B[/header][/mrql]`, []string{"header"}},
+		{"unpaired header stays literal", `[mrql query="type = note"][header]A[/mrql]`, []string{"header"}},
+		{"attributed header stays literal", `[mrql query="type = note"][header class="x"]A[/header][/mrql]`, []string{"header"}},
+		{"else inside an extracted header stays literal", `[mrql query="type = note"][header]A[else]B[/header][/mrql]`, []string{"else"}},
+		{"second else in a conditional is still a divider", `[conditional mrql="type = note"]A[else]B[else]C[/conditional]`, nil},
 		{"invented shortcode beside real slots", `[mrql query="type = note"][header]H[/header][star-rating value="4"][/mrql]`, []string{"star-rating"}},
 	}
 	for _, tt := range tests {

@@ -108,6 +108,7 @@ func TestTemplateGenerationEval(t *testing.T) {
 		Model:           model,
 		Timeout:         timeout.String(),
 		Repeats:         repeats,
+		ScorerVersion:   templateeval.ScorerVersion,
 	}
 	for _, c := range cases {
 		fixture, _ := templateeval.FixtureForCase(c)

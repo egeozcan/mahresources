@@ -17,23 +17,37 @@ import (
 // reader of an older report would misread.
 const ReportSchemaVersion = 3
 
+// ScorerVersion is the version of the scoring rules that produced a report's
+// checks. Bump it whenever Score can judge the same draft differently. A report
+// without the field predates it and was scored by version 1.
+const ScorerVersion = 2
+
+// RescoredUnknownShortcodes names the check a re-scored report re-derived.
+const RescoredUnknownShortcodes = "unknownShortcodes"
+
 // RegressionThresholdPP is the pass-rate drop, in percentage points, beyond
 // which Compare reports a kind as regressed.
 const RegressionThresholdPP = 10.0
 
 // RunReport is one eval run.
 type RunReport struct {
-	SchemaVersion   int          `json:"schemaVersion"`
-	CorpusVersion   string       `json:"corpusVersion"`
-	FixtureChecksum string       `json:"fixtureChecksum"`
-	Commit          string       `json:"commit,omitempty"`
-	StartedAt       string       `json:"startedAt,omitempty"`
-	FinishedAt      string       `json:"finishedAt,omitempty"`
-	Model           string       `json:"model,omitempty"`
-	Timeout         string       `json:"timeout,omitempty"`
-	Repeats         int          `json:"repeats"`
-	Results         []CaseResult `json:"results"`
-	Summary         Summary      `json:"summary"`
+	SchemaVersion   int    `json:"schemaVersion"`
+	CorpusVersion   string `json:"corpusVersion"`
+	FixtureChecksum string `json:"fixtureChecksum"`
+	Commit          string `json:"commit,omitempty"`
+	StartedAt       string `json:"startedAt,omitempty"`
+	FinishedAt      string `json:"finishedAt,omitempty"`
+	Model           string `json:"model,omitempty"`
+	Timeout         string `json:"timeout,omitempty"`
+	Repeats         int    `json:"repeats"`
+	// ScorerVersion is the scoring rules' version (0 reads as 1). Rescored lists
+	// the checks that were re-derived from stored drafts rather than measured by
+	// Score during the run; the rest of such a report was scored at its original
+	// version.
+	ScorerVersion int          `json:"scorerVersion,omitempty"`
+	Rescored      []string     `json:"rescored,omitempty"`
+	Results       []CaseResult `json:"results"`
+	Summary       Summary      `json:"summary"`
 }
 
 // CaseResult is one run of one case.
@@ -197,6 +211,14 @@ func FormatSummary(s Summary) string {
 
 func pct(f float64) string { return fmt.Sprintf("%.0f%%", f*100) }
 
+// EffectiveScorerVersion is ScorerVersion with the missing field read as 1.
+func (r RunReport) EffectiveScorerVersion() int {
+	if r.ScorerVersion == 0 {
+		return 1
+	}
+	return r.ScorerVersion
+}
+
 // Comparison is the result of comparing a candidate run against a baseline.
 type Comparison struct {
 	Compatible  bool         `json:"compatible"`
@@ -238,6 +260,12 @@ func Compare(base, candidate RunReport) Comparison {
 	}
 	if base.FixtureChecksum != candidate.FixtureChecksum {
 		fail("fixture checksums differ: %s vs %s", base.FixtureChecksum, candidate.FixtureChecksum)
+	}
+	if b, c := base.EffectiveScorerVersion(), candidate.EffectiveScorerVersion(); b != c {
+		fail("scorer versions differ: %d vs %d", b, c)
+	}
+	if !reflect.DeepEqual(base.Rescored, candidate.Rescored) {
+		fail("the reports mix measured and re-scored checks: baseline re-scored %v, candidate re-scored %v", base.Rescored, candidate.Rescored)
 	}
 	// Equal counts per case, not just equal case sets: three repeats of a
 	// passing case against one of a failing case would read as a gain.
