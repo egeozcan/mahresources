@@ -23,13 +23,34 @@ export function unescapeJsonPointer(token: string): string {
 
 // ─── Ref resolution ──────────────────────────────────────────────────────────
 
+// ─── Own-property access ─────────────────────────────────────────────────────
+// Schema and data keys are arbitrary strings. obj[key] reads inherited members
+// ("constructor", "toString"), and assigning obj["__proto__"] sets the
+// prototype instead of a property. Use these wherever a key comes from a
+// schema or from stored data.
+
+/** Whether key is obj's own property. */
+export function hasOwn(obj: unknown, key: string): boolean {
+  return obj != null && typeof obj === 'object' && Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+/** obj[key] when key is obj's own property, else undefined. */
+export function ownValue(obj: unknown, key: string): any {
+  return hasOwn(obj, key) ? (obj as Record<string, unknown>)[key] : undefined;
+}
+
+/** Set key as an own data property of obj, "__proto__" included. */
+export function setOwn(obj: object, key: string, value: unknown): void {
+  Object.defineProperty(obj, key, { value, writable: true, enumerable: true, configurable: true });
+}
+
 export function resolveRef(ref: unknown, root: JSONSchema): JSONSchema | null {
   if (typeof ref !== 'string' || !ref.startsWith('#/')) return null;
   const parts = ref.split('/').slice(1);
   let current: any = root;
   for (const part of parts) {
     const unescaped = unescapeJsonPointer(part);
-    if (current && typeof current === 'object' && unescaped in current) {
+    if (hasOwn(current, unescaped)) {
       current = current[unescaped];
     } else {
       return null;
@@ -51,20 +72,22 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'int
       const extProps = extension.properties || {};
       merged.properties = { ...baseProps };
       for (const propKey in extProps) {
-        if (baseProps[propKey] && extProps[propKey]) {
-          const baseProp = baseProps[propKey];
-          const extProp = extProps[propKey];
+        const baseProp = ownValue(baseProps, propKey);
+        const extProp = extProps[propKey];
+        if (baseProp && extProp) {
 
           // Deep merge when both sides have nested properties or required
           if ((baseProp.properties && extProp.properties) ||
               (baseProp.required && extProp.required)) {
-            merged.properties[propKey] = mergeSchemas(baseProp, extProp, mode);
+            setOwn(merged.properties, propKey, mergeSchemas(baseProp, extProp, mode));
           } else {
             // Shallow merge with type/enum conflict resolution
             const baseType = baseProp.type;
             const extType = extProp.type;
             const numericTypes = new Set(['number', 'integer']);
-            const mergedProp = { ...baseProp, ...extProp };
+            // The same filter as the top level: an invalid value in extProp
+            // never erases a valid one in baseProp.
+            const mergedProp = { ...baseProp, ...validKeywords(extProp) };
             // Resolve type conflicts
             if (baseType && extType && baseType !== extType) {
               mergedProp.type = (numericTypes.has(baseType) && numericTypes.has(extType))
@@ -98,10 +121,10 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'int
             // exists on mergedProp. This is correct for allOf (the constraint
             // applies). For oneOf/anyOf, resolveSchema handles enum dropping
             // after merging all branches.
-            merged.properties[propKey] = mergedProp;
+            setOwn(merged.properties, propKey, mergedProp);
           }
         } else {
-          merged.properties[propKey] = extProps[propKey];
+          setOwn(merged.properties, propKey, extProp);
         }
       }
     } else if (key === 'required') {
@@ -118,7 +141,7 @@ export function mergeSchemas(base: JSONSchema, extension: JSONSchema, mode: 'int
         merged[key] = extension[key];
       }
     } else {
-      merged[key] = extension[key];
+      setOwn(merged, key, extension[key]);
     }
   }
   return merged;
@@ -324,7 +347,7 @@ export function evaluateCondition(conditionSchema: JSONSchema | null | undefined
   // Check required — all listed keys must be present and non-undefined
   if (conditionSchema.required && Array.isArray(conditionSchema.required)) {
     for (const key of conditionSchema.required) {
-      if (data?.[key] === undefined) return false;
+      if (ownValue(data, key) === undefined) return false;
     }
   }
 
@@ -335,7 +358,7 @@ export function evaluateCondition(conditionSchema: JSONSchema | null | undefined
   if (conditionSchema.properties) {
     for (const key in conditionSchema.properties) {
       let propSchema = conditionSchema.properties[key];
-      const value = data?.[key];
+      const value = ownValue(data, key);
 
       // Resolve property-level $ref
       if (propSchema.$ref && rootSchema) {
@@ -477,7 +500,7 @@ export function scoreSchemaMatch(schema: JSONSchema, data: unknown, rootSchema: 
     // recursing into nested objects for deep discriminators.
     for (const [key, propSchema] of Object.entries(schema.properties)) {
       const ps = propSchema as Record<string, any>;
-      const val = (data as Record<string, any>)[key];
+      const val = ownValue(data, key);
       if (val === undefined) continue;
 
       // const match: strong signal for discriminated unions
@@ -634,7 +657,7 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
     if (!schema.properties) return {};
     const obj: any = {};
     for (const [key, propSchema] of Object.entries(schema.properties)) {
-      obj[key] = getDefaultValue(propSchema as JSONSchema, rootSchema);
+      setOwn(obj, key, getDefaultValue(propSchema as JSONSchema, rootSchema));
     }
     return obj;
   }
@@ -662,7 +685,7 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
   if (schema.properties) {
     const obj: any = {};
     for (const [key, propSchema] of Object.entries(schema.properties)) {
-      obj[key] = getDefaultValue(propSchema as JSONSchema, rootSchema);
+      setOwn(obj, key, getDefaultValue(propSchema as JSONSchema, rootSchema));
     }
     return obj;
   }
@@ -732,7 +755,7 @@ export function getPreviewDefaultValue(schema: JSONSchema, rootSchema?: JSONSche
     if (!schema.properties) return {};
     const obj: any = {};
     for (const [key, propSchema] of Object.entries(schema.properties)) {
-      obj[key] = getPreviewDefaultValue(propSchema as JSONSchema, rootSchema);
+      setOwn(obj, key, getPreviewDefaultValue(propSchema as JSONSchema, rootSchema));
     }
     return obj;
   }
@@ -762,7 +785,7 @@ export function getPreviewDefaultValue(schema: JSONSchema, rootSchema?: JSONSche
   if (schema.properties) {
     const obj: any = {};
     for (const [key, propSchema] of Object.entries(schema.properties)) {
-      obj[key] = getPreviewDefaultValue(propSchema as JSONSchema, rootSchema);
+      setOwn(obj, key, getPreviewDefaultValue(propSchema as JSONSchema, rootSchema));
     }
     return obj;
   }
@@ -850,8 +873,16 @@ const KEYWORD_TYPES: Record<string, (value: unknown) => boolean> = {
 
 /** False only for a checked keyword holding a value of a type no draft allows. */
 export function keywordValueValid(key: string, value: unknown): boolean {
-  const check = KEYWORD_TYPES[key];
-  return !check || check(value);
+  return !hasOwn(KEYWORD_TYPES, key) || KEYWORD_TYPES[key](value);
+}
+
+/** schema without the keywords keywordValueValid rejects. */
+function validKeywords(schema: JSONSchema): JSONSchema {
+  const out: JSONSchema = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (keywordValueValid(key, value)) setOwn(out, key, value);
+  }
+  return out;
 }
 
 /**
@@ -874,7 +905,7 @@ export function withTypedKeywords(schema: JSONSchema): JSONSchema {
   let copy: JSONSchema | null = null;
   const edit = (): JSONSchema => (copy ??= { ...schema });
   for (const key of Object.keys(KEYWORD_TYPES)) {
-    if (key in schema && !keywordValueValid(key, schema[key])) delete edit()[key];
+    if (hasOwn(schema, key) && !keywordValueValid(key, schema[key])) delete edit()[key];
   }
   for (const [flag, bound] of [['exclusiveMinimum', 'minimum'], ['exclusiveMaximum', 'maximum']] as const) {
     const current = copy ?? schema;

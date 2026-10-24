@@ -408,6 +408,119 @@ describe('search: stored values are re-matched on every rebuild', () => {
   });
 });
 
+describe('inherited property names as schema and data keys', () => {
+  // JSON.parse makes "__proto__" an own key; a plain object literal would not.
+  const KEYS = ['__proto__', 'constructor', 'toString'];
+  const props = JSON.parse('{"__proto__":{"type":"string","title":"Proto"},"constructor":{"type":"string","title":"Ctor"},"toString":{"type":"string","title":"ToStr"}}');
+  const schema = { type: 'object', properties: props };
+  const value = JSON.parse('{"__proto__":"p-val","constructor":"c-val","toString":"t-val"}');
+
+  it('merging a branch with those keys neither throws nor loses them', () => {
+    expect(() => mergeSchemas({}, JSON.parse('{"__proto__":"annotation"}'))).not.toThrow();
+    const r = resolveSchema({ allOf: [{ type: 'object', properties: props }, JSON.parse('{"properties":{"__proto__":{"description":"D"}}}')] }, {})!;
+    expect(Object.keys(r.properties)).toEqual(KEYS);
+    expect(r.properties.__proto__).toEqual({ type: 'string', title: 'Proto', description: 'D' });
+    expect(flattenSchema(schema).map(f => f.path)).toEqual(KEYS);
+  });
+
+  it('every entry point shows the fields and their values, and nothing inherited', async () => {
+    const panel = await mountEl('schema-display-mode', { schema, value });
+    const form = await mountEl('schema-form-mode', { schema, value });
+    const search = await mountEl('schema-search-mode', { schema: JSON.stringify(schema), metaQuery: '[]' });
+    for (const el of [panel, form, search]) {
+      expectClean(el);
+      expect(snapshot(el)).not.toContain('[native code]');
+    }
+    for (const v of ['p-val', 'c-val', 't-val']) expect(snapshot(panel)).toContain(v);
+    expect([...form.querySelectorAll('input:not([type="hidden"])')].map(i => i.value)).toEqual(['p-val', 'c-val', 't-val']);
+    expect(search.querySelectorAll('input[type="text"]')).toHaveLength(3);
+    // With no stored data, an inherited name is absent, not Object's own member.
+    const empty = await mountEl('schema-display-mode', { schema, value: {} });
+    expect(snapshot(empty)).not.toContain('[native code]');
+    const emptyForm = await mountEl('schema-form-mode', { schema, value: {} });
+    expect([...emptyForm.querySelectorAll('input:not([type="hidden"])')].map(i => i.value)).toEqual(['', '', '']);
+    const meta = await mountEl('meta-shortcode', {}, { 'data-path': 'constructor', 'data-schema': '{"type":"string"}', 'data-value': '' , 'data-hide-empty': 'true' });
+    expect(snapshot(meta)).not.toContain('[native code]');
+  });
+
+  it('a property only one branch declares passes through unchanged, inherited names included', () => {
+    // Filtering protects an existing valid value; a branch that adds a new
+    // property (even one named like an Object member) hands it on as written.
+    const added = JSON.parse('{"properties":{"constructor":{"type":"string","x-display":7},"toString":{"title":{}}}}');
+    const r = mergeSchemas({ properties: {} }, added);
+    expect(r.properties.constructor).toEqual({ type: 'string', 'x-display': 7 });
+    expect(r.properties.toString).toEqual({ title: {} });
+  });
+
+  it('a $ref through an inherited name resolves to nothing', () => {
+    expect(resolveSchema({ $ref: '#/__proto__' }, {})).toBeNull();
+    expect(resolveSchema({ $ref: '#/constructor' }, {})).toBeNull();
+  });
+});
+
+describe('form submission enforces the same bounds blur shows', () => {
+  async function submitWith(prop: any, v: number) {
+    const form = document.createElement('form');
+    document.body.append(form);
+    const el = document.createElement('schema-form-mode') as any;
+    el.schema = { type: 'object', properties: { v: prop } };
+    el.value = { v };
+    form.append(el);
+    await settle(el);
+    const ev = new Event('submit', { cancelable: true });
+    form.dispatchEvent(ev);
+    await settle(el);
+    return { blocked: ev.defaultPrevented, text: el.textContent as string };
+  }
+
+  it('draft-04 boolean exclusive bounds block submit', async () => {
+    const low = await submitWith({ type: 'number', minimum: 1, exclusiveMinimum: true }, 0.5);
+    expect(low.blocked).toBe(true);
+    expect(low.text).toContain('Must be greater than 1');
+    expect((await submitWith({ type: 'number', minimum: 1, exclusiveMinimum: true }, 1)).blocked).toBe(true);
+    expect((await submitWith({ type: 'number', maximum: 5, exclusiveMaximum: true }, 5)).blocked).toBe(true);
+    expect((await submitWith({ type: 'number', minimum: 1, exclusiveMinimum: true }, 2)).blocked).toBe(false);
+  });
+
+  it('draft-07 numeric exclusive bounds block submit', async () => {
+    expect((await submitWith({ type: 'number', exclusiveMinimum: 1 }, 1)).blocked).toBe(true);
+    expect((await submitWith({ type: 'number', exclusiveMaximum: 5 }, 5)).blocked).toBe(true);
+    expect((await submitWith({ type: 'number', multipleOf: 2 }, 3)).blocked).toBe(true);
+    expect((await submitWith({ type: 'number', exclusiveMinimum: 1, exclusiveMaximum: 5 }, 3)).blocked).toBe(false);
+  });
+});
+
+describe('nested property merges filter invalid values too', () => {
+  it('an allOf branch cannot erase an inherited property annotation', () => {
+    const r = resolveSchema({ allOf: [
+      { type: 'object', properties: { v: { type: 'object', 'x-display': 'dimensions', title: 'V' } } },
+      { properties: { v: { 'x-display': 7, title: {}, description: 'kept' } } },
+    ] }, {})!;
+    expect(r.properties.v).toEqual({ type: 'object', 'x-display': 'dimensions', title: 'V', description: 'kept' });
+  });
+});
+
+describe('date parser edge cases', () => {
+  async function panel(format: string, value: string) {
+    return mountEl('schema-display-mode', { schema: { type: 'object', properties: { v: { type: 'string', format } } }, value: { v: value } });
+  }
+
+  it('accepts any number of fraction digits', async () => {
+    for (const v of ['2024-03-15T10:00:00.1234567890Z', '2024-03-15T10:00:00.5Z', '2024-03-15T10:00:00.123456789012Z']) {
+      expect((await panel('date-time', v)).textContent).not.toContain(v);
+    }
+  });
+
+  it('checks leap years on the proleptic calendar, low years included', async () => {
+    for (const v of ['0000-02-29', '0400-02-29', '2000-02-29', '2024-02-29']) {
+      expect((await panel('date', v)).textContent).not.toContain(v);
+    }
+    for (const v of ['0100-02-29', '1900-02-29', '2023-02-29', '0001-02-29']) {
+      expect((await panel('date', v)).textContent).toContain(v);
+    }
+  });
+});
+
 describe('pills with hand-written options', () => {
   it('ignores non-scalar option values and labels, and unsafe colors', async () => {
     const el = await mountEl('meta-shortcode', {}, {

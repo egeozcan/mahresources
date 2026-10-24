@@ -9,6 +9,8 @@ import {
   getLabeledEnumEntries,
   titleCase,
   withTypedKeywords,
+  ownValue,
+  setOwn,
 } from '../schema-core';
 import { detectShape, getBuiltinRenderer, parseDisplayDate, renderBuiltin, xDisplayOf } from '../display-renderers';
 import { PluginNodeCache } from '../../utils/pluginNodeCache';
@@ -33,8 +35,7 @@ function getNestedValue(obj: any, path: string): any {
   const parts = path.split('.');
   let current = obj;
   for (const part of parts) {
-    if (current == null || typeof current !== 'object') return undefined;
-    current = current[part];
+    current = ownValue(current, part);
   }
   return current;
 }
@@ -520,12 +521,12 @@ export class SchemaDisplayMode extends LitElement {
   private _renderPluginDisplay(field: DisplayField): TemplateResult {
     const key = field.path;
 
-    const rendered = this._pluginHtml[key];
+    const rendered = ownValue(this._pluginHtml, key);
     if (rendered !== undefined) {
       return html`${this._pluginNodes.nodeFor(key, rendered)}`;
     }
 
-    if (this._pluginErrors[key]) {
+    if (ownValue(this._pluginErrors, key)) {
       if (typeof field.value === 'object' && field.value !== null) {
         return this._renderObjectValue(field.value, 0, field.path);
       }
@@ -545,7 +546,8 @@ export class SchemaDisplayMode extends LitElement {
   }
 
   private async _fetchPluginDisplay(key: string, pluginName: string, typeName: string, field: DisplayField) {
-    const version = (this._pluginFetchVersions[key] = (this._pluginFetchVersions[key] || 0) + 1);
+    const version = (ownValue(this._pluginFetchVersions, key) || 0) + 1;
+    setOwn(this._pluginFetchVersions, key, version);
     try {
       const resp = await fetch(`/v1/plugins/${pluginName}/display/render`, {
         method: 'POST',
@@ -562,11 +564,11 @@ export class SchemaDisplayMode extends LitElement {
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const htmlStr = await resp.text();
-      if (version === this._pluginFetchVersions[key]) {
+      if (version === ownValue(this._pluginFetchVersions, key)) {
         this._pluginHtml = { ...this._pluginHtml, [key]: htmlStr };
       }
     } catch {
-      if (version === this._pluginFetchVersions[key]) {
+      if (version === ownValue(this._pluginFetchVersions, key)) {
         this._pluginErrors = { ...this._pluginErrors, [key]: true };
       }
     }

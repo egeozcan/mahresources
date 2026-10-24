@@ -4,7 +4,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { styleMap } from 'lit/directives/style-map.js';
 import { detectShape, getBuiltinRenderer, renderBuiltin, xDisplayOf } from '../schema-editor/display-renderers';
 import type { JSONSchema } from '../schema-editor/schema-core';
-import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resolveSchema, safeColor, valueText, withTypedKeywords } from '../schema-editor/schema-core';
+import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resolveSchema, safeColor, valueText, withTypedKeywords, ownValue } from '../schema-editor/schema-core';
 import { dateTimeField } from '../utils/dateTimeValue';
 import { PluginNodeCache } from '../utils/pluginNodeCache';
 import { pillOptions, type PillOption } from '../utils/pillOptions';
@@ -50,7 +50,7 @@ export class MetaShortcode extends LitElement {
       let current: any = detail.meta;
       for (const part of parts) {
         if (current == null || typeof current !== 'object') { current = undefined; break; }
-        current = current[part];
+        current = ownValue(current, part);
       }
       this._currentValue = current;
       this.valueStr = current !== undefined ? JSON.stringify(current) : '';
@@ -525,7 +525,7 @@ export class MetaShortcode extends LitElement {
             current = undefined;
             break;
           }
-          current = current[part];
+          current = ownValue(current, part);
         }
         this._currentValue = current;
         this.valueStr = current !== undefined ? JSON.stringify(current) : '';

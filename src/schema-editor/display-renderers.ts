@@ -91,10 +91,14 @@ function selectDateRange(val: any): DateRangeFields | null {
 
 // YYYY-MM-DD, optionally followed by a time (T or space), optional seconds and
 // fraction, and an optional zone (Z or ±HH:MM / ±HHMM).
-const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?(?:([Zz])|([+-])(\d{2}):?(\d{2}))?)?$/;
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(?:([Zz])|([+-])(\d{2}):?(\d{2}))?)?$/;
 
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+// Proleptic Gregorian, computed directly: Date.UTC maps years 0-99 to 1900-1999.
 function daysInMonth(year: number, month: number): number {
-  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  return month === 2 && leap ? 29 : DAYS_IN_MONTH[month - 1];
 }
 
 /**
@@ -128,7 +132,8 @@ export function parseDisplayDate(text: string): Date | null {
   const hour = Number(m[4]);
   const minute = Number(m[5]);
   const second = m[6] === undefined ? 0 : Number(m[6]);
-  const ms = m[7] === undefined ? 0 : Math.floor(Number(`0.${m[7]}`) * 1000);
+  // Any number of fraction digits; only the first three reach the Date.
+  const ms = m[7] === undefined ? 0 : Number(m[7].slice(0, 3).padEnd(3, '0'));
   if (hour > 23 || minute > 59 || second > 59) return null;
 
   if (m[8] === undefined && m[9] === undefined) {

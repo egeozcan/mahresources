@@ -16,6 +16,8 @@ import {
   choiceIndex,
   findChoice,
   withTypedKeywords,
+  ownValue,
+  setOwn,
 } from '../schema-core';
 import { isLeafSchema, stripStaleKeys } from '../form-mode-helpers';
 
@@ -147,6 +149,9 @@ export class SchemaFormMode extends LitElement {
               }
             }
           }
+          // The blur dispatched above ran the field's schema-aware check
+          // (exclusive bounds, multipleOf, ...); its error blocks submit too.
+          errorText ||= this._errors.get(id) || '';
           if (errorText) {
             newErrors.set(id, errorText);
           }
@@ -421,7 +426,7 @@ export class SchemaFormMode extends LitElement {
       if (sharedProps && data && typeof data === 'object' && typeof variantDefault === 'object') {
         const preserved: any = { ...variantDefault };
         for (const key of Object.keys(sharedProps)) {
-          if (data[key] !== undefined) preserved[key] = data[key];
+          if (ownValue(data, key) !== undefined) setOwn(preserved, key, data[key]);
         }
         onChange(preserved);
       } else {
@@ -494,7 +499,7 @@ export class SchemaFormMode extends LitElement {
       if (sharedProps && data && typeof data === 'object' && typeof variantDefault === 'object') {
         const preserved: any = { ...variantDefault };
         for (const key of Object.keys(sharedProps)) {
-          if (data[key] !== undefined) preserved[key] = data[key];
+          if (ownValue(data, key) !== undefined) setOwn(preserved, key, data[key]);
         }
         onChange(preserved);
       } else {
@@ -695,7 +700,7 @@ export class SchemaFormMode extends LitElement {
         const ps = propSchema as JSONSchema;
         const isBooleanType = ps.type === 'boolean' ||
           (Array.isArray(ps.type) && ps.type.includes('boolean'));
-        if (data[key] === undefined && isBooleanType && requiredSet.has(key)) {
+        if (ownValue(data, key) === undefined && isBooleanType && requiredSet.has(key)) {
           data = { ...data, [key]: ps.default !== undefined ? ps.default : false };
           needsUpdate = true;
         }
@@ -728,7 +733,8 @@ export class SchemaFormMode extends LitElement {
           // editing existing data), its own required array should be enforced
           // on its children. childParentRequired propagates to nested objects
           // so their required constraints kick in when data exists.
-          const hasData = data[key] !== undefined && data[key] !== null;
+          const propData = ownValue(data, key);
+          const hasData = propData !== undefined && propData !== null;
           const childParentRequired = isRequired || hasData;
 
           return html`
@@ -740,7 +746,7 @@ export class SchemaFormMode extends LitElement {
                 ? html`<p class="text-xs text-gray-500" id="${fieldId}-desc">${propSchema.description}</p>`
                 : nothing}
               <div>
-                ${this._renderFieldWithAttributes(propSchema, data[key], (val: any) => {
+                ${this._renderFieldWithAttributes(propSchema, propData, (val: any) => {
                   onChange({ ...data, [key]: val });
                 }, rootSchema, fieldId, propSchema.description ? `${fieldId}-desc` : null, isRequired, fullPath, childParentRequired)}
               </div>
