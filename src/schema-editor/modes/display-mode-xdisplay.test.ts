@@ -142,4 +142,45 @@ describe('display panel x-display guards', () => {
     expect(plain.textContent).toContain('text');
     expect(plain.textContent).toContain('obj');
   });
+
+  it('renders a non-primitive value under a scalar type without coercing it', async () => {
+    const hostile = { toString: null, note: 'kept' };
+    const schemas = [
+      geoSchema({ type: 'number', 'x-display': 'dimensions' }),
+      { type: 'object', $defs: { n: { type: 'number', 'x-display': 'dimensions' } }, properties: { loc: { $ref: '#/$defs/n' } } },
+      geoSchema({ type: 'number', allOf: [{ 'x-display': 'dimensions' }] }),
+      geoSchema({ type: 'string' }),
+      geoSchema({ type: 'boolean' }),
+      geoSchema({ type: 'string', enum: ['a', 'b'] }),
+      geoSchema({ oneOf: [{ const: 'a', title: 'A' }, { const: 'b', title: 'B' }] }),
+    ];
+    for (const schema of schemas) {
+      const el = await mount(schema, { loc: hostile });
+      expect(el.textContent).toContain('kept');
+    }
+    const arr = await mount(geoSchema({ type: 'string' }), { loc: [hostile, 'x'] });
+    expect(arr.textContent).toContain('kept');
+    expect(arr.textContent).toContain('x');
+  });
+
+  it('keeps the object grid under the raw and none opt-outs', async () => {
+    for (const xd of ['raw', 'none']) {
+      const el = await mount(geoSchema({ type: 'object', 'x-display': xd, properties: geoProps }),
+        { loc: { latitude: 1, longitude: 2 } });
+      expect(el.textContent).toContain('Latitude');
+      expect(el.querySelector('a[href*="openstreetmap.org"]')).toBeNull();
+    }
+  });
+
+  it('falls back to the values for an invalid date range', async () => {
+    const value = { loc: { start: '2024-03-15', end: 'bad' } };
+    for (const schema of [
+      geoSchema({ type: 'object', 'x-display': 'daterange', properties: { start: { type: 'string' }, end: { type: 'string' } } }),
+      geoSchema({ type: 'object' }),
+    ]) {
+      const el = await mount(schema, value);
+      expect(el.textContent).toContain('bad');
+      expect(el.textContent).not.toContain('Invalid Date');
+    }
+  });
 });

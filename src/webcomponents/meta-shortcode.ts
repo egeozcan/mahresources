@@ -9,6 +9,14 @@ import { dateTimeField } from '../utils/dateTimeValue';
 import { PluginNodeCache } from '../utils/pluginNodeCache';
 import { pillOptions, type PillOption } from '../utils/pillOptions';
 
+/**
+ * A stored value as text. Objects and arrays go through JSON: String() on a
+ * parsed value such as {"toString":null} throws.
+ */
+function valueText(value: any): string {
+  return value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value);
+}
+
 @customElement('meta-shortcode')
 export class MetaShortcode extends LitElement {
   @property({ attribute: 'data-path' }) path = '';
@@ -203,7 +211,7 @@ export class MetaShortcode extends LitElement {
           </span>
         ` : html`<span class="text-sm text-stone-600">No options configured for ${this._label}.</span>`}
         ${selected < 0 && !this._isEmpty
-          ? html`<span class="text-sm text-stone-600">Current: ${String(this._value)}</span>` : nothing}
+          ? html`<span class="text-sm text-stone-600">Current: ${valueText(this._value)}</span>` : nothing}
         <span role="status" class="text-sm ${this._pillError ? 'text-red-700' : 'text-stone-600'}">
           ${this._pillError ? 'Could not save. Try again.' : this._saving ? 'Saving…' : ''}
         </span>
@@ -294,6 +302,13 @@ export class MetaShortcode extends LitElement {
       if (shape) return html`<span>${renderBuiltin(shape, value)}</span>`;
     }
 
+    // A non-primitive value renders as JSON whatever type the schema declares
+    // (a forced renderer may have rejected it), so it never reaches the scalar
+    // coercions below. A plugin renderer still receives it as data.
+    if (value !== null && typeof value === 'object' && !xDisplay.startsWith('plugin:')) {
+      return JSON.stringify(value);
+    }
+
     if (schema) {
       // Check labeled enum on raw schema (resolveSchema merges oneOf away).
       if (isLabeledEnum(schema)) return this._renderLabeledEnum(value, schema);
@@ -326,7 +341,7 @@ export class MetaShortcode extends LitElement {
   private _renderLabeledEnum(value: any, schema: JSONSchema): TemplateResult {
     const entries = getLabeledEnumEntries(schema);
     const entry = entries.find(e => e.value === value);
-    const label = entry ? entry.label : String(value);
+    const label = entry ? entry.label : valueText(value);
     const tooltip = entry ? String(value) : '';
     return html`<span
       class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-medium"
@@ -337,7 +352,7 @@ export class MetaShortcode extends LitElement {
   private _renderPlainEnum(value: any): TemplateResult {
     return html`<span
       class="inline-block text-xs px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium"
-    >${String(value)}</span>`;
+    >${valueText(value)}</span>`;
   }
 
   private _renderPluginDisplay(value: any, xDisplay: string, resolvedSchema?: JSONSchema | null): TemplateResult {

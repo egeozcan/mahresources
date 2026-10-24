@@ -9,8 +9,9 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-async function mount(schema: any, value: any) {
+async function mount(schema: any, value: any, attrs: Record<string, string> = {}) {
   const el = document.createElement('meta-shortcode') as MetaShortcode;
+  for (const [name, attr] of Object.entries(attrs)) el.setAttribute(name, attr);
   el.setAttribute('data-path', 'loc');
   el.setAttribute('data-entity-type', 'group');
   el.setAttribute('data-entity-id', '1');
@@ -97,5 +98,53 @@ describe('[meta] x-display guards', () => {
     // A resolved x-display that fails selection skips auto-detection too.
     const failed = await mount({ allOf: [{ type: 'object', 'x-display': 'url' }] }, value);
     expect(failed.textContent).toContain(JSON.stringify(value));
+  });
+
+  it('renders a non-primitive value under a scalar type without coercing it', async () => {
+    const hostile = { toString: null };
+    const schemas = [
+      { type: 'number', 'x-display': 'dimensions' },
+      { $ref: '#/$defs/n', $defs: { n: { type: 'number', 'x-display': 'dimensions' } } },
+      { allOf: [{ type: 'number', 'x-display': 'dimensions' }] },
+      { type: 'boolean' },
+      { type: 'string', enum: ['a', 'b'] },
+      { oneOf: [{ const: 'a', title: 'A' }, { const: 'b', title: 'B' }] },
+      { allOf: [{ enum: ['a', 'b'] }] },
+    ];
+    for (const schema of schemas) {
+      const el = await mount(schema, hostile);
+      expect(el.textContent).toContain('{"toString":null}');
+    }
+    const arr = await mount({ type: 'string' }, [hostile]);
+    expect(arr.textContent).toContain('[{"toString":null}]');
+  });
+
+  it('shows a non-primitive current value next to pills without coercing it', async () => {
+    const el = await mount({ enum: ['a', 'b'] }, { toString: null }, { 'data-pills': 'true' });
+    expect(el.textContent).toContain('Current: {"toString":null}');
+  });
+
+  it('honours the raw and none opt-outs, raw and resolved', async () => {
+    const value = { latitude: 1, longitude: 2 };
+    const schemas = [
+      { type: 'object', 'x-display': 'raw' },
+      { type: 'object', 'x-display': 'none' },
+      { $ref: '#/$defs/r', $defs: { r: { type: 'object', 'x-display': 'raw' } } },
+      { allOf: [{ type: 'object', 'x-display': 'none' }] },
+    ];
+    for (const schema of schemas) {
+      const el = await mount(schema, value);
+      expect(el.textContent).toContain(JSON.stringify(value));
+      expect(el.querySelector('a[href*="openstreetmap.org"]')).toBeNull();
+    }
+  });
+
+  it('falls back to the values for an invalid date range', async () => {
+    const value = { start: '2024-03-15', end: 'bad' };
+    for (const schema of [{ type: 'object', 'x-display': 'daterange' }, { type: 'object' }]) {
+      const el = await mount(schema, value);
+      expect(el.textContent).toContain(JSON.stringify(value));
+      expect(el.textContent).not.toContain('Invalid Date');
+    }
   });
 });

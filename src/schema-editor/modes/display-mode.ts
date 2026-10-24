@@ -353,6 +353,33 @@ export class SchemaDisplayMode extends LitElement {
     }
     // ── End renderer pipeline ──────────────────────────────────────────
 
+    // A non-primitive value renders structurally whatever type the schema
+    // declares (a forced renderer may have rejected it), so it never reaches
+    // the String() coercions of the scalar branches below.
+    // Array
+    if (Array.isArray(val)) {
+      if (val.length === 0) return html`<span class="text-stone-300">\u2014</span>`;
+      const allScalar = val.every(v => typeof v !== 'object' || v === null);
+      if (allScalar) {
+        return html`${val.map((v, i) => html`<span
+          class="inline-block text-xs px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 font-medium mr-1 mb-1"
+        >${String(v)}</span>`)}`;
+      }
+      // Array of objects — render each object as a key-value sub-grid. Members
+      // can be mixed (null, scalars), e.g. a forced renderer's rejected value.
+      return html`${val.map((item, i) => html`
+        ${i > 0 ? html`<hr class="my-2 border-stone-100">` : nothing}
+        ${typeof item === 'object' && item !== null
+          ? this._renderObjectValue(item, 0, `${field.path}[${i}]`)
+          : html`<span>${String(item)}</span>`}
+      `)}`;
+    }
+
+    // Object — render as inline key-value grid
+    if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+      return this._renderObjectValue(val, 0, field.path);
+    }
+
     // Enum with labels — pill with tooltip
     if (field.enumLabels && field.enum) {
       const idx = field.enum.indexOf(val);
@@ -411,30 +438,6 @@ export class SchemaDisplayMode extends LitElement {
           return val;
         }
       }
-    }
-
-    // Array
-    if (field.type === 'array' && Array.isArray(val)) {
-      if (val.length === 0) return html`<span class="text-stone-300">\u2014</span>`;
-      const allScalar = val.every(v => typeof v !== 'object' || v === null);
-      if (allScalar) {
-        return html`${val.map((v, i) => html`<span
-          class="inline-block text-xs px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 font-medium mr-1 mb-1"
-        >${String(v)}</span>`)}`;
-      }
-      // Array of objects — render each object as a key-value sub-grid. Members
-      // can be mixed (null, scalars), e.g. a forced renderer's rejected value.
-      return html`${val.map((item, i) => html`
-        ${i > 0 ? html`<hr class="my-2 border-stone-100">` : nothing}
-        ${typeof item === 'object' && item !== null
-          ? this._renderObjectValue(item, 0, `${field.path}[${i}]`)
-          : html`<span>${String(item)}</span>`}
-      `)}`;
-    }
-
-    // Object — render as inline key-value grid
-    if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
-      return this._renderObjectValue(val, 0, field.path);
     }
 
     // Default — plain string
