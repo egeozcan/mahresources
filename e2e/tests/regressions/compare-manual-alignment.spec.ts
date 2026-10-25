@@ -75,6 +75,20 @@ test.describe.serial('compare page manual alignment', () => {
         .every((i) => (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0));
   }
 
+  // A tall frame can be only partly visible even after scrollIntoView. Choose
+  // a point in its visible portion, after scrolling and font layout settle.
+  async function pointerPosition(locator: Locator) {
+    return locator.evaluate(async (element) => {
+      await document.fonts.ready;
+      element.scrollIntoView({ block: 'center', behavior: 'instant' });
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const rect = element.getBoundingClientRect();
+      const top = Math.max(0, rect.top);
+      const bottom = Math.min(innerHeight, rect.bottom);
+      return { x: rect.x + rect.width / 2, y: top + Math.min((bottom - top) / 2, 60) };
+    });
+  }
+
   const alignButton = (page: Page) => page.getByRole('button', { name: /^Nudge and zoom / });
   const readout = (page: Page) => page.locator('.compare-offset-readout');
 
@@ -142,7 +156,7 @@ test.describe.serial('compare page manual alignment', () => {
     // handler makes rather than an accident of where focus happens to be.
     await page.goto(`/resource/compare?r1=${pairResourceId}&v1=1&v2=2`);
     await showOnionSkin(page);
-    const { lead, trail } = onionImages(page);
+    const { box, trail } = onionImages(page);
 
     await alignButton(page).focus();
     await expect(alignButton(page)).toHaveAttribute('aria-pressed', 'false');
@@ -151,7 +165,11 @@ test.describe.serial('compare page manual alignment', () => {
 
     const after = (await trail.boundingBox())!;
     expect(after.x).toBeCloseTo(before.x, 0);
-    expect(after.y).toBeCloseTo((await lead.boundingBox())!.y, 0);
+    const verticalOffset = await box.evaluate((element) => {
+      const [lead, trail] = element.querySelectorAll('img.compare-overlay-img');
+      return trail.getBoundingClientRect().y - lead.getBoundingClientRect().y;
+    });
+    expect(verticalOffset).toBeCloseTo(0, 0);
     await expect(readout(page)).toHaveText(/0, 0, 100%/);
   });
 
@@ -255,16 +273,13 @@ test.describe.serial('compare page manual alignment', () => {
     const { box, lead, trail } = onionImages(page);
 
     await alignButton(page).click();
-    const frame = (await box.boundingBox())!;
+    const point = await pointerPosition(box);
     const leadBefore = (await lead.boundingBox())!;
     const trailBefore = (await trail.boundingBox())!;
 
-    // Near the top of the frame, so the gesture stays inside the viewport on a
-    // portrait pair, and away from the edges so the clamp is nowhere near.
-    const y = frame.y + Math.min(frame.height / 2, 60);
-    await page.mouse.move(frame.x + frame.width / 2, y);
+    await page.mouse.move(point.x, point.y);
     await page.mouse.down();
-    await page.mouse.move(frame.x + frame.width / 2 + 60, y + 30, { steps: 10 });
+    await page.mouse.move(point.x + 60, point.y + 30, { steps: 10 });
     await page.mouse.up();
 
     const trailAfter = (await trail.boundingBox())!;
@@ -308,9 +323,9 @@ test.describe.serial('compare page manual alignment', () => {
     const { box } = onionImages(page);
 
     await alignButton(page).click();
-    const frame = (await box.boundingBox())!;
+    const point = await pointerPosition(box);
     const before = await page.evaluate(() => window.scrollY);
-    await page.mouse.move(frame.x + frame.width / 2, frame.y + Math.min(frame.height / 2, 60));
+    await page.mouse.move(point.x, point.y);
     await page.mouse.wheel(0, 200);
 
     await expect(readout(page)).toHaveText(/0, 0, 99%/);
@@ -374,19 +389,12 @@ test.describe.serial('compare page manual alignment', () => {
     await expect(handle).toBeVisible();
     const sliderBox = page.locator('.compare-overlay-box').filter({ has: handle });
     const trail = sliderBox.locator('.compare-overlay-img').first();
+    const point = await pointerPosition(handle);
     const before = (await trail.boundingBox())!;
-    await handle.scrollIntoViewIfNeeded();
-    const grip = (await handle.boundingBox())!;
-    // Near the handle's top, not its centre. The handle is `inset-y-0`, so it
-    // is as tall as the overlay box -- on a portrait pair that centre is below
-    // the fold, and `page.mouse` does not scroll the way `click()` does, so the
-    // press lands on nothing and neither drag starts.
-    const x = grip.x + grip.width / 2;
-    const y = grip.y + Math.min(grip.height / 2, 60);
 
-    await page.mouse.move(x, y);
+    await page.mouse.move(point.x, point.y);
     await page.mouse.down();
-    await page.mouse.move(x + 80, y, { steps: 8 });
+    await page.mouse.move(point.x + 80, point.y, { steps: 8 });
     await page.mouse.up();
 
     const after = (await trail.boundingBox())!;

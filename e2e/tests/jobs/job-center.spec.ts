@@ -746,6 +746,19 @@ test.describe('Job Center', () => {
     }
     // This test's own backlog, not whatever earlier tests left behind.
     for (const id of submitted) await waitForJobState(request, id, 'succeeded');
+    // A committed outcome is published to the stream on a later tick. This is
+    // history before the page opens, so its announcements must already be
+    // behind the stream's starting cursor when we test the Dismiss notice.
+    await expect.poll(async () => {
+      const published = await Promise.all(submitted.map(async id => {
+        const response = await request.get(`/v1/jobs/${encodeURIComponent(id)}/events`);
+        expect(response.ok(), await response.text()).toBe(true);
+        const { events } = await response.json();
+        return events.some((event: { type: string; deliverySequence?: number }) =>
+          event.type === 'succeeded' && typeof event.deliverySequence === 'number');
+      }));
+      return published.every(Boolean);
+    }, { timeout: 20_000, message: 'fixture outcomes must be published before opening the panel' }).toBe(true);
     const undismissedFinished = async () => {
       const response = await request.get('/v1/jobs?state=succeeded&state=cancelled&dismissed=false&limit=200');
       expect(response.ok()).toBe(true);
