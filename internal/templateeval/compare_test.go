@@ -104,11 +104,12 @@ func TestAggregateOnlyDropsDraftsAndRawContent(t *testing.T) {
 	r := result("a", KindPair, "group", true)
 	r.Draft = &Draft{Content: "secret draft"}
 	r.Previews = map[string]Preview{"CustomHeader": {HTML: "x"}}
+	r.Probes = []QueryProbe{{Query: "secret query", Snippet: "secret snippet"}}
 	r.Details = &Details{ProviderError: "x"}
 	r.Calls = []Call{{Content: "raw", Usage: Usage{Prompt: 3}}}
 	report := reportWith(r)
 	got := AggregateOnly(report)
-	if got.Results[0].Draft != nil || got.Results[0].Previews != nil || got.Results[0].Details != nil || got.Results[0].Calls[0].Content != "" {
+	if got.Results[0].Draft != nil || got.Results[0].Previews != nil || got.Results[0].Probes != nil || got.Results[0].Details != nil || got.Results[0].Calls[0].Content != "" {
 		t.Fatalf("aggregate kept per-run detail: %#v", got.Results[0])
 	}
 	if got.Results[0].Calls[0].Usage.Prompt != 3 || report.Results[0].Calls[0].Content != "raw" || report.Results[0].Draft == nil {
@@ -261,6 +262,7 @@ func TestAggregateKeepsNoFreeText(t *testing.T) {
 		Draft:    &Draft{Error: secret, Content: secret, Explanation: secret, Slots: map[string]string{secret: secret}, Issues: []shortcodes.LintIssue{{Message: secret}}},
 		Previews: map[string]Preview{secret: {HTML: secret, Error: secret, Issues: []shortcodes.LintIssue{{Message: secret}}}},
 		Calls:    []Call{{Model: "deepseek-flash", ErrorClass: ErrorClassHTTPStatus, FinishReason: "stop", Content: secret}},
+		Probes:   []QueryProbe{{Slot: secret, Query: secret, Snippet: secret}},
 	}
 	report := reportWith(r)
 	report.Commit, report.Model, report.Timeout, report.StartedAt, report.FinishedAt = "abc123+dirty", "deepseek-flash", "20s", "2026-10-24T00:00:00Z", "2026-10-24T00:01:00Z"
@@ -311,7 +313,7 @@ func TestAggregateKeepsNoFreeText(t *testing.T) {
 		"renderedExecutableMarkup": func(v string) bool { return flags[v] },
 		"key":                      func(v string) bool { return v == "all" || strings.Count(v, "/") <= 1 },
 		// Config the harness sets, never text from upstream.
-		"corpusVersion": func(string) bool { return true }, "fixtureChecksum": func(string) bool { return true },
+		"corpusVersion": func(string) bool { return true }, "scoringEnvironment": func(string) bool { return true }, "fixtureChecksum": func(string) bool { return true },
 		"commit": func(string) bool { return true }, "startedAt": func(string) bool { return true },
 		"finishedAt": func(string) bool { return true }, "model": func(string) bool { return true }, "timeout": func(string) bool { return true },
 	}

@@ -26,13 +26,29 @@ The recorder that captures token usage never stores request headers or upstream 
 ## Compare
 
 ```bash
-TEMPLATE_EVAL_BASELINE=benchmarks/template-generation/baselines/master-2026-10-24.json \
-TEMPLATE_EVAL_CANDIDATE=benchmarks/template-generation/results/eval-....aggregate.json \
+TEMPLATE_EVAL_BASELINE=benchmarks/template-generation/baselines/master-replayed-2026-10-25.json \
+TEMPLATE_EVAL_CANDIDATE=benchmarks/template-generation/baselines/final-replayed-2026-10-25.json \
 go test --tags 'json1 fts5 templateeval' ./server/api_tests \
   -run TestTemplateGenerationEvalCompare -count=1 -v
 ```
 
-This makes no network calls. It refuses two reports whose report schema version, `CorpusVersion` or `FixtureChecksum` differ, or that hold a different number of results for any case. It also refuses a report whose stored summary does not match its own results, or whose stored verdict for a run disagrees with that run's checks, and computes every delta from summaries rebuilt from the results. Otherwise it prints the deltas per group and fails when a kind's pass rate drops by more than 10 percentage points.
+This makes no network calls. It refuses two reports whose report schema version, scorer version, re-scoring provenance, `CorpusVersion` or `FixtureChecksum` differ, or that hold a different number of results for any case. It also refuses a report whose stored summary does not match its own results, or whose stored verdict for a run disagrees with that run's checks, and computes every delta from summaries rebuilt from the results. Otherwise it prints the deltas per group and fails when a kind's pass rate drops by more than 10 percentage points.
+
+## Re-score saved reports
+
+When scoring rules change, replay both full reports against fresh copies of the same seeded fixtures, without generation or provider calls:
+
+```bash
+TEMPLATE_EVAL_REPLAY=benchmarks/template-generation/results/baseline-2026-10-24.json \
+TEMPLATE_EVAL_REPLAY_OUT=benchmarks/template-generation/results/baseline-replayed.json \
+go test --tags 'json1 fts5 templateeval' ./server/api_tests -run '^TestTemplateGenerationEvalReplay$' -count=1 -v
+```
+
+Paths are relative to the repository root. This writes the full replayed report and its `.aggregate.json` copy. Repeat it for the candidate, then compare the aggregates. The replay regenerates previews and standalone query probes locally, then runs the current scorer with the same SQLite/FTS environment on both reports. It refuses a different corpus or fixture, an unknown case, or a missing raw draft. The source generation's replies, token counts and timing remain the original measurements.
+
+New reports store query probes separately, so they can also be re-scored offline with `TEMPLATE_EVAL_RESCORE=<full report>` and `TEMPLATE_EVAL_RESCORE_OUT=<output>` through `go test --tags 'json1 fts5' ./internal/templateeval -run '^TestRescoreReport$' -count=1 -v`. Offline re-scoring refuses a missing or different source environment fingerprint and any missing or partial query probes. For legacy reports without separate probes, the old error details merge lint and runtime failures and cannot recover their individual verdicts. Use replay for those reports.
+
+Compare requires the same scorer version, replay/re-score provenance and environment fingerprint (shortcode catalogue, MRQL checks enabled, SQL dialect and FTS availability). Send both reports through the same workflow before comparing them.
 
 ## What is measured
 
@@ -40,9 +56,11 @@ Each case is one of four kinds: `pair` (an HTML slot with its CSS companion), `s
 
 Each request is the body the editor sends: `cluster` with the pair's current content for a pair, `slot` with `mode=css` for CustomCSS, `metaschema` with the schema editor's text, and for a bundle every field of the bundle panel's `SLOT_FIELDS` map (`src/components/templateBundle.js`), on every carrier.
 
-A run is truncated when the model stopped at `max_tokens`, or when a slot is at or over the 20,000-byte content cap, measured untrimmed (today the server cuts a bundle slot there without saying so). It is malformed when the reply is not valid JSON although the model stopped on its own, and the wrong shape when the reply is valid JSON that does not decode as the generator decodes it (a field of the wrong type, `explanation` included, or a missing one). All three fail the run and are reported separately.
+A run is truncated when the model stopped at `max_tokens`, or when the server reports a slot over its 20,000-byte content cap. It is malformed when the reply is not valid JSON although the model stopped on its own, and the wrong shape when the reply is valid JSON that does not decode as the generator decodes it (a field of the wrong type, `explanation` included, or a missing one). All three fail the run and are reported separately. A whole-template planning reply is decoded as a design plan, separately from its pair replies. A failed section counts as a failed slot rather than a lint warning, and fails the run even when another section succeeded. A discarded repair does not make the retained draft truncated.
 
 A markup run passes when the request succeeded, was neither truncated nor malformed, every required slot came back non-empty, and the draft has no lint errors, MRQL errors, unknown shortcodes, incomplete pairs, slots that render empty, shortcode text left in the rendered output, or preview errors. A pair requires its HTML slot; a bundle requires the slots in its case's `ExpectSlots` and may leave the rest empty. An unknown shortcode is a bracket that reads like a shortcode to the tokenizer (a name, then nothing or `key=value` attributes) with a name the catalogue lacks; in CSS a bare `[name]` is a selector and is not counted. An MRQL error is a query that lint rejects or that fails when it runs. Each inline query (`[mrql query=]`, and the `mrql`, `mrql2`, … sources of `[conditional]` and `[elseif]`) is also rendered on its own, with its params, limit, buckets and scope read through the production shortcode parser and written back so the parser yields the same values, so a runtime failure is tied to its query text. Lint verdicts for MRQL come from linting each slot on its own with the server's validator, so an issue is never credited to the wrong slot. A query is counted once per slot however many of the two report it; a runtime error that no single query reproduces counts once for its slot. Preview errors are the other render failures and the preview's issues that are not already counted.
+
+Known parser limit: an `[elseif]` divider containing `]` inside a quoted attribute is cut at that bracket by the runtime's divider scanner. Query attribution can count its lint and runtime errors separately. This remains a runtime/parser follow-up; it does not affect the corpus used for these comparisons.
 
 A metaschema run passes when the schema compiles (with the server's own `ValidateMetaSchema`), has at least one property, declares every expected field, and every fixture member's Meta validates against it.
 

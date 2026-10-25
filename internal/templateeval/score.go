@@ -1,8 +1,10 @@
 package templateeval
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"regexp"
 	"sort"
@@ -29,6 +31,7 @@ type Draft struct {
 	Valid       bool                   `json:"valid"`
 	Issues      []shortcodes.LintIssue `json:"issues,omitempty"`
 	Repair      *Repair                `json:"repair,omitempty"`
+	FailedSlots []string               `json:"failedSlots,omitempty"`
 }
 
 // Repair mirrors application_context.TemplateRepair: the result's report of
@@ -84,6 +87,7 @@ type Checks struct {
 	FixtureMetaInvalid  int      `json:"fixtureMetaInvalid,omitempty"`
 	MissingExpectFields []string `json:"missingExpectFields,omitempty"`
 
+	FailedSlots     int     `json:"failedSlots,omitempty"`
 	IncompletePairs int     `json:"incompletePairs"`
 	RequestedSlots  int     `json:"requestedSlots,omitempty"`
 	ReturnedSlots   int     `json:"returnedSlots,omitempty"`
@@ -125,7 +129,7 @@ func (c Checks) Pass() bool {
 	if c.Kind == KindMetaSchema {
 		return !c.SchemaCompileFailed && c.FixtureMetaInvalid == 0 && c.SchemaProperties > 0 && len(c.MissingExpectFields) == 0
 	}
-	return len(c.MissingSlots) == 0 && c.LintErrors == 0 && c.MRQLErrors == 0 && c.UnknownShortcodeCount == 0 && c.IncompletePairs == 0 &&
+	return c.FailedSlots == 0 && len(c.MissingSlots) == 0 && c.LintErrors == 0 && c.MRQLErrors == 0 && c.UnknownShortcodeCount == 0 && c.IncompletePairs == 0 &&
 		len(c.RenderEmptySlots) == 0 && len(c.LeftoverShortcodeText) == 0 && c.PreviewErrors == 0
 }
 
@@ -139,10 +143,11 @@ const (
 	classBundleDegraded
 	classTruncated
 	classOversize
+	classFailedSlot
 )
 
 func (c issueClass) String() string {
-	return [...]string{"other", "unknown-attribute", "mrql", "unknown-shortcode", "bundle-degraded", "truncated", "oversize"}[c]
+	return [...]string{"other", "unknown-attribute", "mrql", "unknown-shortcode", "bundle-degraded", "truncated", "oversize", "failed-slot"}[c]
 }
 
 // classifyIssue sorts an issue by its message prefix. The prefixes come from
@@ -152,6 +157,9 @@ func (c issueClass) String() string {
 // TestBundleDegradeMessageStaysClassified and
 // TestTruncationAndOversizeIssuesStayClassified).
 func classifyIssue(issue shortcodes.LintIssue) issueClass {
+	if slot, _, ok := strings.Cut(issue.Message, " could not be generated and was left unchanged: "); ok && containsString(browserBundleFields, slot) {
+		return classFailedSlot
+	}
 	switch {
 	case strings.HasPrefix(issue.Message, "MRQL error in "):
 		return classMRQL
@@ -177,13 +185,27 @@ type Env struct {
 	// (server/api_handlers/template_generation_api_handlers.go). It must change
 	// whenever the server's does.
 	ValidateMRQL func(query string, opts shortcodes.MRQLCheckOptions) error
+	MRQLDialect  string
+	MRQLFTS      bool
+}
+
+// Fingerprint identifies the catalogue and query capabilities used to score a
+// report. Validator implementation changes require a ScorerVersion bump.
+func (e Env) Fingerprint() string {
+	raw, _ := json.Marshal(struct {
+		Known      shortcodes.KnownShortcodes
+		MRQLChecks bool
+		Dialect    string
+		FTS        bool
+	}{e.Known, e.ValidateMRQL != nil, e.MRQLDialect, e.MRQLFTS})
+	return fmt.Sprintf("%x", sha256.Sum256(raw))
 }
 
 // Score measures one run. calls are the provider calls the recorder saw for
 // it, previews are keyed by HTML slot name, probes are the draft's queries
 // each rendered on its own (QueryProbes), and env is what the server lints with.
 func Score(c Case, d Draft, calls []Call, previews map[string]Preview, probes []QueryProbe, env Env) (Checks, Details) {
-	checks := Checks{Kind: c.Kind, Adversarial: c.Adversarial, HTTPStatus: d.Status}
+	checks := Checks{Kind: c.Kind, Adversarial: c.Adversarial, HTTPStatus: d.Status, FailedSlots: len(d.FailedSlots)}
 	var details Details
 	if d.Status != 200 {
 		details.ProviderError = d.Error
@@ -200,7 +222,8 @@ func Score(c Case, d Draft, calls []Call, previews map[string]Preview, probes []
 	// A repair reply that was not applied is discarded, so the draft that stands
 	// is the first call's; an applied one is the last call's.
 	judged := calls
-	if len(calls) > 1 && checks.RepairAttempted {
+	fanout := len(calls) > 0 && isPlanCall(c, calls[0], len(calls) > 1)
+	if !fanout && len(calls) > 1 && checks.RepairAttempted {
 		if checks.Repaired {
 			judged = calls[len(calls)-1:]
 		} else {
@@ -209,7 +232,7 @@ func Score(c Case, d Draft, calls []Call, previews map[string]Preview, probes []
 	}
 	lengthStop := false
 	for _, call := range judged {
-		if call.FinishReason == "length" {
+		if call.FinishReason == "length" && (!fanout || (d.Status != 200 && !call.Repair)) {
 			lengthStop = true
 		}
 	}
@@ -218,6 +241,12 @@ func Score(c Case, d Draft, calls []Call, previews map[string]Preview, probes []
 	degraded := false
 	for _, issue := range d.Issues {
 		switch classifyIssue(issue) {
+		case classFailedSlot:
+			_, reason, _ := strings.Cut(issue.Message, " could not be generated and was left unchanged: ")
+			if class := classifyIssue(shortcodes.LintIssue{Message: reason}); class == classTruncated || class == classOversize {
+				checks.Truncated = true
+			}
+			continue
 		case classBundleDegraded:
 			// Emitted for any bundle reply that does not decode, cut off or not.
 			degraded = true
@@ -241,7 +270,7 @@ func Score(c Case, d Draft, calls []Call, previews map[string]Preview, probes []
 		}
 	}
 	if d.Status != 200 || degraded {
-		scoreRawReplies(c, calls, lengthStop, &checks)
+		scoreRawReplies(c, judged, &checks)
 		if degraded && !lengthStop && !checks.Malformed && !checks.WrongShape {
 			// No reply to read: the degrade message is all there is.
 			checks.Malformed = true
@@ -384,6 +413,13 @@ func scoreMRQL(texts map[string]string, requested []string, previews map[string]
 func lintedQuery(text string, issue shortcodes.LintIssue) string {
 	attrName, _, ok := strings.Cut(strings.TrimPrefix(issue.Message, "MRQL error in "), ":")
 	if ok {
+		if attr, elseif := strings.CutPrefix(attrName, "[elseif] "); elseif && issue.Start >= 0 && issue.End <= len(text) {
+			if guard := shortcodes.Parse("[conditional " + text[issue.Start:issue.End]); len(guard) == 1 {
+				if q, found := guard[0].Attrs[attr]; found {
+					return q
+				}
+			}
+		}
 		for _, sc := range shortcodes.Parse(text) {
 			if sc.Start <= issue.Start && issue.Start < sc.End {
 				if q, found := sc.Attrs[attrName]; found {
@@ -408,10 +444,10 @@ func sortedKeysOf[V any](m map[string]V) []string {
 // rendered on its own so a runtime failure can be tied to its text. The harness
 // renders Snippet and sets Failed.
 type QueryProbe struct {
-	Slot    string
-	Query   string
-	Snippet string
-	Failed  bool
+	Slot    string `json:"slot"`
+	Query   string `json:"query"`
+	Snippet string `json:"snippet"`
+	Failed  bool   `json:"failed"`
 }
 
 var numberedSource = regexp.MustCompile(`^mrql([0-9]*)$`)
@@ -531,16 +567,29 @@ func RenderShowsMRQLError(rendered string) bool {
 // scoreRawReplies reads the model's replies behind a failed or degraded
 // request, mirroring how the generator decodes them: a pair or bundle reply is
 // {slots, explanation}, anything else {content, explanation}.
-func scoreRawReplies(c Case, calls []Call, lengthStop bool, checks *Checks) {
-	for _, call := range calls {
+func scoreRawReplies(c Case, calls []Call, checks *Checks) {
+	for i, call := range calls {
 		if call.ErrorClass != "" || call.Content == "" {
 			continue
 		}
 		raw := []byte(strings.TrimSpace(call.Content))
 		if !json.Valid(raw) {
 			// A reply cut by max_tokens is truncated, not malformed.
-			if !lengthStop {
+			if call.FinishReason != "length" {
 				checks.Malformed = true
+			}
+			continue
+		}
+		if i == 0 && isPlanCall(c, call, len(calls) > 1) {
+			var plan struct {
+				ClassPrefix, Palette, Layout, SharedCSSAdditions, Explanation string
+				Sections                                                      map[string]struct {
+					Fill   bool
+					Intent string
+				}
+			}
+			if json.Unmarshal(raw, &plan) != nil || plan.Sections == nil {
+				checks.WrongShape = true
 			}
 			continue
 		}
@@ -574,6 +623,26 @@ func scoreRawReplies(c Case, calls []Call, lengthStop bool, checks *Checks) {
 			checks.WrongShape = true
 		}
 	}
+}
+
+// Older recordings did not label calls. Only the initial reply of a multi-call
+// bundle can be a design plan; the sections/classPrefix keys distinguish it from
+// the single-call bundle followed by its repair.
+func isPlanCall(c Case, call Call, multiple bool) bool {
+	if call.Plan {
+		return true
+	}
+	if c.Kind != KindBundle || !multiple {
+		return false
+	}
+	var shape map[string]json.RawMessage
+	if json.Unmarshal([]byte(call.Content), &shape) != nil {
+		return false
+	}
+	_, sections := shape["sections"]
+	_, prefix := shape["classPrefix"]
+	_, slots := shape["slots"]
+	return !slots && (sections || prefix)
 }
 
 func scoreMetaSchema(c Case, d Draft, checks *Checks, details *Details) {

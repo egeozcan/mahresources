@@ -20,10 +20,10 @@ const ReportSchemaVersion = 3
 // ScorerVersion is the version of the scoring rules that produced a report's
 // checks. Bump it whenever Score can judge the same draft differently. A report
 // without the field predates it and was scored by version 1.
-const ScorerVersion = 2
+const ScorerVersion = 3
 
-// RescoredUnknownShortcodes names the check a re-scored report re-derived.
-const RescoredUnknownShortcodes = "unknownShortcodes"
+// RescoredScore identifies checks recomputed from a full saved report.
+const RescoredScore = "score"
 
 // RegressionThresholdPP is the pass-rate drop, in percentage points, beyond
 // which Compare reports a kind as regressed.
@@ -40,10 +40,12 @@ type RunReport struct {
 	Model           string `json:"model,omitempty"`
 	Timeout         string `json:"timeout,omitempty"`
 	Repeats         int    `json:"repeats"`
+	// ScoringEnvironment identifies the shortcode catalogue and MRQL dialect,
+	// FTS availability and validator enabled state used by the scorer.
+	ScoringEnvironment string `json:"scoringEnvironment,omitempty"`
 	// ScorerVersion is the scoring rules' version (0 reads as 1). Rescored lists
-	// the checks that were re-derived from stored drafts rather than measured by
-	// Score during the run; the rest of such a report was scored at its original
-	// version.
+	// checks recomputed from saved evidence rather than measured during the run.
+	// Compare requires the same provenance on both reports.
 	ScorerVersion int          `json:"scorerVersion,omitempty"`
 	Rescored      []string     `json:"rescored,omitempty"`
 	Results       []CaseResult `json:"results"`
@@ -66,6 +68,7 @@ type CaseResult struct {
 	Details         *Details           `json:"details,omitempty"`
 	Draft           *Draft             `json:"draft,omitempty"`
 	Previews        map[string]Preview `json:"previews,omitempty"`
+	Probes          []QueryProbe       `json:"probes,omitempty"`
 }
 
 // Summary holds one GroupSummary for the whole run ("all"), per kind ("pair")
@@ -264,6 +267,9 @@ func Compare(base, candidate RunReport) Comparison {
 	if b, c := base.EffectiveScorerVersion(), candidate.EffectiveScorerVersion(); b != c {
 		fail("scorer versions differ: %d vs %d", b, c)
 	}
+	if base.ScoringEnvironment != candidate.ScoringEnvironment {
+		fail("scoring environments differ: %s vs %s", base.ScoringEnvironment, candidate.ScoringEnvironment)
+	}
 	if !reflect.DeepEqual(base.Rescored, candidate.Rescored) {
 		fail("the reports mix measured and re-scored checks: baseline re-scored %v, candidate re-scored %v", base.Rescored, candidate.Rescored)
 	}
@@ -370,7 +376,7 @@ func AggregateOnly(report RunReport) RunReport {
 	report.Results = append([]CaseResult(nil), report.Results...)
 	for i := range report.Results {
 		r := &report.Results[i]
-		r.Details, r.Draft, r.Previews = nil, nil, nil
+		r.Details, r.Draft, r.Previews, r.Probes = nil, nil, nil, nil
 		r.Calls = append([]Call(nil), r.Calls...)
 		for j := range r.Calls {
 			r.Calls[j].Content = ""

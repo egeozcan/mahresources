@@ -11,6 +11,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"mahresources/application_context"
+	"mahresources/shortcodes"
 )
 
 func TestRecorderRecordsUsageAndNeverAuthorization(t *testing.T) {
@@ -235,5 +238,79 @@ func TestRedactReportCoversEveryStringField(t *testing.T) {
 	}
 	if report.Results[0].Draft.Error != echoedSecret {
 		t.Fatal("RedactReport mutated its input")
+	}
+}
+
+func TestRecorderRecognizesTheProductionPlanningCall(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var sent struct {
+			Messages []struct{ Role, Content string }
+		}
+		if err := json.NewDecoder(r.Body).Decode(&sent); err != nil {
+			t.Error(err)
+			w.WriteHeader(400)
+			return
+		}
+		req := application_context.TemplateDraftRequest{}
+		for _, message := range sent.Messages {
+			if message.Role == "user" {
+				req.User = message.Content
+			}
+		}
+		reply, err := (planAndPairProvider{}).GenerateDraft(r.Context(), req)
+		if err != nil {
+			t.Error(err)
+			w.WriteHeader(500)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": reply.Content}, "finish_reason": "stop"}}})
+	}))
+	defer server.Close()
+	recorder := NewRecorder(nil)
+	provider := application_context.NewDeepSeekTemplateDraftProvider(server.URL, "k", "m", &http.Client{Transport: recorder})
+	generator := application_context.NewTemplateGenerator(provider, application_context.TemplateGenerationConfig{APIKey: "k", Timeout: time.Second})
+	_, err := disclosedGenerate(generator, application_context.TemplateGenerationInput{Target: application_context.TemplateTargetBundle, EntityType: "group", SlotsSelected: true, BundleSlots: []string{"CustomHeader", "CustomHeaderCSS", "CustomSidebar", "CustomSidebarCSS"}}, "a template")
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := recorder.Take()
+	if len(calls) != 3 || !calls[0].Plan || calls[1].Plan || calls[2].Plan {
+		t.Fatalf("planning call not distinguished from pairs: %#v", calls)
+	}
+}
+
+func TestRecorderRecognizesTheProductionRepairCall(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var sent struct {
+			Messages []struct{ Role, Content string }
+		}
+		if err := json.NewDecoder(r.Body).Decode(&sent); err != nil {
+			t.Error(err)
+			w.WriteHeader(400)
+			return
+		}
+		content := `.x{color:red}[meta]`
+		for _, message := range sent.Messages {
+			if strings.Contains(message.Content, "\nRepair request:") {
+				content = `.x{color:green}`
+			}
+		}
+		draft, _ := json.Marshal(map[string]string{"content": content, "explanation": "e"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": string(draft)}, "finish_reason": "stop"}}})
+	}))
+	defer server.Close()
+	recorder := NewRecorder(nil)
+	provider := application_context.NewDeepSeekTemplateDraftProvider(server.URL, "k", "m", &http.Client{Transport: recorder})
+	generator := application_context.NewTemplateGenerator(provider, application_context.TemplateGenerationConfig{APIKey: "k", Timeout: 10 * time.Second})
+	result, err := disclosedGenerate(generator, application_context.TemplateGenerationInput{Target: application_context.TemplateTargetSlot, EntityType: "group", Slot: "CustomCSS", Mode: "css", Known: shortcodes.KnownFromBuiltins()}, "some CSS")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Repair == nil || !result.Repair.Applied {
+		t.Fatalf("control did not apply the repair: %#v", result.Repair)
+	}
+	calls := recorder.Take()
+	if len(calls) != 2 || calls[0].Repair || !calls[1].Repair {
+		t.Fatalf("repair not distinguished from original: %#v", calls)
 	}
 }

@@ -49,6 +49,8 @@ var knownFinishReasons = map[string]bool{"": true, "stop": true, "length": true,
 type Call struct {
 	Model        string `json:"model"`
 	Thinking     bool   `json:"thinking"`
+	Plan         bool   `json:"plan,omitempty"`
+	Repair       bool   `json:"repair,omitempty"`
 	MaxTokens    int    `json:"maxTokens"`
 	Status       int    `json:"status"`
 	ErrorClass   string `json:"errorClass,omitempty"`
@@ -87,14 +89,23 @@ func (r *Recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		req.Body = io.NopCloser(bytes.NewReader(body))
 		var sent struct {
-			Model     string `json:"model"`
-			MaxTokens int    `json:"max_tokens"`
+			Model     string                           `json:"model"`
+			MaxTokens int                              `json:"max_tokens"`
+			Messages  []struct{ Role, Content string } `json:"messages"`
 			Thinking  struct {
 				Type string `json:"type"`
 			} `json:"thinking"`
 		}
 		if json.Unmarshal(body, &sent) == nil {
 			call.Model, call.MaxTokens, call.Thinking = sent.Model, sent.MaxTokens, sent.Thinking.Type == "enabled"
+			for _, message := range sent.Messages {
+				if message.Role == "user" {
+					call.Repair = strings.Contains(message.Content, "\nRepair request: your previous reply could not be used as it stands.")
+				}
+				if message.Role == "user" && strings.Contains(message.Content, "\nTask: plan the design of a whole template.") {
+					call.Plan = true
+				}
+			}
 		}
 	}
 

@@ -2,58 +2,65 @@ package templateeval
 
 import (
 	"fmt"
-	"strings"
+	"sort"
 )
 
-// RescoreUnknownShortcodes re-reads each stored draft with the current
-// unknown-shortcode scan and recomputes what depends on it: the count, the
-// names, Pass and the summary. It calls no provider. Everything else in a
-// result is kept as recorded: the per-query runtime probes are not stored, so
-// lint, MRQL and preview checks cannot be re-derived from a report. The result
-// is stamped ScorerVersion with Rescored naming the one re-derived check, and
-// Compare refuses it against a report scored any other way.
-//
-// It refuses a report in which any scorable result lacks its draft, since a
-// partial re-score would mix two scorers in one summary.
-func RescoreUnknownShortcodes(report RunReport, env Env) (RunReport, error) {
+// RescoreReport runs the current scorer over stored drafts, replies, previews
+// and query probes. It calls no provider or renderer. Missing query probes
+// cannot be recovered from the old merged lint/runtime error details: use the
+// eval replay command to render a legacy report against the seeded fixtures.
+// Every result must have its raw draft, so aggregate or partial reports cannot
+// silently mix old and new checks.
+func RescoreReport(report RunReport, env Env) (RunReport, error) {
 	cases := map[string]Case{}
 	for _, c := range Corpus() {
 		cases[c.ID] = c
 	}
+	if report.CorpusVersion != CorpusVersion || report.FixtureChecksum != FixtureChecksum() {
+		return report, fmt.Errorf("cannot re-score a different corpus or fixture")
+	}
+	if report.ScoringEnvironment == "" || report.ScoringEnvironment != env.Fingerprint() {
+		return report, fmt.Errorf("cannot re-score stored runtime evidence from a missing or different scoring environment; use TestTemplateGenerationEvalReplay")
+	}
 	for _, r := range report.Results {
-		if r.Kind == KindMetaSchema || r.Checks.HTTPStatus != 200 {
-			continue
-		}
 		if _, ok := cases[r.Case]; !ok {
 			return report, fmt.Errorf("cannot re-score %s #%d: case is not in the corpus", r.Case, r.Repeat)
 		}
 		if r.Draft == nil {
 			return report, fmt.Errorf("cannot re-score %s #%d: the report holds no draft for it", r.Case, r.Repeat)
 		}
+		if r.Draft.Status == 200 {
+			type probeKey struct{ slot, query, snippet string }
+			missing := map[probeKey]int{}
+			for slot, text := range draftTexts(cases[r.Case], *r.Draft) {
+				for _, probe := range QueryProbes(slot, text) {
+					missing[probeKey{probe.Slot, probe.Query, probe.Snippet}]++
+				}
+			}
+			for _, probe := range r.Probes {
+				missing[probeKey{probe.Slot, probe.Query, probe.Snippet}]--
+			}
+			for _, count := range missing {
+				if count != 0 {
+					return report, fmt.Errorf("cannot re-score %s #%d: stored query probes do not match the draft; use TestTemplateGenerationEvalReplay", r.Case, r.Repeat)
+				}
+			}
+		}
 	}
 	report.Results = append([]CaseResult(nil), report.Results...)
 	for i := range report.Results {
 		r := &report.Results[i]
-		if r.Kind == KindMetaSchema || r.Checks.HTTPStatus != 200 {
-			continue
-		}
-		unknown := map[string]bool{}
-		for slot, text := range draftTexts(cases[r.Case], *r.Draft) {
-			for _, name := range unknownShortcodeNames(text, env.Known, strings.HasSuffix(slot, "CSS")) {
-				unknown[name] = true
-			}
-		}
-		details := Details{}
-		if r.Details != nil {
-			details = *r.Details
-		}
-		details.UnknownShortcodes = sortedKeys(unknown)
-		r.Details = &details
-		r.Checks.UnknownShortcodeCount = len(details.UnknownShortcodes)
-		r.Pass = r.Checks.Pass()
+
+		checks, details := Score(cases[r.Case], *r.Draft, r.Calls, r.Previews, r.Probes, env)
+		r.Checks, r.Details, r.Pass = checks, &details, checks.Pass()
 	}
 	report.Summary = Summarize(report.Results)
 	report.ScorerVersion = ScorerVersion
-	report.Rescored = []string{RescoredUnknownShortcodes}
+	report.Rescored = append([]string(nil), report.Rescored...)
+	if !containsString(report.Rescored, RescoredScore) {
+		report.Rescored = append(report.Rescored, RescoredScore)
+	}
+	sort.Strings(report.Rescored)
+	report.ScoringEnvironment = env.Fingerprint()
 	return report, nil
 }

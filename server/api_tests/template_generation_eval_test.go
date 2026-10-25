@@ -91,24 +91,19 @@ func TestTemplateGenerationEval(t *testing.T) {
 	// SetupTestEnv runs no plugin manager, so the server lints against the
 	// built-ins alone, and so does the scorer. ValidateMRQL is the generate
 	// handler's seam; keep it in step when the handler's changes.
-	mrqlEnv := tc.AppCtx.MRQLStaticEnv()
-	env := templateeval.Env{
-		Known: shortcodes.KnownFromBuiltins(),
-		ValidateMRQL: func(q string, opts shortcodes.MRQLCheckOptions) error {
-			return application_context.CheckTemplateMRQL(q, opts, mrqlEnv)
-		},
-	}
+	env := evalScoringEnv(tc)
 
 	report := templateeval.RunReport{
-		SchemaVersion:   templateeval.ReportSchemaVersion,
-		CorpusVersion:   templateeval.CorpusVersion,
-		FixtureChecksum: templateeval.FixtureChecksum(),
-		Commit:          evalCommit(repoRoot),
-		StartedAt:       time.Now().UTC().Format(time.RFC3339),
-		Model:           model,
-		Timeout:         timeout.String(),
-		Repeats:         repeats,
-		ScorerVersion:   templateeval.ScorerVersion,
+		SchemaVersion:      templateeval.ReportSchemaVersion,
+		CorpusVersion:      templateeval.CorpusVersion,
+		FixtureChecksum:    templateeval.FixtureChecksum(),
+		Commit:             evalCommit(repoRoot),
+		StartedAt:          time.Now().UTC().Format(time.RFC3339),
+		Model:              model,
+		Timeout:            timeout.String(),
+		Repeats:            repeats,
+		ScorerVersion:      templateeval.ScorerVersion,
+		ScoringEnvironment: env.Fingerprint(),
 	}
 	for _, c := range cases {
 		fixture, _ := templateeval.FixtureForCase(c)
@@ -125,7 +120,7 @@ func TestTemplateGenerationEval(t *testing.T) {
 				Case: c.ID, Kind: c.Kind, Carrier: c.Carrier, Repeat: repeat,
 				DurationMS: time.Since(start).Milliseconds(), DisclosureBytes: disclosureBytes,
 				Pass: checks.Pass(), Checks: checks, Calls: calls,
-				Details: &details, Draft: &draft, Previews: previews,
+				Details: &details, Draft: &draft, Previews: previews, Probes: probes,
 			}
 			report.Results = append(report.Results, result)
 			t.Logf("%s #%d: pass=%t status=%d calls=%d %dms", c.ID, repeat, result.Pass, draft.Status, len(calls), result.DurationMS)
@@ -147,6 +142,87 @@ func TestTemplateGenerationEval(t *testing.T) {
 	t.Logf("report: %s\naggregate: %s\n%s", out, aggregate, templateeval.FormatSummary(report.Summary))
 }
 
+// TestTemplateGenerationEvalReplay scores saved drafts against fresh copies of
+// the corpus fixtures. It makes no generation/provider call, and recreates the
+// runtime query probes older reports did not store separately from lint errors.
+func TestTemplateGenerationEvalReplay(t *testing.T) {
+	path := os.Getenv("TEMPLATE_EVAL_REPLAY")
+	if path == "" {
+		t.Skip("set TEMPLATE_EVAL_REPLAY to replay a full saved report")
+	}
+	root, err := templateeval.ModuleRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path = templateeval.ResolveOutPath(path, root, time.Now())
+	report, err := templateeval.ReadReport(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.CorpusVersion != templateeval.CorpusVersion || report.FixtureChecksum != templateeval.FixtureChecksum() {
+		t.Fatal("the saved report uses a different corpus or fixture")
+	}
+	cases := map[string]templateeval.Case{}
+	for _, c := range templateeval.Corpus() {
+		cases[c.ID] = c
+	}
+	for _, r := range report.Results {
+		if _, ok := cases[r.Case]; !ok || r.Draft == nil {
+			t.Fatalf("%s #%d lacks a corpus case or raw draft", r.Case, r.Repeat)
+		}
+	}
+	tc := SetupTestEnv(t)
+	seeded := seedTemplateEvalFixtures(t, tc)
+	env := evalScoringEnv(tc)
+	for i := range report.Results {
+		r := &report.Results[i]
+		c := cases[r.Case]
+		fixture, ok := templateeval.FixtureForCase(c)
+		if !ok {
+			t.Fatalf("case %s has no fixture", c.ID)
+		}
+		ids, ok := seeded[fixture.Key]
+		if !ok || ids.category == 0 || ids.sample == 0 {
+			t.Fatalf("case %s lacks seeded category or sample IDs", c.ID)
+		}
+		r.Previews = evalPreviews(tc, c, *r.Draft, ids.category, ids.sample)
+		r.Probes = evalQueryProbes(tc, c, *r.Draft, ids.category, ids.sample)
+		checks, details := templateeval.Score(c, *r.Draft, r.Calls, r.Previews, r.Probes, env)
+		r.Checks, r.Details, r.Pass = checks, &details, checks.Pass()
+	}
+	report.Summary = templateeval.Summarize(report.Results)
+	report.ScorerVersion = templateeval.ScorerVersion
+	report.ScoringEnvironment = env.Fingerprint()
+	report.Rescored = []string{"previews", "queryProbes", templateeval.RescoredScore}
+	out := os.Getenv("TEMPLATE_EVAL_REPLAY_OUT")
+	if out == "" {
+		out = strings.TrimSuffix(path, ".json") + ".replayed.json"
+	}
+	out = templateeval.ResolveOutPath(out, root, time.Now())
+	if err := templateeval.WriteJSONAtomic(out, report); err != nil {
+		t.Fatal(err)
+	}
+	aggregate := strings.TrimSuffix(out, ".json") + ".aggregate.json"
+	if err := templateeval.WriteJSONAtomic(aggregate, templateeval.AggregateOnly(report)); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("replayed report: %s\naggregate: %s\n%s", out, aggregate, templateeval.FormatSummary(report.Summary))
+}
+
+func evalScoringEnv(tc *TestContext) templateeval.Env {
+	mrqlEnv := tc.AppCtx.MRQLStaticEnv()
+	dialect := "sqlite"
+	if mrqlEnv.Postgres {
+		dialect = "postgres"
+	}
+	return templateeval.Env{
+		Known: shortcodes.KnownFromBuiltins(), MRQLDialect: dialect, MRQLFTS: mrqlEnv.FTS,
+		ValidateMRQL: func(q string, opts shortcodes.MRQLCheckOptions) error {
+			return application_context.CheckTemplateMRQL(q, opts, mrqlEnv)
+		},
+	}
+}
+
 // TestTemplateGenerationEvalCompare compares two saved reports. It makes no
 // network calls.
 func TestTemplateGenerationEvalCompare(t *testing.T) {
@@ -157,6 +233,12 @@ func TestTemplateGenerationEvalCompare(t *testing.T) {
 	if basePath == "" || candidatePath == "" {
 		t.Fatal("TEMPLATE_EVAL_BASELINE and TEMPLATE_EVAL_CANDIDATE must both be set")
 	}
+	root, err := templateeval.ModuleRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	basePath = templateeval.ResolveOutPath(basePath, root, time.Now())
+	candidatePath = templateeval.ResolveOutPath(candidatePath, root, time.Now())
 	base, err := templateeval.ReadReport(basePath)
 	if err != nil {
 		t.Fatal(err)

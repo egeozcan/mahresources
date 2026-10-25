@@ -681,6 +681,70 @@ func TestScoreChecks(t *testing.T) {
 			check:    wantFlags("script"),
 			pass:     true,
 		},
+		{
+			name: "a fan-out bundle's plan reply is not a wrong-shaped pair reply", c: expectBundle,
+			draft: Draft{Status: 502, Error: "template generation provider error"},
+			calls: []Call{
+				{FinishReason: "stop", Content: `{"classPrefix":"tpl","palette":"p","layout":"l","sharedCssAdditions":"","sections":{"CustomHeader":{"fill":true,"intent":"i"}},"explanation":"e"}`},
+				{FinishReason: "stop", Content: `{"slots":{"CustomHeader":"<h1>x</h1>","CustomHeaderCSS":""},"explanation":"e"}`},
+				{FinishReason: "stop", Content: `{"slots":{"CustomSidebar":"<p>half</p>"},"explanation":"e"}`},
+			},
+			check: func(t *testing.T, got Checks, details Details) {
+				if got.WrongShape || got.Malformed || got.IncompletePairs != 1 {
+					t.Fatalf("wrongShape=%v malformed=%v incomplete=%d", got.WrongShape, got.Malformed, got.IncompletePairs)
+				}
+			},
+		},
+		{
+			name: "an explicitly recorded plan with pair-shaped output is wrong-shaped", c: expectBundle,
+			draft: Draft{Status: 502},
+			calls: []Call{{Plan: true, FinishReason: "stop", Content: `{"slots":{"CustomHeader":"x","CustomHeaderCSS":""},"explanation":"e"}`}},
+			check: wantShape(false, true),
+		},
+		{
+			name: "one truncated pair does not hide another malformed pair", c: expectBundle,
+			draft: Draft{Status: 502},
+			calls: []Call{{Plan: true, FinishReason: "stop", Content: `{"sections":{}}`}, {FinishReason: "length", Content: `{"slots":`}, {FinishReason: "stop", Content: `broken`}},
+			check: func(t *testing.T, got Checks, _ Details) {
+				if !got.Truncated || !got.Malformed {
+					t.Fatalf("truncated=%v malformed=%v", got.Truncated, got.Malformed)
+				}
+			},
+		},
+		{
+			name: "a plan cut off at its output limit is truncation, not a malformed reply", c: expectBundle,
+			draft: Draft{Status: 502, Error: "template generation provider error"},
+			calls: []Call{{FinishReason: "length", Content: `{"classPrefix":"t`}},
+			check: func(t *testing.T, got Checks, details Details) {
+				if !got.Truncated || got.Malformed {
+					t.Fatalf("truncated=%v malformed=%v", got.Truncated, got.Malformed)
+				}
+			},
+		},
+		{
+			name: "a pair left out because its reply was cut off is truncation, and a failed slot", c: expectBundle,
+			draft: Draft{Status: 200, Target: "bundle", Valid: true, Slots: map[string]string{"CustomHeader": "<h1>x</h1>", "CustomHeaderCSS": ""}, FailedSlots: []string{"CustomSidebar"},
+				Issues: []shortcodes.LintIssue{{Severity: shortcodes.SeverityWarning, Message: "CustomSidebar could not be generated and was left unchanged: The model's reply was cut off at its output limit, so this draft is incomplete. Try a shorter request, or generate fewer slots at once."}}},
+			calls:    []Call{{FinishReason: "stop", Content: `{"classPrefix":"t"}`}, {FinishReason: "stop"}, {FinishReason: "length", Content: `{"slots":{"CustomSidebar":"<p>cut`}},
+			previews: map[string]Preview{"CustomHeader": {Status: 200, HTML: "<h1>x</h1>"}},
+			check: func(t *testing.T, got Checks, details Details) {
+				if !got.Truncated || got.FailedSlots != 1 || got.LintWarnings != 0 || !reflect.DeepEqual(got.MissingSlots, []string{"CustomSidebar"}) {
+					t.Fatalf("truncated=%v failed=%d warnings=%d missing=%v", got.Truncated, got.FailedSlots, got.LintWarnings, got.MissingSlots)
+				}
+			},
+		},
+		{
+			name: "a repair reply cut off in a fan-out does not make a draft that stands truncated", c: bundleCase,
+			draft:    Draft{Status: 200, Target: "bundle", Valid: true, Slots: map[string]string{"CustomHeader": "<h1>x</h1>", "CustomHeaderCSS": ""}, Repair: &Repair{Attempted: true, Reason: "not_better"}},
+			calls:    []Call{{FinishReason: "stop", Content: `{"classPrefix":"t","sections":{}}`}, {FinishReason: "stop"}, {FinishReason: "length"}},
+			previews: map[string]Preview{"CustomHeader": {Status: 200, HTML: "<h1>x</h1>"}},
+			check: func(t *testing.T, got Checks, details Details) {
+				if got.Truncated {
+					t.Fatal("the unapplied repair's cut-off counted as truncation")
+				}
+			},
+			pass: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -970,5 +1034,90 @@ func TestUnknownShortcodeScanReadsSlotTagsWhereTheRuntimeDoes(t *testing.T) {
 				t.Fatalf("unknown = %v, want %v", names, tt.want)
 			}
 		})
+	}
+}
+
+// TestFailedSlotWarningStaysClassified drives the real generator into a
+// fan-out with one failed pair, so a rewording of its warning fails here
+// instead of counting failed slots as lint warnings.
+func TestFailedSlotWarningStaysClassified(t *testing.T) {
+	provider := planAndPairProvider{failSidebar: true}
+	generator := application_context.NewTemplateGenerator(provider, application_context.TemplateGenerationConfig{APIKey: "k", Timeout: time.Second})
+	result, err := disclosedGenerate(generator, application_context.TemplateGenerationInput{
+		Target: application_context.TemplateTargetBundle, EntityType: "group", SlotsSelected: true,
+		BundleSlots: []string{"CustomHeader", "CustomHeaderCSS", "CustomSidebar", "CustomSidebarCSS"},
+	}, "a template")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(result.FailedSlots, []string{"CustomSidebar"}) {
+		t.Fatalf("failedSlots = %v", result.FailedSlots)
+	}
+	found := false
+	for _, issue := range result.Issues {
+		found = found || classifyIssue(issue) == classFailedSlot
+	}
+	if !found {
+		t.Fatalf("no issue classified as a failed slot in %#v", result.Issues)
+	}
+	draft := Draft{Status: 200, Target: result.Target, Slots: result.Slots, Valid: result.Valid, Issues: result.Issues, FailedSlots: result.FailedSlots}
+	got, _ := Score(Case{ID: "t", Kind: KindBundle, Carrier: "group", Prompt: "x"}, draft, nil, map[string]Preview{"CustomHeader": {Status: 200, HTML: "<p>x</p>"}}, nil, testEnv())
+	if got.LintWarnings != 0 || got.FailedSlots != 1 {
+		t.Fatalf("warnings=%d failed=%d", got.LintWarnings, got.FailedSlots)
+	}
+}
+
+// planAndPairProvider answers the planning call and each pair call; the
+// Sidebar pair errors when failSidebar is set.
+type planAndPairProvider struct{ failSidebar bool }
+
+func (planAndPairProvider) Endpoint() string {
+	return application_context.DefaultDeepSeekChatCompletionsURL
+}
+
+func (p planAndPairProvider) GenerateDraft(_ context.Context, req application_context.TemplateDraftRequest) (application_context.TemplateDraftResponse, error) {
+	if strings.Contains(req.User, "Task: plan the design of a whole template") {
+		return application_context.TemplateDraftResponse{Content: `{"classPrefix":"tpl","palette":"p","layout":"l","sharedCssAdditions":"","sections":{"CustomHeader":{"fill":true,"intent":"i"},"CustomSidebar":{"fill":true,"intent":"i"}},"explanation":"e"}`, FinishReason: "stop"}, nil
+	}
+	base := "CustomHeader"
+	if strings.Contains(req.User, "Task: fill the CustomSidebar section") {
+		if p.failSidebar {
+			return application_context.TemplateDraftResponse{}, context.DeadlineExceeded
+		}
+		base = "CustomSidebar"
+	}
+	reply, _ := json.Marshal(map[string]any{"slots": map[string]string{base: "<p>x</p>", base + "CSS": ""}, "explanation": "e"})
+	return application_context.TemplateDraftResponse{Content: string(reply), FinishReason: "stop"}, nil
+}
+
+func TestElseifMRQLFailureCountsOnceAndAnchorsToItsGuard(t *testing.T) {
+	for _, text := range []string{
+		`[conditional path="a" eq="b"]A[elseif mrql="BAD" gt="0"]B[/conditional]`,
+		`[conditional path="a" eq="b"][conditional path="x" eq="y"]A[elseif mrql="BAD" gt="0"]B[/conditional][/conditional]`,
+		`[conditional path="a" eq="b"]A[elseif mrql="type = note" gt="0"]B[elseif path="a" eq="c" mrql2="BAD" gt2="0"]C[/conditional]`,
+	} {
+		env := testEnv()
+		issues := shortcodes.Lint(text, shortcodes.LintOptions{Known: env.Known, ValidateMRQL: env.ValidateMRQL})
+		probes := QueryProbes("CustomHeader", text)
+		for i := range probes {
+			probes[i].Failed = probes[i].Query == "BAD"
+		}
+		checks, details := Score(pairCase(), pairDraft(text, "", issues...), nil, nil, probes, env)
+		if checks.MRQLErrors != 1 || !reflect.DeepEqual(details.MRQLErrors, []string{"CustomHeader: BAD"}) {
+			t.Fatalf("%q: counted %d query errors: %v", text, checks.MRQLErrors, details.MRQLErrors)
+		}
+		for _, issue := range issues {
+			if classifyIssue(issue) == classMRQL && !strings.HasPrefix(text[issue.Start:issue.End], "mrql") {
+				t.Fatalf("%q: MRQL issue is not anchored to the guard: %+v", text, issue)
+			}
+		}
+	}
+}
+
+func TestAllFailedFanOutIgnoresDiscardedRepairTruncation(t *testing.T) {
+	calls := []Call{{Plan: true, FinishReason: "stop", Content: `{"sections":{}}`}, {FinishReason: "stop", Content: `{"slots":{"CustomHeader":"x","CustomHeaderCSS":""},"explanation":"e"}`}, {Repair: true, FinishReason: "length", Content: `{"slots":`}}
+	checks, _ := Score(Case{Kind: KindBundle, Carrier: "group"}, Draft{Status: 502}, calls, nil, nil, testEnv())
+	if checks.Truncated {
+		t.Fatal("a discarded repair counted as a truncated standing draft")
 	}
 }

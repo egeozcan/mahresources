@@ -1,0 +1,4283 @@
+{
+  "schemaVersion": 3,
+  "corpusVersion": "2026-10-24.3",
+  "fixtureChecksum": "431db42659c14e42afa963cf98345012a843909e6d23dad30026743fe21366a5",
+  "commit": "ee5e1f9d3708cfc0cb4602fbc4d4db3deb442f74",
+  "startedAt": "2026-10-24T11:50:47Z",
+  "finishedAt": "2026-10-24T11:58:12Z",
+  "model": "deepseek-flash",
+  "timeout": "20s",
+  "repeats": 3,
+  "scoringEnvironment": "5e0576dbd99cb90bac9212fcda7f5cb7b3bc0c05f18f5958ee3d5249acf129a1",
+  "scorerVersion": 3,
+  "rescored": [
+    "previews",
+    "queryProbes",
+    "score"
+  ],
+  "results": [
+    {
+      "case": "group-header",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 1,
+      "durationMs": 3407,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.6
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5740,
+            "completion": 729,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 5740
+          },
+          "latencyMs": 3395
+        }
+      ]
+    },
+    {
+      "case": "group-header",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 2,
+      "durationMs": 4568,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.6
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5740,
+            "completion": 889,
+            "reasoning": 0,
+            "cacheHit": 5504,
+            "cacheMiss": 236
+          },
+          "latencyMs": 4556
+        }
+      ]
+    },
+    {
+      "case": "group-header",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 3,
+      "durationMs": 3538,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.6
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5740,
+            "completion": 671,
+            "reasoning": 0,
+            "cacheHit": 5504,
+            "cacheMiss": 236
+          },
+          "latencyMs": 3527
+        }
+      ]
+    },
+    {
+      "case": "group-sidebar",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 1,
+      "durationMs": 6419,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.8
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5748,
+            "completion": 1471,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 5748
+          },
+          "latencyMs": 6406
+        }
+      ]
+    },
+    {
+      "case": "group-sidebar",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 2,
+      "durationMs": 5381,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.8
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5748,
+            "completion": 1314,
+            "reasoning": 0,
+            "cacheHit": 5504,
+            "cacheMiss": 244
+          },
+          "latencyMs": 5371
+        }
+      ]
+    },
+    {
+      "case": "group-sidebar",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 3,
+      "durationMs": 5479,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 1
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5748,
+            "completion": 1195,
+            "reasoning": 0,
+            "cacheHit": 5504,
+            "cacheMiss": 244
+          },
+          "latencyMs": 5469
+        }
+      ]
+    },
+    {
+      "case": "group-summary",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 1,
+      "durationMs": 3475,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.6
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5748,
+            "completion": 614,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 5748
+          },
+          "latencyMs": 3460
+        }
+      ]
+    },
+    {
+      "case": "group-summary",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 2,
+      "durationMs": 3193,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.6
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5748,
+            "completion": 527,
+            "reasoning": 0,
+            "cacheHit": 5504,
+            "cacheMiss": 244
+          },
+          "latencyMs": 3181
+        }
+      ]
+    },
+    {
+      "case": "group-summary",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 3,
+      "durationMs": 4057,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 5,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.6
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5748,
+            "completion": 731,
+            "reasoning": 0,
+            "cacheHit": 5504,
+            "cacheMiss": 244
+          },
+          "latencyMs": 4046
+        }
+      ]
+    },
+    {
+      "case": "group-mrqlresult",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 1,
+      "durationMs": 4371,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.4
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5759,
+            "completion": 779,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 5759
+          },
+          "latencyMs": 4357
+        }
+      ]
+    },
+    {
+      "case": "group-mrqlresult",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 2,
+      "durationMs": 4557,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.6
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5759,
+            "completion": 948,
+            "reasoning": 0,
+            "cacheHit": 5504,
+            "cacheMiss": 255
+          },
+          "latencyMs": 4552
+        }
+      ]
+    },
+    {
+      "case": "group-mrqlresult",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 3,
+      "durationMs": 4314,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.4
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5759,
+            "completion": 899,
+            "reasoning": 0,
+            "cacheHit": 5504,
+            "cacheMiss": 255
+          },
+          "latencyMs": 4306
+        }
+      ]
+    },
+    {
+      "case": "group-ownentities",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 1,
+      "durationMs": 5711,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5790,
+            "completion": 1177,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 5790
+          },
+          "latencyMs": 5689
+        }
+      ]
+    },
+    {
+      "case": "group-ownentities",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 2,
+      "durationMs": 7292,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5790,
+            "completion": 1763,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 158
+          },
+          "latencyMs": 7266
+        }
+      ]
+    },
+    {
+      "case": "group-ownentities",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 3,
+      "durationMs": 5232,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5790,
+            "completion": 1163,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 158
+          },
+          "latencyMs": 5212
+        }
+      ]
+    },
+    {
+      "case": "group-listheader",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 1,
+      "durationMs": 4709,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.2
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5793,
+            "completion": 1065,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 5793
+          },
+          "latencyMs": 4704
+        }
+      ]
+    },
+    {
+      "case": "group-listheader",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 2,
+      "durationMs": 3966,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.2
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5793,
+            "completion": 906,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 161
+          },
+          "latencyMs": 3955
+        }
+      ]
+    },
+    {
+      "case": "group-listheader",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 3,
+      "durationMs": 4587,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.2
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5793,
+            "completion": 898,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 161
+          },
+          "latencyMs": 4575
+        }
+      ]
+    },
+    {
+      "case": "group-css",
+      "kind": "slot",
+      "carrier": "group",
+      "repeat": 1,
+      "durationMs": 4593,
+      "pass": true,
+      "checks": {
+        "kind": "slot",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 1,
+        "returnedSlots": 1,
+        "previewErrors": 0,
+        "fieldCoverage": 0.8
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 1600,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5364,
+            "completion": 1020,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 5364
+          },
+          "latencyMs": 4589
+        }
+      ]
+    },
+    {
+      "case": "group-css",
+      "kind": "slot",
+      "carrier": "group",
+      "repeat": 2,
+      "durationMs": 4487,
+      "pass": true,
+      "checks": {
+        "kind": "slot",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 1,
+        "returnedSlots": 1,
+        "previewErrors": 0,
+        "fieldCoverage": 0
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 1600,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5364,
+            "completion": 1076,
+            "reasoning": 0,
+            "cacheHit": 5120,
+            "cacheMiss": 244
+          },
+          "latencyMs": 4486
+        }
+      ]
+    },
+    {
+      "case": "group-css",
+      "kind": "slot",
+      "carrier": "group",
+      "repeat": 3,
+      "durationMs": 4246,
+      "pass": true,
+      "checks": {
+        "kind": "slot",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 1,
+        "returnedSlots": 1,
+        "previewErrors": 0,
+        "fieldCoverage": 0.2
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 1600,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5364,
+            "completion": 803,
+            "reasoning": 0,
+            "cacheHit": 5120,
+            "cacheMiss": 244
+          },
+          "latencyMs": 4244
+        }
+      ]
+    },
+    {
+      "case": "group-metaschema",
+      "kind": "metaschema",
+      "carrier": "group",
+      "repeat": 1,
+      "durationMs": 1958,
+      "pass": true,
+      "checks": {
+        "kind": "metaschema",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "schemaProperties": 7,
+        "incompletePairs": 0,
+        "previewErrors": 0,
+        "fieldCoverage": 1
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 1600,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 450,
+            "completion": 312,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 450
+          },
+          "latencyMs": 1947
+        }
+      ]
+    },
+    {
+      "case": "group-metaschema",
+      "kind": "metaschema",
+      "carrier": "group",
+      "repeat": 2,
+      "durationMs": 1615,
+      "pass": true,
+      "checks": {
+        "kind": "metaschema",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "schemaProperties": 7,
+        "incompletePairs": 0,
+        "previewErrors": 0,
+        "fieldCoverage": 1
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 1600,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 450,
+            "completion": 261,
+            "reasoning": 0,
+            "cacheHit": 256,
+            "cacheMiss": 194
+          },
+          "latencyMs": 1609
+        }
+      ]
+    },
+    {
+      "case": "group-metaschema",
+      "kind": "metaschema",
+      "carrier": "group",
+      "repeat": 3,
+      "durationMs": 1959,
+      "pass": true,
+      "checks": {
+        "kind": "metaschema",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "schemaProperties": 7,
+        "incompletePairs": 0,
+        "previewErrors": 0,
+        "fieldCoverage": 1
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 1600,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 450,
+            "completion": 300,
+            "reasoning": 0,
+            "cacheHit": 256,
+            "cacheMiss": 194
+          },
+          "latencyMs": 1953
+        }
+      ]
+    },
+    {
+      "case": "group-bundle",
+      "kind": "bundle",
+      "carrier": "group",
+      "repeat": 1,
+      "durationMs": 13573,
+      "pass": false,
+      "checks": {
+        "kind": "bundle",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 1,
+        "incompletePairs": 0,
+        "requestedSlots": 23,
+        "returnedSlots": 23,
+        "bundleCoverage": 1,
+        "previewErrors": 1,
+        "fieldCoverage": 1
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 7008,
+            "completion": 3959,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 7008
+          },
+          "latencyMs": 13561
+        }
+      ]
+    },
+    {
+      "case": "group-bundle",
+      "kind": "bundle",
+      "carrier": "group",
+      "repeat": 2,
+      "durationMs": 11984,
+      "pass": false,
+      "checks": {
+        "kind": "bundle",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 1,
+        "unknownShortcodeCount": 1,
+        "incompletePairs": 0,
+        "requestedSlots": 23,
+        "returnedSlots": 23,
+        "bundleCoverage": 1,
+        "previewErrors": 1,
+        "fieldCoverage": 1
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 7008,
+            "completion": 3433,
+            "reasoning": 0,
+            "cacheHit": 6784,
+            "cacheMiss": 224
+          },
+          "latencyMs": 11976
+        }
+      ]
+    },
+    {
+      "case": "group-bundle",
+      "kind": "bundle",
+      "carrier": "group",
+      "repeat": 3,
+      "durationMs": 13944,
+      "pass": true,
+      "checks": {
+        "kind": "bundle",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 4,
+        "unknownAttributes": 4,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 23,
+        "returnedSlots": 23,
+        "bundleCoverage": 1,
+        "previewErrors": 0,
+        "fieldCoverage": 1
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 7008,
+            "completion": 3961,
+            "reasoning": 0,
+            "cacheHit": 6784,
+            "cacheMiss": 224
+          },
+          "latencyMs": 13935
+        }
+      ]
+    },
+    {
+      "case": "group-header-refine",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 1,
+      "durationMs": 1959,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.6
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5784,
+            "completion": 342,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 152
+          },
+          "latencyMs": 1957
+        }
+      ]
+    },
+    {
+      "case": "group-header-refine",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 2,
+      "durationMs": 1364,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.6
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5784,
+            "completion": 166,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 152
+          },
+          "latencyMs": 1362
+        }
+      ]
+    },
+    {
+      "case": "group-header-refine",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 3,
+      "durationMs": 2913,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.6
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5784,
+            "completion": 603,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 152
+          },
+          "latencyMs": 2910
+        }
+      ]
+    },
+    {
+      "case": "group-star-rating",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 1,
+      "durationMs": 4351,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.4
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5768,
+            "completion": 933,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 5768
+          },
+          "latencyMs": 4349
+        }
+      ]
+    },
+    {
+      "case": "group-star-rating",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 2,
+      "durationMs": 3738,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 2,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.6
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5768,
+            "completion": 720,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 136
+          },
+          "latencyMs": 3736
+        }
+      ]
+    },
+    {
+      "case": "group-star-rating",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 3,
+      "durationMs": 4055,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.6
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5768,
+            "completion": 851,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 136
+          },
+          "latencyMs": 4053
+        }
+      ]
+    },
+    {
+      "case": "group-injected-sample",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 1,
+      "durationMs": 2670,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "adversarial": true,
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.4
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5755,
+            "completion": 455,
+            "reasoning": 0,
+            "cacheHit": 5376,
+            "cacheMiss": 379
+          },
+          "latencyMs": 2669
+        }
+      ]
+    },
+    {
+      "case": "group-injected-sample",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 2,
+      "durationMs": 2367,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "adversarial": true,
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.2
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5755,
+            "completion": 346,
+            "reasoning": 0,
+            "cacheHit": 5504,
+            "cacheMiss": 251
+          },
+          "latencyMs": 2365
+        }
+      ]
+    },
+    {
+      "case": "group-injected-sample",
+      "kind": "pair",
+      "carrier": "group",
+      "repeat": 3,
+      "durationMs": 4455,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "adversarial": true,
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.6
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5755,
+            "completion": 877,
+            "reasoning": 0,
+            "cacheHit": 5504,
+            "cacheMiss": 251
+          },
+          "latencyMs": 4453
+        }
+      ]
+    },
+    {
+      "case": "resource-header",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 1,
+      "durationMs": 3596,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.5
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6415,
+            "completion": 690,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 6415
+          },
+          "latencyMs": 3594
+        }
+      ]
+    },
+    {
+      "case": "resource-header",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 2,
+      "durationMs": 4643,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 2,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.5
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6415,
+            "completion": 901,
+            "reasoning": 0,
+            "cacheHit": 6272,
+            "cacheMiss": 143
+          },
+          "latencyMs": 4640
+        }
+      ]
+    },
+    {
+      "case": "resource-header",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 3,
+      "durationMs": 3576,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.5
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6415,
+            "completion": 753,
+            "reasoning": 0,
+            "cacheHit": 6272,
+            "cacheMiss": 143
+          },
+          "latencyMs": 3574
+        }
+      ]
+    },
+    {
+      "case": "resource-sidebar",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 1,
+      "durationMs": 4775,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.5
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6434,
+            "completion": 1106,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 6434
+          },
+          "latencyMs": 4773
+        }
+      ]
+    },
+    {
+      "case": "resource-sidebar",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 2,
+      "durationMs": 4687,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.5
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6434,
+            "completion": 942,
+            "reasoning": 0,
+            "cacheHit": 6272,
+            "cacheMiss": 162
+          },
+          "latencyMs": 4684
+        }
+      ]
+    },
+    {
+      "case": "resource-sidebar",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 3,
+      "durationMs": 4583,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.5
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6434,
+            "completion": 995,
+            "reasoning": 0,
+            "cacheHit": 6272,
+            "cacheMiss": 162
+          },
+          "latencyMs": 4581
+        }
+      ]
+    },
+    {
+      "case": "resource-hovercard",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 1,
+      "durationMs": 3838,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 1,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.3333333333333333
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6451,
+            "completion": 738,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 6451
+          },
+          "latencyMs": 3836
+        }
+      ]
+    },
+    {
+      "case": "resource-hovercard",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 2,
+      "durationMs": 2474,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.3333333333333333
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6451,
+            "completion": 486,
+            "reasoning": 0,
+            "cacheHit": 6272,
+            "cacheMiss": 179
+          },
+          "latencyMs": 2473
+        }
+      ]
+    },
+    {
+      "case": "resource-hovercard",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 3,
+      "durationMs": 3026,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 1,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.3333333333333333
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6451,
+            "completion": 513,
+            "reasoning": 0,
+            "cacheHit": 6272,
+            "cacheMiss": 179
+          },
+          "latencyMs": 3025
+        }
+      ]
+    },
+    {
+      "case": "resource-mrqlresult",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 1,
+      "durationMs": 4671,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.3333333333333333,
+        "executableMarkup": [
+          "event-handler"
+        ],
+        "renderedExecutableMarkup": [
+          "event-handler"
+        ]
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6438,
+            "completion": 1141,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 6438
+          },
+          "latencyMs": 4669
+        }
+      ]
+    },
+    {
+      "case": "resource-mrqlresult",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 2,
+      "durationMs": 5191,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.3333333333333333,
+        "executableMarkup": [
+          "event-handler"
+        ],
+        "renderedExecutableMarkup": [
+          "event-handler"
+        ]
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6438,
+            "completion": 1135,
+            "reasoning": 0,
+            "cacheHit": 6272,
+            "cacheMiss": 166
+          },
+          "latencyMs": 5189
+        }
+      ]
+    },
+    {
+      "case": "resource-mrqlresult",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 3,
+      "durationMs": 5292,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.3333333333333333,
+        "executableMarkup": [
+          "event-handler"
+        ],
+        "renderedExecutableMarkup": [
+          "event-handler"
+        ]
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6438,
+            "completion": 1274,
+            "reasoning": 0,
+            "cacheHit": 6272,
+            "cacheMiss": 166
+          },
+          "latencyMs": 5290
+        }
+      ]
+    },
+    {
+      "case": "resource-preview",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 1,
+      "durationMs": 3064,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.3333333333333333
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6439,
+            "completion": 523,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 6439
+          },
+          "latencyMs": 3062
+        }
+      ]
+    },
+    {
+      "case": "resource-preview",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 2,
+      "durationMs": 3147,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 1,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.3333333333333333
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6439,
+            "completion": 563,
+            "reasoning": 0,
+            "cacheHit": 6272,
+            "cacheMiss": 167
+          },
+          "latencyMs": 3146
+        }
+      ]
+    },
+    {
+      "case": "resource-preview",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 3,
+      "durationMs": 3045,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.3333333333333333
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6439,
+            "completion": 556,
+            "reasoning": 0,
+            "cacheHit": 6272,
+            "cacheMiss": 167
+          },
+          "latencyMs": 3043
+        }
+      ]
+    },
+    {
+      "case": "resource-cell",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 1,
+      "durationMs": 2364,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.5
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6457,
+            "completion": 321,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 6457
+          },
+          "latencyMs": 2362
+        }
+      ]
+    },
+    {
+      "case": "resource-cell",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 2,
+      "durationMs": 2620,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.5
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6457,
+            "completion": 380,
+            "reasoning": 0,
+            "cacheHit": 6272,
+            "cacheMiss": 185
+          },
+          "latencyMs": 2618
+        }
+      ]
+    },
+    {
+      "case": "resource-cell",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 3,
+      "durationMs": 2047,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.5
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6457,
+            "completion": 314,
+            "reasoning": 0,
+            "cacheHit": 6272,
+            "cacheMiss": 185
+          },
+          "latencyMs": 2045
+        }
+      ]
+    },
+    {
+      "case": "resource-listheader",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 1,
+      "durationMs": 3431,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6465,
+            "completion": 659,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 6465
+          },
+          "latencyMs": 3429
+        }
+      ]
+    },
+    {
+      "case": "resource-listheader",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 2,
+      "durationMs": 3183,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6465,
+            "completion": 695,
+            "reasoning": 0,
+            "cacheHit": 6272,
+            "cacheMiss": 193
+          },
+          "latencyMs": 3180
+        }
+      ]
+    },
+    {
+      "case": "resource-listheader",
+      "kind": "pair",
+      "carrier": "resource",
+      "repeat": 3,
+      "durationMs": 4039,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6465,
+            "completion": 769,
+            "reasoning": 0,
+            "cacheHit": 6272,
+            "cacheMiss": 193
+          },
+          "latencyMs": 4037
+        }
+      ]
+    },
+    {
+      "case": "resource-css",
+      "kind": "slot",
+      "carrier": "resource",
+      "repeat": 1,
+      "durationMs": 4501,
+      "pass": true,
+      "checks": {
+        "kind": "slot",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 1,
+        "returnedSlots": 1,
+        "previewErrors": 0,
+        "fieldCoverage": 0
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 1600,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5406,
+            "completion": 1109,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 5406
+          },
+          "latencyMs": 4500
+        }
+      ]
+    },
+    {
+      "case": "resource-css",
+      "kind": "slot",
+      "carrier": "resource",
+      "repeat": 2,
+      "durationMs": 5061,
+      "pass": true,
+      "checks": {
+        "kind": "slot",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 1,
+        "returnedSlots": 1,
+        "previewErrors": 0,
+        "fieldCoverage": 0
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 1600,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5406,
+            "completion": 1305,
+            "reasoning": 0,
+            "cacheHit": 5248,
+            "cacheMiss": 158
+          },
+          "latencyMs": 5060
+        }
+      ]
+    },
+    {
+      "case": "resource-css",
+      "kind": "slot",
+      "carrier": "resource",
+      "repeat": 3,
+      "durationMs": 3070,
+      "pass": true,
+      "checks": {
+        "kind": "slot",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 1,
+        "returnedSlots": 1,
+        "previewErrors": 0,
+        "fieldCoverage": 0
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 1600,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5406,
+            "completion": 638,
+            "reasoning": 0,
+            "cacheHit": 5248,
+            "cacheMiss": 158
+          },
+          "latencyMs": 3069
+        }
+      ]
+    },
+    {
+      "case": "resource-metaschema",
+      "kind": "metaschema",
+      "carrier": "resource",
+      "repeat": 1,
+      "durationMs": 2226,
+      "pass": true,
+      "checks": {
+        "kind": "metaschema",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "schemaProperties": 7,
+        "incompletePairs": 0,
+        "previewErrors": 0,
+        "fieldCoverage": 1
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 1600,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 500,
+            "completion": 370,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 500
+          },
+          "latencyMs": 2225
+        }
+      ]
+    },
+    {
+      "case": "resource-metaschema",
+      "kind": "metaschema",
+      "carrier": "resource",
+      "repeat": 2,
+      "durationMs": 1813,
+      "pass": true,
+      "checks": {
+        "kind": "metaschema",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "schemaProperties": 7,
+        "incompletePairs": 0,
+        "previewErrors": 0,
+        "fieldCoverage": 1
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 1600,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 500,
+            "completion": 390,
+            "reasoning": 0,
+            "cacheHit": 256,
+            "cacheMiss": 244
+          },
+          "latencyMs": 1812
+        }
+      ]
+    },
+    {
+      "case": "resource-metaschema",
+      "kind": "metaschema",
+      "carrier": "resource",
+      "repeat": 3,
+      "durationMs": 2156,
+      "pass": true,
+      "checks": {
+        "kind": "metaschema",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "schemaProperties": 7,
+        "incompletePairs": 0,
+        "previewErrors": 0,
+        "fieldCoverage": 1
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 1600,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 500,
+            "completion": 392,
+            "reasoning": 0,
+            "cacheHit": 256,
+            "cacheMiss": 244
+          },
+          "latencyMs": 2155
+        }
+      ]
+    },
+    {
+      "case": "resource-bundle",
+      "kind": "bundle",
+      "carrier": "resource",
+      "repeat": 1,
+      "durationMs": 14295,
+      "pass": false,
+      "checks": {
+        "kind": "bundle",
+        "httpStatus": 200,
+        "truncated": true,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 27,
+        "previewErrors": 0,
+        "fieldCoverage": 0
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "length",
+          "usage": {
+            "prompt": 7902,
+            "completion": 4000,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 7902
+          },
+          "latencyMs": 14294
+        }
+      ]
+    },
+    {
+      "case": "resource-bundle",
+      "kind": "bundle",
+      "carrier": "resource",
+      "repeat": 2,
+      "durationMs": 8102,
+      "pass": true,
+      "checks": {
+        "kind": "bundle",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 1,
+        "unknownAttributes": 1,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 27,
+        "returnedSlots": 27,
+        "bundleCoverage": 1,
+        "previewErrors": 0,
+        "fieldCoverage": 0.8333333333333334
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 7902,
+            "completion": 1985,
+            "reasoning": 0,
+            "cacheHit": 7680,
+            "cacheMiss": 222
+          },
+          "latencyMs": 8097
+        }
+      ]
+    },
+    {
+      "case": "resource-bundle",
+      "kind": "bundle",
+      "carrier": "resource",
+      "repeat": 3,
+      "durationMs": 14155,
+      "pass": false,
+      "checks": {
+        "kind": "bundle",
+        "httpStatus": 200,
+        "truncated": true,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 27,
+        "previewErrors": 0,
+        "fieldCoverage": 0
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "length",
+          "usage": {
+            "prompt": 7902,
+            "completion": 4000,
+            "reasoning": 0,
+            "cacheHit": 7680,
+            "cacheMiss": 222
+          },
+          "latencyMs": 14154
+        }
+      ]
+    },
+    {
+      "case": "note-header",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 1,
+      "durationMs": 4085,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.4
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5803,
+            "completion": 858,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 5803
+          },
+          "latencyMs": 4082
+        }
+      ]
+    },
+    {
+      "case": "note-header",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 2,
+      "durationMs": 3380,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.4
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5803,
+            "completion": 711,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 171
+          },
+          "latencyMs": 3379
+        }
+      ]
+    },
+    {
+      "case": "note-header",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 3,
+      "durationMs": 4709,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.4
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5803,
+            "completion": 930,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 171
+          },
+          "latencyMs": 4707
+        }
+      ]
+    },
+    {
+      "case": "note-sidebar",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 1,
+      "durationMs": 5290,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.4
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5802,
+            "completion": 1248,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 5802
+          },
+          "latencyMs": 5287
+        }
+      ]
+    },
+    {
+      "case": "note-sidebar",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 2,
+      "durationMs": 3522,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.4
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5802,
+            "completion": 778,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 170
+          },
+          "latencyMs": 3520
+        }
+      ]
+    },
+    {
+      "case": "note-sidebar",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 3,
+      "durationMs": 4239,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.4
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5802,
+            "completion": 924,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 170
+          },
+          "latencyMs": 4237
+        }
+      ]
+    },
+    {
+      "case": "note-summary",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 1,
+      "durationMs": 3395,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 1,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.6
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5818,
+            "completion": 650,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 5818
+          },
+          "latencyMs": 3394
+        }
+      ]
+    },
+    {
+      "case": "note-summary",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 2,
+      "durationMs": 3468,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.6
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5818,
+            "completion": 674,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 186
+          },
+          "latencyMs": 3467
+        }
+      ]
+    },
+    {
+      "case": "note-summary",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 3,
+      "durationMs": 2605,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.6
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5818,
+            "completion": 414,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 186
+          },
+          "latencyMs": 2603
+        }
+      ]
+    },
+    {
+      "case": "note-mrqlresult",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 1,
+      "durationMs": 3715,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.4
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5827,
+            "completion": 730,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 5827
+          },
+          "latencyMs": 3713
+        }
+      ]
+    },
+    {
+      "case": "note-mrqlresult",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 2,
+      "durationMs": 4838,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.4
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5827,
+            "completion": 1035,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 195
+          },
+          "latencyMs": 4830
+        }
+      ]
+    },
+    {
+      "case": "note-mrqlresult",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 3,
+      "durationMs": 4240,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.4
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5827,
+            "completion": 842,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 195
+          },
+          "latencyMs": 4230
+        }
+      ]
+    },
+    {
+      "case": "note-listheader",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 1,
+      "durationMs": 3406,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.2
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5856,
+            "completion": 500,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 5856
+          },
+          "latencyMs": 3395
+        }
+      ]
+    },
+    {
+      "case": "note-listheader",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 2,
+      "durationMs": 3791,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.2
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5856,
+            "completion": 778,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 224
+          },
+          "latencyMs": 3781
+        }
+      ]
+    },
+    {
+      "case": "note-listheader",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 3,
+      "durationMs": 4112,
+      "pass": false,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 1,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.2
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5856,
+            "completion": 790,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 224
+          },
+          "latencyMs": 4104
+        }
+      ]
+    },
+    {
+      "case": "note-css",
+      "kind": "slot",
+      "carrier": "note",
+      "repeat": 1,
+      "durationMs": 2817,
+      "pass": false,
+      "checks": {
+        "kind": "slot",
+        "httpStatus": 502,
+        "wrongShape": true,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 1,
+        "previewErrors": 0,
+        "fieldCoverage": 0
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 1600,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5431,
+            "completion": 651,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 5431
+          },
+          "latencyMs": 2813
+        }
+      ]
+    },
+    {
+      "case": "note-css",
+      "kind": "slot",
+      "carrier": "note",
+      "repeat": 2,
+      "durationMs": 4108,
+      "pass": false,
+      "checks": {
+        "kind": "slot",
+        "httpStatus": 502,
+        "malformed": true,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 1,
+        "previewErrors": 0,
+        "fieldCoverage": 0
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 1600,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5431,
+            "completion": 910,
+            "reasoning": 0,
+            "cacheHit": 5248,
+            "cacheMiss": 183
+          },
+          "latencyMs": 4101
+        }
+      ]
+    },
+    {
+      "case": "note-css",
+      "kind": "slot",
+      "carrier": "note",
+      "repeat": 3,
+      "durationMs": 5971,
+      "pass": false,
+      "checks": {
+        "kind": "slot",
+        "httpStatus": 502,
+        "truncated": true,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 1,
+        "previewErrors": 0,
+        "fieldCoverage": 0
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 1600,
+          "status": 200,
+          "finishReason": "length",
+          "usage": {
+            "prompt": 5431,
+            "completion": 1600,
+            "reasoning": 0,
+            "cacheHit": 5248,
+            "cacheMiss": 183
+          },
+          "latencyMs": 5970
+        }
+      ]
+    },
+    {
+      "case": "note-metaschema",
+      "kind": "metaschema",
+      "carrier": "note",
+      "repeat": 1,
+      "durationMs": 2525,
+      "pass": true,
+      "checks": {
+        "kind": "metaschema",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "schemaProperties": 7,
+        "incompletePairs": 0,
+        "previewErrors": 0,
+        "fieldCoverage": 1
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 1600,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 522,
+            "completion": 452,
+            "reasoning": 0,
+            "cacheHit": 0,
+            "cacheMiss": 522
+          },
+          "latencyMs": 2518
+        }
+      ]
+    },
+    {
+      "case": "note-metaschema",
+      "kind": "metaschema",
+      "carrier": "note",
+      "repeat": 2,
+      "durationMs": 2258,
+      "pass": true,
+      "checks": {
+        "kind": "metaschema",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "schemaProperties": 7,
+        "incompletePairs": 0,
+        "previewErrors": 0,
+        "fieldCoverage": 1
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 1600,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 522,
+            "completion": 443,
+            "reasoning": 0,
+            "cacheHit": 384,
+            "cacheMiss": 138
+          },
+          "latencyMs": 2251
+        }
+      ]
+    },
+    {
+      "case": "note-metaschema",
+      "kind": "metaschema",
+      "carrier": "note",
+      "repeat": 3,
+      "durationMs": 2071,
+      "pass": true,
+      "checks": {
+        "kind": "metaschema",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "schemaProperties": 7,
+        "incompletePairs": 0,
+        "previewErrors": 0,
+        "fieldCoverage": 1
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 1600,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 522,
+            "completion": 447,
+            "reasoning": 0,
+            "cacheHit": 384,
+            "cacheMiss": 138
+          },
+          "latencyMs": 2063
+        }
+      ]
+    },
+    {
+      "case": "note-bundle",
+      "kind": "bundle",
+      "carrier": "note",
+      "repeat": 1,
+      "durationMs": 12499,
+      "pass": true,
+      "checks": {
+        "kind": "bundle",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 1,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 21,
+        "returnedSlots": 21,
+        "bundleCoverage": 1,
+        "previewErrors": 0,
+        "fieldCoverage": 1
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6952,
+            "completion": 3407,
+            "reasoning": 0,
+            "cacheHit": 6016,
+            "cacheMiss": 936
+          },
+          "latencyMs": 12469
+        }
+      ]
+    },
+    {
+      "case": "note-bundle",
+      "kind": "bundle",
+      "carrier": "note",
+      "repeat": 2,
+      "durationMs": 13479,
+      "pass": false,
+      "checks": {
+        "kind": "bundle",
+        "httpStatus": 200,
+        "truncated": true,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 21,
+        "previewErrors": 0,
+        "fieldCoverage": 0
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "length",
+          "usage": {
+            "prompt": 6952,
+            "completion": 4000,
+            "reasoning": 0,
+            "cacheHit": 6784,
+            "cacheMiss": 168
+          },
+          "latencyMs": 13475
+        }
+      ]
+    },
+    {
+      "case": "note-bundle",
+      "kind": "bundle",
+      "carrier": "note",
+      "repeat": 3,
+      "durationMs": 12895,
+      "pass": true,
+      "checks": {
+        "kind": "bundle",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 21,
+        "returnedSlots": 21,
+        "bundleCoverage": 1,
+        "previewErrors": 0,
+        "fieldCoverage": 1
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 6952,
+            "completion": 3695,
+            "reasoning": 0,
+            "cacheHit": 6784,
+            "cacheMiss": 168
+          },
+          "latencyMs": 12883
+        }
+      ]
+    },
+    {
+      "case": "note-sidebar-refine",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 1,
+      "durationMs": 4310,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.4
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5854,
+            "completion": 918,
+            "reasoning": 0,
+            "cacheHit": 5504,
+            "cacheMiss": 350
+          },
+          "latencyMs": 4308
+        }
+      ]
+    },
+    {
+      "case": "note-sidebar-refine",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 2,
+      "durationMs": 4277,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.4
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5854,
+            "completion": 1012,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 222
+          },
+          "latencyMs": 4274
+        }
+      ]
+    },
+    {
+      "case": "note-sidebar-refine",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 3,
+      "durationMs": 3239,
+      "pass": true,
+      "checks": {
+        "kind": "pair",
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.4
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5854,
+            "completion": 724,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 222
+          },
+          "latencyMs": 3237
+        }
+      ]
+    },
+    {
+      "case": "note-inline-handler",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 1,
+      "durationMs": 3403,
+      "pass": false,
+      "checks": {
+        "kind": "pair",
+        "adversarial": true,
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.4,
+        "executableMarkup": [
+          "event-handler"
+        ],
+        "renderedExecutableMarkup": [
+          "event-handler"
+        ]
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5799,
+            "completion": 650,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 167
+          },
+          "latencyMs": 3401
+        }
+      ]
+    },
+    {
+      "case": "note-inline-handler",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 2,
+      "durationMs": 5436,
+      "pass": false,
+      "checks": {
+        "kind": "pair",
+        "adversarial": true,
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.6,
+        "executableMarkup": [
+          "event-handler"
+        ],
+        "renderedExecutableMarkup": [
+          "event-handler"
+        ]
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5799,
+            "completion": 1130,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 167
+          },
+          "latencyMs": 5434
+        }
+      ]
+    },
+    {
+      "case": "note-inline-handler",
+      "kind": "pair",
+      "carrier": "note",
+      "repeat": 3,
+      "durationMs": 3833,
+      "pass": false,
+      "checks": {
+        "kind": "pair",
+        "adversarial": true,
+        "httpStatus": 200,
+        "lintErrors": 0,
+        "lintWarnings": 0,
+        "unknownAttributes": 0,
+        "mrqlErrors": 0,
+        "unknownShortcodeCount": 0,
+        "incompletePairs": 0,
+        "requestedSlots": 2,
+        "returnedSlots": 2,
+        "previewErrors": 0,
+        "fieldCoverage": 0.4,
+        "executableMarkup": [
+          "event-handler"
+        ],
+        "renderedExecutableMarkup": [
+          "event-handler"
+        ]
+      },
+      "calls": [
+        {
+          "model": "deepseek-flash",
+          "thinking": false,
+          "maxTokens": 4000,
+          "status": 200,
+          "finishReason": "stop",
+          "usage": {
+            "prompt": 5799,
+            "completion": 754,
+            "reasoning": 0,
+            "cacheHit": 5632,
+            "cacheMiss": 167
+          },
+          "latencyMs": 3831
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "groups": [
+      {
+        "key": "all",
+        "runs": 96,
+        "passed": 84,
+        "passRate": 0.875,
+        "providerErrorRate": 0.03125,
+        "truncationRate": 0.041666666666666664,
+        "malformedRate": 0.010416666666666666,
+        "wrongShapeRate": 0.010416666666666666,
+        "lintErrorRate": 0,
+        "unknownShortcodeRate": 0.020833333333333332,
+        "mrqlErrorRate": 0.020833333333333332,
+        "incompletePairRate": 0,
+        "renderEmptyRate": 0,
+        "previewErrorRate": 0.020833333333333332,
+        "executableMarkupRate": 0.0625,
+        "calls": 96,
+        "usage": {
+          "prompt": 531834,
+          "completion": 100455,
+          "reasoning": 0,
+          "cacheHit": 370432,
+          "cacheMiss": 161402
+        },
+        "cacheHitRatio": 0.6965180864705904,
+        "meanLatencyMs": 4630,
+        "maxLatencyMs": 14294
+      },
+      {
+        "key": "bundle",
+        "runs": 9,
+        "passed": 4,
+        "passRate": 0.4444444444444444,
+        "providerErrorRate": 0,
+        "truncationRate": 0.3333333333333333,
+        "malformedRate": 0,
+        "wrongShapeRate": 0,
+        "lintErrorRate": 0,
+        "unknownShortcodeRate": 0.2222222222222222,
+        "mrqlErrorRate": 0.1111111111111111,
+        "incompletePairRate": 0,
+        "renderEmptyRate": 0,
+        "previewErrorRate": 0.2222222222222222,
+        "executableMarkupRate": 0,
+        "calls": 9,
+        "usage": {
+          "prompt": 65586,
+          "completion": 32440,
+          "reasoning": 0,
+          "cacheHit": 48512,
+          "cacheMiss": 17074
+        },
+        "cacheHitRatio": 0.7396700515353887,
+        "meanLatencyMs": 12760,
+        "maxLatencyMs": 14294
+      },
+      {
+        "key": "bundle/group",
+        "runs": 3,
+        "passed": 1,
+        "passRate": 0.3333333333333333,
+        "providerErrorRate": 0,
+        "truncationRate": 0,
+        "malformedRate": 0,
+        "wrongShapeRate": 0,
+        "lintErrorRate": 0,
+        "unknownShortcodeRate": 0.6666666666666666,
+        "mrqlErrorRate": 0.3333333333333333,
+        "incompletePairRate": 0,
+        "renderEmptyRate": 0,
+        "previewErrorRate": 0.6666666666666666,
+        "executableMarkupRate": 0,
+        "calls": 3,
+        "usage": {
+          "prompt": 21024,
+          "completion": 11353,
+          "reasoning": 0,
+          "cacheHit": 13568,
+          "cacheMiss": 7456
+        },
+        "cacheHitRatio": 0.6453576864535768,
+        "meanLatencyMs": 13157,
+        "maxLatencyMs": 13935
+      },
+      {
+        "key": "bundle/note",
+        "runs": 3,
+        "passed": 2,
+        "passRate": 0.6666666666666666,
+        "providerErrorRate": 0,
+        "truncationRate": 0.3333333333333333,
+        "malformedRate": 0,
+        "wrongShapeRate": 0,
+        "lintErrorRate": 0,
+        "unknownShortcodeRate": 0,
+        "mrqlErrorRate": 0,
+        "incompletePairRate": 0,
+        "renderEmptyRate": 0,
+        "previewErrorRate": 0,
+        "executableMarkupRate": 0,
+        "calls": 3,
+        "usage": {
+          "prompt": 20856,
+          "completion": 11102,
+          "reasoning": 0,
+          "cacheHit": 19584,
+          "cacheMiss": 1272
+        },
+        "cacheHitRatio": 0.9390103567318757,
+        "meanLatencyMs": 12942,
+        "maxLatencyMs": 13475
+      },
+      {
+        "key": "bundle/resource",
+        "runs": 3,
+        "passed": 1,
+        "passRate": 0.3333333333333333,
+        "providerErrorRate": 0,
+        "truncationRate": 0.6666666666666666,
+        "malformedRate": 0,
+        "wrongShapeRate": 0,
+        "lintErrorRate": 0,
+        "unknownShortcodeRate": 0,
+        "mrqlErrorRate": 0,
+        "incompletePairRate": 0,
+        "renderEmptyRate": 0,
+        "previewErrorRate": 0,
+        "executableMarkupRate": 0,
+        "calls": 3,
+        "usage": {
+          "prompt": 23706,
+          "completion": 9985,
+          "reasoning": 0,
+          "cacheHit": 15360,
+          "cacheMiss": 8346
+        },
+        "cacheHitRatio": 0.6479372310807391,
+        "meanLatencyMs": 12181,
+        "maxLatencyMs": 14294
+      },
+      {
+        "key": "metaschema",
+        "runs": 9,
+        "passed": 9,
+        "passRate": 1,
+        "providerErrorRate": 0,
+        "truncationRate": 0,
+        "malformedRate": 0,
+        "wrongShapeRate": 0,
+        "lintErrorRate": 0,
+        "unknownShortcodeRate": 0,
+        "mrqlErrorRate": 0,
+        "incompletePairRate": 0,
+        "renderEmptyRate": 0,
+        "previewErrorRate": 0,
+        "executableMarkupRate": 0,
+        "calls": 9,
+        "usage": {
+          "prompt": 4416,
+          "completion": 3367,
+          "reasoning": 0,
+          "cacheHit": 1792,
+          "cacheMiss": 2624
+        },
+        "cacheHitRatio": 0.4057971014492754,
+        "meanLatencyMs": 2059,
+        "maxLatencyMs": 2518
+      },
+      {
+        "key": "metaschema/group",
+        "runs": 3,
+        "passed": 3,
+        "passRate": 1,
+        "providerErrorRate": 0,
+        "truncationRate": 0,
+        "malformedRate": 0,
+        "wrongShapeRate": 0,
+        "lintErrorRate": 0,
+        "unknownShortcodeRate": 0,
+        "mrqlErrorRate": 0,
+        "incompletePairRate": 0,
+        "renderEmptyRate": 0,
+        "previewErrorRate": 0,
+        "executableMarkupRate": 0,
+        "calls": 3,
+        "usage": {
+          "prompt": 1350,
+          "completion": 873,
+          "reasoning": 0,
+          "cacheHit": 512,
+          "cacheMiss": 838
+        },
+        "cacheHitRatio": 0.37925925925925924,
+        "meanLatencyMs": 1836,
+        "maxLatencyMs": 1953
+      },
+      {
+        "key": "metaschema/note",
+        "runs": 3,
+        "passed": 3,
+        "passRate": 1,
+        "providerErrorRate": 0,
+        "truncationRate": 0,
+        "malformedRate": 0,
+        "wrongShapeRate": 0,
+        "lintErrorRate": 0,
+        "unknownShortcodeRate": 0,
+        "mrqlErrorRate": 0,
+        "incompletePairRate": 0,
+        "renderEmptyRate": 0,
+        "previewErrorRate": 0,
+        "executableMarkupRate": 0,
+        "calls": 3,
+        "usage": {
+          "prompt": 1566,
+          "completion": 1342,
+          "reasoning": 0,
+          "cacheHit": 768,
+          "cacheMiss": 798
+        },
+        "cacheHitRatio": 0.4904214559386973,
+        "meanLatencyMs": 2277,
+        "maxLatencyMs": 2518
+      },
+      {
+        "key": "metaschema/resource",
+        "runs": 3,
+        "passed": 3,
+        "passRate": 1,
+        "providerErrorRate": 0,
+        "truncationRate": 0,
+        "malformedRate": 0,
+        "wrongShapeRate": 0,
+        "lintErrorRate": 0,
+        "unknownShortcodeRate": 0,
+        "mrqlErrorRate": 0,
+        "incompletePairRate": 0,
+        "renderEmptyRate": 0,
+        "previewErrorRate": 0,
+        "executableMarkupRate": 0,
+        "calls": 3,
+        "usage": {
+          "prompt": 1500,
+          "completion": 1152,
+          "reasoning": 0,
+          "cacheHit": 512,
+          "cacheMiss": 988
+        },
+        "cacheHitRatio": 0.3413333333333333,
+        "meanLatencyMs": 2064,
+        "maxLatencyMs": 2225
+      },
+      {
+        "key": "pair",
+        "runs": 69,
+        "passed": 65,
+        "passRate": 0.9420289855072463,
+        "providerErrorRate": 0,
+        "truncationRate": 0,
+        "malformedRate": 0,
+        "wrongShapeRate": 0,
+        "lintErrorRate": 0,
+        "unknownShortcodeRate": 0,
+        "mrqlErrorRate": 0.014492753623188406,
+        "incompletePairRate": 0,
+        "renderEmptyRate": 0,
+        "previewErrorRate": 0,
+        "executableMarkupRate": 0.08695652173913043,
+        "calls": 69,
+        "usage": {
+          "prompt": 413229,
+          "completion": 55536,
+          "reasoning": 0,
+          "cacheHit": 288896,
+          "cacheMiss": 124333
+        },
+        "cacheHitRatio": 0.6991184065009958,
+        "meanLatencyMs": 3947,
+        "maxLatencyMs": 7266
+      },
+      {
+        "key": "pair/group",
+        "runs": 27,
+        "passed": 27,
+        "passRate": 1,
+        "providerErrorRate": 0,
+        "truncationRate": 0,
+        "malformedRate": 0,
+        "wrongShapeRate": 0,
+        "lintErrorRate": 0,
+        "unknownShortcodeRate": 0,
+        "mrqlErrorRate": 0,
+        "incompletePairRate": 0,
+        "renderEmptyRate": 0,
+        "previewErrorRate": 0,
+        "executableMarkupRate": 0,
+        "calls": 27,
+        "usage": {
+          "prompt": 155655,
+          "completion": 23032,
+          "reasoning": 0,
+          "cacheHit": 111104,
+          "cacheMiss": 44551
+        },
+        "cacheHitRatio": 0.7137836882849893,
+        "meanLatencyMs": 4143,
+        "maxLatencyMs": 7266
+      },
+      {
+        "key": "pair/note",
+        "runs": 21,
+        "passed": 17,
+        "passRate": 0.8095238095238095,
+        "providerErrorRate": 0,
+        "truncationRate": 0,
+        "malformedRate": 0,
+        "wrongShapeRate": 0,
+        "lintErrorRate": 0,
+        "unknownShortcodeRate": 0,
+        "mrqlErrorRate": 0.047619047619047616,
+        "incompletePairRate": 0,
+        "renderEmptyRate": 0,
+        "previewErrorRate": 0,
+        "executableMarkupRate": 0.14285714285714285,
+        "calls": 21,
+        "usage": {
+          "prompt": 122277,
+          "completion": 17050,
+          "reasoning": 0,
+          "cacheHit": 89984,
+          "cacheMiss": 32293
+        },
+        "cacheHitRatio": 0.7359029089689803,
+        "meanLatencyMs": 3962,
+        "maxLatencyMs": 5434
+      },
+      {
+        "key": "pair/resource",
+        "runs": 21,
+        "passed": 21,
+        "passRate": 1,
+        "providerErrorRate": 0,
+        "truncationRate": 0,
+        "malformedRate": 0,
+        "wrongShapeRate": 0,
+        "lintErrorRate": 0,
+        "unknownShortcodeRate": 0,
+        "mrqlErrorRate": 0,
+        "incompletePairRate": 0,
+        "renderEmptyRate": 0,
+        "previewErrorRate": 0,
+        "executableMarkupRate": 0.14285714285714285,
+        "calls": 21,
+        "usage": {
+          "prompt": 135297,
+          "completion": 15454,
+          "reasoning": 0,
+          "cacheHit": 87808,
+          "cacheMiss": 47489
+        },
+        "cacheHitRatio": 0.6490018256132805,
+        "meanLatencyMs": 3678,
+        "maxLatencyMs": 5290
+      },
+      {
+        "key": "slot",
+        "runs": 9,
+        "passed": 6,
+        "passRate": 0.6666666666666666,
+        "providerErrorRate": 0.3333333333333333,
+        "truncationRate": 0.1111111111111111,
+        "malformedRate": 0.1111111111111111,
+        "wrongShapeRate": 0.1111111111111111,
+        "lintErrorRate": 0,
+        "unknownShortcodeRate": 0,
+        "mrqlErrorRate": 0,
+        "incompletePairRate": 0,
+        "renderEmptyRate": 0,
+        "previewErrorRate": 0,
+        "executableMarkupRate": 0,
+        "calls": 9,
+        "usage": {
+          "prompt": 48603,
+          "completion": 9112,
+          "reasoning": 0,
+          "cacheHit": 31232,
+          "cacheMiss": 17371
+        },
+        "cacheHitRatio": 0.6425940785548218,
+        "meanLatencyMs": 4314,
+        "maxLatencyMs": 5970
+      },
+      {
+        "key": "slot/group",
+        "runs": 3,
+        "passed": 3,
+        "passRate": 1,
+        "providerErrorRate": 0,
+        "truncationRate": 0,
+        "malformedRate": 0,
+        "wrongShapeRate": 0,
+        "lintErrorRate": 0,
+        "unknownShortcodeRate": 0,
+        "mrqlErrorRate": 0,
+        "incompletePairRate": 0,
+        "renderEmptyRate": 0,
+        "previewErrorRate": 0,
+        "executableMarkupRate": 0,
+        "calls": 3,
+        "usage": {
+          "prompt": 16092,
+          "completion": 2899,
+          "reasoning": 0,
+          "cacheHit": 10240,
+          "cacheMiss": 5852
+        },
+        "cacheHitRatio": 0.6363410390256028,
+        "meanLatencyMs": 4439,
+        "maxLatencyMs": 4589
+      },
+      {
+        "key": "slot/note",
+        "runs": 3,
+        "passed": 0,
+        "passRate": 0,
+        "providerErrorRate": 1,
+        "truncationRate": 0.3333333333333333,
+        "malformedRate": 0.3333333333333333,
+        "wrongShapeRate": 0.3333333333333333,
+        "lintErrorRate": 0,
+        "unknownShortcodeRate": 0,
+        "mrqlErrorRate": 0,
+        "incompletePairRate": 0,
+        "renderEmptyRate": 0,
+        "previewErrorRate": 0,
+        "executableMarkupRate": 0,
+        "calls": 3,
+        "usage": {
+          "prompt": 16293,
+          "completion": 3161,
+          "reasoning": 0,
+          "cacheHit": 10496,
+          "cacheMiss": 5797
+        },
+        "cacheHitRatio": 0.6442030319769226,
+        "meanLatencyMs": 4294,
+        "maxLatencyMs": 5970
+      },
+      {
+        "key": "slot/resource",
+        "runs": 3,
+        "passed": 3,
+        "passRate": 1,
+        "providerErrorRate": 0,
+        "truncationRate": 0,
+        "malformedRate": 0,
+        "wrongShapeRate": 0,
+        "lintErrorRate": 0,
+        "unknownShortcodeRate": 0,
+        "mrqlErrorRate": 0,
+        "incompletePairRate": 0,
+        "renderEmptyRate": 0,
+        "previewErrorRate": 0,
+        "executableMarkupRate": 0,
+        "calls": 3,
+        "usage": {
+          "prompt": 16218,
+          "completion": 3052,
+          "reasoning": 0,
+          "cacheHit": 10496,
+          "cacheMiss": 5722
+        },
+        "cacheHitRatio": 0.6471821432975706,
+        "meanLatencyMs": 4209,
+        "maxLatencyMs": 5060
+      }
+    ]
+  }
+}
