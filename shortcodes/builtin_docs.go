@@ -135,7 +135,7 @@ func BuiltinDocs() []BuiltinDoc {
 		{
 			Name:        "mrql",
 			Syntax:      `[mrql query="..."]`,
-			Description: "Runs an MRQL query and renders the results. Provide either an inline query or a saved query name. Set value= for a single inline scalar, or wrap a block body for a custom item template with optional [header]/[footer]/[else] slots.",
+			Description: "Runs an MRQL query and renders the results. Provide either an inline query or a saved query name. Set value= for a single inline scalar, or wrap a block body for a custom item template with optional [header]/[footer]/[else] slots. [else] is a divider with no closing tag: write [else]…[/mrql], never [else]…[/else].",
 			IsBlock:     BlockOptional,
 			Attrs: []DocAttr{
 				{Name: "query", Type: "string", Required: false, Description: "Inline MRQL expression. Required unless saved is set."},
@@ -160,7 +160,7 @@ func BuiltinDocs() []BuiltinDoc {
 		{
 			Name:        "conditional",
 			Syntax:      `[conditional path="..." eq="..."]...[/conditional]`,
-			Description: "Renders its inner content only when a condition holds. Test a meta path, an entity field, or an MRQL result count against one or more operators. Every operator present must pass (use combine=\"any\" for OR). Add numbered-suffix sources (path2, eq2, …) for extra conditions. Supports [elseif …] and [else] dividers inside the block; the first matching branch renders.",
+			Description: "Renders its inner content only when a condition holds. Test a meta path, an entity field, or an MRQL result count against one or more operators. Every operator present must pass (use combine=\"any\" for OR). Add numbered-suffix sources (path2, eq2, …) for extra conditions. Supports [elseif …] and [else] dividers inside the block; the first matching branch renders. [elseif] and [else] are dividers with no closing tag: never write [/elseif] or [/else], they render as literal text.",
 			IsBlock:     BlockRequired,
 			Attrs: []DocAttr{
 				{Name: "path", Type: "string", Required: false, Description: "Meta path to test. Provide one of path / field / mrql."},
@@ -208,7 +208,7 @@ func BuiltinDocs() []BuiltinDoc {
 		{
 			Name:        "each",
 			Syntax:      `[each path="..."]...[item ...]...[/each]`,
-			Description: "Iterates an array value from the entity's Meta JSON, rendering its inner content once per element. Reference the current element with [item] inside the block. A non-array or empty value renders the [else] branch (nothing when there is no [else]). Inner [meta]/[conditional]/[mrql] shortcodes run against the parent entity, not the element.",
+			Description: "Iterates an array value from the entity's Meta JSON, rendering its inner content once per element. Reference the current element with [item] inside the block. A non-array or empty value renders the [else] branch (nothing when there is no [else]); [else] is a divider with no closing tag, so end the block with [/each], never [/else]. Inner [meta]/[conditional]/[mrql] shortcodes run against the parent entity, not the element.",
 			IsBlock:     BlockRequired,
 			Attrs: []DocAttr{
 				{Name: "path", Type: "string", Required: true, Description: "Dot-notation path to an array in the entity Meta, e.g. ingredients."},

@@ -455,7 +455,7 @@ A block body may carry three optional slots alongside the per-item template, usi
 ```
 
 - **`[header]` / `[footer]`** render **once**, wrapped around the results, with the parent (page) entity as context -- not per item. The first occurrence of each is used; a `[header]`/`[footer]` nested inside another block is left untouched.
-- **`[else]`** is the complete empty-state output. When the result has no rows (no items, no buckets, or no aggregated rows), only the `[else]` branch renders -- header and footer are suppressed. Without an `[else]`, an empty result still shows the standard `No results.` placeholder.
+- **`[else]`** is a divider with no closing tag (never write `[/else]`; it would render as literal text). It is the complete empty-state output. When the result has no rows (no items, no buckets, or no aggregated rows), only the `[else]` branch renders -- header and footer are suppressed. Without an `[else]`, an empty result still shows the standard `No results.` placeholder.
 - The remaining content (after the slots are removed) is the per-item template, exactly as before.
 
 Wrapping the block in a `[conditional mrql="..."]` still works and remains useful when the fallback needs to live outside the `[mrql]` wrapper.
@@ -660,7 +660,7 @@ Use `[elseif ...]` dividers to chain additional conditions. Each `[elseif]` carr
 [/conditional]
 ```
 
-`[elseif]` and `[else]` dividers nested inside an inner `[conditional]` block belong to that inner block, not the outer one.
+`[elseif]` and `[else]` are dividers with no closing tag: `[/elseif]` and `[/else]` render as literal text, and the editor flags them as errors. `[elseif]` and `[else]` dividers nested inside an inner `[conditional]` block belong to that inner block, not the outer one.
 
 ### Nesting
 
@@ -748,7 +748,7 @@ Renders its inner content once per element of an array meta value.
 
 ### How It Works
 
-`[each]` is a block shortcode. Reference the current element with `[item]` inside the block. A non-array or empty value renders the `[else]` branch, or nothing when there is no `[else]`. Inner `[meta]`, `[conditional]`, `[mrql]`, and `[property]` shortcodes run against the **parent entity**, not the element -- use `[item]` for element data.
+`[each]` is a block shortcode. Reference the current element with `[item]` inside the block. A non-array or empty value renders the `[else]` branch, or nothing when there is no `[else]`. `[else]` is a divider with no closing tag; end the block with `[/each]`. Inner `[meta]`, `[conditional]`, `[mrql]`, and `[property]` shortcodes run against the **parent entity**, not the element -- use `[item]` for element data.
 
 ### `[item]`
 

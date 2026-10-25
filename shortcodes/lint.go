@@ -402,12 +402,16 @@ func Lint(input string, opts LintOptions) []LintIssue {
 				})
 				// [elseif] is a divider, not a token, but its guard runs.
 				if inner, ok := condInner[tk.start]; ok {
+					dividers := SlotTagSpans("conditional", inner)
 					for i, branch := range SplitBranches(inner) {
 						if i == 0 || branch.IsElse {
 							continue
 						}
+						span := dividers[i-1]
+						guard := token{start: tk.end + span[0], end: tk.end + span[1], raw: inner[span[0]:span[1]]}
 						forEachConditionalQuery(branch.Attrs, func(attr, suffix string) {
-							check(branch.Attrs[attr], mrqlCheckOptions(branch.Attrs, suffix), tk.start, tk.end, "[elseif] "+attr)
+							start, end := attrOffset(guard, attr)
+							check(branch.Attrs[attr], mrqlCheckOptions(branch.Attrs, suffix), start, end, "[elseif] "+attr)
 						})
 					}
 				}
@@ -423,6 +427,8 @@ func Lint(input string, opts LintOptions) []LintIssue {
 			}
 		}
 	}
+
+	lintStrayCloseTags(input, tokens, add)
 
 	// --- Loose bracket scan for shortcode-looking typos (info) ---
 	for _, m := range looseBracketPattern.FindAllStringSubmatchIndex(input, -1) {
@@ -693,6 +699,41 @@ func forEachConditionalQuery(attrs map[string]string, visit func(attr, suffix st
 		}
 		if attrs["mrql"+suffix] != "" {
 			visit("mrql"+suffix, suffix)
+		}
+	}
+}
+
+// lintStrayCloseTags reports closing tags the runtime leaves on the page as
+// literal text when their body renders. [else] and [elseif] are dividers with no closing tag, so a
+// written [/else] is never consumed. [header] and [footer] are real pairs, but
+// only the first complete top-level pair inside an [mrql] block is read
+// (SlotTagSpans), so any other [/header] or [/footer] is literal too.
+func lintStrayCloseTags(input string, tokens []token, add func(start, end int, severity, msg string)) {
+	consumed := map[int]bool{}
+	for _, span := range namedBlockSpans(tokens, "mrql") {
+		for _, s := range SlotTagSpans("mrql", input[span[0]:span[1]]) {
+			consumed[span[0]+s[0]] = true
+		}
+	}
+	for _, name := range []string{"else", "elseif", mrqlHeaderTag, mrqlFooterTag} {
+		closer := "[/" + name + "]"
+		for from := 0; ; {
+			i := strings.Index(input[from:], closer)
+			if i < 0 {
+				break
+			}
+			i += from
+			from = i + len(closer)
+			switch name {
+			case "else", "elseif":
+				add(i, from, SeverityError,
+					"["+name+"] has no closing tag; remove "+closer+", it may be ignored or left as literal text")
+			default:
+				if !consumed[i] {
+					add(i, from, SeverityError,
+						closer+" closes no slot; ["+name+"]…"+closer+" is read once, as the first top-level pair directly inside an [mrql] block, and anything else may be ignored or left as literal text")
+				}
+			}
 		}
 	}
 }
