@@ -135,6 +135,9 @@ func parseTemplateDesignPlan(raw string, in TemplateGenerationInput) (templateDe
 	plan.Palette = clipBytes(strings.TrimSpace(plan.Palette), templatePlanPaletteBytes)
 	plan.Layout = clipBytes(strings.TrimSpace(plan.Layout), templatePlanLayoutBytes)
 	plan.Explanation = clipBytes(strings.TrimSpace(plan.Explanation), MaxTemplateGeneratedExplanationLength)
+	if fan.css && len(plan.SharedCSSAdditions) > MaxTemplateGeneratedContentLength {
+		return templateDesignPlan{}, fmt.Errorf("%w: the design plan's shared CSS additions exceed %d bytes", ErrTemplateGenerationProvider, MaxTemplateGeneratedContentLength)
+	}
 	plan.SharedCSSAdditions = strings.TrimSpace(plan.SharedCSSAdditions)
 	if !fan.css {
 		plan.SharedCSSAdditions = ""
@@ -396,7 +399,13 @@ func (g *defaultTemplateGenerator) generateFanOut(ctx context.Context, request t
 	}
 
 	pairProfile := g.config.profileFor(TemplateKindPair)
-	continuation := promptMessage(sections, len(fan.bases)+1, promptRoleUser)
+	var continuationParts []string
+	for _, section := range sections {
+		if !section.Shared && section.Call == len(fan.bases)+1 && section.Role == promptRoleUser {
+			continuationParts = append(continuationParts, section.Text)
+		}
+	}
+	continuation := strings.Join(continuationParts, "\n")
 	planText := plan.planJSON()
 	outcomes := make([]pairOutcome, len(fill))
 	inFlight := make(chan struct{}, templateFanOutInFlight)
@@ -405,6 +414,12 @@ func (g *defaultTemplateGenerator) generateFanOut(ctx context.Context, request t
 		wg.Add(1)
 		go func(i int, base string) {
 			defer wg.Done()
+			defer func() {
+				if recover() != nil {
+					outcomes[i] = pairOutcome{base: base, failure: "the section generation failed unexpectedly", err: ErrTemplateGenerationProvider}
+					g.config.Logf("template generation: phase=fanout carrier=%s slot=%s result=panic", in.EntityType, base)
+				}
+			}()
 			select {
 			case inFlight <- struct{}{}:
 				defer func() { <-inFlight }()
@@ -471,6 +486,11 @@ func (g *defaultTemplateGenerator) generatePair(ctx context.Context, in Template
 	if err != nil {
 		return pairOutcome{base: base, repair: repair, err: err}
 	}
+	for _, issue := range result.Issues {
+		if issue.Severity == shortcodes.SeverityError {
+			return pairOutcome{base: base, repair: repair, failure: "the reply still has validation errors: " + issue.Message, err: ErrTemplateGenerationProvider}
+		}
+	}
 	_, hasHTML := result.Slots[base]
 	_, hasCSS := result.Slots[base+"CSS"]
 	if !hasHTML || !hasCSS {
@@ -510,7 +530,7 @@ func assembleFanOut(in TemplateGenerationInput, fan *templateFanOut, plan templa
 				repair = &TemplateRepair{}
 			}
 			repair.Attempted = repair.Attempted || outcome.repair.Attempted
-			repair.Applied = repair.Applied || outcome.repair.Applied
+			repair.Applied = repair.Applied || (outcome.repair.Applied && outcome.result != nil)
 			if repair.Reason == "" {
 				repair.Reason = outcome.repair.Reason
 			}
@@ -538,10 +558,14 @@ func assembleFanOut(in TemplateGenerationInput, fan *templateFanOut, plan templa
 		}
 	}
 	if len(result.FailedSlots) == len(outcomes) {
+		err := fmt.Errorf("%w: no section could be generated", ErrTemplateGenerationProvider)
 		if timeouts == len(outcomes) {
-			return nil, ErrTemplateGenerationTimeout
+			err = ErrTemplateGenerationTimeout
 		}
-		return nil, fmt.Errorf("%w: no section could be generated", ErrTemplateGenerationProvider)
+		if repair != nil {
+			err = &templateRepairError{err: err, repair: repair}
+		}
+		return nil, err
 	}
 	if fan.css && plan.SharedCSSAdditions != "" {
 		css, issues := appendSharedCSS(in, plan.SharedCSSAdditions)
@@ -555,6 +579,9 @@ func assembleFanOut(in TemplateGenerationInput, fan *templateFanOut, plan templa
 		result.SlotIssues = nil
 	}
 	result.Valid = !hasErrorIssue(result.Issues)
+	if repair != nil && repair.Applied {
+		repair.Reason = ""
+	}
 	result.Repair = repair
 	return result, nil
 }
@@ -567,7 +594,7 @@ func assembleFanOut(in TemplateGenerationInput, fan *templateFanOut, plan templa
 func appendSharedCSS(in TemplateGenerationInput, additions string) (string, []shortcodes.LintIssue) {
 	current := currentTemplateSlots(in)[templateFanOutCustomCSS]
 	combined, offset := additions, 0
-	if strings.TrimSpace(current) != "" {
+	if current != "" {
 		separator := "\n\n"
 		if strings.HasSuffix(current, "\n\n") {
 			separator = ""
@@ -578,8 +605,8 @@ func appendSharedCSS(in TemplateGenerationInput, additions string) (string, []sh
 		offset = len(current) + len(separator)
 	}
 	var issues []shortcodes.LintIssue
-	if len(additions) > MaxTemplateGeneratedContentLength {
-		issues = append(issues, templateOversizeIssue(templateFanOutCustomCSS, len(additions)))
+	if len(combined) > MaxTemplateGeneratedContentLength {
+		issues = append(issues, templateOversizeIssue(templateFanOutCustomCSS, len(combined)))
 	}
 	for _, issue := range validateTemplateContent(TemplateTargetSlot, in, additions, true) {
 		if issue.End > issue.Start {

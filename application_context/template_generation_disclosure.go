@@ -10,12 +10,12 @@ import (
 
 // templateContinuationRuleVersion versions templateContinuationRule. Bump it
 // whenever the rule's text or meaning changes; it is part of the hash.
-const templateContinuationRuleVersion = 1
+const templateContinuationRuleVersion = 2
 
 // templateContinuationRule says what may fill a placeholder in a disclosed
 // message, that is, text that exists only after a model replies (a later
 // phase's design plan or repair round).
-const templateContinuationRule = "Only the model's own output and the server's validation messages ever fill a placeholder, never further user or entity data."
+const templateContinuationRule = "Shared sections are sent with every call. Each repair resends its original system and user messages unchanged, then appends the disclosed repair section. Only the model's own output and the server's validation messages ever fill a placeholder, never further user or entity data."
 
 // TemplateDisclosure is everything one generation request can send, shown to
 // the user before anything is sent. GroundingHash covers all of it.
