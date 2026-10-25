@@ -133,20 +133,23 @@ func runMRQLConfinedRankIgnoresHiddenDocuments(t *testing.T, tc *TestContext) {
 		}
 		return strings.Join(kept, ",")
 	}
-	order := func(appCtx *application_context.MahresourcesContext) []string {
+	// The confined result is compared verbatim, so a leaked row fails it; only
+	// the unconfined baseline, which holds the hidden rows, is filtered.
+	order := func(appCtx *application_context.MahresourcesContext, keep func(string) string) []string {
 		var out []string
 		for _, q := range queries {
-			out = append(out, visible(runConfinedMRQL(t, appCtx, q)))
+			out = append(out, keep(runConfinedMRQL(t, appCtx, q)))
 		}
 		return out
 	}
-	before, unconfinedBefore := order(confined), order(tc.AppCtx)
+	verbatim := func(s string) string { return s }
+	before, unconfinedBefore := order(confined, verbatim), order(tc.AppCtx, visible)
 	// Hidden documents that hold the searched term and shift the corpus
 	// statistics bm25 uses.
 	for i := 0; i < 40; i++ {
 		note(fmt.Sprintf("hidden-%02d", i), "kestrel "+strings.Repeat("pad ", 2000), outside)
 	}
-	after, unconfinedAfter := order(confined), order(tc.AppCtx)
+	after, unconfinedAfter := order(confined, verbatim), order(tc.AppCtx, visible)
 	for i, q := range queries {
 		if before[i] != after[i] {
 			t.Errorf("%s: hidden documents changed a confined order: %q, then %q", q, before[i], after[i])
@@ -172,6 +175,17 @@ func runMRQLConfinedRankIgnoresHiddenDocuments(t *testing.T, tc *TestContext) {
 	if unconfinedBefore[0] != "rank-short,rank-long" || unconfinedAfter[0] != "rank-long,rank-short" {
 		t.Errorf("SQLite unconfined RANK = %q, then %q; want bm25 reversed by hidden documents", unconfinedBefore[0], unconfinedAfter[0])
 	}
+}
+
+// chainBuckets is GROUP BY parent over the scope chain: the root under no
+// parent, s01 under the root, and every later level under the one before.
+func chainBuckets() string {
+	rows := []string{"count=1 parent=<nil>", "count=1 parent=scope-root"}
+	for i := 1; i < 60; i++ {
+		rows = append(rows, fmt.Sprintf("count=1 parent=s%02d", i))
+	}
+	sort.Strings(rows)
+	return strings.Join(rows, "; ")
 }
 
 func TestMRQLScopeReachesTheWholeSubtree(t *testing.T) {
@@ -216,7 +230,7 @@ func runMRQLScopeReachesTheWholeSubtree(t *testing.T, tc *TestContext) {
 		fmt.Sprintf(`type = group SCOPE %d`, c1.ID):                                     "cyc-1,cyc-2",
 		fmt.Sprintf(`count:type = group SCOPE %d`, c2.ID):                               "total=2",
 		fmt.Sprintf(`type = group SCOPE %d GROUP BY parent COUNT()`, c1.ID):             "count=1 parent=cyc-1; count=1 parent=cyc-2",
-		fmt.Sprintf(`type = group SCOPE %d GROUP BY parent COUNT() LIMIT 100`, root.ID): "",
+		fmt.Sprintf(`type = group SCOPE %d GROUP BY parent COUNT() LIMIT 100`, root.ID): chainBuckets(),
 	} {
 		count := strings.HasPrefix(query, "count:")
 		q := strings.TrimPrefix(query, "count:")
@@ -255,14 +269,6 @@ func runMRQLScopeReachesTheWholeSubtree(t *testing.T, tc *TestContext) {
 			rows := strings.Split(summarizeMRQLResult(t, result), ",")
 			sort.Strings(rows)
 			got = strings.Join(rows, ",")
-		}
-		if expected == "" {
-			// Every level groups under its own parent: 60 rows of one, and the
-			// root under the parent it has none of.
-			if n := strings.Count(got, "count=1 "); n != 61 {
-				t.Errorf("%s: %d groups counted at their parent, want 61: %.200q", query, n, got)
-			}
-			continue
 		}
 		if got != expected {
 			t.Errorf("%s:\n got %.300q\nwant %.300q", query, got, expected)

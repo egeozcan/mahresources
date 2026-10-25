@@ -374,7 +374,7 @@ func (tc *translateContext) buildTraversalChain(parts []Token) []fkStep {
 			if fieldName == "children" {
 				outerRef = tc.tableName + ".id"
 			} else {
-				outerRef = tc.tableName + ".owner_id"
+				outerRef = tc.groupFK(tc.tableName + ".owner_id")
 			}
 		} else {
 			// Subsequent steps: reference from the previous subquery alias
@@ -382,7 +382,7 @@ func (tc *translateContext) buildTraversalChain(parts []Token) []fkStep {
 			if fieldName == "children" {
 				outerRef = prevAlias + ".id"
 			} else {
-				outerRef = prevAlias + ".owner_id"
+				outerRef = tc.groupFK(prevAlias + ".owner_id")
 			}
 		}
 		steps = append(steps, buildFKStep(fieldName, outerRef, i))
@@ -520,8 +520,9 @@ func (tc *translateContext) negatedNullClause(step fkStep) string {
 	if tc.isChildrenStep(step) {
 		return step.fkExpr + " NOT IN (SELECT owner_id FROM groups WHERE owner_id IS NOT NULL)"
 	}
-	// For forward FK (owner/parent): the fkExpr is like "resources.owner_id"
-	return tc.missingGroup(step.fkExpr)
+	// For forward FK (owner/parent): the fkExpr is the groupFK of, for
+	// example, "resources.owner_id", already NULL for an invisible group.
+	return step.fkExpr + " IS NULL"
 }
 
 // isChildrenStep returns true if the step represents a reverse FK (children) traversal.
@@ -713,7 +714,7 @@ func (tc *translateContext) translateRecursiveComparison(db *gorm.DB, expr *Comp
 			mSub, recursiveDepthGuard)
 	}
 
-	outerCol := tc.tableName + ".owner_id"
+	outerCol := tc.groupFK(tc.tableName + ".owner_id")
 	if tc.entityType == EntityGroup {
 		outerCol = tc.tableName + ".id"
 	}
@@ -726,7 +727,7 @@ func (tc *translateContext) translateRecursiveComparison(db *gorm.DB, expr *Comp
 	if isNegated && tc.entityType != EntityGroup {
 		// Owner-less rows have no base group, so they have no ancestors/descendants
 		// and trivially satisfy a negated existential.
-		sql = "(" + sql + " OR " + tc.tableName + ".owner_id IS NULL)"
+		sql = "(" + sql + " OR " + outerCol + " IS NULL)"
 	}
 	db = db.Where(sql, mVal...)
 	return db, nil
@@ -889,13 +890,18 @@ func (tc *translateContext) visibleRelated(col, table string) string {
 	return fmt.Sprintf(" AND %s IN (SELECT v.id FROM %s v)", col, tc.visibleTable(table))
 }
 
-// missingGroup is "<fk> IS NULL" for a group foreign key; for a confined
-// principal a key naming a group it cannot see counts as missing too.
-func (tc *translateContext) missingGroup(fk string) string {
+// groupFK is how the translator reads a foreign key that names a group
+// (owner_id, which is also a group's parent) from a row that is not a join
+// target already filtered to visible rows. For a confined principal a key
+// naming a group it cannot see reads as NULL, so every comparison, IS NULL,
+// NOT, AND and OR treats it exactly as a missing parent under three-valued
+// logic. Every such read goes through here; TestNoRawGroupFKReadWhenConfined
+// fails on one that does not.
+func (tc *translateContext) groupFK(fk string) string {
 	if tc.visibleRoot == 0 {
-		return fk + " IS NULL"
+		return fk
 	}
-	return fmt.Sprintf("(%s IS NULL OR %s NOT IN (SELECT v.id FROM %s v))", fk, fk, tc.visibleTable("groups"))
+	return fmt.Sprintf("(CASE WHEN %s IN (SELECT v.id FROM %s v) THEN %s END)", fk, tc.visibleTable("groups"), fk)
 }
 
 // translateNode recursively translates an AST node into GORM Where/Or clauses.
@@ -1201,16 +1207,16 @@ func (tc *translateContext) translateRelationComparison(db *gorm.DB, fd FieldDef
 	switch fd.Column {
 	case "owner_id":
 		if isNumericValue(val) {
-			return db.Where(tc.qualifiedColumn("owner_id")+" "+tc.sqlOperator(op)+" ?"+tc.visibleRelated(tc.qualifiedColumn("owner_id"), "groups"), val), nil
+			return db.Where(tc.groupFK(tc.qualifiedColumn("owner_id"))+" "+tc.sqlOperator(op)+" ?", val), nil
 		}
 		// owner = "name" → find entities whose owner group has the given name
 		steps := tc.buildTraversalChain([]Token{{Value: "owner"}, {Value: "name"}})
 		return tc.translateFKChainScalar(db, steps, "name", op, val, nameFd)
 	case "parent_id":
 		if isNumericValue(val) {
-			// A parent the caller cannot see compares like a missing one: never
-			// equal, never unequal, as NULL is.
-			return db.Where(tc.qualifiedColumn("owner_id")+" "+tc.sqlOperator(op)+" ?"+tc.visibleRelated(tc.qualifiedColumn("owner_id"), "groups"), val), nil
+			// A parent the caller cannot see compares like a missing one: as
+			// NULL, under NOT too.
+			return db.Where(tc.groupFK(tc.qualifiedColumn("owner_id"))+" "+tc.sqlOperator(op)+" ?", val), nil
 		}
 		// parent = "name" → find groups whose parent has the given name
 		steps := tc.buildTraversalChain([]Token{{Value: "parent"}, {Value: "name"}})
@@ -1316,14 +1322,20 @@ func (tc *translateContext) translateTraversalIsNull(db *gorm.DB, expr *IsExpr, 
 		// parent/owner: forward FK traversal
 		// X.field IS NULL → FK target exists but field is null, OR no FK at all
 		// X.field IS NOT NULL → FK target exists and field is not null
-		fkCol := tc.tableName + ".owner_id"
+		fkCol := tc.groupFK(tc.tableName + ".owner_id")
+		// The leaf is the parent's own column; when that is its parent in turn
+		// (parent.parent), it is a group key too.
+		leaf := "p." + col
+		if col == "owner_id" {
+			leaf = tc.groupFK(leaf)
+		}
 		if expr.Negated {
 			db = db.Where(
-				fmt.Sprintf("%s IN (SELECT p.id FROM %s p WHERE p.%s IS NOT NULL)", fkCol, tc.visibleTable("groups"), col),
+				fmt.Sprintf("%s IN (SELECT p.id FROM %s p WHERE %s IS NOT NULL)", fkCol, tc.visibleTable("groups"), leaf),
 			)
 		} else {
 			db = db.Where(
-				fmt.Sprintf("(%s IN (SELECT p.id FROM %s p WHERE p.%s IS NULL) OR %s)", fkCol, tc.visibleTable("groups"), col, tc.missingGroup(fkCol)),
+				fmt.Sprintf("(%s IN (SELECT p.id FROM %s p WHERE %s IS NULL) OR %s IS NULL)", fkCol, tc.visibleTable("groups"), leaf, fkCol),
 			)
 		}
 	}
@@ -1718,13 +1730,11 @@ func (tc *translateContext) translateRelationIsEmpty(db *gorm.DB, fd FieldDef, n
 	case "owner_id", "parent_id":
 		// owner/parent IS EMPTY → owner_id IS NULL, where a group the caller
 		// cannot see counts as missing, as in the traversal paths.
-		fk := tc.tableName + ".owner_id"
-		if negated && tc.visibleRoot == 0 {
+		fk := tc.groupFK(tc.tableName + ".owner_id")
+		if negated {
 			db = db.Where(fk + " IS NOT NULL")
-		} else if negated {
-			db = db.Where("NOT " + tc.missingGroup(fk))
 		} else {
-			db = db.Where(tc.missingGroup(fk))
+			db = db.Where(fk + " IS NULL")
 		}
 
 	case "children":
