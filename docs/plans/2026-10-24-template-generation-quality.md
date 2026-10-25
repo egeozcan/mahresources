@@ -175,7 +175,7 @@ Lint only covers generated schemas; hand-written schemas and stored values reach
 
 - [x] Install a loader on the compiler that refuses every URL (`file`, `http`, `https`, anything else) with a clear error ("external schema references are not supported; use a local #/$defs reference"). The `mem://` resource added with `AddResource` and local `#/...` references keep working, as do the standard metaschemas, which the library embeds.
 - [x] Tests, red first: a `$ref` to a `file://` temp file holding a valid schema is refused and the file is not opened (the loader records calls); `http://` and `https://` refs are refused without network access; a `$schema` naming an unknown remote metaschema is refused; draft 2020-12 and draft-07 `$schema` values and a local `#/$defs` ref still compile. One api test saves a category with a `file://` ref and gets a 400.
-- [ ] Item 5's non-local `$ref` warning stays, now as a friendlier message on top of a compile that fails.
+- [x] Item 5's non-local `$ref` warning stays, now as a friendlier message on top of a compile that fails.
 
 ### 1f. Disclosure dialog (decision 11)
 
@@ -190,7 +190,7 @@ Lands before phase 2, so every grounding block added later appears in the dialog
   - The eval harness (phase 0) switches to dry run then send, and records the disclosure size per case.
   - E2E: Generate opens the dialog; with a long disclosure at a 375px viewport the actions stay reachable and the section list scrolls by keyboard; Cancel sends nothing (route spy) and restores focus to Generate; after Send, focus is on the status region, not on `body`; a 409 shows "Review again" and opens nothing by itself; with search open (Cmd/Ctrl+K) when the delayed 409 arrives, only search is open and operable; Review again while another modal is painted is refused with the notice; after an HTTP error and after a network rejection, focus is on Generate, not `body`; the samples section shows the seeded entity's name; Send makes exactly one generate request carrying the hash; Run the a11y suite on the open dialog.
 
-- [ ] Re-run the eval. The pass rate should be unchanged within noise, and the cache-hit tokens should now be visible.
+- [x] Re-run the eval. The pass rate should be unchanged within noise, and the cache-hit tokens should now be visible.
 
 ## Phase 2: richer grounding
 
@@ -292,7 +292,7 @@ Each item is its own commit, each with prompt tests red first. They all touch `t
   - the prompt contains the reference and teaches regex only on Postgres;
   - the reference size is pinned;
   - `TestBuiltinDocMRQLExamplesParse` upgraded to `CheckTemplateMRQL`.
-- [ ] Re-run the eval after 2e; compare against the phase 1 report.
+- [x] Re-run the eval after 2e; compare against the phase 1 report.
 
 ## Phase 3: repair and per-kind profiles
 
@@ -315,7 +315,7 @@ Profiles land first: the repair budget is defined in terms of `profile.Timeout`.
   - document them in `docs/architecture/configuration.md:70-72`.
 - [x] Verify with one real call that `response_format: json_object` works together with `thinking: enabled`. If the API rejects it, add `JSONMode` to the options, turned off when thinking is on. (2026-10-24: `deepseek-flash` answered HTTP 200 with a valid JSON object and reasoning tokens; no `JSONMode` option was needed.)
 - [x] Tests: the profile table with no env; per-kind overrides; fallbacks; invalid values; `TestTemplateCallKind`; the fake records model, thinking and max tokens per kind; a per-kind timeout is honoured.
-- [ ] Eval: run with the defaults and record it.
+- [x] Eval: run with the defaults and record it.
 - [x] The process-wide provider semaphore (decision 4) lands here, before fan-out needs it. Test: with 2 slots, a third concurrent call waits, and times out at its deadline.
 
 ### 3b. Repair round (item 1)
@@ -335,11 +335,11 @@ Profiles land first: the repair budget is defined in terms of `profile.Timeout`.
   - handler: one limiter slot covers both calls;
   - E2E: the status text, plus the a11y suite.
   - Implemented in `template_generation_repair_test.go` (generator), `server/api_tests/template_generate_test.go` (one limiter slot) and `template-generate.spec.ts` (status text). The repair call is disclosed as call 1: its sections continue call 0's messages and hold only the two placeholders; the dry run reports `maxCalls: 2` while repair is enabled.
-- [ ] Eval: run with the defaults (repair on), then again with `PAIR_THINKING=on`, and record both.
+- [x] Eval: run with the defaults (repair on), then again with `PAIR_THINKING=on`, and record both.
 
 ## Phase 4: bundle fan-out (item 2)
 
-- [ ] `application_context/template_generation_fanout.go`. The routing predicate is one rule, applied to the expanded `BundleSlots` (the handler also represents ordinary pair and cluster requests as two-slot bundles, `template_generation_api_handlers.go:164-193`, so `target=bundle` alone cannot tell the paths apart): **planner when the pair count is above 1 or `CustomCSS` is requested**; otherwise the single call.
+- [x] `application_context/template_generation_fanout.go`. The routing predicate is one rule, applied to the expanded `BundleSlots` (the handler also represents ordinary pair and cluster requests as two-slot bundles, `template_generation_api_handlers.go:164-193`, so `target=bundle` alone cannot tell the paths apart): **planner when the pair count is above 1 or `CustomCSS` is requested**; otherwise the single call.
   1. **Plan call.** It returns `templateDesignPlan{ClassPrefix, Palette, Layout, SharedCSSAdditions string, Sections map[base]{Fill, Intent}, Explanation}`.
      - `parseTemplateDesignPlan` drops unrequested sections, caps lengths, and forces Fill for slots the user selected.
      - If the plan fails, the request returns 502 (504 on timeout) and no pair calls are made.
@@ -353,29 +353,29 @@ Profiles land first: the repair budget is defined in terms of `profile.Timeout`.
      - Skipped sections are absent, not empty, so the editor keeps them.
      - Failed pairs are listed in `failedSlots` with a warning issue each.
      - If every fill pair fails, the request is an error and nothing is applied.
-- [ ] Optional request field `slots` (HTML base names plus `CustomCSS`). The handler validates and expands it. An omitted field means the generator chooses; an explicit empty list is a 400, and so is a CustomCSS-only selection ("use the CustomCSS Generate button"), since a fan-out with no pairs has nothing to apply CSS additions to. The UI sends `slots` only when at least one box is ticked, so "none ticked" means "let the generator choose", which the fieldset legend says. The response adds `failedSlots`, an additive change. Update `server/routes_openapi.go:2620-2660` and regenerate the OpenAPI spec.
-- [ ] UI (`templates/partials/form/templateBundleTools.tpl` around lines 46-60, `templateBundle.js`):
+- [x] Optional request field `slots` (HTML base names plus `CustomCSS`). The handler validates and expands it. An omitted field means the generator chooses; an explicit empty list is a 400, and so is a CustomCSS-only selection ("use the CustomCSS Generate button"), since a fan-out with no pairs has nothing to apply CSS additions to. The UI sends `slots` only when at least one box is ticked, so "none ticked" means "let the generator choose", which the fieldset legend says. The response adds `failedSlots`, an additive change. Update `server/routes_openapi.go:2620-2660` and regenerate the OpenAPI spec.
+- [x] UI (`templates/partials/form/templateBundleTools.tpl` around lines 46-60, `templateBundle.js`):
   - a fieldset of labelled section checkboxes (`data-testid="template-bundle-section-<Field>"`);
   - a status line that the request can take up to a minute;
   - a warning naming any failed slots;
   - Apply asks one combined question (user decision 2 plus decision 7), before any editor is written. It names every returned field whose current value differs from the draft and that is either currently non-empty or changed since the request's snapshot, so a field the user cleared during generation is named too, and it marks the fields edited since the request started. `confirmOverwrite` (`templateBundle.js:235-238`) gains a field-list parameter, because today it counts every populated slot and MetaSchema, which would claim a Header-only draft discards untouched fields. One dialog, not two in a row, so `confirmDialog.js:122-128`'s delayed focus restore cannot pick up a closing dialog as the opener; focus returns to Apply.
   - E2E: Apply with authored slots asks and names only the returned ones; clearing an authored returned slot while the request runs still makes Apply ask and name it; Cancel leaves every editor unchanged and focus on Apply; a Header-only draft does not mention MetaSchema or other slots.
   - No streaming in v1. Revisit if the eval shows durations near the deadline.
-- [ ] Tests:
+- [x] Tests:
   - generator (scripted provider that counts calls in flight): plan, then pairs; a pair prompt carries the plan and only its own content; skipped sections are absent; empty additions leave CustomCSS absent; a selection of `CustomHeader` plus `CustomCSS` goes through the planner and its CustomCSS starts with the original byte for byte, so an unselected Sidebar that depends on existing CustomCSS keeps its rules; the single-pair path, given a provider reply that includes CustomCSS, drops it; with the Header pair failing and Sidebar succeeding, the result's CustomCSS starts with the original CustomCSS byte for byte; with Header and Sidebar selected and CustomCSS not selected, a plan that returns additions has them cleared, the pair prompts contain no additions and the companion-only instruction; partial failure; all pairs failing is an error; a plan failure makes no pair calls; concurrency is bounded; the overall deadline holds; client cancellation propagates; the selection is honoured; plan and pairs share the prefix; cache usage is summed in the log;
   - existing bundle tests (`template_generation_test.go:321, 349, 556`) retargeted to two-slot bundles;
   - handler: one rate slot per bundle; selection validation (an unknown name, `CustomHeaderCSS` and an explicit `[]` and `["CustomCSS"]` all return 400; an omitted field generates the planner's choice);
   - E2E: failed slots are reported; selected sections are sent for all three carriers; the existing whole-template test stays green; the a11y suite runs.
-- [ ] Final eval run, compared against the `master` baseline.
+- [x] Final eval run, compared against the `master` baseline.
 
 ## Phase 5: docs and wrap-up
 
-- [ ] `docs-site/docs/features/custom-templates.md:814-825`: list exactly what is sent to the provider. The current sentence is already false. Describe repair, the section picker and failed slots.
-- [ ] `docs/architecture/configuration.md`: the new env vars.
-- [ ] OpenAPI regenerated and validated.
-- [ ] Every suite on SQLite and Postgres; E2E browser, CLI and a11y.
-- [ ] pi review of each phase as it lands, until one round has no P0 or P1 finding.
-- [ ] A review section added at the end of this file.
+- [x] `docs-site/docs/features/custom-templates.md:814-825`: list exactly what is sent to the provider. The current sentence is already false. Describe repair, the section picker and failed slots.
+- [x] `docs/architecture/configuration.md`: the new env vars.
+- [x] OpenAPI regenerated and validated.
+- [x] Every suite on SQLite and Postgres; E2E browser, CLI and a11y.
+- [x] pi review of each phase as it lands, until one round has no P0 or P1 finding.
+- [x] A review section added at the end of this file.
 
 ## Risks
 
@@ -401,4 +401,39 @@ Reviewed with pi (GPT-6.1-sol, high thinking) before any code: nine rounds, stop
 
 Open follow-up, not in this plan: isolate the preview iframe from entity data.
 
-An implementation review section follows here when the work lands.
+## Implementation review (2026-10-25)
+
+Resumed from Claude session `343b2801-8654-4f1a-992e-9c1883c65861` after its usage limit interrupted the work. The existing implementation and approved decisions were retained.
+
+- Recovered the unmerged MRQL access-control round-four patch. Invisible parent/owner IDs now read as NULL through one helper, including under NOT/OR and chained NULL checks. New cases were red before the fix; SQLite and Postgres scope/RANK tests pass. Independent pi review found no P0/P1 issue.
+- Completed fan-out review fixes: worker panic isolation; whole-pair rejection after unsuccessful repair; exact disclosed repair bytes without duplicated grounding; raw shared-CSS and combined-slot limits; byte-preserving append-only CSS; and repair metadata for retained pairs and all-failed requests. Each defect has a regression observed red before the fix. Focused generator/disclosure and race suites pass. Pi's third round had no P0/P1 issue; its remaining small repair-metadata findings were also fixed.
+- Completed stray slot-closer lint and documented that divider tags have no closer. Removing the lint hook makes the malformed-closer tests fail. The scoring harness now distinguishes planning replies, failed sections and discarded repairs. Historical reports are replayed through fresh seeded previews/query probes rather than guessing runtime failures from old combined diagnostics. Comparisons require matching scorer, environment fingerprint, corpus, fixtures and replay provenance.
+- Corrected compare E2E coordinate sampling after repeated failures: a tall slider's pointer could be above the viewport, and separate image measurements could straddle a scroll frame. The unchanged repeat run failed; all 132 repeated cases passed after using a visible pointer position and an atomic relative measurement. No compare application code changed.
+
+### Evaluation
+
+The 32-case corpus ran three times per case (96 results), making 177 provider calls with the shipped defaults and repair enabled. The final run used the completed generation logic; later disclosure-text and repair-summary fixes leave provider messages unchanged. No sampled CSS approached the new combined-content cap (largest generated CSS slot: 2,789 bytes). Saved drafts from both runs were replayed against the same fixtures and current scoring environment, with no provider calls during replay. Original reports remain available separately from replayed aggregates.
+
+| Kind | Replayed master baseline | Final |
+|---|---:|---:|
+| All | 84/96 (87.5%) | 90/96 (93.75%) |
+| Pair | 65/69 (94.20%) | 65/69 (94.20%) |
+| Whole template | 4/9 (44.44%) | 7/9 (77.78%) |
+| CustomCSS | 6/9 (66.67%) | 9/9 (100%) |
+| MetaSchema | 9/9 (100%) | 9/9 (100%) |
+
+Final measured truncation, unknown shortcodes and MRQL errors are all zero; prefix cache hits are 91.9%. Six runs still fail the broader quality checks: one malformed reply, two bundles with a dropped section, and three explicit inline-handler adversarial requests. Generated content remains pending text until Apply, as required by decision 10. The baseline's older 56% bundle figure used different scoring rules; 44.44% is the comparable replayed value.
+
+### Remaining scope limits
+
+A fan-out's one generic repair section is a reusable continuation template, rather than a separate entry for every possible physical repair call. The version-2 hashed continuation rule explicitly describes how each pair reuses its own original messages. Preview isolation from entity data remains the separate follow-up already listed under Risks.
+
+### Final verification
+
+- Full Go suite: `go test --tags 'json1 fts5' ./...` and `go test --tags 'json1 fts5 postgres' ./...` both passed. The dedicated Postgres MRQL/API run passed as well.
+- Frontend unit tests: 129 files, 2,390 tests passed. Generator/disclosure, shortcode and scorer race checks passed.
+- Complete SQLite browser, CLI, auth, doctest and accessibility run: 2,625 passed, five skipped, no flakes. The complete Postgres run: 2,625 passed, four skipped, one fixture-related Jobs flake. That fixture now waits for seeded outcome events to receive delivery cursors before opening the panel; it subsequently passed 20 targeted repetitions and 50 full-file cases without retries, with the original assertions unchanged.
+- Repeated compare regression file: 132 passed after the coordinate fix.
+- Frontend/assets and docs-site builds, CSS source-scan checks, OpenAPI regeneration/validation, generated MRQL skill reference and `git diff --check` passed. OpenAPI and frontend rebuilds produced no additional source drift.
+- The comparable aggregate artifacts are `benchmarks/template-generation/baselines/master-replayed-2026-10-25.json` and `final-replayed-2026-10-25.json`; replayed phase 1, phase 3 and pair-thinking reports preserve the intermediate measurements. The comparator accepts matching environment/replay provenance and reports no kind regression. Full drafts and provider replies remain untracked.
+- Final pi reviews used DeepSeek Flash with low thinking: UI/API, MRQL, fan-out round 3, and lint/scoring round 2 each ended with zero P0/P1 findings. The small diagnostic, metadata and replay-guard follow-ups were verified with focused regressions. No dependency was added.

@@ -207,7 +207,22 @@ DEEPSEEK_TIMEOUT=20s
 
 For the `/mrql` editor the server sends only the prompt text entered there plus syntax-only MRQL instructions. It does not send local tag lists, categories, saved queries, or database contents to the provider.
 
-`DEEPSEEK_API_KEY` also enables template generation in the Category, Resource Category and Note Type editors, which additionally sends the Meta JSON Schema being authored and one sample entity's metadata. See [Custom Templates](../features/custom-templates.md).
+### Template Generation
+
+`DEEPSEEK_API_KEY` also enables generation in the Category, Resource Category and Note Type editors. Before sending, a dialog shows the provider messages, including category identity, layout, current templates, schema, bounded samples and reference documentation as applicable. Drafts stay pending until Apply. See [Custom Templates](../features/custom-templates.md#generate-from-natural-language) for the data sent, repair and whole-template generation.
+
+Each kind of template provider call has its own model, thinking setting and timeout. Replace `<KIND>` below with `SLOT` (shared CustomCSS), `PAIR` (one HTML section and its CSS), `PLAN` (the whole-template design plan), `BUNDLE` (the single-call bundle profile) or `METASCHEMA`.
+
+| Env Variable | Default | Description |
+|--------------|---------|-------------|
+| `DEEPSEEK_TEMPLATE_<KIND>_MODEL` | `DEEPSEEK_MODEL` | Model for this kind of template call. MRQL generation keeps its own model. |
+| `DEEPSEEK_TEMPLATE_<KIND>_THINKING` | `off` | Accepts `on`/`off`, `true`/`false` or `1`/`0`. Thinking tokens count against the output budget. |
+| `DEEPSEEK_TEMPLATE_<KIND>_TIMEOUT` | `DEEPSEEK_TIMEOUT` | Positive Go duration for one provider call, including time waiting for a provider slot. With thinking on, the default is `60s`, or `120s` for `BUNDLE`. |
+| `DEEPSEEK_TEMPLATE_REPAIR` | `on` | One repair attempt for lint errors or incomplete pairs, when time permits. Accepts the same switch values as thinking. |
+
+Invalid settings fail startup. With thinking off, the output budget is 4,000 tokens for `SLOT`, `PAIR` and `METASCHEMA`, 1,200 for `PLAN`, and 8,000 for `BUNDLE`. With thinking on it is 8,192 tokens, or 16,384 for `BUNDLE`.
+
+A whole-template request uses a planning call followed by section pairs, within a 55 second deadline, whenever it includes multiple sections or shared CSS. At most five section calls run at once per request and eight template provider calls across the server. Repairs share the request's budget and use no extra rate-limit slot.
 
 ## Deferred Render Signing Key
 
