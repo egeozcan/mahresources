@@ -1,7 +1,7 @@
 ---
 outputShape: Array of revision summaries, newest first, with id, number, carrierType, carrierId, createdAt, createdByUserId, label, source, applied, changedSlots and restoredFrom
 exitCodes: 0 on success; 1 on any error
-relatedCmds: mr note-types revisions show, mr note-types revisions diff, note-type edit
+relatedCmds: note-types revisions show, note-types revisions diff, note-type edit
 ---
 
 # Long

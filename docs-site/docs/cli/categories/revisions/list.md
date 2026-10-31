@@ -58,4 +58,6 @@ Array of revision summaries, newest first, with id, number, carrierType, carrier
 
 ## See Also
 
+- [`mr categories revisions show`](./show.md)
+- [`mr categories revisions diff`](./diff.md)
 - [`mr category edit`](../../category/edit.md)

@@ -1,7 +1,7 @@
 ---
 outputShape: Object with carrierType, carrierId, from, optional to, and slots, each slot holding fields with equal, insert and delete hunks of lines; text mode prints a unified diff
 exitCodes: 0 on success; 1 on any error
-relatedCmds: mr categories revisions list, mr categories revisions show, mr categories revisions restore
+relatedCmds: categories revisions list, categories revisions show, categories revisions restore
 ---
 
 # Long
@@ -10,9 +10,11 @@ Diff the templates of two revisions of a category. `--id` and `--from` are
 required; `--to` defaults to the category's current state. Only fields
 that differ are shown. Text output is a unified diff per field, with three
 lines of context and `-` and `+` marking removed and added lines.
-MetaSchema, SectionConfig and AutoDetectRules are compared as
+MetaSchema is compared as
 pretty-printed JSON with sorted keys, so key order never shows as a
-change. Under `--json` the server's hunks are printed unchanged.
+change; text that does not parse is compared as raw text. SectionConfig is
+always compared as the server resolves it, so configs that resolve to the
+same sections show no change, while a config that turns a section off differs from `{}`. Under `--json` the server's hunks are printed unchanged.
 
 # Example
 

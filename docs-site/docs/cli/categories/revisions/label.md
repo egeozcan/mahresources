@@ -60,3 +60,9 @@ Revision summary with the new label under --json; confirmation otherwise
 ## Exit Codes
 
 0 on success; 1 on any error
+
+## See Also
+
+- [`mr categories revisions list`](./list.md)
+- [`mr categories revisions show`](./show.md)
+- [`mr categories revisions restore`](./restore.md)

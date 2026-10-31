@@ -1,7 +1,7 @@
 ---
 outputShape: Revision summary with the new label under --json; confirmation otherwise
 exitCodes: 0 on success; 1 on any error
-relatedCmds: mr note-types revisions list, mr note-types revisions show, mr note-types revisions restore
+relatedCmds: note-types revisions list, note-types revisions show, note-types revisions restore
 ---
 
 # Long

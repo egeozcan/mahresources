@@ -8,7 +8,7 @@ sidebar_label: show
 
 Show one revision of a note type. `<number>` is the per-note type revision
 number from `list`, and `--id` is required. The output is the revision's
-metadata followed by each non-empty field exactly as it was stored, which
+metadata followed by each field that has stored content, printed verbatim, which
 for an old note type can include a MetaSchema that is not valid JSON.
 Under `--json` the `snapshot` object holds every recorded field, and the
 `editor` object holds the same fields as the edit form loads them.
@@ -60,3 +60,9 @@ Revision summary plus snapshot, the stored value of every tracked field the revi
 ## Exit Codes
 
 0 on success; 1 on any error
+
+## See Also
+
+- [`mr note-types revisions list`](./list.md)
+- [`mr note-types revisions diff`](./diff.md)
+- [`mr note-types revisions restore`](./restore.md)

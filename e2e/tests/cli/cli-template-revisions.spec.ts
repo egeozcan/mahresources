@@ -39,7 +39,7 @@ for (const carrier of carriers) {
     const revisions = (cli: CliRunner, ...args: string[]) =>
       cli.runJson<any>(carrier.plural, 'revisions', ...args, '--id', id);
     const header = (cli: CliRunner) =>
-      cli.runJson<{ CustomHeader: string; CustomSidebar: string }>(carrier.singular, 'get', id);
+      cli.runJson<{ CustomHeader: string; CustomSidebar: string; CustomSidebarCSS: string }>(carrier.singular, 'get', id);
 
     test('create records revision 1 with source create', async ({ cli }) => {
       id = String(cli.runJson<{ ID: number }>(carrier.singular, 'create', '--name', name).ID);
@@ -111,6 +111,39 @@ for (const carrier of carriers) {
       const now = header(cli);
       expect(now.CustomHeader).toBe('<p>one</p>');
       expect(now.CustomSidebar).toBe('<p>kept</p>');
+    });
+
+    test('--no-css keeps the current CSS and the default brings the old CSS back', async ({ cli }) => {
+      cli.runOrFail(carrier.singular, 'edit', '--id', id, '--custom-sidebar-css', '.old{}');
+      const old = (revisions(cli, 'list') as Revision[])[0].number;
+      cli.runOrFail(carrier.singular, 'edit', '--id', id, '--custom-sidebar', '<p>new</p>', '--custom-sidebar-css', '.new{}', '--custom-header', '<p>other</p>');
+
+      revisions(cli, 'restore', String(old), '--slot', 'CustomSidebar', '--no-css');
+      let now = header(cli);
+      expect(now.CustomSidebar).toBe('<p>kept</p>');
+      expect(now.CustomSidebarCSS).toBe('.new{}');
+      expect(now.CustomHeader).toBe('<p>other</p>');
+
+      revisions(cli, 'restore', String(old), '--slot', 'CustomSidebar');
+      now = header(cli);
+      expect(now.CustomSidebarCSS).toBe('.old{}');
+      expect(now.CustomHeader).toBe('<p>other</p>');
+    });
+
+    test('a blank --slot is refused rather than restoring everything', async ({ cli }) => {
+      const before = (revisions(cli, 'list') as Revision[]).length;
+      for (const blank of ['', ' ']) {
+        const result = cli.runExpectError(carrier.plural, 'revisions', 'restore', '1', '--id', id, '--slot', blank);
+        expect(result.stderr).toContain('--slot must name a slot');
+      }
+      expect((revisions(cli, 'list') as Revision[]).length).toBe(before);
+    });
+
+    test('show prints whitespace-only values verbatim', async ({ cli }) => {
+      cli.runOrFail(carrier.singular, 'edit', '--id', id, '--custom-sidebar-css', '   ');
+      const n = (revisions(cli, 'list') as Revision[])[0].number;
+      const text = cli.runOrFail(carrier.plural, 'revisions', 'show', String(n), '--id', id).stdout;
+      expect(text).toContain('--- CustomSidebarCSS ---\n   \n');
     });
 
     test('--no-css needs --slot', async ({ cli }) => {

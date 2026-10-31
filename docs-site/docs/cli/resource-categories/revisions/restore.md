@@ -67,3 +67,9 @@ Summary of the new restore revision with number, source, restoredFrom and change
 ## Exit Codes
 
 0 on success; 1 on any error
+
+## See Also
+
+- [`mr resource-categories revisions list`](./list.md)
+- [`mr resource-categories revisions diff`](./diff.md)
+- [`mr resource-categories revisions label`](./label.md)

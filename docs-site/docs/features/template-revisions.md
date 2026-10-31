@@ -29,7 +29,7 @@ Each revision also carries:
 - a timestamp and the user who made the change
 - an optional label of at most 200 characters
 - a **source**, described below
-- an **applied** list naming a preset, a generated draft, a copied template or a loaded revision, when the save used one
+- an **applied** list naming a preset, a generated draft, a copied template or a loaded revision, when the save used one. Create and update revisions keep it. `baseline`, `import` and `restore` revisions have an empty list.
 - the slots that changed compared with the previous revision. A slot and its `*CSS` sibling count as one slot. For revision #1 these are the slots that have content.
 
 ## When a revision is recorded
@@ -42,9 +42,10 @@ Each revision also carries:
 | A restore | The next number, source `restore`, even when the content equals the current state |
 | A group import creates the carrier | Revision #1, source `import` |
 | A group import reuses an existing carrier | Nothing |
-| A carrier that has no revisions is saved with a change | Revision #1 holding the state before the save (source `baseline`), then the new revision |
+| The first save that changes a tracked field of a carrier that has no revisions | Revision #1 holding the state before the save (source `baseline`), then the new revision |
+| Any other save of a carrier that has no revisions, such as a rename, a description edit or an unchanged save | Nothing |
 
-A save changes a tracked field when the canonical form of that field differs. Text slots compare as written. `SectionConfig` is compared after the server resolves it, so an empty value, `{}`, a sparse config and a full config that only restates the defaults are the same. `MetaSchema` and `AutoDetectRules` compare as pretty-printed JSON with sorted keys, so reordering keys is not a change. When the text does not parse as JSON, the raw text is compared.
+A save changes a tracked field when the canonical form of that field differs. Text slots compare as written. `SectionConfig` is always compared as the server resolves it, so an empty value, `{}`, and a sparse config that resolves to the same sections as a full one are the same. A config that turns a section off differs from `{}`. When the config cannot be resolved, the defaults are compared. `MetaSchema` and `AutoDetectRules` (Resource Categories only) compare as pretty-printed JSON with sorted keys, so reordering keys is not a change. When their text does not parse as JSON, the raw text is compared.
 
 A `baseline` revision carries the timestamp and user of the save that triggered it, not those of the carrier's original author.
 
@@ -69,7 +70,7 @@ The source records where a save came from. It is provenance for reading the hist
 | `plugin` | A plugin changed the carrier through `mah.db` |
 | `import` | A group import created the carrier |
 | `restore` | A restore recorded it |
-| `baseline` | The state before the first recorded change of an older carrier |
+| `baseline` | The state before the first recorded change of a carrier that had no revisions |
 
 Because `form` is decided by the `Accept` header, a script that posts with `Accept: text/html` is recorded as `form`.
 
@@ -87,7 +88,7 @@ The edit form sends a hidden `revisionApplied` field so a revision can say how i
 
 ## History page
 
-Each carrier has a History page, linked from its edit and display pages:
+Each carrier has a History page. Its edit page links to it with **View template history** at the top, and its display page has a **History** action in the title bar. The links are shown to every role, and the page itself needs the role described under Permissions.
 
 | Carrier | Page |
 |---------|------|
@@ -95,13 +96,13 @@ Each carrier has a History page, linked from its edit and display pages:
 | Resource Category | `/resourceCategory/revisions?id=<id>` |
 | Note Type | `/noteType/revisions?id=<id>` |
 
-The page lists the revisions with their number, source, changed slots, user, time and label. From it you can compare revisions, edit a label, and load a revision into the editor.
+The page lists the revisions with their number, time, user, source, label and changed slots. Each row has **Compare with current**, **Edit label** and **Load into editor** actions. A revision with no user shows as System.
 
 ## Comparing revisions
 
-A diff compares two revisions, or one revision against the carrier's current state, which is the default. It is grouped by slot and shows only the slots and fields that changed. Each changed field is a line diff, shown unified by default with a side-by-side option. The server computes the diff.
+A diff compares two revisions, or one revision against the carrier's current state, which is the default. It is grouped by slot and shows only the slots and fields that changed. On the History page the **From** and **To** selects pick the two sides, and **Compare with current** on a row compares that revision with the current state. Each changed field is a line diff, shown unified by default with a **Side by side** option, and long runs of unchanged lines are folded to three lines of context. The server computes the diff.
 
-`MetaSchema`, `SectionConfig` and `AutoDetectRules` are diffed as pretty-printed JSON with sorted keys. A value that does not parse is diffed as raw text.
+`MetaSchema` and `AutoDetectRules` (Resource Categories only) are diffed as pretty-printed JSON with sorted keys, or as raw text when they do not parse. `SectionConfig` is always diffed as the server's resolved, pretty-printed JSON.
 
 The CLI prints the same diff as a unified diff with three lines of context:
 
@@ -114,7 +115,7 @@ mr categories revisions diff --id 7 --from 2 --to 5
 
 There are two ways to bring an old state back.
 
-**Load into editor** is the way the UI restores. It fills the edit form with the whole revision, or with one slot, without saving. The slot's CSS comes along by default and can be unticked. You review the form and save it like any edit, and the saved revision lists `loaded:<number>` or `loaded:<number>:<slot>` in its applied entries. Loading a revision replaces the form's section configuration with the server-resolved view, not a merge with what the form held.
+**Load into editor** is the way the UI restores. It opens the edit form with the whole revision, or with one slot, filled in but not saved, and shows a "Loaded revision #N" notice. A slot that has a CSS companion has an **Include its CSS** checkbox, ticked by default, on the History page. You review the form and save it like any edit, and the saved revision lists `loaded:<number>` or `loaded:<number>:<slot>` in its applied entries. Loading a revision replaces the form's section configuration with the server-resolved view, not a merge with what the form held.
 
 **Restore** through the API or CLI saves directly:
 
@@ -161,11 +162,11 @@ Every revision is kept. There is no pruning. Deleting a carrier deletes its revi
 
 ## Import and export
 
-Group export archives do not carry revisions. On import, a carrier that the import creates starts with revision #1 from source `import`. A carrier the import reuses is left alone and gets no revision.
+Group export archives do not carry revisions. On import, a carrier that the import creates starts with revision #1 from source `import`. A carrier the import reuses gets no revision and its tracked templates are not replaced. A `guid_rename` decision can still rename a reused Category, and a rename is not tracked.
 
 ## Plugins
 
-Plugins have no API for reading or restoring revisions. A save a plugin makes through `mah.db` is recorded like any other, with source `plugin`.
+Plugins have no API for reading or restoring revisions. A carrier a plugin creates through `mah.db` records revision #1 with source `create`, like any non-exempt creation. A plugin update that changes a tracked field records source `plugin`.
 
 ## API
 

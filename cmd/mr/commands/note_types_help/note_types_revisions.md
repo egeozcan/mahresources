@@ -1,6 +1,6 @@
 ---
 exitCodes: 0 on success; 1 on any error
-relatedCmds: mr note-types revisions list, note-type edit, note-type get
+relatedCmds: note-types revisions list, note-type edit, note-type get
 ---
 
 # Long

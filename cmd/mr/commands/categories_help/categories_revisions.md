@@ -1,6 +1,6 @@
 ---
 exitCodes: 0 on success; 1 on any error
-relatedCmds: mr categories revisions list, category edit, category get
+relatedCmds: categories revisions list, category edit, category get
 ---
 
 # Long

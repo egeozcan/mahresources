@@ -39,5 +39,6 @@ This command has no local flags.
 
 ## See Also
 
+- [`mr resource-categories revisions list`](./list.md)
 - [`mr resource-category edit`](../../resource-category/edit.md)
 - [`mr resource-category get`](../../resource-category/get.md)

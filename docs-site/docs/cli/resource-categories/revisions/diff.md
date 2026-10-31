@@ -10,9 +10,11 @@ Diff the templates of two revisions of a resource category. `--id` and `--from` 
 required; `--to` defaults to the resource category's current state. Only fields
 that differ are shown. Text output is a unified diff per field, with three
 lines of context and `-` and `+` marking removed and added lines.
-MetaSchema, SectionConfig and AutoDetectRules are compared as
+MetaSchema and AutoDetectRules are compared as
 pretty-printed JSON with sorted keys, so key order never shows as a
-change. Under `--json` the server's hunks are printed unchanged.
+change; text that does not parse is compared as raw text. SectionConfig is
+always compared as the server resolves it, so configs that resolve to the
+same sections show no change, while a config that turns a section off differs from `{}`. Under `--json` the server's hunks are printed unchanged.
 
 ## Usage
 
@@ -58,3 +60,9 @@ Object with carrierType, carrierId, from, optional to, and slots, each slot hold
 ## Exit Codes
 
 0 on success; 1 on any error
+
+## See Also
+
+- [`mr resource-categories revisions list`](./list.md)
+- [`mr resource-categories revisions show`](./show.md)
+- [`mr resource-categories revisions restore`](./restore.md)

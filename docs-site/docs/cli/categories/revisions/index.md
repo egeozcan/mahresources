@@ -39,5 +39,6 @@ This command has no local flags.
 
 ## See Also
 
+- [`mr categories revisions list`](./list.md)
 - [`mr category edit`](../../category/edit.md)
 - [`mr category get`](../../category/get.md)

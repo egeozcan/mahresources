@@ -219,17 +219,16 @@ func printRevisionSnapshot(snapshot map[string]any) {
 		case string:
 			text = v
 		case bool:
-			if !v {
-				continue
-			}
-			text = "true"
+			text = strconv.FormatBool(v)
 		default:
 			text = fmt.Sprint(v)
 		}
-		if strings.TrimSpace(text) == "" {
+		if text == "" {
 			continue
 		}
-		fmt.Printf("\n--- %s ---\n%s\n", name, strings.TrimRight(text, "\n"))
+		// Printed verbatim: whitespace-only values and trailing newlines are
+		// stored content, and the header line brackets them.
+		fmt.Printf("\n--- %s ---\n%s\n", name, text)
 	}
 }
 
@@ -400,11 +399,15 @@ func newTemplateRevisionsRestoreCmd(c *client.Client, opts *output.Options, spec
 			if err != nil {
 				return err
 			}
-			if noCSS && slot == "" {
+			if noCSS && !cmd.Flags().Changed("slot") {
 				return fmt.Errorf("--no-css requires --slot")
 			}
 			body := map[string]any{}
-			if slot != "" {
+			if cmd.Flags().Changed("slot") {
+				slot = strings.TrimSpace(slot)
+				if slot == "" {
+					return fmt.Errorf("--slot must name a slot, for example CustomHeader")
+				}
 				body["slot"] = slot
 				body["includeCss"] = !noCSS
 			}

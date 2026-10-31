@@ -58,4 +58,6 @@ Array of revision summaries, newest first, with id, number, carrierType, carrier
 
 ## See Also
 
+- [`mr note-types revisions show`](./show.md)
+- [`mr note-types revisions diff`](./diff.md)
 - [`mr note-type edit`](../../note-type/edit.md)

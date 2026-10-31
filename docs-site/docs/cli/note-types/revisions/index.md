@@ -39,5 +39,6 @@ This command has no local flags.
 
 ## See Also
 
+- [`mr note-types revisions list`](./list.md)
 - [`mr note-type edit`](../../note-type/edit.md)
 - [`mr note-type get`](../../note-type/get.md)

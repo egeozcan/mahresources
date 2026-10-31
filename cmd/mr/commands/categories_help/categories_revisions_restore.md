@@ -1,7 +1,7 @@
 ---
 outputShape: Summary of the new restore revision with number, source, restoredFrom and changedSlots under --json; confirmation otherwise
 exitCodes: 0 on success; 1 on any error
-relatedCmds: mr categories revisions list, mr categories revisions diff, mr categories revisions label
+relatedCmds: categories revisions list, categories revisions diff, categories revisions label
 ---
 
 # Long
@@ -26,12 +26,14 @@ refused with an error naming the field, and nothing is recorded.
   # Restore only the header and keep the current header CSS
   mr categories revisions restore 2 --id 3 --slot CustomHeader --no-css
 
-  # mr-doctest: restore the whole revision, then one slot of another
+  # mr-doctest: restore one slot with and without its CSS, then a whole revision
   ID=$(mr category create --name "rev-$$-$RANDOM" --json | jq -r .ID)
-  mr category edit --id "$ID" --custom-header '<p>A</p>'
-  mr category edit --id "$ID" --custom-header '<p>B</p>' --custom-sidebar '<p>S</p>'
-  mr categories revisions restore 1 --id "$ID" --json | jq -e '.number == 4 and .source == "restore" and .restoredFrom == 1'
+  mr category edit --id "$ID" --custom-header '<p>A</p>' --custom-header-css '.a{}'
+  mr category edit --id "$ID" --custom-header '<p>B</p>' --custom-header-css '.b{}' --custom-sidebar '<p>S</p>'
+  mr categories revisions restore 2 --id "$ID" --slot CustomHeader --no-css --json | jq -e '.number == 4 and .source == "restore" and .restoredFrom == 2'
+  mr category get "$ID" --json | jq -e '.CustomHeader == "<p>A</p>" and .CustomHeaderCSS == ".b{}" and .CustomSidebar == "<p>S</p>"'
+  mr categories revisions restore 2 --id "$ID" --slot CustomHeader --json | jq -e '.number == 5'
+  mr category get "$ID" --json | jq -e '.CustomHeaderCSS == ".a{}" and .CustomSidebar == "<p>S</p>"'
+  mr categories revisions restore 1 --id "$ID" --json | jq -e '.number == 6 and .restoredFrom == 1'
   mr category get "$ID" --json | jq -e '.CustomHeader == "" and .CustomSidebar == ""'
-  mr categories revisions restore 2 --id "$ID" --slot CustomHeader --json | jq -e '.number == 5 and .changedSlots == ["CustomHeader"]'
-  mr category get "$ID" --json | jq -e '.CustomHeader == "<p>A</p>" and .CustomSidebar == ""'
   mr category delete "$ID"

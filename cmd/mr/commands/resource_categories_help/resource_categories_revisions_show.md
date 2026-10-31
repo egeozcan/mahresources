@@ -1,14 +1,14 @@
 ---
 outputShape: Revision summary plus snapshot, the stored value of every tracked field the revision recorded
 exitCodes: 0 on success; 1 on any error
-relatedCmds: mr resource-categories revisions list, mr resource-categories revisions diff, mr resource-categories revisions restore
+relatedCmds: resource-categories revisions list, resource-categories revisions diff, resource-categories revisions restore
 ---
 
 # Long
 
 Show one revision of a resource category. `<number>` is the per-resource category revision
 number from `list`, and `--id` is required. The output is the revision's
-metadata followed by each non-empty field exactly as it was stored, which
+metadata followed by each field that has stored content, printed verbatim, which
 for an old resource category can include a MetaSchema that is not valid JSON.
 Under `--json` the `snapshot` object holds every recorded field, and the
 `editor` object holds the same fields as the edit form loads them.
