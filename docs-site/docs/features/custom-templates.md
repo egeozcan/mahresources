@@ -60,7 +60,7 @@ For the same reason, the Own Entities section auto-opens whenever `CustomOwnEnti
 
 Custom template content is processed in two ways:
 
-- **Shortcodes** (`[meta]`, `[property]`, `[mrql]`, `[conditional]`, `[link]`, `[each]`, `[partial]`, and plugin shortcodes) are expanded server-side.
+- **Shortcodes** (`[meta]`, `[property]`, `[mrql]`, `[conditional]`, `[link]`, `[each]`, `[partial]`, `[using]`, and plugin shortcodes) are expanded server-side.
 - **Alpine.js directives** (`x-text`, `x-if`, `:class`, `@click`, etc.) work in the slots the outer page template wraps in an `x-data` scope, which is every detail-page and card slot: CustomHeader, CustomSidebar, CustomPreview, CustomOwnEntities, CustomDetailFooter, CustomSummary, CustomAvatar, CustomHoverCard and CustomLightbox. The full entity is available there as `entity`. Alpine directives do **not** work in `CustomMRQLResult`, `CustomEntityPickerResult`, `CustomCell`, `CustomListHeader` or `CustomListFooter`. The first three the shortcode engine renders server-side into a table cell or card; the list slots have no `x-data` wrapper and bind the carrier rather than a member entity, so there is no `entity` object to read. Use shortcodes instead: `[meta]`, `[property]` and `[conditional]` in the first three, `[property]` and `[conditional]` in the list slots, where `[meta]` renders its empty state.
 
 :::caution Pongo2 expressions do not work
@@ -480,6 +480,7 @@ Shortcodes let you embed dynamic content in custom templates without writing Alp
 - **`[partial]`** -- Include a reusable shared snippet by name
 - **`[lazy]`** / **`[details]`** -- Defer rendering until the block scrolls into view or is opened
 - **`[reload]`** -- Button that re-renders the innermost `[lazy]`/`[details]` block, or else the whole custom-content slot, in place
+- **`[using]`** -- Render a block with another group, resource or note (the owner, or an ID from metadata) as the entity
 
 Plugins can also register custom shortcodes via `mah.shortcode()`.
 

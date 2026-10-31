@@ -85,6 +85,8 @@ func (u templateShortcodeUse) addPath(shortcode, path string) {
 //     entity (markItems); an [item] anywhere else renders empty;
 //   - an [mrql] body's per-result template renders against each result, so
 //     only its [header], [footer] and [else] are walked;
+//   - a [using] body renders against its target, so only its [else] is walked,
+//     and an id-path= is a path read from the entity;
 //   - other block bodies render against the entity and are walked.
 func collectTemplateShortcodeUse(content string) templateShortcodeUse {
 	use := templateShortcodeUse{paths: map[string]map[string]bool{}, fields: map[string]bool{}, itemPaths: map[string]bool{}, others: map[string]bool{}, partials: map[string]bool{}}
@@ -134,6 +136,13 @@ func collectTemplateShortcodeUse(content string) templateShortcodeUse {
 				}
 				itemBranch, elseBranch := shortcodes.SplitElse(sc.InnerContent)
 				walk(itemBranch, true)
+				walk(elseBranch, false)
+			case "using":
+				use.others["using"] = true
+				if path := sc.Attrs["id-path"]; path != "" {
+					use.addPath("using", path)
+				}
+				_, elseBranch := shortcodes.SplitElse(sc.InnerContent)
 				walk(elseBranch, false)
 			case "mrql":
 				// The per-result template renders against each result; the

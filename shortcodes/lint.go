@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"mahresources/mrql"
 )
 
 // Lint severity levels.
@@ -113,7 +115,7 @@ func KnownFromBuiltins() KnownShortcodes {
 var conditionalOperators = []string{"eq", "neq", "gt", "lt", "gte", "lte", "in", "contains", "matches", "empty", "not-empty"}
 
 // builtinBaseNames is used for near-miss detection of misspelled shortcodes.
-var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload"}
+var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "using"}
 
 // looseBracketPattern finds bracket expressions that lead with an identifier,
 // used to detect shortcode-looking brackets that did not parse as real
@@ -160,6 +162,7 @@ func Lint(input string, opts LintOptions) []LintIssue {
 	// be flagged.
 	eachSpans := namedBlockSpans(tokens, "each")
 	reloadSpans := namedBlockSpans(tokens, "reload")
+	usingSpans := namedBlockSpans(tokens, "using")
 
 	// --- Structural checks over the token stream ---
 	for _, tk := range tokens {
@@ -277,7 +280,12 @@ func Lint(input string, opts LintOptions) []LintIssue {
 			if !insideSpans(tk.start, eachSpans) {
 				add(tk.start, tk.end, SeverityWarning,
 					"[item] is only meaningful inside an [each] block")
+			} else if innermostSpanStart(tk.start, usingSpans) > innermostSpanStart(tk.start, eachSpans) {
+				add(tk.start, tk.end, SeverityWarning,
+					"[item] inside a [using] block renders nothing: [using] switches to another entity, so the [each] element is not available there")
 			}
+		case "using":
+			lintUsing(tk, add)
 		case "reload":
 			// A <button> may not contain another button. The renderer refuses the
 			// whole thing rather than emit invalid interactive nesting, so say so
@@ -395,6 +403,9 @@ func Lint(input string, opts LintOptions) []LintIssue {
 				// saved query alone is the only one left unchecked.
 				start, end := attrOffset(tk, "query")
 				check(tk.attrs["query"], mrqlCheckOptions(tk.attrs, ""), start, end, "query")
+			case "using":
+				start, end := attrOffset(tk, "query")
+				check(tk.attrs["query"], MRQLCheckOptions{Params: collectShortcodeParams(tk.attrs), Limit: 1}, start, end, "query")
 			case "conditional":
 				forEachConditionalQuery(tk.attrs, func(attr, suffix string) {
 					start, end := attrOffset(tk, attr)
@@ -463,6 +474,111 @@ func Lint(input string, opts LintOptions) []LintIssue {
 		return issues[i].End < issues[j].End
 	})
 	return issues
+}
+
+// lintUsing checks a [using] opener: exactly one target source, a type exactly
+// where the source needs one, and values the handler would refuse. Each error
+// here is a case RenderUsingShortcode renders as an error marker, and each
+// warning one where it silently ignores what the author wrote.
+func lintUsing(tk token, add func(start, end int, severity, msg string)) {
+	var sources []string
+	for _, name := range usingSources {
+		if strings.TrimSpace(tk.attrs[name]) != "" {
+			sources = append(sources, name)
+		}
+	}
+	switch len(sources) {
+	case 0:
+		add(tk.start, tk.end, SeverityError,
+			"[using] needs one of id, id-path, id-prop, rel or query to name its target")
+		return
+	case 1:
+	default:
+		add(tk.start, tk.end, SeverityError,
+			"[using] takes exactly one of id, id-path, id-prop, rel or query; found "+strings.Join(sources, ", "))
+		return
+	}
+	source := sources[0]
+
+	typ := strings.TrimSpace(tk.attrs["type"])
+	switch source {
+	case "rel", "query":
+		if typ != "" {
+			add(tk.start, tk.end, SeverityWarning,
+				`[using] ignores type= with `+source+`=: `+map[string]string{"rel": "rel always names a group", "query": "the query names its own type"}[source])
+		}
+	default:
+		if typ == "" {
+			add(tk.start, tk.end, SeverityError,
+				`[using] with `+source+`= needs type="group", "resource" or "note"`)
+		} else if !usingTypes[typ] {
+			start, end := attrOffset(tk, "type")
+			add(start, end, SeverityError,
+				`[using] type must be "group", "resource" or "note", not "`+typ+`"`)
+		}
+	}
+
+	if source != "query" {
+		_, hasScope := tk.attrs["scope"]
+		if hasScope || len(collectShortcodeParams(tk.attrs)) > 0 {
+			add(tk.start, tk.end, SeverityWarning,
+				"[using] reads scope= and param-… only with query=; a lookup by ID ignores them")
+		}
+	}
+
+	switch source {
+	case "id":
+		if _, ok := parseEntityID(strings.TrimSpace(tk.attrs["id"])); !ok {
+			start, end := attrOffset(tk, "id")
+			add(start, end, SeverityError, "[using] id must be a positive whole number")
+		}
+	case "id-prop":
+		prop := strings.TrimSpace(tk.attrs["id-prop"])
+		if strings.HasSuffix(prop, "CategoryId") || strings.HasSuffix(prop, "TypeId") {
+			start, end := attrOffset(tk, "id-prop")
+			add(start, end, SeverityWarning,
+				"[using] id-prop=\""+prop+"\" holds a category ID, and categories are not a [using] target; this renders the [else] branch or the wrong entity")
+		}
+	case "rel":
+		if rel := strings.TrimSpace(tk.attrs["rel"]); rel != "owner" && rel != "root" {
+			start, end := attrOffset(tk, "rel")
+			add(start, end, SeverityError, `[using] rel must be "owner" or "root", not "`+rel+`"`)
+		}
+	case "query":
+		// Shape checks only; whether the query is valid at all is the
+		// ValidateMRQL pass's job, so a parse failure is left to it.
+		parsed, err := mrql.Parse(tk.attrs["query"])
+		if err != nil {
+			return
+		}
+		start, end := attrOffset(tk, "query")
+		if parsed.GroupBy != nil {
+			add(start, end, SeverityError,
+				"[using] query cannot use GROUP BY: it needs one entity, not buckets")
+			return
+		}
+		if mrql.ExtractEntityType(parsed) == mrql.EntityUnspecified {
+			add(start, end, SeverityWarning,
+				"[using] query does not name an entity type (type = group, resource or note), so its first result may be any of the three")
+		}
+		if len(parsed.OrderBy) == 0 {
+			add(start, end, SeverityWarning,
+				"[using] query has no ORDER BY, so which match becomes the target is not stable")
+		}
+	}
+}
+
+// innermostSpanStart returns the start of the innermost span containing i, or
+// -1 when none does. Spans of one block name nest, so the innermost is the one
+// that starts last.
+func innermostSpanStart(i int, spans [][2]int) int {
+	best := -1
+	for _, s := range spans {
+		if i >= s[0] && i < s[1] && s[0] > best {
+			best = s[0]
+		}
+	}
+	return best
 }
 
 // knownAttr reports whether attrName is a recognized attribute on known,

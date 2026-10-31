@@ -264,17 +264,17 @@ func renderFlat(reqCtx context.Context, items []QueryResultItem, format string, 
 	case "compact":
 		return renderFlatCompact(items)
 	case "custom":
-		return renderFlatWithCustom(reqCtx, items, renderer, executor, depth, true)
+		return renderFlatWithCustom(reqCtx, items, parentCtx, renderer, executor, depth, true)
 	default:
 		// Auto-resolve: try custom templates, fall back to default
-		return renderFlatWithCustom(reqCtx, items, renderer, executor, depth, false)
+		return renderFlatWithCustom(reqCtx, items, parentCtx, renderer, executor, depth, false)
 	}
 }
 
 // renderFlatWithCustom renders items, using custom templates where available.
 // If forceCustom is true (explicit format="custom"), items without templates use default rendering.
 // If forceCustom is false (auto-resolve), items without templates also use default rendering.
-func renderFlatWithCustom(reqCtx context.Context, items []QueryResultItem, renderer PluginRenderer, executor QueryExecutor, depth int, forceCustom bool) string {
+func renderFlatWithCustom(reqCtx context.Context, items []QueryResultItem, parentCtx MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor, depth int, forceCustom bool) string {
 	if len(items) == 0 {
 		return `<p class="text-sm text-stone-500 font-mono py-2 text-center">No results.</p>`
 	}
@@ -296,20 +296,7 @@ func renderFlatWithCustom(reqCtx context.Context, items []QueryResultItem, rende
 	var b strings.Builder
 	for _, item := range items {
 		if item.CustomMRQLResult != "" {
-			childCtx := MetaShortcodeContext{
-				EntityType:     item.EntityType,
-				EntityID:       item.EntityID,
-				Meta:           item.Meta,
-				MetaSchema:     item.MetaSchema,
-				Entity:         item.Entity,
-				ScopeGroupID:   item.ScopeGroupID,
-				ParentGroupID:  item.ParentGroupID,
-				RootGroupID:    item.RootGroupID,
-				ScopeGroupName: item.ScopeGroupName, ScopeCategoryName: item.ScopeCategoryName,
-				ParentGroupName: item.ParentGroupName, ParentCategoryName: item.ParentCategoryName,
-				RootGroupName: item.RootGroupName, RootCategoryName: item.RootCategoryName,
-			}
-			rendered := processWithDepth(reqCtx, item.CustomMRQLResult, childCtx, renderer, executor, depth+1)
+			rendered := processWithDepth(reqCtx, item.CustomMRQLResult, contextFromItem(item, parentCtx), renderer, executor, depth+1)
 			b.WriteString(rendered)
 		} else {
 			// Fall back to default single-item rendering
@@ -317,6 +304,27 @@ func renderFlatWithCustom(reqCtx context.Context, items []QueryResultItem, rende
 		}
 	}
 	return b.String()
+}
+
+// contextFromItem builds the shortcode context a query result renders in: the
+// result's own entity, Meta and scope chain. It inherits ForceReadOnly from the
+// context that ran the query, because a read-only render must not grow an edit
+// affordance by rendering some other entity inside itself.
+func contextFromItem(item QueryResultItem, parent MetaShortcodeContext) MetaShortcodeContext {
+	return MetaShortcodeContext{
+		EntityType:     item.EntityType,
+		EntityID:       item.EntityID,
+		Meta:           item.Meta,
+		MetaSchema:     item.MetaSchema,
+		Entity:         item.Entity,
+		ScopeGroupID:   item.ScopeGroupID,
+		ParentGroupID:  item.ParentGroupID,
+		RootGroupID:    item.RootGroupID,
+		ScopeGroupName: item.ScopeGroupName, ScopeCategoryName: item.ScopeCategoryName,
+		ParentGroupName: item.ParentGroupName, ParentCategoryName: item.ParentCategoryName,
+		RootGroupName: item.RootGroupName, RootCategoryName: item.RootCategoryName,
+		ForceReadOnly: parent.ForceReadOnly,
+	}
 }
 
 // renderBucketed renders bucketed GROUP BY results.

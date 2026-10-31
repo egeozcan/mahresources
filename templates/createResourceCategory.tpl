@@ -270,6 +270,18 @@
 [reload]Refresh[/reload]</code></pre>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[using type="group" id="…"]…[else]…[/using]</code>
+                        &mdash; render the body with another group, resource or note as the entity, so every shortcode inside reads that entity. Name the target with exactly one source. An optional <code class="bg-stone-100 px-1 rounded">[else]</code> branch renders when there is no target or you cannot see it.
+                        <br><span class="text-stone-400 ml-4">
+                            <b class="text-stone-500">id</b>="42" &nbsp; <b class="text-stone-500">id-path</b>="meta.path" &nbsp; <b class="text-stone-500">id-prop</b>="OwnerId" &nbsp; <b class="text-stone-500">rel</b>="owner|root" &nbsp; <b class="text-stone-500">query</b>="MRQL" &nbsp; <b class="text-stone-500">type</b>="group|resource|note"
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[using rel="owner"]
+  &lt;a href="[link]"&gt;[property path="Name"]&lt;/a&gt;: [meta path="status" inline="true"]
+[else]
+  No owner
+[/using]</code></pre>
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[plugin:name:shortcode attr="val"]</code>
                         &mdash; render a plugin-provided shortcode. See each plugin's docs page for available shortcodes.
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[plugin:meta-editors:star-rating path="rating"]

@@ -232,6 +232,14 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 				// raw shortcode text.
 				replacement = shortcodeComment("mrql unavailable in this context")
 			}
+		case sc.Name == "using":
+			if executor != nil {
+				replacement = RenderUsingShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+			} else {
+				// Same as [mrql]: the target is loaded through the executor, so a
+				// context without one cannot switch to it.
+				replacement = shortcodeComment("using unavailable in this context")
+			}
 		case sc.Name == "link":
 			replacement = RenderLinkShortcode(reqCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "partial":

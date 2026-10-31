@@ -39,6 +39,7 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 | `[lazy]` | Block | Defer server rendering until the block scrolls into view |
 | `[details]` | Block | Defer server rendering until a disclosure is opened |
 | `[reload]` | Inline or block | Re-render the nearest deferred block or custom-content slot on demand |
+| `[using]` | Block | Render the body with another group, resource or note as the entity |
 
 ### Block Syntax
 
@@ -904,6 +905,71 @@ Because this is a proximity walk, a `[reload]` placed inside a `[lazy]` body ref
   - **A `[lazy]` or `[details]` inside a `[reload]`.** Both emit a block-level element, which a button may not contain. Each renders its own `⚠` marker in place. This is also what stops the deferred-nesting case above from reaching the page by way of a `[partial]`, whose source the checks on the button's own body never see.
 - A region token carries the slot's own source, so a `[reload]` in a `CustomSummary` adds one sealed copy of that slot per card on a list page. The sealed token runs about **1.34x the size of the raw slot body** (base64 over a nonce and an authentication tag), so a 2 KB `CustomSummary` adds roughly 2.7 KB per card -- about 135 KB on a 50-card page. The ciphertext is randomised, so identical slots across cards do not compress against each other. This scales with cards rendered per page, not with database size. Putting the `[reload]` inside a `[lazy]` mints no region at all, because the block's own token (which `[lazy]` seals regardless) serves the button. That only shrinks the page when the deferred body is smaller than the whole slot, but it never adds a second copy on top.
 - A description is sealed **after** its Markdown and mention filters have run, so a `[reload]` written in one re-evaluates the shortcodes inside it but replays the surrounding prose as it stood when the page loaded. Edits to the description text itself need a page load.
+
+## `[using]` -- Switch to another entity
+
+Renders its body with another group, resource or note as the entity. Every shortcode inside -- `[property]`, `[meta]`, `[conditional]`, `[each]`, `[link]`, `[mrql scope=…]`, a nested `[using]` -- reads the target instead of the entity the template belongs to.
+
+```
+[using rel="owner"]
+  <h3>[link][property path="Name"][/link]</h3>
+  Status: [meta path="status" inline="true"]
+[else]
+  <p>No owner.</p>
+[/using]
+```
+
+### Attributes
+
+Name the target with **exactly one** of `id`, `id-path`, `id-prop`, `rel` or `query`.
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `type` | With `id`, `id-path`, `id-prop` | | `group`, `resource` or `note`. Not used with `rel` (always a group) or `query` (the query names its type) |
+| `id` | | | The target's ID, a positive whole number |
+| `id-path` | | | Dot-path into this entity's Meta holding the target's ID, as a number or a numeric string, e.g. `links.client` |
+| `id-prop` | | | Field of this entity holding the target's ID, e.g. `OwnerId` |
+| `rel` | | | `owner` (the group that owns this entity) or `root` (the top of its ownership chain), as in `[link to=]` |
+| `query` | | | MRQL query; its first result is the target |
+| `scope` | No | `entity` | With `query` only: subtree to run the query in, as on `[mrql]` |
+| `param-<name>` | No | | With `query` only: binds `$name` in the query |
+
+### How It Works
+
+The target is loaded with an MRQL query run as the viewer, the same way `[mrql]` runs. That has three consequences:
+
+- **You only see what you may see.** A target outside the viewer's groups is treated as missing. Missing and hidden targets both render the `[else]` branch (or nothing when there is no `[else]`), so the block cannot be used to probe which IDs exist.
+- **It costs a query.** Each block runs one query per render and counts toward the [per-page query budget](#per-page-query-budget). In a per-card slot that is one query per card, so wrap it in `[lazy]` on long lists. Identical lookups on one page (every card pointing at the same owner) are cached and cost one.
+- **It is unavailable where `[mrql]` is.** On share pages a `[using]` block renders an HTML comment.
+
+A lookup by `id`, `id-path`, `id-prop` or `rel` searches globally: the `[mrql]` default scope does not apply to it. `[else]` is a divider with no closing tag; end the block with `[/using]`. It renders against the original entity.
+
+`query` must name its entity type and should have an `ORDER BY`, otherwise which match becomes the target is not stable. `GROUP BY` is not allowed.
+
+### Limits
+
+- An `[item]` from an enclosing `[each]` is not available inside `[using]`; it renders nothing.
+- There is no way to reach the original entity from inside the block. Put values from it before or after the block.
+- The target category's CustomCSS is not added to the page.
+- An editable `[meta]` inside the block edits the target, subject to the viewer's write access.
+
+### Examples
+
+```
+[using type="group" id-path="client"]
+  Client: [property path="Name"]
+[/using]
+
+[using type="resource" id="42"]
+  <img src="/v1/resource/preview?id=[property path='ID']" alt="[property path='Name']">
+[/using]
+
+[using query='type = note AND name = $name ORDER BY created DESC' param-name="Index"]
+  [property path="Description"]
+[else]
+  No index note yet.
+[/using]
+```
 
 ## Plugin Shortcodes
 

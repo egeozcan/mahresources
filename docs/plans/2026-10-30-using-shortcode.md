@@ -14,6 +14,28 @@ refer to the target.
 [/using]
 ```
 
+## Status
+
+Implemented (`shortcodes/using_handler.go`). Where the build differs from the
+plan below:
+
+- A `query=` that names no entity type is a lint **warning**, not an error: the
+  runtime accepts it and takes the first result of any type.
+- The three "verify" items checked out. Query results do carry resolved scope
+  IDs (`convertResultItemsWithData` fills them from `data.Scopes`), so
+  `[mrql scope=…]` and `[link to=root]` inside the block work. The deferred
+  endpoint's subtree check is already covered by `TestDeferredRender_ScopedPrincipal`
+  (a validly signed token for an out-of-subtree entity is a 404), and a `[lazy]`
+  inside `[using]` can only seal a target the inline render could see; the unit
+  test asserts it seals the target's type and ID. Editing through a `[meta]` in
+  the block is covered by the E2E spec.
+- The confinement API test runs on SQLite only; the Postgres suite needs Docker.
+- `[item]` inside a `[using]` inside an `[each]` gets its own lint warning
+  rather than relying on the generic one, which did not fire (the `[item]` is
+  inside an `[each]`).
+- The template generator's partial summary walks only a `[using]` block's
+  `[else]` branch and records `id-path` as a path the partial reads.
+
 ## Decisions
 
 1. **One entity per block.** `[using]` never iterates. `query=` runs with
@@ -103,7 +125,7 @@ Wire-up:
 - Exactly one ID source; `type` required/forbidden per the table; `type` in the
   whitelist; `rel` in `owner|root`; literal `id` a positive integer.
 - `query=` goes through the existing `ValidateMRQL` hook with `Limit: 1`, plus
-  errors for missing entity type / `GROUP BY` and a warning for no `ORDER BY`.
+  an error for `GROUP BY` and warnings for a missing entity type or no `ORDER BY`.
 - `[item]` inside a `[using]` inside an `[each]` already renders empty (only
   top-level `[item]`s are marked); the existing "[item] outside [each]" check
   should flag it the same way it flags one inside `[conditional]`. Verify, and

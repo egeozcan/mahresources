@@ -18,11 +18,12 @@ const (
 // body. None is registered with the global parser, so each carries meaning only
 // inside its parent: [mrql] pulls out [header], [footer] and a top-level
 // [else] (parseMRQLSlots); [conditional] splits on [elseif] and [else]
-// (SplitBranches); [each] splits on [else] (SplitElse).
+// (SplitBranches); [each] and [using] split on [else] (SplitElse).
 var slotTags = map[string][]string{
 	"mrql":        {mrqlHeaderTag, mrqlFooterTag, "else"},
 	"conditional": {"else", "elseif"},
 	"each":        {"else"},
+	"using":       {"else"},
 }
 
 // SlotTags returns the tags a block shortcode's handler reads out of its body,
@@ -135,15 +136,15 @@ func firstSlotSpan(content, tag string) (openIdx, innerStart, closeIdx, closeEnd
 // SlotTagSpans returns, in order, the [start,end) offsets, within inner, of the tags the
 // parent block's handler consumes from its body: for [mrql] the first complete
 // [header] and [footer] pair and the top-level [else]; for [conditional] every
-// top-level [else] and [elseif …] divider; for [each] the first top-level
-// [else]. Any other occurrence of the same tag stays literal text at runtime.
+// top-level [else] and [elseif …] divider; for [each] and [using] the first
+// top-level [else]. Any other occurrence of the same tag stays literal text at runtime.
 func SlotTagSpans(parent, inner string) [][2]int {
 	switch parent {
 	case "mrql":
 		return mrqlSlotTagSpans(inner)
 	case "conditional":
 		return branchDividerSpans(inner)
-	case "each":
+	case "each", "using":
 		if i := firstElseIndex(inner); i >= 0 {
 			return [][2]int{{i, i + len(elseTag)}}
 		}

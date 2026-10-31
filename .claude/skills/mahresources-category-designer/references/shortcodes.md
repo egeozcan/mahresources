@@ -165,6 +165,30 @@ So pair `[reload]` with `[lazy]` to scope the refresh to that one block, and pla
 [lazy][reload label="Refresh open tasks"][mrql query='type = "note"' format="list"][/lazy]
 ```
 
+### `[using]`
+
+A block that **renders its body with another group, resource or note as the entity**, so every shortcode inside (`[property]`, `[meta]`, `[conditional]`, `[each]`, `[link]`, `[mrql scope=…]`) reads the target.
+
+Name the target with exactly one source:
+
+- `rel="owner"` / `rel="root"` -- the owning group or the top of the ownership chain (same meaning as `[link to=]`).
+- `type="group|resource|note" id="42"` -- a fixed ID.
+- `type="…" id-path="links.client"` -- an ID stored in this entity's Meta (number or numeric string).
+- `type="…" id-prop="OwnerId"` -- an ID field on this entity.
+- `query='type = note AND name = $n ORDER BY created DESC' param-n="Index"` -- first result of an MRQL query (`scope=` and `param-*` apply only here; no `GROUP BY`).
+
+`[else]` renders, against the original entity, when there is no target or the viewer cannot see it. The lookup runs as the viewer and costs one query per render (counted by the page budget, cached for identical lookups), so wrap it in `[lazy]` in `CustomSummary`. It is unavailable on share pages. Inside the block there is no way back to the original entity, an `[item]` from an enclosing `[each]` renders nothing, and the target category's CustomCSS is not loaded.
+
+Reach for it when a template needs fields from a related entity, typically the owner group's status or a Meta-referenced client. Use `[mrql]` instead when you need a list.
+
+```
+[using rel="owner"]
+  Project: [link][property path="Name"][/link] ([meta path="status" inline="true"])
+[else]
+  Unfiled
+[/using]
+```
+
 ## Built-in Plugin Shortcodes
 
 Only three built-in plugins currently ship shortcodes:
@@ -298,7 +322,7 @@ Use this order of preference:
 2. `[property]` for built-in entity fields.
 3. `data-views` for presentation widgets.
 4. `meta-editors` for frequent inline edits.
-5. `[mrql]` for related collections and rollups.
+5. `[using]` for fields of one related entity (owner, Meta-referenced ID); `[mrql]` for related collections and rollups.
 6. `widgets` for group dashboards.
 
 Good combinations:
