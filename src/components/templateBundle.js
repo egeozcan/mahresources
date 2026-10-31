@@ -454,19 +454,40 @@ export function templateBundle({ carrier } = {}) {
     // &includeCss=0], which the History page links to. Nothing is saved: the
     // user reviews the form and presses Save, and revisionApplied says so.
     loadRevisionFromUrl() {
-      const params = new URLSearchParams(window.location.search);
-      const number = Number(params.get('loadRevision'));
-      const idInput = document.querySelector('form input[name="ID"]');
-      if (!Number.isInteger(number) || number < 1 || !idInput) return;
-      const slot = params.get('slot') || '';
-      const includeCss = params.get('includeCss') !== '0';
-      // A reload should show the saved state, not load the revision over edits.
-      params.delete('loadRevision');
-      params.delete('slot');
-      params.delete('includeCss');
-      const query = params.toString();
-      window.history.replaceState(null, '', window.location.pathname + (query ? `?${query}` : '') + window.location.hash);
-      this.loadRevision(idInput.value, number, slot, includeCss, idInput.form);
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const number = Number(params.get('loadRevision'));
+        const idInput = document.querySelector('form input[name="ID"]');
+        if (!Number.isInteger(number) || number < 1 || !idInput) {
+          this.releaseServerLock();
+          return;
+        }
+        const slot = params.get('slot') || '';
+        const includeCss = params.get('includeCss') !== '0';
+        // A reload should show the saved state, not load the revision over edits.
+        params.delete('loadRevision');
+        params.delete('slot');
+        params.delete('includeCss');
+        const query = params.toString();
+        window.history.replaceState(null, '', window.location.pathname + (query ? `?${query}` : '') + window.location.hash);
+        this.loadRevision(idInput.value, number, slot, includeCss, idInput.form);
+      } catch (err) {
+        // Nothing else will release the lock the server rendered.
+        this.releaseServerLock();
+        throw err;
+      }
+    },
+
+    // The server renders the form inert (data-revision-locked) when the page was
+    // asked to load a revision, so it cannot be edited before this script runs.
+    releaseServerLock() {
+      const form = document.querySelector('form[data-revision-locked]');
+      if (form) {
+        form.inert = false;
+        form.removeAttribute('aria-busy');
+        form.removeAttribute('data-revision-locked');
+      }
+      document.getElementById('revision-preload-status')?.remove();
     },
 
     // setFormBusy keeps the form from being edited or submitted while a revision
@@ -477,7 +498,8 @@ export function templateBundle({ carrier } = {}) {
       if (!form) return;
       form.inert = !!text;
       if (text) form.setAttribute('aria-busy', 'true');
-      else form.removeAttribute('aria-busy');
+      else this.releaseServerLock();
+      if (!text) form.removeAttribute('aria-busy');
       if (!this._busyRegion) {
         this._busyRegion = document.createElement('div');
         this._busyRegion.className = 'sr-only';

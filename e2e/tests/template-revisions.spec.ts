@@ -428,6 +428,71 @@ test.describe('Template Revisions history', () => {
     await expect(page.getByTestId('revision-label-1')).toHaveText('saved');
   });
 
+  test('a label draft survives reopening its row and other rows cannot discard it', async ({ page, apiClient }) => {
+    const name = `Rev Draft ${Date.now()}`;
+    const cat = await apiClient.createCategory(name, undefined, { CustomHeader: '<p>a</p>' });
+    await postForm(page, '/v1/category', { ID: String(cat.ID), name, CustomHeader: '<p>b</p>' });
+    await page.goto(`/category/revisions?id=${cat.ID}`);
+    await page.getByTestId('revision-label-edit-1').click();
+    const input = page.getByTestId('revision-label-input-1');
+    await input.fill('half typed');
+    await page.getByTestId('revision-label-edit-1').click();
+    await expect(input).toHaveValue('half typed');
+    await expect(input).toBeFocused();
+    const other = page.getByTestId('revision-label-edit-2');
+    await expect(other).toBeDisabled();
+    await expect(other).toHaveAttribute('aria-describedby', 'label-edit-reason');
+    await expect(page.locator('#label-edit-reason')).toHaveText('Save or cancel the open label first.');
+    await input.press('Escape');
+    await expect(other).toBeEnabled();
+  });
+
+  test('a label is limited to 200 characters, counted as characters', async ({ page, apiClient }) => {
+    const cat = await apiClient.createCategory(`Rev Len ${Date.now()}`, undefined, { CustomHeader: '<p>a</p>' });
+    await page.goto(`/category/revisions?id=${cat.ID}`);
+    await page.getByTestId('revision-label-edit-1').click();
+    const input = page.getByTestId('revision-label-input-1');
+    await input.fill('\u{1F600}'.repeat(150));
+    await expect(page.getByTestId('revision-label-error')).toBeHidden();
+    await input.fill('\u{1F600}'.repeat(201));
+    await expect(page.getByTestId('revision-label-error')).toBeVisible();
+    await expect(input).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByTestId('revision-label-save-1')).toBeDisabled();
+    await input.fill('\u{1F600}'.repeat(150));
+    await input.press('Enter');
+    await expect(page.getByTestId('revision-label-edit-1')).toBeFocused();
+    expect((await listRevisions(page, '/v1/category', cat.ID))[0].label).toBe('\u{1F600}'.repeat(150));
+  });
+
+  test('the form is locked from first paint, before the script loads', async ({ page, apiClient }) => {
+    const cat = await apiClient.createCategory(`Rev Prepaint ${Date.now()}`, undefined, { CustomHeader: '<p>a</p>' });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/public/dist/main.js*', async (route) => {
+      await gate;
+      await route.continue();
+    });
+    await page.goto(`/category/edit?id=${cat.ID}&loadRevision=1`, { waitUntil: 'commit' });
+    const form = page.locator('form[data-revision-locked]');
+    await expect(form).toHaveAttribute('aria-busy', 'true');
+    await expect(form).toHaveAttribute('inert', '');
+    await expect(page.getByTestId('revision-preload-status')).toContainText('Loading revision #1');
+    await expect(page.locator('input[name="name"]').click({ timeout: 700 })).rejects.toThrow();
+    release();
+    await expect(page.getByTestId('revision-load-notice')).toContainText('Loaded revision #1');
+    await expect(page.locator('form[data-revision-locked]')).toHaveCount(0);
+    await expect(page.getByTestId('revision-preload-status')).toHaveCount(0);
+    expect(await page.locator('form').first().evaluate((f: HTMLFormElement) => f.inert)).toBe(false);
+  });
+
+  test('an unusable loadRevision value does not leave the form locked', async ({ page, apiClient }) => {
+    const cat = await apiClient.createCategory(`Rev Bad Param ${Date.now()}`);
+    await page.goto(`/category/edit?id=${cat.ID}&loadRevision=abc`);
+    await expect(page.locator('form[data-revision-locked]')).toHaveCount(0);
+    await page.locator('input[name="name"]').fill('editable');
+    await expect(page.locator('input[name="name"]')).toHaveValue('editable');
+  });
+
   test('a diff body that arrives after the selection changed is not committed', async ({ page, apiClient }) => {
     const name = `Rev Stale Body ${Date.now()}`;
     const cat = await apiClient.createCategory(name, undefined, { CustomHeader: '<p>a</p>' });
@@ -445,7 +510,13 @@ test.describe('Template Revisions history', () => {
         if (url.includes('/revisions/diff') && url.includes('to=2') && !w.__held) {
           w.__held = true;
           const json = resp.json.bind(resp);
-          resp.json = async () => { await gate; return json(); };
+          resp.json = async () => {
+            (w as { __jsonCalled?: boolean }).__jsonCalled = true;
+            await gate;
+            const body = await json();
+            (w as { __heldDone?: boolean }).__heldDone = true;
+            return body;
+          };
         }
         return resp;
       };
@@ -454,10 +525,11 @@ test.describe('Template Revisions history', () => {
     await expect(page.getByTestId('revision-row-3')).toBeVisible();
     await page.getByTestId('revision-from').selectOption('1');
     await page.getByTestId('revision-to').selectOption('2'); // held: would show only the header change
+    await page.waitForFunction(() => (window as unknown as { __jsonCalled?: boolean }).__jsonCalled === true);
     await page.getByTestId('revision-to').selectOption('3'); // current answer
     await expect(page.getByTestId('revision-diff-slot-CustomSidebar')).toBeVisible();
     await page.evaluate(() => (window as unknown as { __release: () => void }).__release());
-    await page.waitForTimeout(500);
+    await page.waitForFunction(() => (window as unknown as { __heldDone?: boolean }).__heldDone === true);
     await expect(page.getByTestId('revision-diff-heading')).toContainText('#1 to revision #3');
     await expect(page.getByTestId('revision-diff-slot-CustomSidebar')).toBeVisible();
   });

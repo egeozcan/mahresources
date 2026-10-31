@@ -5,6 +5,8 @@
 // form, which reads ?loadRevision= (see templateBundle.js).
 
 // Equal runs longer than this are folded to CONTEXT lines on each side of a change.
+// Longest label the server accepts, in characters.
+const LABEL_MAX = 200;
 const FOLD_OVER = 8;
 const CONTEXT = 3;
 
@@ -273,6 +275,12 @@ export function templateRevisions({ carrierType, id, apiPrefix, editUrl } = {}) 
 
     startLabelEdit(rev) {
       if (this.savingLabel) return;
+      if (this.editingLabel === rev.number) {
+        // Reopening the open row keeps its draft.
+        this.root.querySelector(`[data-label-input="${rev.number}"]`)?.focus();
+        return;
+      }
+      if (this.editingLabel !== null) return;
       this._labelSession++;
       this.editingLabel = rev.number;
       this.labelDraft = rev.label || '';
@@ -289,8 +297,13 @@ export function templateRevisions({ carrierType, id, apiPrefix, editUrl } = {}) 
       this.focusLabelButton(number);
     },
 
+    // The server counts characters (code points), not UTF-16 units.
+    get labelTooLong() {
+      return [...this.labelDraft].length > LABEL_MAX;
+    },
+
     async saveLabel(rev) {
-      if (this.savingLabel) return;
+      if (this.savingLabel || this.labelTooLong) return;
       this.savingLabel = true;
       this.status = `Saving the label of revision ${rev.number}...`;
       const session = this._labelSession;

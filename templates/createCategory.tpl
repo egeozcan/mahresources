@@ -6,7 +6,11 @@
   <p class="text-sm font-medium text-red-800"><strong>Could not save:</strong> {{ queryValues.error.0 }}</p>
 </div>
 {% endif %}
-<form class="space-y-8" method="post" action="/v1/category">
+{% if category.ID && queryValues.loadRevision.0 %}
+<p id="revision-preload-status" role="status" data-testid="revision-preload-status" class="mb-4 border-l-4 border-t-4 border-green-700 bg-green-50 p-3 text-sm text-green-900">Loading revision #{{ queryValues.loadRevision.0 }}. The form is locked until it arrives.</p>
+<noscript><p class="mb-4 text-sm">Loading a revision needs JavaScript. <a href="/category/edit?id={{ category.ID }}">Open the editor without it</a>.</p></noscript>
+{% endif %}
+<form class="space-y-8" method="post" action="/v1/category"{% if category.ID && queryValues.loadRevision.0 %} inert aria-busy="true" data-revision-locked{% endif %}>
     {% if category.ID %}
     <input type="hidden" value="{{ category.ID }}" name="ID">
     {% endif %}

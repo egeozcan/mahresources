@@ -10,6 +10,7 @@
     </p>
     <p class="text-sm text-stone-600">Every save that changes a template, schema or section layout records a revision. Loading a revision fills the edit form without saving, so you can review it first.</p>
 
+    <p id="label-edit-reason" class="sr-only">Save or cancel the open label first.</p>
     <p role="status" data-testid="revisions-status" class="text-sm text-stone-700 empty:hidden" x-text="status"></p>
 
     <section aria-labelledby="revisions-heading" class="space-y-3">
@@ -52,12 +53,13 @@
                                 <template x-if="editingLabel === rev.number">
                                     <form class="flex flex-wrap items-center gap-2" @submit.prevent="saveLabel(rev)" @keydown.escape.prevent="cancelLabelEdit(rev.number)">
                                         <label class="sr-only" :for="'revision-label-input-' + rev.number" x-text="'Label for revision ' + rev.number"></label>
-                                        <input type="text" maxlength="200" x-model="labelDraft"
+                                        <input type="text" x-model="labelDraft" :aria-invalid="labelTooLong.toString()" :aria-describedby="labelTooLong ? 'revision-label-error-' + rev.number : null"
                                                :id="'revision-label-input-' + rev.number" :data-label-input="rev.number"
                                                :data-testid="'revision-label-input-' + rev.number"
                                                :readonly="savingLabel" :aria-busy="savingLabel.toString()"
                                                class="w-48 rounded-md border-stone-300 text-sm focus:border-amber-500 focus:ring-amber-500">
-                                        <button type="submit" :disabled="savingLabel" :data-testid="'revision-label-save-' + rev.number"
+                                        <p x-show="labelTooLong" :id="'revision-label-error-' + rev.number" role="alert" data-testid="revision-label-error" class="basis-full text-xs text-red-700">A label can be at most 200 characters.</p>
+                                        <button type="submit" :disabled="savingLabel || labelTooLong" :data-testid="'revision-label-save-' + rev.number"
                                                 class="inline-flex items-center px-2 py-1 text-xs font-mono font-medium text-white bg-amber-700 border border-transparent rounded-md hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 disabled:opacity-40 cursor-pointer">Save</button>
                                         <button type="button" @click="cancelLabelEdit(rev.number)"
                                                 class="inline-flex items-center px-2 py-1 text-xs font-mono font-medium text-stone-700 bg-stone-100 border border-stone-300 rounded-md hover:bg-stone-200 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">Cancel</button>
@@ -71,7 +73,8 @@
                                             :aria-label="'Compare revision ' + rev.number + ' with the current state'"
                                             :data-testid="'revision-compare-' + rev.number"
                                             class="inline-flex items-center px-2 py-1 text-xs font-mono font-medium text-stone-700 bg-stone-100 border border-stone-300 rounded-md hover:bg-stone-200 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">Compare with current</button>
-                                    <button type="button" @click="startLabelEdit(rev)" :disabled="savingLabel"
+                                    <button type="button" @click="startLabelEdit(rev)" :disabled="savingLabel || (editingLabel !== null && editingLabel !== rev.number)"
+                                            :aria-describedby="editingLabel !== null && editingLabel !== rev.number ? 'label-edit-reason' : null"
                                             :aria-label="'Edit label of revision ' + rev.number"
                                             :data-label-button="rev.number" :data-testid="'revision-label-edit-' + rev.number"
                                             class="inline-flex items-center px-2 py-1 text-xs font-mono font-medium text-stone-700 bg-stone-100 border border-stone-300 rounded-md hover:bg-stone-200 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 disabled:opacity-40 cursor-pointer">Edit label</button>
