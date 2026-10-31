@@ -786,6 +786,10 @@ Example MetaSchema:
 }
 ```
 
+## Revision history
+
+Every save that changes a template slot, its CSS, the Meta JSON Schema or the section configuration is recorded as a Template Revision. You can compare any two revisions, load an old slot back into the editor, or restore it from the API or CLI. See [Template Revisions](./template-revisions.md).
+
 ## Editor authoring tools
 
 The Category, Resource Category, and Note Type edit forms provide a feedback loop for authoring the `Custom*` template slots (including `CustomCSS`, which supports shortcodes). These tools apply only to the template slots -- the Meta JSON Schema editor is unaffected.

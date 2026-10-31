@@ -301,6 +301,13 @@
                     <code class="bg-stone-100 px-1 rounded">x-show="entity.Meta?.status"</code>.
                 </p>
             </div>
+            <div>
+                <h2 class="font-semibold text-stone-700">History</h2>
+                <p class="text-xs">
+                    Each save that changes a template, its CSS, the Meta JSON Schema or the section configuration is recorded as a Template Revision.
+                    {% if resourceCategory.ID %}<a href="/resourceCategory/revisions?id={{ resourceCategory.ID }}" class="text-amber-700 hover:text-amber-900 underline">Open the history of this resource category</a> to compare revisions or load one back into the editor.{% else %}The history page is available once the resource category exists.{% endif %}
+                </p>
+            </div>
         </div>
 
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomHeader">
