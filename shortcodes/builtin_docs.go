@@ -39,7 +39,7 @@ type DocExample struct {
 
 // BuiltinDoc documents one built-in shortcode (meta, datetime, pills,
 // property, mrql, conditional, link, each, item, partial, lazy, details,
-// reload).
+// reload, using).
 type BuiltinDoc struct {
 	Name        string          `json:"name"`
 	Syntax      string          `json:"syntax"`
@@ -287,6 +287,27 @@ func BuiltinDocs() []BuiltinDoc {
 				{Title: "Icon button", Code: `[reload]`},
 				{Title: "Refresh one deferred block", Code: "[lazy]\n  [reload label=\"Refresh open tasks\"]\n  [mrql query='type = \"note\"' format=\"list\"]\n[/lazy]"},
 				{Title: "Labelled button", Code: `[reload]Refresh[/reload]`},
+			},
+		},
+		{
+			Name:        "using",
+			Syntax:      `[using type="..." id="..."]...[else]...[/using]`,
+			Description: "Renders its body with another group, resource or note as the entity, so every shortcode inside ([property], [meta], [conditional], [each], [link], [mrql scope=…]) reads that entity instead of this one. Name the target with exactly one of id, id-path, id-prop, rel or query. When there is no target, or it is one you cannot see, the [else] branch renders against this entity (nothing when there is no [else]); [else] is a divider with no closing tag, so end the block with [/using]. Each block runs one query per render. An [item] from an enclosing [each] is not available inside it, and the target's category CustomCSS is not added to the page.",
+			IsBlock:     BlockRequired,
+			Attrs: []DocAttr{
+				{Name: "type", Type: "enum", Required: false, Description: "Entity type of the target. Required with id, id-path and id-prop; not used with rel (always a group) or query (the query names its type).", Enum: []string{"group", "resource", "note"}},
+				{Name: "id", Type: "number", Required: false, Description: "The target's ID, a positive whole number."},
+				{Name: "id-path", Type: "string", Required: false, Description: "Dot-path into this entity's Meta holding the target's ID (a number or a numeric string), e.g. links.client."},
+				{Name: "id-prop", Type: "string", Required: false, Description: "Field of this entity holding the target's ID, e.g. OwnerId."},
+				{Name: "rel", Type: "enum", Required: false, Description: "A group related to this entity: owner (the group that owns it) or root (the top of its ownership chain). Same meaning as [link to=].", Enum: []string{"owner", "root"}},
+				{Name: "query", Type: "string", Required: false, Description: "MRQL query whose first result is the target. Name the entity type, and add ORDER BY so the first result is a stable one. GROUP BY is not allowed."},
+				{Name: "scope", Type: "enum", Default: "entity", Description: "With query only: group subtree to scope the query to, as on [mrql]: entity, parent, root, global, or a numeric group ID. Lookups by ID ignore it.", Enum: []string{"entity", "parent", "root", "global"}},
+				{Name: "param-", Type: "string", Wildcard: true, Description: "With query only: binds an MRQL $name placeholder, e.g. param-name=\"Index\" binds $name."},
+			},
+			Examples: []DocExample{
+				{Title: "The owning group", Code: "[using rel=\"owner\"]\n  <h3>[link][property path=\"Name\"][/link]</h3>\n  Status: [meta path=\"status\" inline=\"true\"]\n[else]\n  <p>No owner.</p>\n[/using]"},
+				{Title: "An ID stored in Meta", Code: "[using type=\"group\" id-path=\"client\"]\n  Client: [property path=\"Name\"]\n[/using]"},
+				{Title: "First result of a query", Code: "[using query='type = note AND name = $name ORDER BY created DESC' param-name=\"Index\"]\n  [property path=\"Description\"]\n[/using]"},
 			},
 		},
 	}

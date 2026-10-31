@@ -52,22 +52,40 @@ func resolveLinkURL(to string, ctx MetaShortcodeContext) (string, bool) {
 		}
 		return "", false
 
-	case "owner":
-		var gid uint
-		if ctx.EntityType == "group" {
-			gid = ctx.ParentGroupID
-		} else {
-			gid = ctx.ScopeGroupID
-		}
+	case "owner", "root":
+		gid, _ := relGroupID(to, ctx)
 		return groupURL(gid)
-
-	case "root":
-		return groupURL(ctx.RootGroupID)
 
 	case "category":
 		return resolveCategoryURL(ctx)
 	}
 	return "", false
+}
+
+// relGroupID resolves a relation keyword to a group ID: "owner" is the group
+// that owns this entity (a group's own scope ID is itself, so its owner is the
+// parent scope) and "root" is the top of the ownership chain. ok is false for an
+// unknown keyword and for an entity with no such group (zero or the unresolved
+// sentinel). Shared by [link to=] and [using rel=] so the two cannot disagree on
+// which group a keyword names.
+func relGroupID(rel string, ctx MetaShortcodeContext) (uint, bool) {
+	var gid uint
+	switch rel {
+	case "owner":
+		if ctx.EntityType == "group" {
+			gid = ctx.ParentGroupID
+		} else {
+			gid = ctx.ScopeGroupID
+		}
+	case "root":
+		gid = ctx.RootGroupID
+	default:
+		return 0, false
+	}
+	if gid == 0 || gid == unresolvedScopeSentinel {
+		return 0, false
+	}
+	return gid, true
 }
 
 // groupURL builds a /group?id= URL for a resolved group ID, rejecting the

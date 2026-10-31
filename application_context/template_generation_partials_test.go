@@ -192,6 +192,18 @@ func TestSummarizeTemplatePartialReadsMRQLParentSlots(t *testing.T) {
 	}
 }
 
+func TestSummarizeTemplatePartialSkipsUsingBody(t *testing.T) {
+	// A [using] body renders against its target, so its paths are the
+	// target's, not the including entity's; only id-path and the [else]
+	// branch read the entity.
+	content := `[using type="group" id-path="client"][meta path="targetonly"][partial name="card"][else][property path="Name"][/using]`
+	reads := SummarizeTemplatePartial("p", "", content).Reads
+	want := "property path=Name; using path=client; uses using"
+	if reads != want {
+		t.Fatalf("reads:\n got %q\nwant %q", reads, want)
+	}
+}
+
 // TestPartialLinesKeepEveryNameAtTheBoundary: a complete list that fits is
 // kept whole, even when the longer "not all are listed" wording would not.
 func TestPartialLinesKeepEveryNameAtTheBoundary(t *testing.T) {

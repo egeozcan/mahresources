@@ -46,6 +46,11 @@ type MetaShortcodeContext struct {
 	// shortcode's editable attr. Set by the share renderer: the public /s/<token>
 	// page must never emit an edit affordance that would POST to the primary server.
 	ForceReadOnly bool
+	// outer is the context a [using] block switched away from, nil at the top
+	// of a render and on every MRQL result. Nothing reads it yet; it is carried
+	// so that reaching the enclosing entity (ctx="outer") can be added without
+	// reshaping how [using] builds its child.
+	outer *MetaShortcodeContext
 }
 
 // RenderMetaShortcode expands a [meta] shortcode into a <meta-shortcode> custom

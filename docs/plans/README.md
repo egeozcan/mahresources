@@ -49,6 +49,7 @@ the code wins. For how the system is actually put together see
 - [2026-10-19-markdown-description-editor-design.md](2026-10-19-markdown-description-editor-design.md)
 - [2026-10-20-frontend-tti-low-hanging-fruit.md](2026-10-20-frontend-tti-low-hanging-fruit.md)
 - [2026-10-24-template-generation-quality.md](2026-10-24-template-generation-quality.md)
+- [2026-10-30-using-shortcode.md](2026-10-30-using-shortcode.md)
 
 ## Archive
 
