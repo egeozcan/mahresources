@@ -216,11 +216,11 @@ The source is advisory provenance, never an authorization input.
   edit-capability gates in the policy and in the handler.
 
 ### 5. UI
-- [ ] History page per carrier: revision list (decision 6 columns), choose two to diff
+- [x] History page per carrier: revision list (decision 6 columns), choose two to diff
   (default: selected vs current), the slot-grouped diff, label editing, and "Load into
   editor" for the whole revision or for one slot.
-- [ ] Link it from the edit and display pages of all three carrier types.
-- [ ] Load into editor: open the edit form pre-filled with the target state, unsaved,
+- [x] Link it from the edit and display pages of all three carrier types.
+- [x] Load into editor: open the edit form pre-filled with the target state, unsaved,
   and append `loaded:<n>[:<slot>]` to `revisionApplied`. Build it on
   `src/components/templateBundle.js`'s editor setters, but not on `applyBundle`
   as it stands. That function loads only slots, MetaSchema and SectionConfig
@@ -241,7 +241,7 @@ The source is advisory provenance, never an authorization input.
   snapshot rendered, because it is the resolver's own output, and it compares equal
   under the canonical view. So no "clear" marker is needed, and later checkbox edits
   are ordinary edits.
-- [ ] Presets, generation and copy append their `revisionApplied` entries.
+- [x] Presets, generation and copy append their `revisionApplied` entries.
 
 ### 6. CLI
 - [ ] `revisions list|show|diff|restore|label` under `categories`, `resource-categories`
@@ -408,6 +408,23 @@ names for `slot` in a restore are the primary field names (`CustomHeader`, not `
 - **The arch gate test is unchanged.** The revision operations carry neither "Categor" nor "NoteType"
   in their names, so it never matches them; `TestRevision_ReadsAndWritesNeedTheCarriersEditCapability`
   and `TestTemplateRevisionRoleMatrix` pin the guards instead.
+
+## Deviations (lane 2)
+
+- **No backend change.** The History page handler (`TemplateRevisionsContextProvider`) only resolves
+  the carrier and names the URLs; the page fetches the lane 1 REST API itself.
+- **Display-page link is the title bar's secondary action** ("History"), shown to every principal,
+  like the existing Edit button. The revision routes and the page path are admin/editor gated, so a
+  lower role gets 403 on following it. The edit pages carry a "View template history" link.
+- **Load into editor strips its query parameters** (`loadRevision`, `slot`, `includeCss`) with
+  `history.replaceState` once read, so a reload shows the saved state instead of loading the revision
+  over the user's edits.
+- **A slot load covers the slot and, unless `includeCss=0`, its `*CSS` companion**, written from the
+  revision's `editor` payload. The History page's "Include its CSS" box is per slot and only shown for
+  slots that have a companion (every `Custom*` slot except `CustomCSS`).
+- **Long unchanged runs in a diff are folded** (more than 8 equal lines keep 3 of context each side).
+- **`generated` is exercised by the existing generation specs' code path only**; no new E2E drives the
+  AI provider.
 
 ## Review
 
