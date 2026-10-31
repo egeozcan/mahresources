@@ -528,7 +528,10 @@ export function templateBundle({ carrier } = {}) {
           this.announceRevision(`Could not load ${what}: this form has no such slot.`, 'warn');
           return;
         }
-        await this.whenEditorsReady();
+        if (!await this.editorsReady(fields)) {
+          this.announceRevision(`Could not load ${what}: the code editors did not finish loading. Reload the page to try again.`, 'warn');
+          return;
+        }
         for (const field of fields) this.setRevisionField(field, editor[field]);
         this.recordApplied(slot ? `loaded:${number}:${slot}` : `loaded:${number}`);
         this.announceRevision(`Loaded ${what}. Review the form, then save. Nothing is saved yet.`, 'info');
@@ -592,17 +595,24 @@ export function templateBundle({ carrier } = {}) {
       if (data) data.config = parsed;
     },
 
-    // whenEditorsReady waits for every CodeMirror editor on the form to exist;
-    // they mount after the page's load event, and a write before then is lost.
-    async whenEditorsReady() {
+    // editorsReady waits until every CodeMirror editor the load would write has a
+    // view: they mount after the page's load event, and a write before then is
+    // lost. It answers false when one failed to mount (its chunk did not load) or
+    // never appeared, so the caller can refuse before changing any field.
+    async editorsReady(fields) {
       const deadline = Date.now() + 15000;
+      const containerOf = (field) => {
+        const input = document.querySelector(`[name="${field}"]`);
+        if (!input || input.tagName === 'TEXTAREA' || input.type === 'checkbox' || field === 'SectionConfig') return undefined;
+        return input.closest('[x-data]')?.querySelector('[x-ref="editorContainer"]') || null;
+      };
       for (;;) {
-        const containers = [...document.querySelectorAll('[x-ref="editorContainer"]')];
-        if (containers.every((container) => container._cmReady)) {
-          await Promise.all(containers.map((container) => container._cmReady));
-          return;
+        const containers = fields.map(containerOf).filter((c) => c !== undefined);
+        if (containers.every((container) => container && container._cmReady)) {
+          const views = await Promise.all(containers.map((container) => container._cmReady));
+          return views.every(Boolean);
         }
-        if (Date.now() > deadline) return;
+        if (Date.now() > deadline) return false;
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
     },

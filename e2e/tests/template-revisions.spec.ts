@@ -485,6 +485,21 @@ test.describe('Template Revisions history', () => {
     expect(await page.locator('form').first().evaluate((f: HTMLFormElement) => f.inert)).toBe(false);
   });
 
+  test('a load is refused, with nothing changed, when the code editors fail to load', async ({ page, apiClient }) => {
+    const name = `Rev NoEditor ${Date.now()}`;
+    const cat = await apiClient.createCategory(name, undefined, { CustomHeader: '<p>one</p>' });
+    await postForm(page, '/v1/category', { ID: String(cat.ID), name, CustomHeader: '<p>two</p>' });
+    await page.route('**/public/dist/assets/dist-*.js', (route) => route.abort());
+    await page.goto(`/category/edit?id=${cat.ID}&loadRevision=1`);
+    const notice = page.getByTestId('revision-load-notice');
+    await expect(notice).toContainText('Could not load revision #1');
+    await expect(notice).toBeFocused();
+    expect(await page.locator('form').first().evaluate((f: HTMLFormElement) => f.inert)).toBe(false);
+    await expect(page.locator('form[data-revision-locked]')).toHaveCount(0);
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<p>two</p>');
+    await expect(page.locator('input[name="revisionApplied"]')).toHaveCount(0);
+  });
+
   test('an unusable loadRevision value does not leave the form locked', async ({ page, apiClient }) => {
     const cat = await apiClient.createCategory(`Rev Bad Param ${Date.now()}`);
     await page.goto(`/category/edit?id=${cat.ID}&loadRevision=abc`);
