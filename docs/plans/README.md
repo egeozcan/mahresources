@@ -51,6 +51,7 @@ the code wins. For how the system is actually put together see
 - [2026-10-24-template-generation-quality.md](2026-10-24-template-generation-quality.md)
 - [2026-10-25-runtime-ai-providers.md](2026-10-25-runtime-ai-providers.md)
 - [2026-10-30-using-shortcode.md](2026-10-30-using-shortcode.md)
+- [2026-10-31-template-revisions.md](2026-10-31-template-revisions.md)
 
 ## Archive
 

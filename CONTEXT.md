@@ -161,6 +161,20 @@ _Avoid_: previous version, old version, earlier version. Version numbers are not
 The Resource Version a viewer is showing for a Resource. It is the Current Version unless a reader has chosen otherwise, and choosing otherwise changes what is on screen and nothing about the Resource.
 _Avoid_: active version, open version
 
+## Category Templates
+
+**Template Carrier**:
+A Category, Resource Category or Note Type: the taxonomy entity whose templates render the entities assigned to it.
+_Avoid_: template owner, category (when a Resource Category or Note Type is meant)
+
+**Template Revision**:
+One saved state of a Template Carrier's whole template set: its slots, their CSS, its meta schema, section config and, for a Resource Category, its auto-detect rules. A Template Revision's content never changes, and only its label may be edited.
+_Avoid_: version, template version, history entry. Version belongs to Resource Version.
+
+**Template Restore**:
+Making a past Template Revision's content, or one slot of it, the carrier's current templates. A restore records a new Template Revision; it never removes the later ones.
+_Avoid_: revert, rollback
+
 ## Plugin Commands
 
 **Command Declaration**:
