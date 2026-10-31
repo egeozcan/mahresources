@@ -310,6 +310,7 @@ func NewNoteTypesCmd(c *client.Client, opts *output.Options, page *int) *cobra.C
 	}
 
 	cmd.AddCommand(newNoteTypesListCmd(c, opts, page))
+	cmd.AddCommand(newTemplateRevisionsCmd(c, opts, templateRevisionsSpec{noun: "note type", endpoint: "/v1/noteType", helpFS: noteTypesHelpFS, helpDir: "note_types_help", helpBase: "note_types_revisions"}))
 
 	return cmd
 }

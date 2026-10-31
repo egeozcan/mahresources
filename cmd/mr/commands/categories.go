@@ -253,6 +253,7 @@ func NewCategoriesCmd(c *client.Client, opts *output.Options, page *int) *cobra.
 
 	cmd.AddCommand(newCategoriesListCmd(c, opts, page))
 	cmd.AddCommand(newCategoriesTimelineCmd(c, opts))
+	cmd.AddCommand(newTemplateRevisionsCmd(c, opts, templateRevisionsSpec{noun: "category", endpoint: "/v1/category", helpFS: categoriesHelpFS, helpDir: "categories_help", helpBase: "categories_revisions"}))
 
 	return cmd
 }
