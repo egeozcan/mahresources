@@ -18,6 +18,7 @@ func TestLintUsing(t *testing.T) {
 		{"valid id-path", `[using type="note" id-path="links.note"]x[/using]`, "", ""},
 		{"valid id-prop", `[using type="group" id-prop="OwnerId"]x[/using]`, "", ""},
 		{"valid query", `[using query="type = note ORDER BY created DESC" param-x="1"]x[/using]`, "", ""},
+		{"type from param", `[using query="type = $t ORDER BY name" param-t="note"]x[/using]`, "", ""},
 
 		{"inline form", `[using rel="owner"]`, "[using] must be a block", SeverityError},
 		{"no source", `[using type="group"]x[/using]`, "needs one of id, id-path, id-prop, rel or query", SeverityError},

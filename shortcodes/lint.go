@@ -557,7 +557,13 @@ func lintUsing(tk token, add func(start, end int, severity, msg string)) {
 				"[using] query cannot use GROUP BY: it needs one entity, not buckets")
 			return
 		}
-		if mrql.ExtractEntityType(parsed) == mrql.EntityUnspecified {
+		// The type can come from a param (type = $t), so bind before reading it,
+		// as the executor does. A binding failure is ValidateMRQL's to report.
+		params := map[string]any{}
+		for k, v := range collectShortcodeParams(tk.attrs) {
+			params[k] = v
+		}
+		if mrql.BindParams(parsed, params) == nil && mrql.ExtractEntityType(parsed) == mrql.EntityUnspecified {
 			add(start, end, SeverityWarning,
 				"[using] query does not name an entity type (type = group, resource or note), so its first result may be any of the three")
 		}

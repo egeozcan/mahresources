@@ -944,7 +944,7 @@ The target is loaded with an MRQL query run as the viewer, the same way `[mrql]`
 
 A lookup by `id`, `id-path`, `id-prop` or `rel` searches globally: the `[mrql]` default scope does not apply to it. `[else]` is a divider with no closing tag; end the block with `[/using]`. It renders against the original entity.
 
-`query` must name its entity type and should have an `ORDER BY`, otherwise which match becomes the target is not stable. `GROUP BY` is not allowed.
+`query` should name its entity type (`type = group`, `resource` or `note`) and have an `ORDER BY`. Without a type the first match can be any of the three, and without an `ORDER BY` which match becomes the target is not stable. The linter warns about both. `GROUP BY` is not allowed.
 
 ### Limits
 
