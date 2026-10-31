@@ -15,12 +15,25 @@ Shortcodes are bracket-delimited expressions embedded in the custom template slo
 
 The parser recognizes these patterns:
 
-- **Built-in inline:** `[meta ...]`, `[property ...]`, `[item ...]`, `[partial ...]`
-- **Built-in block:** `[conditional ...]...[/conditional]`, `[each ...]...[/each]`, `[lazy]...[/lazy]`, `[details ...]...[/details]`
+- **Built-in inline:** `[meta ...]`, `[datetime ...]`, `[pills ...]`, `[property ...]`, `[item ...]`, `[partial ...]`
+- **Built-in block:** `[conditional ...]...[/conditional]`, `[each ...]...[/each]`, `[lazy]...[/lazy]`, `[details ...]...[/details]`, `[using ...]...[/using]`
 - **Built-in inline or block:** `[mrql ...]` or `[mrql ...]...[/mrql]`, `[link ...]` or `[link ...]...[/link]`, `[reload ...]` or `[reload ...]...[/reload]`
-- **Plugin:** `[plugin:plugin-name:shortcode-name ...]`
+- **Plugin:** `[plugin:plugin-name:shortcode-name ...]`, inline or as a block closed by `[/plugin:plugin-name:shortcode-name]`
 
 Attribute values can be double-quoted, single-quoted, or unquoted. When a key appears more than once, the last value wins.
+
+### Quoting
+
+- Wrap a value in the quote character it does not contain. `query='type = resource AND tags = "photo"'` is valid; a value cannot contain its own delimiter.
+- There is no backslash escape. `path="name = \"x\""` is read as `name = \`, so switch to single quotes instead.
+- Quote every value that contains a space. An unquoted value stops at the first space and the rest is dropped without an error: `[meta path=cooking time]` reads only `path=cooking`.
+- A `]` inside quotes does not end the shortcode: `[mrql query='type = note AND name ~ "a]b"']` is one shortcode.
+
+```
+[meta path="cooking.difficulty" default="Not rated"]
+[meta path='cooking.time' default='Not set']
+[mrql query='type = note AND name ~ "draft"' limit="5"]
+```
 
 ### Built-in Shortcodes
 
@@ -57,13 +70,17 @@ Block shortcodes can be nested. The inner content is processed after the outer s
 
 Shortcodes are processed via the `process_shortcodes` Pongo2 template tag. Every `Custom*` slot processes shortcodes automatically: `CustomLightbox` is expanded before the JSON detail response is serialized, and `CustomCSS` is expanded by the `custom_css` tag. Entity description fields also process shortcodes on detail pages; truncated previews in list views do not.
 
+A `CustomCSS` slot is expanded once per category per page. Its shortcodes resolve against the first entity of that category that the page renders: the entity being viewed on a detail page, or the first matching entity in a list. A stylesheet therefore cannot vary per card on a list page, so keep shortcodes in CSS for values that are the same across the category.
+
 ### Failure markers
 
 A shortcode that cannot be expanded never leaks its raw `[…]` source. Instead, the rendered page carries a diagnosable marker:
 
 - **A failing plugin shortcode** renders an inline `<span class="shortcode-error" title="…">⚠ plugin:name:shortcode</span>` with the error in the `title` attribute.
 - **An unclosed `[conditional]`** (used without `[/conditional]`) renders the same inline marker -- it can't gate anything as written. The template lint flags this at edit time.
-- **Structural stops** render an HTML comment rather than visible noise: the recursion depth cap emits `<!-- mr:shortcode depth limit reached -->`, and a context that deliberately wires no query executor or plugin renderer emits `<!-- mr:mrql unavailable in this context -->` / `<!-- mr:plugin unavailable in this context -->`.
+- **Structural stops** render an HTML comment rather than visible noise: the recursion depth cap emits `<!-- mr:shortcode depth limit reached -->`, and a context that deliberately wires no query executor or plugin renderer emits `<!-- mr:mrql unavailable in this context -->` / `<!-- mr:using unavailable in this context -->` / `<!-- mr:plugin unavailable in this context -->`.
+
+A `<!-- mr: ... -->` comment means expansion stopped on purpose, either because the surface has no query or plugin support or because the depth cap was reached. It is not a failed query. A red `⚠` marker means a plugin shortcode or a `[reload]` failed, and its `title` attribute says why. A failing `[mrql]` shows a red `mrql-error` message instead.
 
 ## `[meta]` -- Metadata Display
 
@@ -209,6 +226,13 @@ Supply `options` to override the schema choices, or to use a field without a sch
 [pills path="priority" editable="true" options='[{"value":1,"label":"Low"},{"value":2,"label":"Medium"},{"value":3,"label":"High"}]']
 ```
 
+A read-only selector shows the stored value without saving anything, and `hide-empty` removes the selector when nothing is stored yet:
+
+```html
+[pills path="status"]
+[pills path="rating" options='[1,2,3,4,5]' hide-empty="true"]
+```
+
 Manual options are a JSON array of strings, numbers, booleans, or null, or objects with `value` and `label`. Stored values retain their JSON types: numeric `1` differs from string `"1"`. Labels are plain text. Manual options still must satisfy any schema validation when saved.
 
 | Attribute | Required | Default | Description |
@@ -239,7 +263,11 @@ The existing value determines the format: ISO dates, times, and timestamps retai
 [datetime path="event.start" layout="January 2, 2006 at 15:04"]
 [datetime path="deadline" editable="true" input-layout="02/01/2006" layout="Jan 2, 2006"]
 [datetime path="openingTime" editable="true"]
+[datetime path="event.start" default="No date set" editable="true"]
+[datetime path="followUp" editable="true"]
 ```
+
+`default` is shown when the stored value is empty. `hide-empty` hides an empty value outside edit mode, so an optional date does not leave a placeholder on every card. Do not combine `hide-empty` with `editable` on the same field: an empty field then has nothing to click, so it can never be filled in from that slot.
 
 Layouts use these Go reference-time tokens: `2006` (year), `January`/`Jan`/`01`/`1` (month), `02`/`2` (day), `15` (24-hour hour), `03`/`3` (12-hour hour), `04`/`4` (minute), `05`/`5` (second), `PM`/`pm`, `.000` (fraction, one to nine zeros), and `Z07:00`/`-07:00`/`Z0700`/`-0700` (offset). Other characters are literal. Use `input-layout` for non-ISO values, including ambiguous day/month formats. `layout` only changes the display, never the saved representation. The native picker edits fractions up to milliseconds; opening and saving without changing the input preserves all stored fractional digits.
 
@@ -293,8 +321,12 @@ The shortcode never triggers database loads by design (list pages render many ca
 [property path="CreatedAt" format="date"]
 [property path="Owner.Name" default="Unassigned"]
 [property path="FileSize" format="filesize"]
-[property path="Description" raw=true]
+[property path="Tags.0.Name" default="No tags"]
+[property path="CreatedAt" layout="2 Jan 2006"]
+[property path="Description" default="No description"]
 ```
+
+`raw=true` skips escaping, so a value that contains HTML is rendered as HTML. Use it only for text an admin or editor wrote, and never for a value that a plain `user` can edit. The linter warns on every `raw=true`.
 
 ### Available Fields by Entity Type
 
@@ -332,7 +364,13 @@ Embeds MRQL query results inline. Executes a query and renders the results in on
 `value=` turns `[mrql]` into an inline scalar: it renders a single escaped text value with **no wrapper `<div>`**, usable mid-sentence.
 
 ```html
-<p>You have <strong>[mrql query="type = resource" value="count"]</strong> files.</p>
+<p>Uploads this week: <strong>[mrql query="type = resource AND created > -7d" value="count" limit="100"]</strong> (at most 100 are counted)</p>
+```
+
+Pick the row a scalar reads with `ORDER BY` and `LIMIT 1` on an aggregated query. This gives the largest file size across all resources, in bytes:
+
+```html
+<p>Largest file: [mrql query="type = resource GROUP BY contentType MAX(fileSize) ORDER BY max_fileSize DESC LIMIT 1" value="max_fileSize"] bytes</p>
 ```
 
 - `value="count"` -- the flat item count, the bucket count (bucketed), or the row count (aggregated).
@@ -342,7 +380,7 @@ Embeds MRQL query results inline. Executes a query and renders the results in on
 - A `value=` shortcode with a block body is a lint error; the body is ignored at render time.
 
 :::caution `value="count"` is capped by `limit`
-`value="count"` counts the **returned** rows, so it is bounded by `limit` (default 20). For a true total, use an aggregated `count()` query (`... GROUP BY ... count()` with `value="<count column>"`) or the `{total}` placeholder in a [block slot](#totals-and-the-view-all-link).
+`value="count"` counts the **returned** rows, so it is bounded by `limit` (default 20). For a true total, use the `{total}` placeholder in a [block slot](#totals-and-the-view-all-link). Do not try an aggregated `COUNT()` with `value=`: its output key is `count`, and `value="count"` reads the number of rows, so you get the number of groups instead of the count.
 :::
 
 ### Render Formats
@@ -386,8 +424,12 @@ Shortcodes can nest up to 10 levels deep (the processing recursion limit). This 
 [mrql query='type = resource AND tags = "photos"']
 [mrql query='type = note AND created > -7d' format=table limit=10]
 [mrql saved="recent-uploads" format=compact]
-[mrql query='type = group AND category = 5 GROUP BY owner.name' buckets=10]
+[mrql saved="recent-uploads" link-all="true" limit="5"]
+[mrql query='type = resource GROUP BY meta.camera_model' buckets=6]
+[mrql query='type = note AND tags = $tag' param-tag="todo" limit=5]
 ```
+
+`param-*` binds a `$name` placeholder, so one saved query can serve many shortcodes with different values. Without the binding, the shortcode renders an MRQL error (`missing parameter $tag`) in place of its results.
 
 In a custom template:
 
@@ -529,7 +571,7 @@ A query without a `type` filter can return mixed entity types (resources, notes,
 ```
 [mrql query='tags = "featured"' limit="12"]
   [conditional field="ContentType" not-empty="true"]
-    <figure><img src="/v1/resource/preview?id=[property path='ID']&height=200" alt="[property path='Name']"></figure>
+    <figure><img src="/v1/resource/preview?id=[property path='ID']&amp;height=200" alt="[property path='Name']"></figure>
   [else]
     <p class="font-medium">[property path="Name"]</p>
   [/conditional]
@@ -543,7 +585,7 @@ Photo gallery from a query:
 ```html
 [mrql query='type = resource AND contentType ~ "image/*"' limit="12" scope="entity"]
   <a href="/resource?id=[property path='ID']" class="block">
-    <img src="/v1/resource/preview?id=[property path='ID']&height=128"
+    <img src="/v1/resource/preview?id=[property path='ID']&amp;height=128"
          alt="[property path='Name']"
          class="w-full h-32 object-cover rounded-md" />
   </a>
@@ -601,8 +643,8 @@ Conditionally renders content based on a metadata value, entity field, or query 
 | `in` | No | -- | True when value equals one of a comma-separated list (e.g. `in="a,b,c"`) |
 | `contains` | No | -- | True when value contains this substring |
 | `matches` | No | -- | True when value matches this Go regular expression. An invalid pattern evaluates to false |
-| `empty` | No | -- | True when value is nil or empty string |
-| `not-empty` | No | -- | True when value is non-nil and non-empty |
+| `empty` | No | -- | True when value is nil or empty string. Write `empty="true"`; the value is ignored, so `empty="false"` does not negate it |
+| `not-empty` | No | -- | True when value is non-nil and non-empty. Write `not-empty="true"`; the value is ignored. An empty array counts as non-empty, so use `[each]`'s `[else]` for an empty list |
 | `combine` | No | `all` | How to fold multiple operators and numbered-suffix conditions: `all` (AND) or `any` (OR) |
 
 *One of `path`, `field`, or `mrql` is required as the condition source.
@@ -695,6 +737,37 @@ Conditional blocks can be nested, and can contain any other shortcode:
 [/conditional]
 ```
 
+More operators, one per use:
+
+```
+[conditional path="notes" empty="true"]No notes yet.[/conditional]
+
+[conditional path="status" in="todo,doing"]Still open[/conditional]
+
+[conditional path="title" contains="draft"]Work in progress[/conditional]
+
+[conditional path="code" matches="^[A-Z]{3}-[0-9]+$"]Valid ticket code[/conditional]
+
+[conditional path="status" eq="urgent" path2="priority" eq2="high" combine="any"]
+  Needs attention now
+[/conditional]
+```
+
+`matches` takes a Go regular expression. An invalid pattern is false, so a typo quietly hides the block; test the pattern on a real value. The last example uses `combine="any"` to show the block when either condition is true. Without it, both must hold.
+
+### Conditions from a query
+
+`mrql=` tests a query result, so a block can appear only when a related set of entities exists:
+
+```
+[conditional mrql='type = note AND tags = "todo"' gt="0"]
+  <h3>Open to-dos</h3>
+  [mrql query='type = note AND tags = "todo"' format=list limit=5]
+[/conditional]
+```
+
+The condition counts at most `limit` results (default 20). A threshold test is exact only when `limit` is above the threshold: to test for more than 100, set `limit="101"`, because a count of 101 means "more than 100". Each `mrql=` condition runs a query when the page renders, so wrap it in `[lazy]` on list pages.
+
 ## `[link]` -- Detail-page URLs
 
 Resolves a detail-page URL for the current entity or a related target.
@@ -732,9 +805,13 @@ When the target cannot be resolved (unknown `to`, an unset category, or an owner
 
 ```
 <a href="[link]" class="btn">This page</a>
+<a href="[link to='owner']">Parent group</a>
 [link to="owner"]Back to group[/link]
+[link to="root"]Top of the hierarchy[/link]
 [link to="category"]View type[/link]
 ```
+
+Inline output is the bare URL, so it fits any `href` that takes a whole URL. Block output is a complete `<a>` element, so do not wrap a block in another link.
 
 ## `[each]` -- Iterate an array
 
@@ -778,6 +855,22 @@ Renders its inner content once per element of an array meta value.
 [/each]
 ```
 
+A list of plain values, numbered, with no path needed:
+
+```
+[each path="steps"]
+  <li>[item index="true"]. [item]</li>
+[/each]
+```
+
+For an array of objects, `[item path="..."]` reads a field of each element. Inner `[meta]`, `[conditional]` and `[property]` still read the parent entity, so use `[item]` for element values. This example puts a value in an `href`, so the value gets a relative prefix and no scheme:
+
+```
+[each path="links"]
+  <a href="/archive/[item path='slug']">[item path="label" default="Link"]</a>
+[/each]
+```
+
 `[item]` binds to the nearest enclosing `[each]`; `[item]` tokens inside a nested `[each]` belong to that inner loop.
 
 ## `[partial]` -- Reusable snippets
@@ -799,6 +892,14 @@ The partial's content is rendered with the **current entity context**, so its ow
 ```
 [partial name="status-badge"]
 ```
+
+A partial is written once and reused in any slot. For example, a partial named `status-badge` could hold the following body; a Category's Custom Header then includes it with `[partial name="status-badge"]`:
+
+```html
+<span class="rounded px-2 py-0.5 text-xs bg-stone-100">[meta path="status" default="no status"]</span>
+```
+
+Because the partial expands in the including entity's context, the same markup shows each entity's own status.
 
 See [Custom Templates](./custom-templates.md) for authoring partials, bundles, and presets.
 
@@ -835,7 +936,13 @@ A disclosure, like the HTML `<details>`/`<summary>` element, whose inner content
 [details summary="Nutrition"]
   [meta path="calories"] kcal
 [/details]
+
+[details summary="Open to-dos" open="true"]
+  [mrql query='type = note AND tags = "todo"' format=list limit=5]
+[/details]
 ```
+
+On entity pages, cards, the dashboard and hovercards, a `[details]` loads its body the first time it is opened, so a heavy query inside one costs nothing until a reader asks for it. Elsewhere (share pages, the live preview, JSON responses) the body renders inline right away. See [Where deferral applies](#where-deferral-applies). Use `open="true"` only when the content is wanted on every view.
 
 The load-on-open mechanism is the same signed round-trip as `[lazy]`.
 
@@ -860,6 +967,16 @@ A button that re-renders content on the server and swaps it into the page. Which
 [reload label="Refresh totals"]
 [reload]Refresh[/reload]
 ```
+
+A typical use is a sidebar that shows a live list. The button refreshes the whole sidebar slot, because it sits outside any `[lazy]` or `[details]` block:
+
+```html
+<h3>Open to-dos</h3>
+[reload label="Refresh open to-dos"]
+[mrql query='type = note AND tags = "todo"' format=list limit=5]
+```
+
+To refresh only one part of a slot, put the button inside a `[lazy]` block with the content it should refresh. The button then reloads just that block.
 
 ### Attributes
 
@@ -960,6 +1077,16 @@ A lookup by `id`, `id-path`, `id-prop` or `rel` searches globally: the `[mrql]` 
   Client: [property path="Name"]
 [/using]
 
+[using rel="root"]
+  Project: [link][property path="Name"][/link]
+[/using]
+
+[using type="group" id-prop="OwnerId"]
+  Owned by [link][property path="Name"][/link]
+[else]
+  No owner group.
+[/using]
+
 [using type="resource" id="42"]
   <img src="/v1/resource/preview?id=[property path='ID']" alt="[property path='Name']">
 [/using]
@@ -979,7 +1106,7 @@ Plugins can register custom shortcodes via the `mah.shortcode()` Lua API. Plugin
 [plugin:plugin-name:shortcode-name attr="value"]
 ```
 
-The plugin name and shortcode name must be lowercase with only letters, digits, hyphens, and underscores.
+The plugin name and the shortcode name must each start with a lowercase letter, contain only lowercase letters, digits, hyphens (`-`) and underscores (`_`), and be at most 50 characters long. A shortcode whose name does not match is rejected when the plugin registers it.
 
 Plugin shortcodes also support block mode:
 
@@ -989,13 +1116,97 @@ Plugin shortcodes also support block mode:
 [/plugin:plugin-name:shortcode-name]
 ```
 
-The plugin receives `inner_content` and `is_block` in its render context.
+The plugin receives `inner_content` and `is_block` in its render context. For example, a plugin named `weather` that registers a `forecast` shortcode is used as follows (the attributes are whatever that plugin defines):
+
+```
+[plugin:weather:forecast city="Berlin" days="3"]
+[plugin:weather:forecast city="Berlin"]
+  Forecast for the trip
+[/plugin:weather:forecast]
+```
 
 Shortcodes in a plugin's returned HTML are expanded after the plugin returns, in both forms: whether the author wrapped a body says nothing about what the plugin emits. Expansion is bounded by the same nesting depth limit as every other shortcode, so a plugin that emits its own shortcode stops instead of looping. Only a successful render is expanded, because an error marker and the "plugin unavailable" comment carry text the plugin did not author.
 
 Note: in docs preview, shortcodes inside plugin output are not expanded (they render as literal text). This is a preview-only limitation; runtime rendering expands them normally.
 
 See [Plugin Lua API](./plugin-lua-api.md#mahshortcode----custom-shortcodes) for registration details.
+
+## Recipes
+
+Complete patterns that combine several shortcodes. Each one is written for a Category, Resource Category or Note Type slot, and each passes the shortcode linter.
+
+### A status card
+
+For a Custom Summary on a note or group card. Optional fields are hidden when empty, so the card stays short:
+
+```html
+<div class="flex flex-wrap items-center gap-2">
+  <strong>[property path="Name"]</strong>
+  [pills path="status" hide-empty="true"]
+  [datetime path="due" layout="Jan 2, 2006" hide-empty="true"]
+</div>
+```
+
+### A list with a live total
+
+The `{total}` placeholder counts every match, while the list shows only the first five:
+
+```html
+[mrql query='type = note AND tags = "todo"' limit="5"]
+  [header]<h4>Open to-dos: {total}</h4><ul class="list-disc pl-5">[/header]
+  <li><a href="[link]">[property path="Name"]</a></li>
+  [footer]</ul>[/footer]
+[else]
+  <p>Nothing open.</p>
+[/mrql]
+```
+
+### A section that appears only with content
+
+A `[conditional]` on a query result, with the query itself deferred until the section scrolls into view:
+
+```html
+[conditional mrql='type = note AND tags = "todo"' gt="0"]
+  <h3>To-dos</h3>
+  [lazy]
+    [mrql query='type = note AND tags = "todo"' format=list limit=5]
+  [/lazy]
+[else]
+  <p class="text-stone-500">No to-dos.</p>
+[/conditional]
+```
+
+### A list with an empty state
+
+`[each]` takes its `[else]` branch for a missing or empty array, which a `[conditional]` on `not-empty` does not do (an empty array counts as present):
+
+```html
+<h3>Ingredients</h3>
+[each path="ingredients"]
+  <li>[item path="name"] -- [item path="qty" default="?"]</li>
+[else]
+  <li class="text-stone-500">No ingredients yet.</li>
+[/each]
+```
+
+### A link to the owner, with a fallback
+
+`[using rel="owner"]` switches to the owning group, so its name and link both come from that group. The `[else]` branch covers an entity with no owner:
+
+```html
+Owned by [using rel="owner"]<a href="[link]">[property path="Name"]</a>[else]no group[/using]
+```
+
+## Common mistakes
+
+- **Closing a divider.** `[/else]` and `[/elseif]` are not closers. They render as literal text. Only `[/conditional]`, `[/each]` and the other block closers take a `[/name]` tag.
+- **Unquoted values with spaces.** The value stops at the first space and the rest is dropped without an error. Quote it (see [Quoting](#quoting)).
+- **`value=` with a block body.** The body is ignored at render time, and the linter reports it as an error.
+- **`[item]` outside its loop.** `[item]` renders nothing outside an `[each]`. An `[item]` from an enclosing `[each]` is not available inside any other block shortcode, including `[conditional]`, `[mrql]`, `[using]`, `[lazy]` and `[details]`.
+- **Counting with `value="count"`.** It counts returned rows, capped by `limit`. Use `{total}` for the real number.
+- **Per-card queries on a list page.** Every card runs an entity-scoped `[mrql]` in `CustomSummary`. Wrap it in `[lazy]` so the query runs only for cards on screen.
+- **Per-card values in CSS.** A `CustomCSS` slot is rendered once per category per page, so on a list page its `[meta]` values come from the first entity of that category in the list.
+- **Meta in a script, style or unquoted attribute.** Escaping does not protect these contexts. See [Inline values inside HTML attributes](#inline-values-inside-html-attributes) for the list.
 
 ## Related Pages
 
