@@ -10,6 +10,8 @@ Remove a runtime override and revert the setting to its boot-time default. The c
 
 Use `--reason` to record why the override was removed; the reason is stored in the database alongside the reset timestamp.
 
+Resetting an API key restores its environment fallback; it does not reveal that key. Current and boot values remain null in JSON, with `configured` and `bootConfigured` describing their status. Resetting a single AI setting affects that key only; the AI section of `/admin/settings` can reset an entire feature's provider, model and limit overrides together.
+
 ## Usage
 
 ```bash
@@ -52,7 +54,7 @@ mr admin settings reset mrql_query_timeout --reason "back to default after testi
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Setting object after reset with key, label, description, group, type, current (equals bootDefault), bootDefault, overridden (false); updatedAt and reason are absent, because the override that carried them is gone
+Setting object after reset with key, label, description, group, type, current (equals bootDefault), bootDefault, overridden (false); updatedAt and reason are absent; secret settings carry secret, configured and bootConfigured with null current and bootDefault
 
 ## Exit Codes
 

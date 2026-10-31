@@ -14,7 +14,10 @@
     </p>
   </header>
 
+  {% include "/partials/aiSettings.tpl" %}
+
   {% for group in settingsByGroup %}
+  {% if group.Group != "ai" %}
   <section class="rounded-lg bg-white border border-stone-200 p-5" aria-labelledby="grp-{{ group.Group }}">
     {# Finding 112: this printed group.Group — the raw config key — under a #}
     {# `capitalize` that cannot reach an underscore, so a reader saw #}
@@ -95,6 +98,7 @@
       {% endfor %}
     </div>
   </section>
+  {% endif %}
   {% endfor %}
 
   <section class="rounded-lg bg-white border border-stone-200 p-5" aria-labelledby="metadata-index-heading" x-data="metadataIndexBuildStatus()">

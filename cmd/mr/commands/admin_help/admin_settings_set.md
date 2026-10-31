@@ -1,5 +1,5 @@
 ---
-outputShape: Updated setting object with key, label, description, group, type, current, bootDefault, overridden, updatedAt, reason; non-string settings also carry minNumeric and maxNumeric, and allowZero when true
+outputShape: Updated setting object with key, label, description, group, type, current, bootDefault, overridden, updatedAt, reason; non-string settings also carry minNumeric and maxNumeric, and allowZero when true; secret settings carry secret, configured and bootConfigured instead of readable values
 exitCodes: 0 on success; 1 on unknown key, invalid value, or error
 relatedCmds: admin settings reset, admin settings get, admin settings list
 ---
@@ -9,6 +9,8 @@ relatedCmds: admin settings reset, admin settings get, admin settings list
 Override a runtime setting. The override persists to the database and takes effect on the next use of the setting -- no restart required. The command prints the updated setting view so you can confirm the new value.
 
 Size values accept suffix notation (e.g., `1G`, `500M`, `2048K`). Duration values use Go's time.ParseDuration format (`30s`, `5m`, `2h`). Use `--reason` to record why the change was made; the reason is stored in the database and shown by `mr admin settings get`.
+
+For an API-key setting, the response reports only whether a key is configured. An empty string saves a cleared override, disabling any environment fallback until the key is reset. Provider-specific AI model keys keep each provider's selections separate; use `/admin/settings` when several profile fields should change atomically.
 
 # Example
 

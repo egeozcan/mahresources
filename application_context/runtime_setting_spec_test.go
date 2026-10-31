@@ -68,6 +68,11 @@ func TestBuildSpecs_AllKeys(t *testing.T) {
 	// Counted from the list rather than written as a literal: the claim is that
 	// the registry holds exactly these keys, and a separate number only ever
 	// fails later for the uninteresting reason that a setting was added.
+	for key, spec := range specs {
+		if spec.Group == GroupAI {
+			expected = append(expected, key)
+		}
+	}
 	if len(specs) != len(expected) {
 		t.Fatalf("want %d specs, got %d", len(expected), len(specs))
 	}

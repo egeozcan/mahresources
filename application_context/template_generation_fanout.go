@@ -325,7 +325,7 @@ func (g *defaultTemplateGenerator) discloseFanOut(in TemplateGenerationInput, pr
 		sections = append(sections, templateRepairSectionsAt(len(fan.bases)+1)...)
 	}
 	plan, pair := g.config.profileFor(TemplateKindPlan), g.config.profileFor(TemplateKindPair)
-	disclosure := newTemplateDisclosure(g.provider.Endpoint(), []TemplateDisclosedProfile{
+	disclosure := g.newDisclosure([]TemplateDisclosedProfile{
 		{Kind: TemplateKindPlan, Model: plan.Model, Thinking: plan.Thinking, MaxTokens: plan.MaxTokens, MaxCalls: 1},
 		{Kind: TemplateKindPair, Model: pair.Model, Thinking: pair.Thinking, MaxTokens: pair.MaxTokens, MaxCalls: maxPairCalls},
 	}, sections)

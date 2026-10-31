@@ -10,6 +10,8 @@ View and manage runtime configuration overrides. Overrides persist to the databa
 
 Use `list` to see all settings, `get` to inspect one, `set` to apply an override, and `reset` to revert a key to its boot-time default.
 
+AI provider keys are write-only settings: reads show whether a key is configured, and never return its value. An empty override clears a key and suppresses its environment fallback; `reset` restores that fallback. Use `/admin/settings` to save a generation profile's provider, model and limits together.
+
 ## Usage
 
 ```bash

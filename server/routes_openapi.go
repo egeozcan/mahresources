@@ -2413,7 +2413,7 @@ Request body fields:
 Request body fields:
   - prompt (string, required) — user request to convert into MRQL
 
-The endpoint does not execute MRQL. The server sends the prompt and syntax-only MRQL instructions to the configured DeepSeek provider.`,
+The endpoint does not execute MRQL. The server sends the prompt and syntax-only MRQL instructions to the configured AI provider.`,
 		Tags:                 mrqlTag,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
@@ -2627,7 +2627,7 @@ saving the template (admin for category/resourceCategory, editor for noteType).
 	}
 
 	generateDescription := `Generate a custom template section from a natural-language prompt using the
-configured DeepSeek provider. Requires DEEPSEEK_API_KEY (503 when unset).
+configured AI provider. Returns 503 when its credential or model is not configured.
 
 Request body fields:
   - target     (string) — "slot" (default), "metaschema", or "bundle" (whole template)
@@ -3485,6 +3485,14 @@ func registerPluginRoutes(r *openapi.Registry) {
 	})
 }
 
+// UpdateSettingsRequest documents non-null string values. The handler decodes
+// pointers only to distinguish an explicit clear from an invalid null value.
+type UpdateSettingsRequest struct {
+	Values map[string]string `json:"values,omitempty"`
+	Reset  []string          `json:"reset,omitempty"`
+	Reason string            `json:"reason,omitempty"`
+}
+
 func registerAdminRoutes(r *openapi.Registry) {
 	// A review candidate is flat, so its partial form is its whole wire shape.
 	r.SetPartialFields("JobReviewCandidate", "ID", "Kind", "State", "AcceptedAt")
@@ -3553,16 +3561,44 @@ func registerAdminRoutes(r *openapi.Registry) {
 	})
 	settingViewType := reflect.TypeOf(application_context.SettingView{})
 	settingViewListType := reflect.TypeOf([]application_context.SettingView{})
+	r.SetPartialFields("SettingView", "Key", "Label", "Description", "Group", "Type", "Current", "BootDefault", "Overridden", "UpdatedAt", "Reason", "MinNumeric", "MaxNumeric", "AllowZero", "Secret", "Configured", "BootConfigured")
+	r.SetPartialFields("AIGenerationCallProfile", "Kind", "Model", "ReasoningMode", "MaxTokens", "Timeout")
+	settingsErrors := map[int]string{
+		http.StatusBadRequest:          "Invalid settings request or value",
+		http.StatusForbidden:           "Administrator role or valid CSRF token required",
+		http.StatusNotFound:            "Unknown setting key",
+		http.StatusInternalServerError: "Settings could not be persisted",
+	}
+
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodGet, Path: "/v1/admin/settings/ai-profiles", OperationID: "getAIGenerationProfiles",
+		Summary:     "Inspect effective AI generation profiles",
+		Description: "Administrator-only resolved provider, model, configured status, token budgets and timeouts for MRQL and template generation, including per-call template profiles. Credentials are never returned.",
+		Tags:        []string{"admin"}, ResponseType: reflect.TypeOf(contracts.AIGenerationProfiles{}),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ErrorResponses:       map[int]string{http.StatusForbidden: "Administrator role required"},
+	})
 
 	r.Register(openapi.RouteInfo{
 		Method:               http.MethodGet,
 		Path:                 "/v1/admin/settings",
 		OperationID:          "listRuntimeSettings",
 		Summary:              "List runtime-editable settings",
-		Description:          "Returns all runtime-editable settings with current value, boot default, override metadata, and bounds.",
+		Description:          "Administrator-only list of runtime-editable settings with current value, boot default, override metadata, and bounds. For secret settings, secret is true, current and bootDefault are null, and configured/bootConfigured report presence without exposing any credential bytes.",
 		Tags:                 []string{"admin"},
 		ResponseType:         settingViewListType,
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodPut, Path: "/v1/admin/settings", OperationID: "updateRuntimeSettings",
+		Summary:     "Atomically save or reset runtime settings",
+		Description: "Administrator-only atomic update. values maps setting keys to string values; reset lists overrides to remove. Omitted settings are preserved. An explicit empty string clears a secret, suppressing its environment fallback; resetting it restores that fallback. A key may occur only once across the two operations. Every value is validated before writing; a failed batch changes neither persisted nor active settings. New generation operations use one complete saved profile, while in-flight operations retain their original profile. Returns the full sanitized settings list. Requires a CSRF token for cookie-authenticated requests.",
+		Tags:        []string{"admin"}, RequestType: reflect.TypeOf(UpdateSettingsRequest{}),
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON},
+		ResponseType:         settingViewListType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ErrorResponses:       settingsErrors,
 	})
 
 	r.Register(openapi.RouteInfo{
@@ -3570,13 +3606,19 @@ func registerAdminRoutes(r *openapi.Registry) {
 		Path:        "/v1/admin/settings/{key}",
 		OperationID: "setRuntimeSetting",
 		Summary:     "Override a runtime setting",
-		Description: "Persists an override for the named setting. Runtime changes take effect on the next use (no restart).",
+		Description: "Administrator-only override for one setting. Send value as a string and an optional reason. Changes take effect on the next use without a restart. Secret values are write-only; an explicit empty string clears the credential even when an environment fallback exists. Use the batch endpoint to change a generation profile atomically.",
 		Tags:        []string{"admin"},
 		PathParams: []openapi.PathParam{
 			{Name: "key", Type: "string", Description: "Stable setting key; see GET /v1/admin/settings for the list."},
 		},
+		RequestType: reflect.TypeOf(struct {
+			Value  string `json:"value" openapi:"required"`
+			Reason string `json:"reason,omitempty"`
+		}{}),
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON},
 		ResponseType:         settingViewType,
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ErrorResponses:       settingsErrors,
 	})
 
 	r.Register(openapi.RouteInfo{
@@ -3584,13 +3626,14 @@ func registerAdminRoutes(r *openapi.Registry) {
 		Path:        "/v1/admin/settings/{key}",
 		OperationID: "resetRuntimeSetting",
 		Summary:     "Reset a runtime setting to boot default",
-		Description: "Removes any persisted override for the named setting and reverts to the boot-time flag/env value.",
+		Description: "Administrator-only removal of one persisted override, restoring the boot-time flag/env value. A secret reset restores its environment credential fallback without returning its value. An optional JSON body may provide a reason string. Use the batch endpoint to reset a complete profile atomically.",
 		Tags:        []string{"admin"},
 		PathParams: []openapi.PathParam{
 			{Name: "key", Type: "string", Description: "Stable setting key."},
 		},
 		ResponseType:         settingViewType,
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ErrorResponses:       settingsErrors,
 	})
 }
 

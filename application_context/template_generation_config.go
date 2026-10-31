@@ -61,9 +61,10 @@ type TemplateCallProfile struct {
 // TemplateCallOverride is a kind's deviation from the shipped profile. A zero
 // field means no override: thinking is off by default, so false needs none.
 type TemplateCallOverride struct {
-	Model    string
-	Thinking bool
-	Timeout  time.Duration
+	Model     string
+	Thinking  bool
+	Timeout   time.Duration
+	MaxTokens int
 }
 
 // profileFor resolves a kind's profile. The model and timeout fall back to the
@@ -79,6 +80,9 @@ func (c TemplateGenerationConfig) profileFor(kind string) TemplateCallProfile {
 	profile.MaxTokens = budget.off
 	if profile.Thinking {
 		profile.MaxTokens = budget.on
+	}
+	if override.MaxTokens > 0 {
+		profile.MaxTokens = override.MaxTokens
 	}
 	if profile.Timeout <= 0 {
 		switch {

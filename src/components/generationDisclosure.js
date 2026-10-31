@@ -39,21 +39,29 @@ export function registerGenerationDisclosureStore(Alpine) {
 
     // One line per kind of call the request can make.
     get profiles() {
-      return (this.disclosure?.destination?.profiles || []).map((p) =>
-        `${p.kind}: ${p.model}, thinking ${p.thinking ? 'on' : 'off'}, up to ${p.maxTokens} output tokens, at most ${p.maxCalls} call${p.maxCalls === 1 ? '' : 's'}`,
-      );
+      return (this.disclosure?.destination?.profiles || []).map((p) => {
+        const reasoning = p.reasoningMode === 'provider_default'
+          ? 'reasoning: provider default'
+          : `thinking ${p.thinking ? 'on' : 'off'}`;
+        const timeout = p.timeout ? `, timeout ${p.timeout}` : '';
+        return `${p.kind}: ${p.model}, ${reasoning}, up to ${p.maxTokens} output tokens, at most ${p.maxCalls} call${p.maxCalls === 1 ? '' : 's'}${timeout}`;
+      });
     },
 
     // How every call is sent: the fixed transport settings.
     get transport() {
       const t = this.disclosure?.transport;
       if (!t) return [];
-      return [
+      const lines = [
         `POST ${this.endpoint}`,
         `Content-Type: ${t.contentType}`,
         `Authorization: ${t.authorization}`,
-        `stream: ${t.stream ? 'true' : 'false'}, response_format: ${t.responseFormat}`,
+        `stream: ${t.stream ? 'true' : 'false'}, ${t.responseFormat === 'prompt_json' ? 'JSON requested in prompt' : `response_format: ${t.responseFormat}`}`,
       ];
+      if (t.apiVersion) lines.push(`Anthropic-Version: ${t.apiVersion}`);
+      const deadline = this.disclosure?.destination?.bundleDeadline;
+      if (deadline) lines.push(`Whole-template deadline: ${deadline}`);
+      return lines;
     },
 
     get continuationRule() {

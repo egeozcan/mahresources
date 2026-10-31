@@ -1035,7 +1035,9 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 
 	// Admin runtime settings routes
 	router.Methods(http.MethodGet).Path("/v1/admin/settings/metadata-index-status").HandlerFunc(api_handlers.GetMetadataIndexStatusHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/admin/settings/ai-profiles").HandlerFunc(api_handlers.GetAIProfilesHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/admin/settings").HandlerFunc(api_handlers.GetListSettingsHandler(appContext))
+	router.Methods(http.MethodPut).Path("/v1/admin/settings").HandlerFunc(api_handlers.GetUpdateSettingsHandler(appContext))
 	router.Methods(http.MethodPut).Path("/v1/admin/settings/{key}").HandlerFunc(api_handlers.GetSetSettingHandler(appContext))
 	router.Methods(http.MethodDelete).Path("/v1/admin/settings/{key}").HandlerFunc(api_handlers.GetResetSettingHandler(appContext))
 

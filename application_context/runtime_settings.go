@@ -14,11 +14,16 @@ import (
 	"mahresources/models/types"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // ErrUnknownSetting is returned by Set/Reset when the key is not registered.
 // HTTP handlers use errors.Is to map it to 404.
 var ErrUnknownSetting = errors.New("unknown setting")
+
+// ErrSettingsStorage deliberately carries no database error: drivers and SQL
+// loggers may include the credential-bearing statement or bound parameters.
+var ErrSettingsStorage = errors.New("runtime settings storage unavailable")
 
 // SettingsLogger is the minimal logger surface RuntimeSettings needs.
 // Production passes a thin adapter over log.Printf; tests pass a stub.
@@ -29,19 +34,22 @@ type SettingsLogger interface {
 
 // SettingView is the API/UI-facing representation of a single setting.
 type SettingView struct {
-	Key         string       `json:"key"`
-	Label       string       `json:"label"`
-	Description string       `json:"description"`
-	Group       SettingGroup `json:"group"`
-	Type        SettingType  `json:"type"`
-	Current     any          `json:"current"`
-	BootDefault any          `json:"bootDefault"`
-	Overridden  bool         `json:"overridden"`
-	UpdatedAt   *time.Time   `json:"updatedAt,omitempty"`
-	Reason      string       `json:"reason,omitempty"`
-	MinNumeric  *int64       `json:"minNumeric,omitempty"`
-	MaxNumeric  *int64       `json:"maxNumeric,omitempty"`
-	AllowZero   bool         `json:"allowZero,omitempty"`
+	Key            string       `json:"key"`
+	Label          string       `json:"label"`
+	Description    string       `json:"description"`
+	Group          SettingGroup `json:"group"`
+	Type           SettingType  `json:"type"`
+	Current        any          `json:"current"`
+	BootDefault    any          `json:"bootDefault"`
+	Overridden     bool         `json:"overridden"`
+	UpdatedAt      *time.Time   `json:"updatedAt,omitempty"`
+	Reason         string       `json:"reason,omitempty"`
+	MinNumeric     *int64       `json:"minNumeric,omitempty"`
+	MaxNumeric     *int64       `json:"maxNumeric,omitempty"`
+	AllowZero      bool         `json:"allowZero,omitempty"`
+	Secret         bool         `json:"secret,omitempty"`
+	Configured     bool         `json:"configured"`
+	BootConfigured bool         `json:"bootConfigured"`
 }
 
 type persistedEntry struct {
@@ -87,8 +95,8 @@ func NewRuntimeSettings(db *gorm.DB, log SettingsLogger, specs map[string]Settin
 // boot default).
 func (s *RuntimeSettings) Load() error {
 	var rows []models.RuntimeSetting
-	if err := s.db.Find(&rows).Error; err != nil {
-		return fmt.Errorf("load: %w", err)
+	if err := s.db.Session(&gorm.Session{Logger: logger.Discard}).Find(&rows).Error; err != nil {
+		return ErrSettingsStorage
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -101,7 +109,7 @@ func (s *RuntimeSettings) Load() error {
 		}
 		v, err := decodeSettingValue(string(spec.Type), []byte(r.ValueJSON))
 		if err != nil {
-			s.log.Error("runtime_settings: decode %q: %v; falling back to boot default", r.Key, err)
+			s.log.Error("runtime_settings: decode %q: %v; falling back to boot default", r.Key, settingValueError(spec, err))
 			continue
 		}
 		if err := validateBounds(spec, v); err != nil {
@@ -114,90 +122,136 @@ func (s *RuntimeSettings) Load() error {
 			// to the boot default.
 			clamped, ok := clampToBounds(spec, v)
 			if !ok {
-				s.log.Error("runtime_settings: persisted %q fails bounds (%v); falling back to boot default", r.Key, err)
+				s.log.Error("runtime_settings: persisted %q fails bounds (%v); falling back to boot default", r.Key, settingValueError(spec, err))
 				continue
 			}
-			s.log.Warn("runtime_settings: persisted %q out of bounds (%v); clamped to %v", r.Key, err, clamped)
+			s.log.Warn("runtime_settings: persisted %q out of bounds (%v); clamped to %v", r.Key, settingValueError(spec, err), settingAuditValue(spec, clamped))
 			v = clamped
 		}
 		s.overrides[r.Key] = persistedEntry{value: v, updatedAt: r.UpdatedAt, reason: r.Reason}
 		if bootDefault, ok := s.defaults[r.Key]; ok && bootDefault != v {
-			s.log.Warn(`runtime_setting %q override (%v) differs from boot flag (%v)`, r.Key, v, bootDefault)
+			s.log.Warn(`runtime_setting %q override (%v) differs from boot flag (%v)`, r.Key, settingAuditValue(spec, v), settingAuditValue(spec, bootDefault))
 		}
 	}
 	return nil
 }
 
-// Set parses rawValue per the key's spec, validates bounds, writes the DB row,
-// updates the cache, and returns the updated view. Errors leave cache + DB unchanged.
-// Note: audit log_entries write happens in a later task (Task 6); this task
-// focuses on the core Set/Reset/Load round-trip.
+// Set saves one override with the same validation and atomicity as a batch.
 func (s *RuntimeSettings) Set(key, rawValue, reason, actor string) error {
-	spec, ok := s.specs[key]
-	if !ok {
-		return fmt.Errorf("%w: %q", ErrUnknownSetting, key)
-	}
-	v, err := parseSettingValue(spec, rawValue)
-	if err != nil {
-		return fmt.Errorf("parse %q: %w", key, err)
-	}
-	if err := validateBounds(spec, v); err != nil {
-		return fmt.Errorf("validate %q: %w", key, err)
-	}
-	enc, err := encodeSettingValue(string(spec.Type), v)
-	if err != nil {
-		return fmt.Errorf("encode: %w", err)
-	}
-	now := time.Now()
-	row := models.RuntimeSetting{Key: key, ValueJSON: string(enc), Reason: reason, UpdatedAt: now}
-
-	// Hold the write-lock across the DB mutation AND the cache update so two
-	// concurrent Set/Reset calls on the same key can't commit in one order and
-	// update the cache in the opposite order. The admin-settings path is low
-	// traffic; serializing writes is cheaper than debugging a cache/DB skew.
-	s.mu.Lock()
-	if err := s.db.Save(&row).Error; err != nil {
-		s.mu.Unlock()
-		return fmt.Errorf("db save: %w", err)
-	}
-	oldValue, _ := s.overrideOrDefaultLocked(key)
-	s.overrides[key] = persistedEntry{value: v, updatedAt: now, reason: reason}
-	a := s.auditor
-	s.mu.Unlock()
-
-	if a != nil {
-		msg := fmt.Sprintf("%s: %v → %v (reason: %s)", key, oldValue, v, reason)
-		a.Audit(models.LogActionUpdate, "runtime_setting", key, msg, map[string]any{
-			"oldValue": oldValue, "newValue": v, "reason": reason, "type": string(spec.Type),
-		}, actor)
-	}
-	return nil
+	return s.Apply(map[string]string{key: rawValue}, nil, reason, actor)
 }
 
 // Reset removes the DB row and cache entry for the key.
 func (s *RuntimeSettings) Reset(key, reason, actor string) error {
-	if _, ok := s.specs[key]; !ok {
-		return fmt.Errorf("%w: %q", ErrUnknownSetting, key)
-	}
+	return s.Apply(nil, []string{key}, reason, actor)
+}
 
-	// Same lock discipline as Set — serialize DB + cache mutation.
-	s.mu.Lock()
-	if err := s.db.Delete(&models.RuntimeSetting{}, "key = ?", key).Error; err != nil {
-		s.mu.Unlock()
-		return fmt.Errorf("db delete: %w", err)
+// Apply validates the whole mutation before writing, commits its rows in one
+// transaction, then publishes them together. Set, Reset and snapshot share the
+// same lock so a reader cannot combine different revisions of a profile.
+func (s *RuntimeSettings) Apply(values map[string]string, reset []string, reason, actor string) error {
+	if len(values)+len(reset) == 0 {
+		return errors.New("no settings to update")
 	}
-	oldValue, _ := s.overrideOrDefaultLocked(key)
-	delete(s.overrides, key)
-	bootDefault := s.defaults[key]
+	rows := make(map[string]models.RuntimeSetting, len(values))
+	parsed := make(map[string]any, len(values))
+	keys := make([]string, 0, len(values)+len(reset))
+	now := time.Now()
+	for key, raw := range values {
+		spec, ok := s.specs[key]
+		if !ok {
+			return fmt.Errorf("%w: %q", ErrUnknownSetting, key)
+		}
+		v, err := parseSettingValue(spec, raw)
+		if err != nil {
+			return fmt.Errorf("parse %q: %w", key, settingValueError(spec, err))
+		}
+		if err := validateBounds(spec, v); err != nil {
+			return fmt.Errorf("validate %q: %w", key, settingValueError(spec, err))
+		}
+		encoded, err := encodeSettingValue(string(spec.Type), v)
+		if err != nil {
+			return fmt.Errorf("encode %q: %w", key, settingValueError(spec, err))
+		}
+		rows[key] = models.RuntimeSetting{Key: key, ValueJSON: string(encoded), Reason: reason, UpdatedAt: now}
+		parsed[key] = v
+		keys = append(keys, key)
+	}
+	seen := make(map[string]bool, len(reset))
+	for _, key := range reset {
+		if _, ok := s.specs[key]; !ok {
+			return fmt.Errorf("%w: %q", ErrUnknownSetting, key)
+		}
+		if _, set := values[key]; set || seen[key] {
+			return fmt.Errorf("setting %q occurs more than once", key)
+		}
+		seen[key] = true
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	s.mu.Lock()
+	// Suppress SQL/slow-query logs even on driver failure. Bound values and
+	// driver error text can both contain credentials; return only the sentinel.
+	err := s.db.Session(&gorm.Session{Logger: logger.Discard}).Transaction(func(tx *gorm.DB) error {
+		for _, key := range keys {
+			if row, set := rows[key]; set {
+				if err := tx.Save(&row).Error; err != nil {
+					return err
+				}
+			} else if err := tx.Delete(&models.RuntimeSetting{}, "key = ?", key).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		s.mu.Unlock()
+		return ErrSettingsStorage
+	}
+	oldValues := make(map[string]any, len(keys))
+	for _, key := range keys {
+		oldValues[key], _ = s.overrideOrDefaultLocked(key)
+		if v, set := parsed[key]; set {
+			s.overrides[key] = persistedEntry{value: v, updatedAt: now, reason: reason}
+		} else {
+			delete(s.overrides, key)
+		}
+	}
 	a := s.auditor
 	s.mu.Unlock()
+	// Auditing uses another DB write, so it must happen after the settings
+	// transaction releases SQLite's writer lock.
 	if a != nil {
-		msg := fmt.Sprintf("%s: %v → %v (reset; reason: %s)", key, oldValue, bootDefault, reason)
-		a.Audit(models.LogActionReset, "runtime_setting", key, msg, map[string]any{
-			"oldValue": oldValue, "newValue": bootDefault, "reason": reason,
-		}, actor)
+		for _, key := range keys {
+			spec := s.specs[key]
+			v, set := parsed[key]
+			action, suffix := models.LogActionUpdate, ""
+			if !set {
+				v = s.defaults[key]
+				action, suffix = models.LogActionReset, "reset; "
+			}
+			oldValue, newValue := settingAuditValue(spec, oldValues[key]), settingAuditValue(spec, v)
+			msg := fmt.Sprintf("%s: %v → %v (%sreason: %s)", key, oldValue, newValue, suffix, reason)
+			a.Audit(action, "runtime_setting", key, msg, map[string]any{
+				"oldValue": oldValue, "newValue": newValue, "reason": reason, "type": string(spec.Type),
+			}, actor)
+		}
 	}
 	return nil
+}
+
+func settingValueError(spec SettingSpec, err error) error {
+	if spec.Secret {
+		return errors.New("invalid secret value")
+	}
+	return err
+}
+
+func settingAuditValue(spec SettingSpec, value any) any {
+	if spec.Secret {
+		return "[redacted]"
+	}
+	return value
 }
 
 // List returns a stable-order snapshot of all registered settings for the UI/API.
@@ -227,9 +281,31 @@ func (s *RuntimeSettings) List() []SettingView {
 			view.UpdatedAt = &t
 			view.Reason = entry.reason
 		}
+		if spec.Secret {
+			view.Secret = true
+			view.Configured = settingSecretConfigured(view.Current)
+			view.BootConfigured = settingSecretConfigured(view.BootDefault)
+			view.Current, view.BootDefault = nil, nil
+		}
 		views = append(views, view)
 	}
 	return views
+}
+
+func settingSecretConfigured(value any) bool {
+	s, _ := value.(string)
+	return s != ""
+}
+
+// snapshot is server-only: its raw values must never enter a public view.
+func (s *RuntimeSettings) snapshot(keys []string) map[string]any {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	values := make(map[string]any, len(keys))
+	for _, key := range keys {
+		values[key], _ = s.overrideOrDefaultLocked(key)
+	}
+	return values
 }
 
 // getRaw is the internal accessor that typed getters in Task 4 use.
@@ -447,6 +523,7 @@ var groupDisplayOrder = []SettingGroup{
 	GroupSharing,
 	GroupDocs,
 	GroupDeduplication,
+	GroupAI,
 	GroupExports,
 }
 

@@ -31,9 +31,9 @@ Navigate to `/mrql` in the web UI. The page provides:
 
 ## Natural-Language Generation
 
-When `DEEPSEEK_API_KEY` is configured, the `/mrql` editor can draft MRQL from a "Describe results" prompt. The server sends only the text you type and syntax-only MRQL instructions to DeepSeek. It does not send local tag lists, category names, note types, resource categories, saved queries, or database contents.
+When an administrator configures an MRQL provider, model and key at `/admin/settings`, the `/mrql` editor can draft MRQL from a "Describe results" prompt. DeepSeek, OpenRouter, OpenAI and Anthropic are supported. The server sends only the text you type and syntax-only MRQL instructions to the selected provider. It does not send local tag lists, category names, note types, resource categories, saved queries, or database contents.
 
-Generated MRQL is parsed, validated, and linted locally, then shown with an explanation. It is not executed until you press Run. Generation is CSRF-protected and requires write access when authentication is enabled. `DEEPSEEK_MODEL` (default `deepseek-flash`) and `DEEPSEEK_TIMEOUT` (default 20s) tune the call, and generation is limited to 10 requests per minute per client address, beyond which the editor reports HTTP 429.
+Generated MRQL is parsed, validated, and linted locally, then shown with an explanation. It is not executed until you press Run. Generation is CSRF-protected and requires write access when authentication is enabled. [Provider settings](../configuration/runtime-settings.md#ai-providers-models-and-credentials) can change without restarting; a running call keeps its original configuration. Existing `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL` (default `deepseek-flash`) and `DEEPSEEK_TIMEOUT` (default 20s) remain DeepSeek boot fallbacks. Other providers default to 8192 completion tokens and a 60s timeout, with optional runtime overrides. Generation is limited to 10 requests per minute per client address, beyond which the editor reports HTTP 429.
 
 ## Filtering List Pages
 

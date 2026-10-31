@@ -49,6 +49,8 @@ type SettingSpec struct {
 	Description string
 	Group       SettingGroup
 	Type        SettingType
+	// Secret values are write-only through public settings views and diagnostics.
+	Secret bool
 	// Bounds interpretation depends on Type:
 	//   int64, int, uint64, duration (nanos)  → MinNumeric / MaxNumeric inclusive
 	//   string  → validated via StringValidator (nil = no validation)
@@ -190,7 +192,7 @@ const (
 // buildSpecs returns the registry of runtime-editable settings.
 // Keep the list in display order; the admin UI groups by SettingGroup.
 func buildSpecs() map[string]SettingSpec {
-	return map[string]SettingSpec{
+	specs := map[string]SettingSpec{
 		KeyMaxUploadSize: {
 			Key: KeyMaxUploadSize, Label: "Max upload size",
 			Description: "Upper bound on one upload request body in bytes. 0 = unlimited. Note this bounds a *request*: a native multi-file form post is capped as a whole, while the client-side bulk upload widget sends one file per request, so it caps each file individually.",
@@ -348,6 +350,8 @@ func buildSpecs() map[string]SettingSpec {
 			MinNumeric: 0, MaxNumeric: 1, AllowZero: true,
 		},
 	}
+	addAISettingSpecs(specs)
+	return specs
 }
 
 func validateSharePublicURL(s string) error {
@@ -405,7 +409,7 @@ func BuildDefaultsFromConfig(cfg *MahresourcesConfig) map[string]any {
 	if cfg.DocsLinksDisabled {
 		docsLinksDisabled = 1
 	}
-	return map[string]any{
+	defaults := map[string]any{
 		KeyMaxUploadSize:            cfg.MaxUploadSize,
 		KeyMaxImportSize:            cfg.MaxImportSize,
 		KeyMRQLDefaultLimit:         cfg.MRQLDefaultLimit,
@@ -445,6 +449,8 @@ func BuildDefaultsFromConfig(cfg *MahresourcesConfig) map[string]any {
 		KeyJobAttentionRetention: jobAttentionDefault(cfg),
 		KeyJobPinLimit:           jobPinLimitDefault(cfg),
 	}
+	AddAIGenerationDefaults(defaults, TemplateGenerationConfig{APIKey: cfg.DeepSeekAPIKey, Model: cfg.DeepSeekModel, Timeout: cfg.DeepSeekTimeout}, nil)
+	return defaults
 }
 
 // The three Job retention defaults come from the boot configuration when it names

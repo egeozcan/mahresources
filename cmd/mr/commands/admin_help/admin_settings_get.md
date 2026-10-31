@@ -1,5 +1,5 @@
 ---
-outputShape: Single setting object with key, label, description, group, type, current, bootDefault, overridden, updatedAt, reason
+outputShape: Single setting object with key, label, description, group, type, current, bootDefault, overridden, updatedAt, reason; secret settings also include secret, configured and bootConfigured, with null current and bootDefault
 exitCodes: 0 on success; 1 on unknown key or error
 relatedCmds: admin settings list, admin settings set, admin settings reset
 ---
@@ -8,7 +8,9 @@ relatedCmds: admin settings list, admin settings set, admin settings reset
 
 Show a single runtime setting by key. The output includes the effective current value, the boot-time default, whether an override is active, and when it was last changed.
 
-Pass `--json` to emit the setting as a JSON object for scripting. It always carries `key`, `label`, `description`, `group`, `type`, `current`, `bootDefault` and `overridden`, adds `updatedAt` while an override is active and `reason` when the override recorded one, and carries nothing else: the numeric bounds `minNumeric`, `maxNumeric` and `allowZero` are dropped here, while `admin settings list`, `set` and `reset` print the server's response unchanged and keep them.
+Pass `--json` to emit the setting as a JSON object for scripting. It always carries `key`, `label`, `description`, `group`, `type`, `current`, `bootDefault` and `overridden`, adds `updatedAt` while an override is active and `reason` when the override recorded one. Secret settings also preserve `secret`, `configured` and `bootConfigured`; their current and boot values are null. The numeric bounds `minNumeric`, `maxNumeric` and `allowZero` are dropped here, while `admin settings list`, `set` and `reset` print the server's response unchanged and keep them.
+
+The table describes a secret as `configured` or `not configured`, without printing the saved key.
 
 # Example
 

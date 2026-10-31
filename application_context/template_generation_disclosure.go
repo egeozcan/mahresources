@@ -32,6 +32,8 @@ type TemplateDisclosure struct {
 
 // TemplateDestination is where the calls go and how each kind of call is made.
 type TemplateDestination struct {
+	Provider       string `json:"provider,omitempty"`
+	BundleDeadline string `json:"bundleDeadline,omitempty"`
 	// Endpoint is the URL the provider posts to, shown with each query value
 	// masked. The exact URL, values included, is what the hash covers.
 	Endpoint string                     `json:"endpoint"`
@@ -39,16 +41,16 @@ type TemplateDestination struct {
 	Profiles []TemplateDisclosedProfile `json:"profiles"`
 }
 
-// TemplateTransport is how every call is sent. It is fixed by
-// postDeepSeekChatJSON and disclosed so the user sees the whole request.
+// TemplateTransport describes the selected adapter's wire contract.
 type TemplateTransport struct {
 	Stream         bool   `json:"stream"`
 	ResponseFormat string `json:"responseFormat"`
 	ContentType    string `json:"contentType"`
 	Authorization  string `json:"authorization"`
+	APIVersion     string `json:"apiVersion,omitempty"`
 }
 
-// templateTransport mirrors the request postDeepSeekChatJSON builds.
+// templateTransport is the legacy DeepSeek transport metadata.
 var templateTransport = TemplateTransport{
 	Stream:         false,
 	ResponseFormat: "json_object",
@@ -58,11 +60,13 @@ var templateTransport = TemplateTransport{
 
 // TemplateDisclosedProfile is one kind of call the request can make.
 type TemplateDisclosedProfile struct {
-	Kind      string `json:"kind"`
-	Model     string `json:"model"`
-	Thinking  bool   `json:"thinking"`
-	MaxTokens int    `json:"maxTokens"`
-	MaxCalls  int    `json:"maxCalls"`
+	Kind          string `json:"kind"`
+	Model         string `json:"model"`
+	Thinking      bool   `json:"thinking"`
+	MaxTokens     int    `json:"maxTokens"`
+	MaxCalls      int    `json:"maxCalls"`
+	ReasoningMode string `json:"reasoningMode,omitempty"`
+	Timeout       string `json:"timeout,omitempty"`
 }
 
 type TemplateContinuationRule struct {
@@ -84,6 +88,40 @@ func newTemplateDisclosure(endpoint string, profiles []TemplateDisclosedProfile,
 		Destination:      TemplateDestination{Endpoint: shown, Host: host, Profiles: profiles},
 		Transport:        templateTransport,
 		ContinuationRule: TemplateContinuationRule{Version: templateContinuationRuleVersion, Text: templateContinuationRule},
+	}
+	d.GroundingHash = templateGroundingHash(d)
+	return d
+}
+
+// newDisclosure takes transport metadata from the same adapter that sends the
+// request. Older injected providers retain the DeepSeek metadata contract.
+func (g *defaultTemplateGenerator) newDisclosure(profiles []TemplateDisclosedProfile, sections []PromptSection) *TemplateDisclosure {
+	d := newTemplateDisclosure(g.provider.Endpoint(), profiles, sections)
+	if provider, ok := g.provider.(interface{ Transport() TemplateTransport }); ok {
+		d.Transport = provider.Transport()
+	}
+	if provider, ok := g.provider.(interface{ ProviderName() string }); ok {
+		d.Destination.Provider = provider.ProviderName()
+	}
+	if provider, ok := g.provider.(interface{ ReasoningMode() string }); ok {
+		for i := range d.Destination.Profiles {
+			profile := &d.Destination.Profiles[i]
+			profile.ReasoningMode = provider.ReasoningMode()
+			if profile.ReasoningMode == "disabled" && profile.Thinking {
+				profile.ReasoningMode = "enabled"
+			}
+			profile.Timeout = g.config.profileFor(profile.Kind).Timeout.String()
+		}
+	}
+	for _, profile := range profiles {
+		if profile.Kind == TemplateKindPlan {
+			deadline := g.config.BundleDeadline
+			if deadline <= 0 {
+				deadline = DefaultTemplateBundleDeadline
+			}
+			d.Destination.BundleDeadline = deadline.String()
+			break
+		}
 	}
 	d.GroundingHash = templateGroundingHash(d)
 	return d

@@ -1,5 +1,44 @@
 components:
     schemas:
+        AIGenerationCallProfilePartial:
+            properties:
+                kind:
+                    type: string
+                maxTokens:
+                    type: integer
+                model:
+                    type: string
+                reasoningMode:
+                    type: string
+                timeout:
+                    type: string
+            type: object
+        AIGenerationProfile:
+            properties:
+                bundleDeadline:
+                    type: string
+                configured:
+                    type: boolean
+                maxTokens:
+                    type: integer
+                model:
+                    type: string
+                profiles:
+                    items:
+                        $ref: '#/components/schemas/AIGenerationCallProfilePartial'
+                    type: array
+                provider:
+                    type: string
+                timeout:
+                    type: string
+            type: object
+        AIGenerationProfiles:
+            properties:
+                mrql:
+                    $ref: '#/components/schemas/AIGenerationProfile'
+                template:
+                    $ref: '#/components/schemas/AIGenerationProfile'
+            type: object
         AccountOKResponse:
             properties:
                 ok:
@@ -2827,7 +2866,11 @@ components:
             properties:
                 allowZero:
                     type: boolean
+                bootConfigured:
+                    type: boolean
                 bootDefault: {}
+                configured:
+                    type: boolean
                 current: {}
                 description:
                     type: string
@@ -2847,6 +2890,8 @@ components:
                     type: boolean
                 reason:
                     type: string
+                secret:
+                    type: boolean
                 type:
                     type: string
                 updatedAt:
@@ -2856,6 +2901,41 @@ components:
                     type: string
             type: object
         SettingViewPartial:
+            properties:
+                allowZero:
+                    type: boolean
+                bootConfigured:
+                    type: boolean
+                bootDefault: {}
+                configured:
+                    type: boolean
+                current: {}
+                description:
+                    type: string
+                group:
+                    type: string
+                key:
+                    type: string
+                label:
+                    type: string
+                maxNumeric:
+                    nullable: true
+                    type: integer
+                minNumeric:
+                    nullable: true
+                    type: integer
+                overridden:
+                    type: boolean
+                reason:
+                    type: string
+                secret:
+                    type: boolean
+                type:
+                    type: string
+                updatedAt:
+                    format: date-time
+                    nullable: true
+                    type: string
             type: object
         SuggestedTagPartial:
             properties:
@@ -3025,6 +3105,19 @@ components:
                     type: integer
                 Start:
                     type: string
+            type: object
+        UpdateSettingsRequest:
+            properties:
+                reason:
+                    type: string
+                reset:
+                    items:
+                        type: string
+                    type: array
+                values:
+                    additionalProperties:
+                        type: string
+                    type: object
             type: object
         UpdateUserRequest:
             properties:
@@ -3460,7 +3553,7 @@ paths:
                 - admin
     /v1/admin/settings:
         get:
-            description: Returns all runtime-editable settings with current value, boot default, override metadata, and bounds.
+            description: Administrator-only list of runtime-editable settings with current value, boot default, override metadata, and bounds. For secret settings, secret is true, current and bootDefault are null, and configured/bootConfigured report presence without exposing any credential bytes.
             operationId: listRuntimeSettings
             responses:
                 "200":
@@ -3474,9 +3567,38 @@ paths:
             summary: List runtime-editable settings
             tags:
                 - admin
+        put:
+            description: Administrator-only atomic update. values maps setting keys to string values; reset lists overrides to remove. Omitted settings are preserved. An explicit empty string clears a secret, suppressing its environment fallback; resetting it restores that fallback. A key may occur only once across the two operations. Every value is validated before writing; a failed batch changes neither persisted nor active settings. New generation operations use one complete saved profile, while in-flight operations retain their original profile. Returns the full sanitized settings list. Requires a CSRF token for cookie-authenticated requests.
+            operationId: updateRuntimeSettings
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/UpdateSettingsRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/SettingViewPartial'
+                                type: array
+                    description: Successful response
+                "400":
+                    description: Invalid settings request or value
+                "403":
+                    description: Administrator role or valid CSRF token required
+                "404":
+                    description: Unknown setting key
+                "500":
+                    description: Settings could not be persisted
+            summary: Atomically save or reset runtime settings
+            tags:
+                - admin
     /v1/admin/settings/{key}:
         delete:
-            description: Removes any persisted override for the named setting and reverts to the boot-time flag/env value.
+            description: Administrator-only removal of one persisted override, restoring the boot-time flag/env value. A secret reset restores its environment credential fallback without returning its value. An optional JSON body may provide a reason string. Use the batch endpoint to reset a complete profile atomically.
             operationId: resetRuntimeSetting
             parameters:
                 - description: Stable setting key.
@@ -3492,11 +3614,19 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/SettingView'
                     description: Successful response
+                "400":
+                    description: Invalid settings request or value
+                "403":
+                    description: Administrator role or valid CSRF token required
+                "404":
+                    description: Unknown setting key
+                "500":
+                    description: Settings could not be persisted
             summary: Reset a runtime setting to boot default
             tags:
                 - admin
         put:
-            description: Persists an override for the named setting. Runtime changes take effect on the next use (no restart).
+            description: Administrator-only override for one setting. Send value as a string and an optional reason. Changes take effect on the next use without a restart. Secret values are write-only; an explicit empty string clears the credential even when an environment fallback exists. Use the batch endpoint to change a generation profile atomically.
             operationId: setRuntimeSetting
             parameters:
                 - description: Stable setting key; see GET /v1/admin/settings for the list.
@@ -3505,6 +3635,19 @@ paths:
                   required: true
                   schema:
                     type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            properties:
+                                reason:
+                                    type: string
+                                value:
+                                    type: string
+                            required:
+                                - value
+                            type: object
+                required: true
             responses:
                 "200":
                     content:
@@ -3512,7 +3655,31 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/SettingView'
                     description: Successful response
+                "400":
+                    description: Invalid settings request or value
+                "403":
+                    description: Administrator role or valid CSRF token required
+                "404":
+                    description: Unknown setting key
+                "500":
+                    description: Settings could not be persisted
             summary: Override a runtime setting
+            tags:
+                - admin
+    /v1/admin/settings/ai-profiles:
+        get:
+            description: Administrator-only resolved provider, model, configured status, token budgets and timeouts for MRQL and template generation, including per-call template profiles. Credentials are never returned.
+            operationId: getAIGenerationProfiles
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AIGenerationProfiles'
+                    description: Successful response
+                "403":
+                    description: Administrator role required
+            summary: Inspect effective AI generation profiles
             tags:
                 - admin
     /v1/admin/settings/metadata-index-status:
@@ -3822,7 +3989,7 @@ paths:
         post:
             description: |-
                 Generate a custom template section from a natural-language prompt using the
-                configured DeepSeek provider. Requires DEEPSEEK_API_KEY (503 when unset).
+                configured AI provider. Returns 503 when its credential or model is not configured.
 
                 Request body fields:
                   - target     (string) — "slot" (default), "metaschema", or "bundle" (whole template)
@@ -8507,7 +8674,7 @@ paths:
                 Request body fields:
                   - prompt (string, required) — user request to convert into MRQL
 
-                The endpoint does not execute MRQL. The server sends the prompt and syntax-only MRQL instructions to the configured DeepSeek provider.
+                The endpoint does not execute MRQL. The server sends the prompt and syntax-only MRQL instructions to the configured AI provider.
             operationId: generateMRQL
             responses:
                 "200":
@@ -9271,7 +9438,7 @@ paths:
         post:
             description: |-
                 Generate a custom template section from a natural-language prompt using the
-                configured DeepSeek provider. Requires DEEPSEEK_API_KEY (503 when unset).
+                configured AI provider. Returns 503 when its credential or model is not configured.
 
                 Request body fields:
                   - target     (string) — "slot" (default), "metaschema", or "bundle" (whole template)
@@ -11778,7 +11945,7 @@ paths:
         post:
             description: |-
                 Generate a custom template section from a natural-language prompt using the
-                configured DeepSeek provider. Requires DEEPSEEK_API_KEY (503 when unset).
+                configured AI provider. Returns 503 when its credential or model is not configured.
 
                 Request body fields:
                   - target     (string) — "slot" (default), "metaschema", or "bundle" (whole template)

@@ -13,8 +13,8 @@ CLI, or the `/v1/admin/settings` HTTP API -- no restart required.
 1. Boot flag / env var supplies the initial value.
 2. If the `runtime_settings` table has a row for the key, that override wins.
 3. When an override differs from the boot value (flag, env var, or built-in
-   default), one WARN line is logged at startup so operators are not silently
-   surprised.
+   default), one WARN line is logged at startup. Secret settings report status
+   without printing either value.
 
 Reset via the UI (Reset button), CLI (`mr admin settings reset <key>`), or API
 (`DELETE /v1/admin/settings/<key>`) removes the override and returns to the
@@ -50,6 +50,90 @@ boot value.
 | `job_history_retention` | duration | 1h–365d | `-job-history-retention` | next Job history sweep |
 | `job_attention_retention` | duration | 1h–365d | `-job-attention-retention` | next Job history sweep |
 | `job_pin_limit` | int | 1–10000 | `-job-pin-limit` | next pin |
+
+## AI providers, models and credentials
+
+The **AI generation** section at `/admin/settings` configures DeepSeek,
+OpenRouter, OpenAI and Anthropic. Save one credential per provider, then select
+the provider and model separately for **MRQL generation** and **Template
+generation**. Changes apply to the next generation operation without a restart,
+even if the server started without a key, and survive a restart. Configuration
+is shared by the deployment and requires an administrator; generation keeps its
+existing feature permissions.
+
+Enter the provider's model ID directly. OpenRouter IDs include their namespace
+(for example, `openai/<model>`). Saving does not contact the provider or verify
+model access. Each provider keeps its own saved models, so switching providers
+cannot accidentally inherit another provider's model. A provider needs both a
+key and a default model; otherwise generation returns "not configured".
+
+Credential fields are write-only and stay empty after loading or saving.
+**Replace** stores a new key; leaving the field untouched preserves it.
+**Clear** saves an empty override, disabling the key even when an environment
+fallback exists. **Reset** removes the override and restores that fallback.
+The status reports whether a key is configured, whether a boot key exists and
+whether an override is present. Keys and key fragments are never returned.
+
+Stored credential overrides are plaintext in the database and its backups,
+readable by database administrators and the server. The settings API/UI, CLI,
+audit records and SQL/application diagnostics redact them. Environment fallbacks
+are `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY` and
+`ANTHROPIC_API_KEY`.
+
+These keys also work with the existing settings API and CLI. Replace
+`<provider>` with `deepseek`, `openrouter`, `openai` or `anthropic`, `<feature>`
+with `mrql` or `template`, and `<kind>` with `slot`, `pair`, `plan`, `bundle` or
+`metaschema`:
+
+| Key | Value |
+| --- | --- |
+| `ai_<provider>_api_key` | Secret string, at most 8192 bytes, no whitespace/control characters; empty clears |
+| `ai_mrql_provider`, `ai_template_provider` | One of the four provider IDs; default `deepseek` |
+| `ai_<feature>_<provider>_model` | Model ID, at most 256 bytes, no whitespace/control characters |
+| `ai_<feature>_<provider>_max_tokens` | 1–65536 output/completion tokens; `0` inherits |
+| `ai_<feature>_<provider>_timeout` | Positive Go duration up to `10m`; `0s` inherits |
+| `ai_template_<provider>_<kind>_model` | Optional kind-specific model; empty inherits the template default |
+| `ai_template_<provider>_<kind>_max_tokens` | Optional kind-specific token cap; `0` inherits |
+| `ai_template_<provider>_<kind>_timeout` | Optional kind-specific timeout; `0s` inherits |
+
+The advanced controls show the effective inherited profiles. An explicit kind
+setting wins over a feature/provider setting, which wins over shipped defaults
+or DeepSeek boot configuration. OpenRouter, OpenAI and Anthropic default to
+8192 tokens and 60s per MRQL/template call, with 16384 tokens and 120s for a
+single-call bundle. Their whole-template planning/fan-out deadline is 120s.
+Reasoning uses the model's defaults and counts against the completion budget.
+DeepSeek keeps its existing models, thinking, budgets and timeout defaults;
+see [Template generation](./advanced.md#template-generation).
+
+Each operation keeps one settings snapshot through its calls and repairs.
+Changes do not alter a running generation. A template provider, model or public
+option change after the disclosure dialog requires reviewing again before Send.
+Rotating a key alone does not change the public disclosure hash. The same eight
+template provider slots and existing rate limits apply across configuration
+changes.
+
+**Reset** for a generation feature atomically removes its provider selection and
+all its provider-specific model/budget/timeout overrides, restoring boot defaults.
+It preserves the credentials. A single-key CLI/API reset only resets that key.
+
+`PUT /v1/admin/settings` saves an atomic batch of string values and resets:
+
+```json
+{
+  "values": {
+    "ai_mrql_provider": "openai",
+    "ai_mrql_openai_model": "<your-model-id>"
+  },
+  "reset": [],
+  "reason": "Use the selected OpenAI model for MRQL"
+}
+```
+
+Omitted keys are preserved. The response is the full sanitized settings list.
+Invalid entries or database failures save nothing. A key cannot appear in both
+`values` and `reset`. `GET /v1/admin/settings/ai-profiles` returns the selected
+providers and effective non-secret call profiles. Settings are cached per server
+process; a write does not automatically refresh another running process.
 
 ## Metadata index build status
 
@@ -89,7 +173,7 @@ about 3 buys little there; Postgres tolerates more.
 
 Every change writes a row to `log_entries` with `entity_type=runtime_setting`,
 the key as `entity_name`, old→new values in `message`, and the request IP in
-`ip_address`. Visible at `/logs` (filter entity type `runtime_setting`), or via
+`ip_address`. Secret entries record redacted values. Visible at `/logs` (filter entity type `runtime_setting`), or via
 `GET /v1/logs`.
 
 ## CLI reference

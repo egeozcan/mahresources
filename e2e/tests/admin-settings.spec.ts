@@ -17,7 +17,8 @@ test.describe('/admin/settings', () => {
     // ever fails later for the uninteresting reason that a setting was added.
     const registered = await (await page.request.get('/v1/admin/settings')).json();
     const rowCount = await page.locator('[data-testid^="setting-row-"]').count();
-    expect(rowCount).toBe(registered.length);
+    expect(rowCount).toBe(registered.filter((setting: any) => setting.group !== 'ai').length);
+    await expect(page.getByRole('heading', { name: 'AI generation', level: 2 })).toBeVisible();
   });
 
   test('max_upload_size save + reset roundtrip', async ({ page, request }) => {

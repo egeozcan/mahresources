@@ -296,7 +296,7 @@ func (g *defaultTemplateGenerator) disclose(in TemplateGenerationInput, prompt s
 		maxCalls = 2
 		sections = append(sections, templateRepairSections()...)
 	}
-	disclosure := newTemplateDisclosure(g.provider.Endpoint(), []TemplateDisclosedProfile{{
+	disclosure := g.newDisclosure([]TemplateDisclosedProfile{{
 		Kind:      kind,
 		Model:     profile.Model,
 		Thinking:  profile.Thinking,

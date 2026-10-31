@@ -191,11 +191,14 @@ The default of 200 is generous -- a three-query summary on a 20-card page is onl
 
 ## MRQL Natural-Language Generation
 
-MRQL generation is optional and configured with environment variables only. There are no CLI flags for the provider credentials in v1.
+MRQL generation is optional. Configure a provider, model and key in the **AI generation** section at `/admin/settings`; DeepSeek, OpenRouter, OpenAI and Anthropic are supported. MRQL and templates can select different providers and models. Changes apply without restarting, and the [runtime settings reference](./runtime-settings.md#ai-providers-models-and-credentials) explains credential replacement, clearing/resetting and advanced call budgets. There are no boot flags for provider credentials.
 
 | Env Variable | Default | Description |
 |--------------|---------|-------------|
-| `DEEPSEEK_API_KEY` | (disabled) | DeepSeek API key for `/mrql` natural-language generation |
+| `DEEPSEEK_API_KEY` | (disabled) | Boot fallback for the DeepSeek generation key |
+| `OPENROUTER_API_KEY` | (disabled) | Boot fallback for the OpenRouter generation key; its provider/model must be selected at runtime |
+| `OPENAI_API_KEY` | (disabled) | Boot fallback for the OpenAI generation key; its provider/model must be selected at runtime |
+| `ANTHROPIC_API_KEY` | (disabled) | Boot fallback for the Anthropic generation key; its provider/model must be selected at runtime |
 | `DEEPSEEK_MODEL` | `deepseek-flash` | DeepSeek model used to draft MRQL |
 | `DEEPSEEK_TIMEOUT` | `20s` | Timeout for one DeepSeek MRQL generation call. Invalid duration values fail startup |
 
@@ -209,9 +212,9 @@ For the `/mrql` editor the server sends only the prompt text entered there plus 
 
 ### Template Generation
 
-`DEEPSEEK_API_KEY` also enables generation in the Category, Resource Category and Note Type editors. Before sending, a dialog shows the provider messages, including category identity, layout, current templates, schema, bounded samples and reference documentation as applicable. Drafts stay pending until Apply. See [Custom Templates](../features/custom-templates.md#generate-from-natural-language) for the data sent, repair and whole-template generation.
+The template provider/model selected at `/admin/settings` enables generation in the Category, Resource Category and Note Type editors when its key is configured. An existing `DEEPSEEK_API_KEY` deployment keeps working with DeepSeek by default. Before sending, a dialog shows the provider, models, call budgets and messages, including category identity, layout, current templates, schema, bounded samples and reference documentation as applicable. Drafts stay pending until Apply. See [Custom Templates](../features/custom-templates.md#generate-from-natural-language) for the data sent, repair and whole-template generation.
 
-Each kind of template provider call has its own model, thinking setting and timeout. Replace `<KIND>` below with `SLOT` (shared CustomCSS), `PAIR` (one HTML section and its CSS), `PLAN` (the whole-template design plan), `BUNDLE` (the single-call bundle profile) or `METASCHEMA`.
+Each kind of template call can have a runtime model, output-token and timeout override for its selected provider. Other providers use their model's default reasoning. These existing environment settings remain DeepSeek's boot defaults; thinking overrides apply only to DeepSeek. Replace `<KIND>` below with `SLOT` (shared CustomCSS), `PAIR` (one HTML section and its CSS), `PLAN` (the whole-template design plan), `BUNDLE` (the single-call bundle profile) or `METASCHEMA`.
 
 | Env Variable | Default | Description |
 |--------------|---------|-------------|
@@ -220,9 +223,9 @@ Each kind of template provider call has its own model, thinking setting and time
 | `DEEPSEEK_TEMPLATE_<KIND>_TIMEOUT` | `DEEPSEEK_TIMEOUT` | Positive Go duration for one provider call, including time waiting for a provider slot. With thinking on, the default is `60s`, or `120s` for `BUNDLE`. |
 | `DEEPSEEK_TEMPLATE_REPAIR` | `on` | One repair attempt for lint errors or incomplete pairs, when time permits. Accepts the same switch values as thinking. |
 
-Invalid settings fail startup. With thinking off, the output budget is 4,000 tokens for `SLOT`, `PAIR` and `METASCHEMA`, 1,200 for `PLAN`, and 8,000 for `BUNDLE`. With thinking on it is 8,192 tokens, or 16,384 for `BUNDLE`.
+Invalid environment settings fail startup. With DeepSeek thinking off, the output budget is 4,000 tokens for `SLOT`, `PAIR` and `METASCHEMA`, 1,200 for `PLAN`, and 8,000 for `BUNDLE`. With thinking on it is 8,192 tokens, or 16,384 for `BUNDLE`. OpenRouter, OpenAI and Anthropic default to 8,192 tokens and 60s per call, or 16,384 tokens and 120s for `BUNDLE`, to leave room for model-default reasoning before visible output. Advanced runtime overrides can tune token caps and call timeouts.
 
-A whole-template request uses a planning call followed by section pairs, within a 55 second deadline, whenever it includes multiple sections or shared CSS. At most five section calls run at once per request and eight template provider calls across the server. Repairs share the request's budget and use no extra rate-limit slot.
+A whole-template request uses a planning call followed by section pairs whenever it includes multiple sections or shared CSS. Its deadline is 55s for DeepSeek and 120s for other providers, independent of per-call overrides. At most five section calls run at once per request and eight template provider calls across the server. Repairs share the request's budget and use no extra rate-limit slot.
 
 ## Deferred Render Signing Key
 

@@ -157,16 +157,19 @@ type adminExpensiveStatsResponse struct {
 
 // adminSettingView matches the SettingView JSON shape from runtime_settings.go.
 type adminSettingView struct {
-	Key         string      `json:"key"`
-	Label       string      `json:"label"`
-	Description string      `json:"description"`
-	Group       interface{} `json:"group"`
-	Type        interface{} `json:"type"`
-	Current     interface{} `json:"current"`
-	BootDefault interface{} `json:"bootDefault"`
-	Overridden  bool        `json:"overridden"`
-	UpdatedAt   *time.Time  `json:"updatedAt,omitempty"`
-	Reason      string      `json:"reason,omitempty"`
+	Key            string      `json:"key"`
+	Label          string      `json:"label"`
+	Description    string      `json:"description"`
+	Group          interface{} `json:"group"`
+	Type           interface{} `json:"type"`
+	Current        interface{} `json:"current"`
+	BootDefault    interface{} `json:"bootDefault"`
+	Secret         bool        `json:"secret,omitempty"`
+	Configured     *bool       `json:"configured,omitempty"`
+	BootConfigured *bool       `json:"bootConfigured,omitempty"`
+	Overridden     bool        `json:"overridden"`
+	UpdatedAt      *time.Time  `json:"updatedAt,omitempty"`
+	Reason         string      `json:"reason,omitempty"`
 }
 
 // NewAdminCmd returns the "admin" command group. Bare `mr admin` delegates to
@@ -536,8 +539,8 @@ func NewAdminSettingsListCmd(c *client.Client, opts *output.Options) *cobra.Comm
 				rows = append(rows, []string{
 					v.Key,
 					fmt.Sprintf("%v", v.Group),
-					fmt.Sprintf("%v", v.Current),
-					fmt.Sprintf("%v", v.BootDefault),
+					settingValueDisplay(v.Current, v.Secret, v.Configured),
+					settingValueDisplay(v.BootDefault, v.Secret, v.BootConfigured),
 					overridden,
 					updatedAt,
 				})
@@ -592,8 +595,8 @@ func NewAdminSettingsGetCmd(c *client.Client, opts *output.Options) *cobra.Comma
 						{Key: "Description", Value: views[i].Description},
 						{Key: "Group", Value: fmt.Sprintf("%v", views[i].Group)},
 						{Key: "Type", Value: fmt.Sprintf("%v", views[i].Type)},
-						{Key: "Current", Value: fmt.Sprintf("%v", views[i].Current)},
-						{Key: "Boot Default", Value: fmt.Sprintf("%v", views[i].BootDefault)},
+						{Key: "Current", Value: settingValueDisplay(views[i].Current, views[i].Secret, views[i].Configured)},
+						{Key: "Boot Default", Value: settingValueDisplay(views[i].BootDefault, views[i].Secret, views[i].BootConfigured)},
 						{Key: "Overridden", Value: overridden},
 						{Key: "Updated At", Value: updatedAt},
 						{Key: "Reason", Value: views[i].Reason},
@@ -703,10 +706,20 @@ func printSettingView(opts output.Options, v adminSettingView) {
 	output.PrintSingle(opts, []output.KeyValue{
 		{Key: "Key", Value: v.Key},
 		{Key: "Label", Value: v.Label},
-		{Key: "Current", Value: fmt.Sprintf("%v", v.Current)},
-		{Key: "Boot Default", Value: fmt.Sprintf("%v", v.BootDefault)},
+		{Key: "Current", Value: settingValueDisplay(v.Current, v.Secret, v.Configured)},
+		{Key: "Boot Default", Value: settingValueDisplay(v.BootDefault, v.Secret, v.BootConfigured)},
 		{Key: "Overridden", Value: overridden},
 		{Key: "Updated At", Value: updatedAt},
 		{Key: "Reason", Value: v.Reason},
 	}, nil)
+}
+
+func settingValueDisplay(value any, secret bool, configured *bool) string {
+	if secret {
+		if configured != nil && *configured {
+			return "configured"
+		}
+		return "not configured"
+	}
+	return fmt.Sprintf("%v", value)
 }

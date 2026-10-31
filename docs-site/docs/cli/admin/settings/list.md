@@ -10,6 +10,8 @@ List all runtime-editable settings with their current value, boot default, overr
 
 Pass `--json` to emit the raw JSON array for scripting or to inspect fields like `minNumeric`, `maxNumeric`, and `allowZero`.
 
+Secret settings show `configured` or `not configured` in the table. JSON carries `secret`, `configured` and `bootConfigured` status; `current` and `bootDefault` are null, so saved API keys are never printed.
+
 ## Usage
 
 ```bash
@@ -45,7 +47,7 @@ This command has no local flags.
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Array of setting objects with key, label, description, group, type, current, bootDefault, overridden, updatedAt, reason
+Array of setting objects with key, label, description, group, type, current, bootDefault, overridden, updatedAt, reason; secret settings also include secret, configured and bootConfigured, with null current and bootDefault
 
 ## Exit Codes
 

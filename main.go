@@ -507,29 +507,6 @@ func main() {
 		}
 	}()
 	context.SetJobReplayKeyring(jobReplayKeyring)
-	if context.Config.DeepSeekAPIKey != "" {
-		provider := application_context.NewDeepSeekMRQLDraftProvider(
-			application_context.DefaultDeepSeekChatCompletionsURL,
-			context.Config.DeepSeekAPIKey,
-			context.Config.DeepSeekModel,
-			nil,
-		)
-		context.SetMRQLGenerator(application_context.NewMRQLGenerator(provider, application_context.MRQLGenerationConfig{
-			APIKey:   context.Config.DeepSeekAPIKey,
-			Model:    context.Config.DeepSeekModel,
-			Timeout:  context.Config.DeepSeekTimeout,
-			Postgres: context.Config.DbType == constants.DbTypePosgres,
-		}))
-
-		templateProvider := application_context.NewDeepSeekTemplateDraftProvider(
-			application_context.DefaultDeepSeekChatCompletionsURL,
-			context.Config.DeepSeekAPIKey,
-			context.Config.DeepSeekModel,
-			nil,
-		)
-		templateGenerationConfig.Postgres = context.Config.DbType == constants.DbTypePosgres
-		context.SetTemplateGenerator(application_context.NewTemplateGenerator(templateProvider, templateGenerationConfig))
-	}
 
 	// Register process-lifetime teardown before any later startup failure can
 	// return. Commands are registered after recovery below, so LIFO remains:
@@ -683,11 +660,17 @@ func main() {
 	}
 
 	// Initialize runtime settings (bucket-A overrides: sizes, timeouts, etc.)
+	settingsDefaults := application_context.BuildDefaultsFromConfig(context.Config)
+	application_context.AddAIGenerationDefaults(settingsDefaults, templateGenerationConfig, map[string]string{
+		"openrouter": os.Getenv("OPENROUTER_API_KEY"),
+		"openai":     os.Getenv("OPENAI_API_KEY"),
+		"anthropic":  os.Getenv("ANTHROPIC_API_KEY"),
+	})
 	settings := application_context.NewRuntimeSettings(
 		db,
 		application_context.NewStdlibSettingsLogger(),
 		application_context.BuildSpecsExported(),
-		application_context.BuildDefaultsFromConfig(context.Config),
+		settingsDefaults,
 	)
 	if err := settings.Load(); err != nil {
 		fail("failed to load runtime settings: %v", err)
@@ -695,6 +678,7 @@ func main() {
 	}
 	settings.SetAuditor(application_context.NewContextAuditor(context))
 	context.SetSettings(settings)
+	context.InstallAIGeneration(templateGenerationConfig, nil)
 	// Wire the live runtime-settings provider into the download manager so that
 	// timeout and export-retention overrides take effect per download start.
 	context.DownloadManager().SetSettings(context.Settings())

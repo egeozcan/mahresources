@@ -10,6 +10,8 @@ Override a runtime setting. The override persists to the database and takes effe
 
 Size values accept suffix notation (e.g., `1G`, `500M`, `2048K`). Duration values use Go's time.ParseDuration format (`30s`, `5m`, `2h`). Use `--reason` to record why the change was made; the reason is stored in the database and shown by `mr admin settings get`.
 
+For an API-key setting, the response reports only whether a key is configured. An empty string saves a cleared override, disabling any environment fallback until the key is reset. Provider-specific AI model keys keep each provider's selections separate; use `/admin/settings` when several profile fields should change atomically.
+
 ## Usage
 
 ```bash
@@ -53,7 +55,7 @@ mr admin settings set mrql_query_timeout 30s
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Updated setting object with key, label, description, group, type, current, bootDefault, overridden, updatedAt, reason; non-string settings also carry minNumeric and maxNumeric, and allowZero when true
+Updated setting object with key, label, description, group, type, current, bootDefault, overridden, updatedAt, reason; non-string settings also carry minNumeric and maxNumeric, and allowZero when true; secret settings carry secret, configured and bootConfigured instead of readable values
 
 ## Exit Codes
 
