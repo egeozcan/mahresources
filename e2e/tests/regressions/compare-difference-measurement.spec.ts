@@ -229,11 +229,15 @@ test.describe.serial('compare page: difference and measurement', () => {
       const trail = box.locator('.compare-overlay-img--difference');
 
       // Same origin, same frame, one on top of the other: this is what makes
-      // the blend a comparison rather than two pictures.
-      const leadRect = (await lead.boundingBox())!;
-      const trailRect = (await trail.boundingBox())!;
-      expect(Math.abs(leadRect.x - trailRect.x)).toBeLessThan(1);
-      expect(Math.abs(leadRect.y - trailRect.y)).toBeLessThan(1);
+      // the blend a comparison rather than two pictures. Both rects come from
+      // one layout pass: two boundingBox() calls can straddle a reflow and
+      // disagree by a pixel the page never showed.
+      const leadHandle = await lead.elementHandle();
+      const trailHandle = await trail.elementHandle();
+      await expect.poll(() => page.evaluate(([a, b]) => {
+        const [ra, rb] = [a!.getBoundingClientRect(), b!.getBoundingClientRect()];
+        return Math.max(Math.abs(ra.x - rb.x), Math.abs(ra.y - rb.y));
+      }, [leadHandle, trailHandle])).toBeLessThan(1);
 
       // The blend itself, from the computed style — the one property whose
       // whole job is to say this, and which no fallback branch overrides.
