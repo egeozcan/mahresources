@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/afero"
 	"gorm.io/gorm"
@@ -15,11 +17,26 @@ import (
 	"mahresources/models"
 )
 
+// newRevisionImportCtx is createGUIDIsolatedContext with a database name that is
+// unique per invocation. The shared-cache memory database lives as long as any
+// connection to it is open, so a fixed name collides with its own previous run
+// under -count=2; the pool is closed on cleanup so the database goes away.
+func newRevisionImportCtx(t *testing.T, name string) *opCtx {
+	t.Helper()
+	ctx := createGUIDIsolatedContext(t, fmt.Sprintf("%s_%d", name, time.Now().UnixNano()))
+	t.Cleanup(func() {
+		if sqlDB, err := ctx.db.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+	return ctx
+}
+
 // exportSchemaDefs exports a small tree that carries one Category, one Note
 // Type and one Resource Category definition, and returns the archive.
 func exportSchemaDefs(t *testing.T, name string) []byte {
 	t.Helper()
-	src := createGUIDIsolatedContext(t, name+"_src")
+	src := newRevisionImportCtx(t, name+"_src")
 
 	cat := &models.Category{Name: "RevCat", CustomHeader: "<h1>cat</h1>"}
 	nt := &models.NoteType{Name: "RevNoteType", CustomSidebar: "side"}
@@ -79,7 +96,7 @@ func revisionsOf(t *testing.T, db *gorm.DB, carrierType, name string) []models.T
 
 func TestApplyImport_CreatedCarriersGetAnImportRevision_ReusedGetNone(t *testing.T) {
 	tar := exportSchemaDefs(t, "rev_import")
-	dst := createGUIDIsolatedContext(t, "rev_import_dst")
+	dst := newRevisionImportCtx(t, "rev_import_dst")
 
 	if err := applyArchive(t, dst, "rev-import-1", tar); err != nil {
 		t.Fatalf("apply: %v", err)
@@ -116,7 +133,7 @@ func TestApplyImport_CreatedCarriersGetAnImportRevision_ReusedGetNone(t *testing
 // failure is injected by a GORM callback between the two inserts, not by a race.
 func TestApplyImport_FailureBetweenCarrierAndRevisionLeavesNeither(t *testing.T) {
 	tar := exportSchemaDefs(t, "rev_atomic")
-	dst := createGUIDIsolatedContext(t, "rev_atomic_dst")
+	dst := newRevisionImportCtx(t, "rev_atomic_dst")
 
 	boom := errors.New("injected revision insert failure")
 	const cbName = "test:fail_revision_insert"

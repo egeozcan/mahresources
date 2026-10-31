@@ -377,6 +377,15 @@ components:
             required:
                 - ok
             type: object
+        DiffHunkPartial:
+            properties:
+                lines:
+                    items:
+                        type: string
+                    type: array
+                op:
+                    type: string
+            type: object
         EntityIdQuery:
             properties:
                 ID:
@@ -434,6 +443,11 @@ components:
         EntityPickerResultPartial:
             type: object
         EntityPickerStylePartial:
+            type: object
+        ErrorResponse:
+            properties:
+                error:
+                    type: string
             type: object
         ExportEstimate:
             properties:
@@ -497,6 +511,15 @@ components:
                     type: boolean
                 subtree:
                     type: boolean
+            type: object
+        FieldDiffPartial:
+            properties:
+                field:
+                    type: string
+                hunks:
+                    items:
+                        $ref: '#/components/schemas/DiffHunkPartial'
+                    type: array
             type: object
         GlobalSearchQuery:
             properties:
@@ -2950,6 +2973,13 @@ components:
                     type: string
             type: object
         SlotDiffPartial:
+            properties:
+                fields:
+                    items:
+                        $ref: '#/components/schemas/FieldDiffPartial'
+                    type: array
+                slot:
+                    type: string
             type: object
         SuggestedTagPartial:
             properties:
@@ -3146,25 +3176,17 @@ components:
                     nullable: true
                     type: integer
             type: object
-        TemplateRevisionDiffQuery:
-            properties:
-                From:
-                    type: integer
-                To:
-                    nullable: true
-                    type: integer
-            type: object
         TemplateRevisionLabelRequest:
             properties:
-                Label:
+                label:
                     type: string
             type: object
         TemplateRevisionRestoreRequest:
             properties:
-                IncludeCss:
+                includeCss:
                     nullable: true
                     type: boolean
-                Slot:
+                slot:
                     type: string
             type: object
         TemplateRevisionSummary:
@@ -3202,8 +3224,35 @@ components:
             type: object
         TemplateRevisionSummaryPartial:
             properties:
+                applied:
+                    items:
+                        type: string
+                    type: array
+                carrierId:
+                    type: integer
+                carrierType:
+                    type: string
+                changedSlots:
+                    items:
+                        type: string
+                    type: array
+                createdAt:
+                    format: date-time
+                    type: string
+                createdByUserId:
+                    nullable: true
+                    type: integer
                 id:
                     type: integer
+                label:
+                    type: string
+                number:
+                    type: integer
+                restoredFrom:
+                    nullable: true
+                    type: integer
+                source:
+                    type: string
             type: object
         TimelineBucketPartial:
             type: object
@@ -4321,6 +4370,12 @@ paths:
                     description: Successful response
                 "400":
                     description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
                 "404":
                     description: Not found
                 "500":
@@ -4353,6 +4408,12 @@ paths:
                     description: Successful response
                 "400":
                     description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
                 "404":
                     description: Not found
                 "500":
@@ -4394,6 +4455,12 @@ paths:
                     description: Successful response
                 "400":
                     description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
                 "404":
                     description: Not found
                 "500":
@@ -4435,6 +4502,12 @@ paths:
                     description: Successful response
                 "400":
                     description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
                 "404":
                     description: Not found
                 "500":
@@ -4448,17 +4521,19 @@ paths:
             operationId: diffCategoryRevisions
             parameters:
                 - in: query
-                  name: From
-                  schema:
-                    type: integer
-                - in: query
-                  name: To
-                  schema:
-                    nullable: true
-                    type: integer
-                - in: query
                   name: id
                   required: true
+                  schema:
+                    type: integer
+                - description: Revision number on the left side.
+                  in: query
+                  name: from
+                  required: true
+                  schema:
+                    type: integer
+                - description: Revision number on the right side; omit for the carrier's current state.
+                  in: query
+                  name: to
                   schema:
                     type: integer
             responses:
@@ -4470,6 +4545,12 @@ paths:
                     description: Successful response
                 "400":
                     description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
                 "404":
                     description: Not found
                 "500":
@@ -9947,6 +10028,12 @@ paths:
                     description: Successful response
                 "400":
                     description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
                 "404":
                     description: Not found
                 "500":
@@ -9979,6 +10066,12 @@ paths:
                     description: Successful response
                 "400":
                     description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
                 "404":
                     description: Not found
                 "500":
@@ -10020,6 +10113,12 @@ paths:
                     description: Successful response
                 "400":
                     description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
                 "404":
                     description: Not found
                 "500":
@@ -10061,6 +10160,12 @@ paths:
                     description: Successful response
                 "400":
                     description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
                 "404":
                     description: Not found
                 "500":
@@ -10074,17 +10179,19 @@ paths:
             operationId: diffNoteTypeRevisions
             parameters:
                 - in: query
-                  name: From
-                  schema:
-                    type: integer
-                - in: query
-                  name: To
-                  schema:
-                    nullable: true
-                    type: integer
-                - in: query
                   name: id
                   required: true
+                  schema:
+                    type: integer
+                - description: Revision number on the left side.
+                  in: query
+                  name: from
+                  required: true
+                  schema:
+                    type: integer
+                - description: Revision number on the right side; omit for the carrier's current state.
+                  in: query
+                  name: to
                   schema:
                     type: integer
             responses:
@@ -10096,6 +10203,12 @@ paths:
                     description: Successful response
                 "400":
                     description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
                 "404":
                     description: Not found
                 "500":
@@ -12631,6 +12744,12 @@ paths:
                     description: Successful response
                 "400":
                     description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
                 "404":
                     description: Not found
                 "500":
@@ -12663,6 +12782,12 @@ paths:
                     description: Successful response
                 "400":
                     description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
                 "404":
                     description: Not found
                 "500":
@@ -12704,6 +12829,12 @@ paths:
                     description: Successful response
                 "400":
                     description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
                 "404":
                     description: Not found
                 "500":
@@ -12745,6 +12876,12 @@ paths:
                     description: Successful response
                 "400":
                     description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
                 "404":
                     description: Not found
                 "500":
@@ -12758,17 +12895,19 @@ paths:
             operationId: diffResourceCategoryRevisions
             parameters:
                 - in: query
-                  name: From
-                  schema:
-                    type: integer
-                - in: query
-                  name: To
-                  schema:
-                    nullable: true
-                    type: integer
-                - in: query
                   name: id
                   required: true
+                  schema:
+                    type: integer
+                - description: Revision number on the left side.
+                  in: query
+                  name: from
+                  required: true
+                  schema:
+                    type: integer
+                - description: Revision number on the right side; omit for the carrier's current state.
+                  in: query
+                  name: to
                   schema:
                     type: integer
             responses:
@@ -12780,6 +12919,12 @@ paths:
                     description: Successful response
                 "400":
                     description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
                 "404":
                     description: Not found
                 "500":

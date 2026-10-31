@@ -322,7 +322,7 @@ The `.json` and `.body` variants of a History page path are gated the same way. 
 | `POST /revisions/{number}/label?id=` | set, change or clear the label (at most 200 characters) | `{"label": "..."}` |
 | `POST /revisions/{number}/restore?id=` | restore the whole revision, or one slot | `{"slot": "CustomHeader", "includeCss": true}`, both optional |
 
-Errors: 400 invalid (unknown slot, overlong label, a revision that no longer validates, missing `id` or
+Errors: 403 role (declared in OpenAPI on every route), 400 invalid (unknown slot, overlong label, a revision that no longer validates, missing `id` or
 `from`), 403 role, 404 unknown carrier or revision number.
 
 Saving still goes through the existing endpoints. The edit form (and `mr`) post `revisionApplied`
@@ -392,8 +392,10 @@ names for `slot` in a restore are the primary field names (`CustomHeader`, not `
   tables. `TemplateRevision` is in the entity list, in `server/api_tests` (SQLite and Postgres harnesses)
   and in the 45 test files that carry their own list, because every carrier create, update and delete
   now touches the table.
-- **Snapshot column is `text`, not JSON/JSONB.** Postgres JSONB reorders keys and renormalises
-  numbers; the snapshot should keep the exact bytes.
+- **Snapshot, applied and changed-slots columns are plain `string` fields holding JSON, migrated as
+  `text`.** `types.JSON.GormDBDataType` returns JSONB on Postgres whatever the `gorm:"type:text"` tag says,
+  and JSONB reorders keys and renormalises numbers; the snapshot should keep the exact bytes.
+  `TestRevision_SnapshotColumnsMigrateAsTextOnPostgres` asserts the column type.
 - **`restoredFrom` stores the revision number**, not the global row ID, since the UI shows "restored
   from #N".
 - **Note Type revision routes sit under `/v1/noteType/revisions`.** `/v1/note/noteType` is the

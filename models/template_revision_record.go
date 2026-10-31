@@ -7,8 +7,6 @@ import (
 	"reflect"
 
 	"gorm.io/gorm"
-
-	"mahresources/models/types"
 )
 
 // Recording kinds, from the table in the plan's decision 8.
@@ -102,7 +100,9 @@ func writeTemplateRevision(tx *gorm.DB, in RecordTemplateRevisionInput, number u
 		return nil, err
 	}
 	applied := []string{}
-	if source != RevisionSourceBaseline && source != RevisionSourceCreate && source != RevisionSourceImport {
+	// A create is the first save of a preset or a generation, so it keeps the
+	// form's provenance; a baseline and an import were not produced by a form.
+	if source != RevisionSourceBaseline && source != RevisionSourceImport {
 		applied = in.Applied
 		if applied == nil {
 			applied = []string{}
@@ -118,8 +118,8 @@ func writeTemplateRevision(tx *gorm.DB, in RecordTemplateRevisionInput, number u
 		Number:       number,
 		Snapshot:     snapshot,
 		Source:       source,
-		Applied:      types.JSON(appliedJSON),
-		ChangedSlots: types.JSON(changed),
+		Applied:      string(appliedJSON),
+		ChangedSlots: string(changed),
 		RestoredFrom: restoredFrom,
 	}
 	if err := tx.Create(rev).Error; err != nil {

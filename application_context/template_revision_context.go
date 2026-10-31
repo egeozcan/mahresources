@@ -103,7 +103,7 @@ func (ctx *MahresourcesContext) recordTemplateRevision(tx *gorm.DB, kind, carrie
 		Before:      before,
 		After:       after,
 		Source:      ctx.templateRevisionSource(),
-		Applied:     models.SanitizeRevisionApplied(applied),
+		Applied:     models.SanitizeRevisionApplied(carrierType, applied),
 	})
 }
 
@@ -132,9 +132,9 @@ func carrierName(carrier any) string {
 
 func summarizeTemplateRevision(rev *models.TemplateRevision) contracts.TemplateRevisionSummary {
 	applied := []string{}
-	_ = json.Unmarshal(rev.Applied, &applied)
+	_ = json.Unmarshal([]byte(rev.Applied), &applied)
 	changed := []string{}
-	_ = json.Unmarshal(rev.ChangedSlots, &changed)
+	_ = json.Unmarshal([]byte(rev.ChangedSlots), &changed)
 	if applied == nil {
 		applied = []string{}
 	}

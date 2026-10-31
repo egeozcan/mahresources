@@ -191,12 +191,12 @@ func setSnapshotField(fv reflect.Value, f TemplateField, snap TemplateSnapshot) 
 }
 
 // ParseTemplateSnapshot decodes a stored Snapshot.
-func ParseTemplateSnapshot(raw types.JSON) (TemplateSnapshot, error) {
+func ParseTemplateSnapshot(raw string) (TemplateSnapshot, error) {
 	snap := TemplateSnapshot{}
 	if len(raw) == 0 {
 		return snap, nil
 	}
-	if err := json.Unmarshal(raw, &snap); err != nil {
+	if err := json.Unmarshal([]byte(raw), &snap); err != nil {
 		return nil, fmt.Errorf("template revision snapshot is not valid JSON: %w", err)
 	}
 	if snap == nil {
@@ -206,9 +206,9 @@ func ParseTemplateSnapshot(raw types.JSON) (TemplateSnapshot, error) {
 }
 
 // Marshal encodes the snapshot for storage.
-func (s TemplateSnapshot) Marshal() (types.JSON, error) {
+func (s TemplateSnapshot) Marshal() (string, error) {
 	b, err := json.Marshal(map[string]any(s))
-	return types.JSON(b), err
+	return string(b), err
 }
 
 // CanonicalTemplateField is the view change detection and diffs compare. It
@@ -295,34 +295,46 @@ func ChangedTemplateSlots(carrierType string, before, after TemplateSnapshot) []
 	return changed
 }
 
-var revisionAppliedPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`^preset:[A-Za-z0-9_.-]{1,100}$`),
-	regexp.MustCompile(`^generated$`),
-	regexp.MustCompile(`^copied:(category|resourceCategory|noteType):[0-9]{1,18}$`),
-	regexp.MustCompile(`^loaded:[0-9]{1,9}(:[A-Za-z0-9]{1,64})?$`),
-}
+var (
+	revisionAppliedPreset = regexp.MustCompile(`^preset:[A-Za-z0-9_.-]{1,100}$`)
+	revisionAppliedCopied = regexp.MustCompile(`^copied:(category|resourceCategory|noteType):[1-9][0-9]{0,17}$`)
+	revisionAppliedLoaded = regexp.MustCompile(`^loaded:[1-9][0-9]{0,8}(?::([A-Za-z0-9]{1,64}))?$`)
+)
 
 // SanitizeRevisionApplied keeps only the revisionApplied entries the server
 // recognises, in order and without duplicates. Each submitted value may itself
-// be a comma-separated list.
-func SanitizeRevisionApplied(values []string) []string {
+// be a comma-separated list. A "loaded:<n>:<slot>" entry must name a primary
+// slot of this carrier type (a Category cannot have loaded AutoDetectRules), and
+// revision numbers and ids must be positive.
+func SanitizeRevisionApplied(carrierType string, values []string) []string {
 	out := []string{}
 	seen := map[string]bool{}
 	for _, v := range values {
 		for _, part := range splitComma(v) {
-			if seen[part] {
+			if seen[part] || !recognisedRevisionApplied(carrierType, part) {
 				continue
 			}
-			for _, re := range revisionAppliedPatterns {
-				if re.MatchString(part) {
-					seen[part] = true
-					out = append(out, part)
-					break
-				}
-			}
+			seen[part] = true
+			out = append(out, part)
 		}
 	}
 	return out
+}
+
+func recognisedRevisionApplied(carrierType, entry string) bool {
+	switch {
+	case entry == "generated", revisionAppliedPreset.MatchString(entry), revisionAppliedCopied.MatchString(entry):
+		return true
+	}
+	m := revisionAppliedLoaded.FindStringSubmatch(entry)
+	if m == nil {
+		return false
+	}
+	if m[1] == "" {
+		return true
+	}
+	_, ok := FindTemplateSlot(carrierType, m[1])
+	return ok
 }
 
 func splitComma(s string) []string {

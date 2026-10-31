@@ -63,3 +63,8 @@ type TemplateRevisionWriter interface {
 	// whole snapshot; otherwise only that slot, with its CSS when includeCSS.
 	RestoreTemplateRevision(carrierType string, carrierID uint, number uint, slot *string, includeCSS bool) (*TemplateRevisionSummary, error)
 }
+
+// ErrorResponse is the JSON body of an authorization refusal: {"error": "..."}.
+type ErrorResponse struct {
+	Error string `json:"error"`
+}

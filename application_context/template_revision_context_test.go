@@ -11,6 +11,7 @@ import (
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
+	"mahresources/plugin_system"
 )
 
 func listRevisionRows(t *testing.T, ctx *MahresourcesContext, carrierType string, id uint) []models.TemplateRevision {
@@ -68,7 +69,7 @@ func TestRevision_CreateRecordsOneCreateRevision_EmptyOrNot(t *testing.T) {
 		t.Fatalf("non-empty create = %q, want exactly one create", got)
 	}
 	var changed []string
-	_ = json.Unmarshal(revs[0].ChangedSlots, &changed)
+	_ = json.Unmarshal([]byte(revs[0].ChangedSlots), &changed)
 	if strings.Join(changed, ",") != "CustomHeader,MetaSchema" {
 		t.Errorf("changed slots of #1 = %v", changed)
 	}
@@ -120,8 +121,8 @@ func TestRevision_ChangingSaveRecordsNextNumberWithChangedSlotsAndApplied(t *tes
 		t.Fatalf("revisions = %q", got)
 	}
 	var changed, applied []string
-	_ = json.Unmarshal(revs[1].ChangedSlots, &changed)
-	_ = json.Unmarshal(revs[1].Applied, &applied)
+	_ = json.Unmarshal([]byte(revs[1].ChangedSlots), &changed)
+	_ = json.Unmarshal([]byte(revs[1].Applied), &applied)
 	if strings.Join(changed, ",") != "CustomSidebar" {
 		t.Errorf("changed slots = %v", changed)
 	}
@@ -541,5 +542,54 @@ func TestRevision_SectionConfigSnapshotKeepsRawText(t *testing.T) {
 	resolved := types.JSON(d.Editor["SectionConfig"].(string))
 	if strings.Contains(string(resolved), `"ownEntities":null`) || !strings.Contains(string(resolved), `"ownNotes":true`) {
 		t.Errorf("editor view must be the resolver's output, got %s", resolved)
+	}
+}
+
+// A plugin call bound to a real actor builds its context through WithPrincipal,
+// a different branch from the actor-zero clone. The source must survive it, and
+// the revision is attributed to the acting user.
+func TestRevision_PluginWritesWithAnActorAreStampedPluginAndAttributed(t *testing.T) {
+	ctx := newStampTestContext(t, true)
+	actor := makeAdmin(t, ctx, "plugin-actor")
+	adapter := &pluginDBAdapter{ctx: ctx}
+	_, writer := adapter.BindInvocation(plugin_system.NewInvocation(actor.ID))
+	w := writer.(*pluginDBAdapter)
+
+	created, err := w.CreateCategory(map[string]any{"name": "plug-actor", "custom_header": "h"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := uint(created["id"].(float64))
+	if _, err := w.PatchCategory(id, map[string]any{"custom_header": "patched"}); err != nil {
+		t.Fatal(err)
+	}
+	revs := listRevisionRows(t, ctx, models.TemplateCarrierCategory, id)
+	if len(revs) != 2 || revs[1].Source != models.RevisionSourcePlugin {
+		t.Fatalf("revisions = %q, want the patch recorded as plugin", revisionSummary(revs))
+	}
+	for _, r := range revs {
+		if r.CreatedByUserId == nil || *r.CreatedByUserId != actor.ID {
+			t.Errorf("revision #%d creator = %v, want the acting user %d", r.Number, r.CreatedByUserId, actor.ID)
+		}
+	}
+}
+
+func TestRevision_SurvivesItsAuthorsDeletionWithANullCreator(t *testing.T) {
+	ctx := newStampTestContext(t, true)
+	makeAdmin(t, ctx, "keeper")
+	author := makeAdmin(t, ctx, "author")
+
+	bound := ctx.WithPrincipal(auth.FromUser(author))
+	cat := mustCategory(t, bound, query_models.CategoryCreator{Name: "authored"})
+	revs := listRevisionRows(t, ctx, models.TemplateCarrierCategory, cat.ID)
+	if len(revs) != 1 || revs[0].CreatedByUserId == nil || *revs[0].CreatedByUserId != author.ID {
+		t.Fatalf("revision should be stamped by the author: %+v", revs)
+	}
+	if err := ctx.DeleteUser(author.ID); err != nil {
+		t.Fatal(err)
+	}
+	revs = listRevisionRows(t, ctx, models.TemplateCarrierCategory, cat.ID)
+	if len(revs) != 1 || revs[0].CreatedByUserId != nil {
+		t.Errorf("after the author is deleted the revision must survive with a NULL creator: %+v", revs)
 	}
 }

@@ -178,12 +178,29 @@ func TestApplyTemplateSnapshotClearsMissingKeys(t *testing.T) {
 }
 
 func TestSanitizeRevisionApplied(t *testing.T) {
-	got := SanitizeRevisionApplied([]string{
+	got := SanitizeRevisionApplied(TemplateCarrierCategory, []string{
 		"preset:dashboard, generated", "copied:category:12", "copied:widget:1", "loaded:3", "loaded:3:CustomHeader",
 		"loaded:x", "preset:", "<script>", "generated", "preset:../etc",
 	})
 	want := "preset:dashboard,generated,copied:category:12,loaded:3,loaded:3:CustomHeader"
 	if strings.Join(got, ",") != want {
 		t.Errorf("sanitized = %v", got)
+	}
+}
+
+func TestSanitizeRevisionAppliedRejectsImpossibleReferences(t *testing.T) {
+	rejected := []string{
+		"loaded:0", "loaded:0:CustomHeader", "loaded:3:Name", "loaded:3:DefinitelyNotASlot",
+		"loaded:3:CustomHeaderCSS", "loaded:3:AutoDetectRules", // not a primary slot / not a Category slot
+		"copied:category:0", "copied:widget:5", "copied:category:", "copied:category:-1",
+	}
+	for _, v := range rejected {
+		if got := SanitizeRevisionApplied(TemplateCarrierCategory, []string{v}); len(got) != 0 {
+			t.Errorf("%q must be rejected, kept %v", v, got)
+		}
+	}
+	// AutoDetectRules is a real slot of a Resource Category.
+	if got := SanitizeRevisionApplied(TemplateCarrierResourceCategory, []string{"loaded:2:AutoDetectRules"}); len(got) != 1 {
+		t.Errorf("a Resource Category slot must be accepted: %v", got)
 	}
 }

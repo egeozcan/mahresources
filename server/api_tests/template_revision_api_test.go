@@ -185,7 +185,7 @@ func TestTemplateRevisionSourcesAcrossIngress(t *testing.T) {
 		t.Fatalf("sources = %v", sources)
 	}
 	var applied []string
-	_ = json.Unmarshal(revs[1].Applied, &applied)
+	_ = json.Unmarshal([]byte(revs[1].Applied), &applied)
 	if strings.Join(applied, ",") != "preset:dashboard,generated,loaded:1:CustomHeader" {
 		t.Errorf("applied = %v", applied)
 	}
@@ -316,5 +316,35 @@ func TestTemplateRevisionRestoreOneSlotOverHTTP(t *testing.T) {
 	got, _ := tc.AppCtx.GetCategory(cat.ID)
 	if got.CustomHeader != "h1" || got.CustomHeaderCSS != "c2" {
 		t.Errorf("header=%q css=%q, want h1 and the current c2", got.CustomHeader, got.CustomHeaderCSS)
+	}
+}
+
+// A create is the first save of a preset or an AI generation, so it carries
+// the same revisionApplied provenance an update does.
+func TestTemplateRevisionCreateKeepsAppliedProvenance(t *testing.T) {
+	tc := SetupTestEnv(t)
+	form := url.Values{}
+	form.Set("Name", "created-with-preset")
+	form.Set("CustomHeader", "x")
+	form.Add("revisionApplied", "preset:x,generated")
+	form.Add("revisionApplied", "bogus")
+	rr := doReq(tc, "POST", "/v1/category", map[string]string{
+		"Accept": "text/html", "Content-Type": "application/x-www-form-urlencoded",
+	}, nil, strings.NewReader(form.Encode()))
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("create status = %d: %s", rr.Code, rr.Body.String())
+	}
+	var cat models.Category
+	if err := tc.DB.Where("name = ?", "created-with-preset").First(&cat).Error; err != nil {
+		t.Fatal(err)
+	}
+	revs := revisionRows(t, tc, revisionCarrier{typ: models.TemplateCarrierCategory, id: cat.ID})
+	if len(revs) != 1 || revs[0].Source != models.RevisionSourceCreate {
+		t.Fatalf("revisions = %+v", revs)
+	}
+	var applied []string
+	_ = json.Unmarshal([]byte(revs[0].Applied), &applied)
+	if strings.Join(applied, ",") != "preset:x,generated" {
+		t.Errorf("applied on create = %v", applied)
 	}
 }

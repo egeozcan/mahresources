@@ -1,10 +1,6 @@
 package models
 
-import (
-	"time"
-
-	"mahresources/models/types"
-)
+import "time"
 
 // Template Carrier types. A Template Revision names its carrier by one of
 // these plus the carrier's ID, so one table serves all three.
@@ -46,10 +42,13 @@ type TemplateRevision struct {
 	CarrierID   uint   `gorm:"not null;uniqueIndex:unique_template_revision_number,priority:2" json:"carrierId"`
 	Number      uint   `gorm:"not null;uniqueIndex:unique_template_revision_number,priority:3" json:"number"`
 
-	Snapshot     types.JSON `gorm:"type:text" json:"-"`
-	Source       string     `gorm:"size:16;not null" json:"source"`
-	Applied      types.JSON `gorm:"type:text" json:"-"`
-	ChangedSlots types.JSON `gorm:"type:text" json:"-"`
-	Label        string     `gorm:"size:200" json:"label"`
-	RestoredFrom *uint      `json:"restoredFrom,omitempty"`
+	// Snapshot, Applied and ChangedSlots hold JSON documents as plain strings.
+	// types.JSON would migrate as JSONB on Postgres whatever the gorm tag says,
+	// and JSONB reorders keys and renormalises numbers.
+	Snapshot     string `gorm:"type:text" json:"-"`
+	Source       string `gorm:"size:16;not null" json:"source"`
+	Applied      string `gorm:"type:text" json:"-"`
+	ChangedSlots string `gorm:"type:text" json:"-"`
+	Label        string `gorm:"size:200" json:"label"`
+	RestoredFrom *uint  `json:"restoredFrom,omitempty"`
 }

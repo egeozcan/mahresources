@@ -67,7 +67,7 @@ func TestRevision_ConcurrentSavesChainOnPostgres(t *testing.T) {
 		}
 		if i > 0 {
 			var stored []string
-			_ = json.Unmarshal(r.ChangedSlots, &stored)
+			_ = json.Unmarshal([]byte(r.ChangedSlots), &stored)
 			want := models.ChangedTemplateSlots(models.TemplateCarrierCategory, prev, snap)
 			if fmt.Sprint(stored) != fmt.Sprint(want) {
 				t.Errorf("revision #%d changed slots %v do not chain from #%d's content (want %v)", r.Number, stored, r.Number-1, want)
@@ -78,5 +78,36 @@ func TestRevision_ConcurrentSavesChainOnPostgres(t *testing.T) {
 	final, _ := ctx.GetCategory(cat.ID)
 	if last, _ := models.ParseTemplateSnapshot(revs[len(revs)-1].Snapshot); last["CustomHeader"] != final.CustomHeader {
 		t.Errorf("the last revision (%v) must describe the stored state (%q)", last["CustomHeader"], final.CustomHeader)
+	}
+}
+
+// The snapshot must migrate as text. A JSON-typed column on Postgres is JSONB,
+// which reorders keys and renormalises numbers, so the stored bytes would no
+// longer be the raw values the snapshot promises.
+func TestRevision_SnapshotColumnsMigrateAsTextOnPostgres(t *testing.T) {
+	ctx := newPostgresUserJobContext(t)
+	for _, col := range []string{"snapshot", "applied", "changed_slots"} {
+		var typ string
+		if err := ctx.db.Raw(`SELECT data_type FROM information_schema.columns WHERE table_name = 'template_revisions' AND column_name = ?`, col).Scan(&typ).Error; err != nil {
+			t.Fatal(err)
+		}
+		if typ != "text" {
+			t.Errorf("template_revisions.%s is %q on Postgres, want text", col, typ)
+		}
+	}
+}
+
+// Key order and number spelling inside a stored snapshot must survive the round
+// trip, which JSONB would not allow.
+func TestRevision_SnapshotKeepsItsBytesOnPostgres(t *testing.T) {
+	ctx := newPostgresUserJobContext(t)
+	cat, err := ctx.CreateCategory(&query_models.CategoryCreator{Name: "bytes", SectionConfig: `{"tags":false,   "ownEntities":null}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev := listRevisionRows(t, ctx, models.TemplateCarrierCategory, cat.ID)[0]
+	snap, _ := models.ParseTemplateSnapshot(rev.Snapshot)
+	if snap["SectionConfig"] != `{"tags":false,   "ownEntities":null}` {
+		t.Errorf("raw SectionConfig text changed: %q", snap["SectionConfig"])
 	}
 }
