@@ -671,10 +671,21 @@ test.describe.serial('compare page teardown fixes', () => {
     const images = box.locator('.compare-overlay-img');
     await expect(images).toHaveCount(2);
 
-    const under = await images.nth(0).boundingBox();
-    const over = await images.nth(1).boundingBox();
-    expect(under).not.toBeNull();
-    expect(over).not.toBeNull();
+    // Both rects from one layout pass, polled until they share a centre:
+    // dimensionless images register on their load events, and two separate
+    // boundingBox() calls can straddle that reflow by a pixel.
+    const rects = () => images.evaluateAll((els) => els.map((el) => {
+      const { x, y, width, height } = el.getBoundingClientRect();
+      return { x, y, width, height };
+    }));
+    let under!: { x: number; y: number; width: number; height: number };
+    let over!: typeof under;
+    await expect.poll(async () => {
+      [under, over] = await rects();
+      return Math.max(
+        Math.abs((over.x + over.width / 2) - (under.x + under.width / 2)),
+        Math.abs((over.y + over.height / 2) - (under.y + under.height / 2)));
+    }).toBeLessThan(0.5);
 
     // Stacked, the second image begins at or below the bottom of the first and
     // the two rectangles never meet. Overlaid, they intersect on both axes.
