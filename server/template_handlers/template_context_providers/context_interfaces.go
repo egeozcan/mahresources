@@ -52,6 +52,7 @@ var (
 	_ SearchPageContext               = (*application_context.MahresourcesContext)(nil)
 	_ TagPageContext                  = (*application_context.MahresourcesContext)(nil)
 	_ TemplatePartialPageContext      = (*application_context.MahresourcesContext)(nil)
+	_ TemplateRevisionsPageContext    = (*application_context.MahresourcesContext)(nil)
 	_ contracts.LogEntryReader        = (*application_context.MahresourcesContext)(nil)
 	_ contracts.SeriesReader          = (*application_context.MahresourcesContext)(nil)
 )
@@ -248,4 +249,12 @@ type selectionHydrator interface {
 	GetNotesWithIds(ids *[]uint) ([]*models.Note, error)
 	GetResourcesWithIds(ids *[]uint) ([]*models.Resource, error)
 	GetCategoriesWithIds(ids *[]uint, limit int) ([]models.Category, error)
+}
+
+// TemplateRevisionsPageContext serves the History page of a Category, Resource
+// Category or Note Type; the revisions themselves come from the revision API.
+type TemplateRevisionsPageContext interface {
+	GetCategory(id uint) (*models.Category, error)
+	GetResourceCategory(id uint) (*models.ResourceCategory, error)
+	GetNoteType(id uint) (*models.NoteType, error)
 }
