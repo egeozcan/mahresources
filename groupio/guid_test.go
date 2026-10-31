@@ -21,7 +21,7 @@ func createGUIDTestContext(t *testing.T, name string) *opCtx {
 		t.Fatalf("Failed to open test database: %v", err)
 	}
 
-	if err := db.AutoMigrate(&models.Group{}, &models.Category{}, &models.ResourceCategory{}); err != nil {
+	if err := db.AutoMigrate(&models.Group{}, &models.Category{}, &models.TemplateRevision{}, &models.ResourceCategory{}); err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)
 	}
 

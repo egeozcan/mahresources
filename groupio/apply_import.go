@@ -601,7 +601,7 @@ func (s *applyState) applySchemaDefDecisions() error {
 			}
 			continue
 		}
-		if err := s.ctx.db.Create(&cat).Error; err != nil {
+		if err := models.CreateTemplateCarrierWithRevision(s.ctx.db, models.TemplateCarrierCategory, &cat, models.RevisionKindImport); err != nil {
 			return fmt.Errorf("create category %q: %w", cat.Name, err)
 		}
 		s.idMap[entry.DecisionKey] = cat.ID
@@ -695,7 +695,7 @@ func (s *applyState) applySchemaDefDecisions() error {
 			}
 			continue
 		}
-		if err := s.ctx.db.Create(&nt).Error; err != nil {
+		if err := models.CreateTemplateCarrierWithRevision(s.ctx.db, models.TemplateCarrierNoteType, &nt, models.RevisionKindImport); err != nil {
 			return fmt.Errorf("create note type %q: %w", nt.Name, err)
 		}
 		s.idMap[entry.DecisionKey] = nt.ID
@@ -796,7 +796,7 @@ func (s *applyState) applySchemaDefDecisions() error {
 			}
 			continue
 		}
-		if err := s.ctx.db.Create(&rc).Error; err != nil {
+		if err := models.CreateTemplateCarrierWithRevision(s.ctx.db, models.TemplateCarrierResourceCategory, &rc, models.RevisionKindImport); err != nil {
 			return fmt.Errorf("create resource category %q: %w", rc.Name, err)
 		}
 		s.idMap[entry.DecisionKey] = rc.ID

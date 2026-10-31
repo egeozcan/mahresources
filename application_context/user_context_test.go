@@ -33,7 +33,7 @@ func newAuthTestContext(t *testing.T) *MahresourcesContext {
 		&models.Tag{},
 		&models.Category{},
 		&models.ResourceCategory{},
-		&models.NoteType{},
+		&models.NoteType{}, &models.TemplateRevision{},
 		&models.SavedMRQLQuery{},
 		&models.TemplatePartial{},
 		&models.Group{},

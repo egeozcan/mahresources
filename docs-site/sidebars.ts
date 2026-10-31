@@ -63,6 +63,7 @@ const sidebars: SidebarsConfig = {
         'features/resource-reduction',
         'features/saved-queries',
         'features/custom-templates',
+        'features/template-revisions',
         'features/meta-schemas',
         'features/note-sharing',
         'features/download-queue',

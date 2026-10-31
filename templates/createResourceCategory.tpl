@@ -1,9 +1,16 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
-<form class="space-y-8" method="post" action="/v1/resourceCategory">
+{% if resourceCategory.ID && queryValues.loadRevision.0 %}
+<p id="revision-preload-status" role="status" data-testid="revision-preload-status" class="mb-4 border-l-4 border-t-4 border-green-700 bg-green-50 p-3 text-sm text-green-900">Loading revision #{{ queryValues.loadRevision.0 }}. The form is locked until it arrives.</p>
+<noscript><p class="mb-4 text-sm">Loading a revision needs JavaScript. <a href="/resourceCategory/edit?id={{ resourceCategory.ID }}">Open the editor without it</a>.</p></noscript>
+{% endif %}
+<form class="space-y-8" method="post" action="/v1/resourceCategory"{% if resourceCategory.ID && queryValues.loadRevision.0 %} inert aria-busy="true" data-revision-locked{% endif %}>
     {% if resourceCategory.ID %}
     <input type="hidden" value="{{ resourceCategory.ID }}" name="ID">
+    {% endif %}
+    {% if resourceCategory.ID %}
+    <p class="text-sm"><a href="/resourceCategory/revisions?id={{ resourceCategory.ID }}" data-testid="template-history-link" class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700 rounded focus:outline-hidden focus:ring-2 focus:ring-amber-600">View template history</a></p>
     {% endif %}
 
     {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=resourceCategory.Name required=true %}

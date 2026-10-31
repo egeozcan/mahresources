@@ -119,8 +119,16 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 		category.SectionConfig = types.JSON(categoryQuery.SectionConfig)
 	}
 
-	if err := ctx.db.Create(&category).Error; err != nil {
-		return nil, friendlyUniqueError("category", err)
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&category).Error; err != nil {
+			return friendlyUniqueError("category", err)
+		}
+		_, err := ctx.recordTemplateRevision(tx, models.RevisionKindCreate, models.TemplateCarrierCategory, category.ID,
+			nil, models.NewTemplateSnapshot(models.TemplateCarrierCategory, &category), categoryQuery.RevisionApplied)
+		return err
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	ctx.Logger().Info(models.LogActionCreate, "category", &category.ID, category.Name, "Created category", nil)
@@ -168,10 +176,41 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 	}
 
 	var category models.Category
-	if err := ctx.db.First(&category, categoryQuery.ID).Error; err != nil {
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		// Lock first, then read the pre-save state under the lock: the revision
+		// diffs against what is really stored, and a concurrent save waits here.
+		if err := lockTemplateCarrier(tx, &category, categoryQuery.ID); err != nil {
+			return err
+		}
+		before := models.NewTemplateSnapshot(models.TemplateCarrierCategory, &category)
+		applyCategoryEditor(&category, categoryQuery)
+		if err := tx.Save(&category).Error; err != nil {
+			return friendlyUniqueError("category", err)
+		}
+		_, err := ctx.recordTemplateRevision(tx, models.RevisionKindUpdate, models.TemplateCarrierCategory, category.ID,
+			before, models.NewTemplateSnapshot(models.TemplateCarrierCategory, &category), categoryQuery.RevisionApplied)
+		return err
+	})
+	if err != nil {
 		return nil, err
 	}
 
+	ctx.Logger().Info(models.LogActionUpdate, "category", &category.ID, category.Name, "Updated category", nil)
+
+	ctx.RunAfterPluginHooks("after_category_update", map[string]any{
+		"id":          float64(category.ID),
+		"name":        category.Name,
+		"description": category.Description,
+	})
+
+	ctx.InvalidateSearchCacheByType(EntityTypeCategory)
+	return &category, nil
+}
+
+// applyCategoryEditor maps editor input onto the loaded category. An empty
+// SectionConfig means "keep the current one", which is why a restore does not
+// use it: it applies an exact target state instead.
+func applyCategoryEditor(category *models.Category, categoryQuery *query_models.CategoryEditor) {
 	if strings.TrimSpace(categoryQuery.Name) != "" {
 		category.Name = categoryQuery.Name
 	}
@@ -206,21 +245,6 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 	if categoryQuery.SectionConfig != "" {
 		category.SectionConfig = types.JSON(categoryQuery.SectionConfig)
 	}
-
-	if err := ctx.db.Save(&category).Error; err != nil {
-		return nil, friendlyUniqueError("category", err)
-	}
-
-	ctx.Logger().Info(models.LogActionUpdate, "category", &category.ID, category.Name, "Updated category", nil)
-
-	ctx.RunAfterPluginHooks("after_category_update", map[string]any{
-		"id":          float64(category.ID),
-		"name":        category.Name,
-		"description": category.Description,
-	})
-
-	ctx.InvalidateSearchCacheByType(EntityTypeCategory)
-	return &category, nil
 }
 
 func (ctx *MahresourcesContext) DeleteCategory(categoryId uint) error {
@@ -252,6 +276,13 @@ func (ctx *MahresourcesContext) DeleteCategory(categoryId uint) error {
 	// would leave the database in an inconsistent state where groups have
 	// already lost their category_id but the category still exists.
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		// Take the carrier lock first, like a save does, so a delete cannot
+		// interleave with a save that is recording a revision.
+		var locked models.Category
+		if err := lockTemplateCarrier(tx, &locked, categoryId); err != nil {
+			return err
+		}
+
 		// Do NOT use Select(clause.Associations) — Category's only association is
 		// Groups, and deleting a category must SET NULL on groups (not cascade-delete them).
 		// Explicitly clear CategoryId since SQLite FK constraints don't fire reliably.
@@ -286,6 +317,9 @@ func (ctx *MahresourcesContext) DeleteCategory(categoryId uint) error {
 			}
 		}
 
+		if err := models.DeleteTemplateRevisions(tx, models.TemplateCarrierCategory, categoryId); err != nil {
+			return err
+		}
 		return tx.Delete(&category).Error
 	})
 

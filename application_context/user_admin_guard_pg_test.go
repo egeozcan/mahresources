@@ -38,7 +38,7 @@ func newPostgresUserJobContext(t *testing.T) *MahresourcesContext {
 	db, dsn := pgContainer.CreateTestDBWithDSN(t)
 	if err := db.AutoMigrate(
 		&models.Query{}, &models.Series{}, &models.Tag{}, &models.Category{},
-		&models.ResourceCategory{}, &models.NoteType{}, &models.SavedMRQLQuery{},
+		&models.ResourceCategory{}, &models.NoteType{}, &models.TemplateRevision{}, &models.SavedMRQLQuery{},
 		&models.TemplatePartial{}, &models.Group{}, &models.GroupRelationType{},
 		&models.Resource{}, &models.Note{}, &models.ResourceVersion{}, &models.NoteBlock{},
 		&models.GroupRelation{}, &models.User{}, &models.SavedSearch{}, &models.UserSetting{},

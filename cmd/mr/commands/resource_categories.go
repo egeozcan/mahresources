@@ -252,6 +252,7 @@ func NewResourceCategoriesCmd(c *client.Client, opts *output.Options, page *int)
 	}
 
 	cmd.AddCommand(newResourceCategoriesListCmd(c, opts, page))
+	cmd.AddCommand(newTemplateRevisionsCmd(c, opts, templateRevisionsSpec{noun: "resource category", endpoint: "/v1/resourceCategory", helpFS: resourceCategoriesHelpFS, helpDir: "resource_categories_help", helpBase: "resource_categories_revisions"}))
 
 	return cmd
 }

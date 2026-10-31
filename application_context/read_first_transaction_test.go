@@ -179,7 +179,7 @@ func TestTransactionsThatReadBeforeTheyWriteSurviveACommitAfterTheirRead(t *test
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := newWALTestContext(t, 0)
-			require.NoError(t, ctx.db.AutoMigrate(&models.Category{}, &models.GroupRelationType{}))
+			require.NoError(t, ctx.db.AutoMigrate(&models.Category{}, &models.TemplateRevision{}, &models.GroupRelationType{}))
 			write := tc.setup(t, ctx)
 			attempts, landed := commitAfterEveryFirstRead(t, ctx)
 			require.NoError(t, write())

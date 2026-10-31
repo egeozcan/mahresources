@@ -65,6 +65,14 @@ func requiredCapability(method, rawPath string) capability {
 	// Normalize the dual-response suffixes used by template routes.
 	path := strings.TrimSuffix(strings.TrimSuffix(rawPath, ".json"), ".body")
 
+	// Template Revisions: history is as sensitive as the editor, and the edit
+	// pages are deliberately readable by lower roles, so the generic branches
+	// below (which give taxonomy and editor GETs capRead) must not see these.
+	// Reads and writes alike need the carrier's edit capability.
+	if c, ok := templateRevisionCapability(path); ok {
+		return c
+	}
+
 	safe := method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions || isReadViaPost(path)
 
 	switch {
@@ -104,6 +112,21 @@ func requiredCapability(method, rawPath string) capability {
 		}
 		return capWrite
 	}
+}
+
+// templateRevisionCapability classifies the revision routes and History pages
+// of the three Template Carriers: /v1/<carrier>/revisions[/...] and
+// /<carrier>/revisions. The page path is reserved here so the History page
+// cannot ship readable by every role.
+func templateRevisionCapability(path string) (capability, bool) {
+	for _, c := range templateRevisionCarriers {
+		for _, base := range []string{c.apiPrefix + "/revisions", c.pagePrefix + "/revisions"} {
+			if path == base || strings.HasPrefix(path, base+"/") {
+				return c.edit, true
+			}
+		}
+	}
+	return 0, false
 }
 
 // isReadViaPost lists POST endpoints that are semantically reads (query

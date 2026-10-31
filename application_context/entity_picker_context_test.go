@@ -18,7 +18,7 @@ import (
 func newPickerTestContext(t *testing.T) *MahresourcesContext {
 	t.Helper()
 	ctx := newScopingTestContext(t)
-	require.NoError(t, ctx.db.AutoMigrate(&models.Query{}, &models.Tag{}, &models.NoteType{}, &models.Series{}, &models.GroupRelationType{}))
+	require.NoError(t, ctx.db.AutoMigrate(&models.Query{}, &models.Tag{}, &models.NoteType{}, &models.TemplateRevision{}, &models.Series{}, &models.GroupRelationType{}))
 	db, err := ctx.db.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })

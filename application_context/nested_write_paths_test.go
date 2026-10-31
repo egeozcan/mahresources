@@ -43,7 +43,7 @@ func createNestedWriteContext(t *testing.T, name string) *MahresourcesContext {
 	}
 	if err := db.AutoMigrate(
 		&models.Query{}, &models.Resource{}, &models.ResourceVersion{}, &models.Note{},
-		&models.Tag{}, &models.Group{}, &models.Category{}, &models.NoteType{},
+		&models.Tag{}, &models.Group{}, &models.Category{}, &models.NoteType{}, &models.TemplateRevision{},
 		&models.Preview{}, &models.GroupRelation{}, &models.GroupRelationType{},
 		&models.ImageHash{}, &models.ResourceSimilarity{}, &models.LogEntry{},
 		&models.ResourceCategory{}, &models.Series{}, &models.NoteBlock{}, &models.PluginKV{},

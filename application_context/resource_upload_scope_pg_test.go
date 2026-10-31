@@ -61,7 +61,7 @@ func newSharedFilePGContext(t *testing.T) *MahresourcesContext {
 		&models.Category{}, &models.ResourceCategory{}, &models.Series{},
 		&models.ResourceVersion{}, &models.Preview{}, &models.ImageHash{},
 		&models.ResourceSimilarity{}, &models.LogEntry{}, &models.NoteBlock{},
-		&models.NoteType{}, &models.GroupRelation{}, &models.GroupRelationType{},
+		&models.NoteType{}, &models.TemplateRevision{}, &models.GroupRelation{}, &models.GroupRelationType{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

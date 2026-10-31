@@ -24,6 +24,12 @@ sidebar_label: CLI
 | `mr auth whoami` | Show the authenticated principal | [Details](./auth/whoami.md) |
 | `mr categories` | List group categories | [Details](./categories/index.md) |
 | `mr categories list` | List categories | [Details](./categories/list.md) |
+| `mr categories revisions` | List, diff, label or restore Template Revisions | [Details](./categories/revisions/index.md) |
+| `mr categories revisions diff` | Diff two revisions, or a revision against now | [Details](./categories/revisions/diff.md) |
+| `mr categories revisions label` | Set, change or clear a revision's label | [Details](./categories/revisions/label.md) |
+| `mr categories revisions list` | List the revisions of a category | [Details](./categories/revisions/list.md) |
+| `mr categories revisions restore` | Restore a revision, or one slot of it | [Details](./categories/revisions/restore.md) |
+| `mr categories revisions show` | Show one revision with its stored content | [Details](./categories/revisions/show.md) |
 | `mr categories timeline` | Display a timeline of category activity | [Details](./categories/timeline.md) |
 | `mr category` | Get, create, edit, or delete a group category | [Details](./category/index.md) |
 | `mr category create` | Create a new category | [Details](./category/create.md) |
@@ -113,6 +119,12 @@ sidebar_label: CLI
 | `mr note-type get` | Get a note type by ID | [Details](./note-type/get.md) |
 | `mr note-types` | List note types | [Details](./note-types/index.md) |
 | `mr note-types list` | List note types | [Details](./note-types/list.md) |
+| `mr note-types revisions` | List, diff, label or restore Template Revisions | [Details](./note-types/revisions/index.md) |
+| `mr note-types revisions diff` | Diff two revisions, or a revision against now | [Details](./note-types/revisions/diff.md) |
+| `mr note-types revisions label` | Set, change or clear a revision's label | [Details](./note-types/revisions/label.md) |
+| `mr note-types revisions list` | List the revisions of a note type | [Details](./note-types/revisions/list.md) |
+| `mr note-types revisions restore` | Restore a revision, or one slot of it | [Details](./note-types/revisions/restore.md) |
+| `mr note-types revisions show` | Show one revision with its stored content | [Details](./note-types/revisions/show.md) |
 | `mr notes` | List notes and bulk tag/group/meta operations | [Details](./notes/index.md) |
 | `mr notes add-groups` | Add groups to multiple notes | [Details](./notes/add-groups.md) |
 | `mr notes add-meta` | Add metadata to multiple notes | [Details](./notes/add-meta.md) |
@@ -182,6 +194,12 @@ sidebar_label: CLI
 | `mr resource versions-compare` | Compare two versions of a resource | [Details](./resource/versions-compare.md) |
 | `mr resource-categories` | List resource categories | [Details](./resource-categories/index.md) |
 | `mr resource-categories list` | List resource categories | [Details](./resource-categories/list.md) |
+| `mr resource-categories revisions` | List, diff, label or restore Template Revisions | [Details](./resource-categories/revisions/index.md) |
+| `mr resource-categories revisions diff` | Diff two revisions, or a revision against now | [Details](./resource-categories/revisions/diff.md) |
+| `mr resource-categories revisions label` | Set, change or clear a revision's label | [Details](./resource-categories/revisions/label.md) |
+| `mr resource-categories revisions list` | List the revisions of a resource category | [Details](./resource-categories/revisions/list.md) |
+| `mr resource-categories revisions restore` | Restore a revision, or one slot of it | [Details](./resource-categories/revisions/restore.md) |
+| `mr resource-categories revisions show` | Show one revision with its stored content | [Details](./resource-categories/revisions/show.md) |
 | `mr resource-category` | Get, create, edit, or delete a resource category | [Details](./resource-category/index.md) |
 | `mr resource-category create` | Create a new resource category | [Details](./resource-category/create.md) |
 | `mr resource-category delete` | Delete a resource category by ID | [Details](./resource-category/delete.md) |

@@ -131,6 +131,7 @@ func setupTestEnvOn(t *testing.T, db *gorm.DB, mutate func(*application_context.
 		&models.PluginKV{},
 		&models.SavedMRQLQuery{},
 		&models.TemplatePartial{},
+		&models.TemplateRevision{}, // associationless: carrier_type + carrier_id, deleted with the carrier
 		&models.RuntimeSetting{},
 		&models.User{},
 		&models.SavedSearch{}, &models.UserSetting{},

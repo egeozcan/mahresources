@@ -68,15 +68,16 @@ var templates = map[string]templateInformation{
 	// row. /search answered 404 before this.
 	"/search": {adaptTemplate(template_context_providers.SearchPageContextProvider), "searchResults.tpl", http.MethodGet},
 
-	"/note/new":      {adaptTemplate(template_context_providers.NoteCreateContextProvider), "createNote.tpl", http.MethodGet},
-	"/notes":         {adaptTemplate(template_context_providers.NoteListContextProvider), "listNotes.tpl", http.MethodGet},
-	"/note":          {adaptTemplate(template_context_providers.NoteContextProvider), "displayNote.tpl", http.MethodGet},
-	"/note/text":     {adaptTemplate(template_context_providers.NoteContextProvider), "displayNoteText.tpl", http.MethodGet},
-	"/note/edit":     {adaptTemplate(template_context_providers.NoteCreateContextProvider), "createNote.tpl", http.MethodGet},
-	"/noteType/new":  {adaptTemplate(template_context_providers.NoteTypeCreateContextProvider), "createNoteType.tpl", http.MethodGet},
-	"/noteTypes":     {adaptTemplate(template_context_providers.NoteTypeListContextProvider), "listNoteTypes.tpl", http.MethodGet},
-	"/noteType":      {adaptTemplate(template_context_providers.NoteTypeContextProvider), "displayNoteType.tpl", http.MethodGet},
-	"/noteType/edit": {adaptTemplate(template_context_providers.NoteTypeCreateContextProvider), "createNoteType.tpl", http.MethodGet},
+	"/note/new":           {adaptTemplate(template_context_providers.NoteCreateContextProvider), "createNote.tpl", http.MethodGet},
+	"/notes":              {adaptTemplate(template_context_providers.NoteListContextProvider), "listNotes.tpl", http.MethodGet},
+	"/note":               {adaptTemplate(template_context_providers.NoteContextProvider), "displayNote.tpl", http.MethodGet},
+	"/note/text":          {adaptTemplate(template_context_providers.NoteContextProvider), "displayNoteText.tpl", http.MethodGet},
+	"/note/edit":          {adaptTemplate(template_context_providers.NoteCreateContextProvider), "createNote.tpl", http.MethodGet},
+	"/noteType/new":       {adaptTemplate(template_context_providers.NoteTypeCreateContextProvider), "createNoteType.tpl", http.MethodGet},
+	"/noteTypes":          {adaptTemplate(template_context_providers.NoteTypeListContextProvider), "listNoteTypes.tpl", http.MethodGet},
+	"/noteType":           {adaptTemplate(template_context_providers.NoteTypeContextProvider), "displayNoteType.tpl", http.MethodGet},
+	"/noteType/edit":      {adaptTemplate(template_context_providers.NoteTypeCreateContextProvider), "createNoteType.tpl", http.MethodGet},
+	"/noteType/revisions": {adaptTemplate(template_context_providers.TemplateRevisionsContextProvider(models.TemplateCarrierNoteType)), "templateRevisions.tpl", http.MethodGet},
 
 	"/templatePartial/new":  {adaptTemplate(template_context_providers.TemplatePartialCreateContextProvider), "createTemplatePartial.tpl", http.MethodGet},
 	"/templatePartials":     {adaptTemplate(template_context_providers.TemplatePartialListContextProvider), "listTemplatePartials.tpl", http.MethodGet},
@@ -115,15 +116,17 @@ var templates = map[string]templateInformation{
 	"/relationType":      {adaptTemplate(template_context_providers.RelationTypeContextProvider), "displayRelationType.tpl", http.MethodGet},
 	"/relation":          {adaptTemplate(template_context_providers.RelationContextProvider), "displayRelation.tpl", http.MethodGet},
 
-	"/category/new":  {adaptTemplate(template_context_providers.CategoryCreateContextProvider), "createCategory.tpl", http.MethodGet},
-	"/categories":    {adaptTemplate(template_context_providers.CategoryListContextProvider), "listCategories.tpl", http.MethodGet},
-	"/category":      {adaptTemplate(template_context_providers.CategoryContextProvider), "displayCategory.tpl", http.MethodGet},
-	"/category/edit": {adaptTemplate(template_context_providers.CategoryCreateContextProvider), "createCategory.tpl", http.MethodGet},
+	"/category/new":       {adaptTemplate(template_context_providers.CategoryCreateContextProvider), "createCategory.tpl", http.MethodGet},
+	"/categories":         {adaptTemplate(template_context_providers.CategoryListContextProvider), "listCategories.tpl", http.MethodGet},
+	"/category":           {adaptTemplate(template_context_providers.CategoryContextProvider), "displayCategory.tpl", http.MethodGet},
+	"/category/edit":      {adaptTemplate(template_context_providers.CategoryCreateContextProvider), "createCategory.tpl", http.MethodGet},
+	"/category/revisions": {adaptTemplate(template_context_providers.TemplateRevisionsContextProvider(models.TemplateCarrierCategory)), "templateRevisions.tpl", http.MethodGet},
 
-	"/resourceCategory/new":  {adaptTemplate(template_context_providers.ResourceCategoryCreateContextProvider), "createResourceCategory.tpl", http.MethodGet},
-	"/resourceCategories":    {adaptTemplate(template_context_providers.ResourceCategoryListContextProvider), "listResourceCategories.tpl", http.MethodGet},
-	"/resourceCategory":      {adaptTemplate(template_context_providers.ResourceCategoryContextProvider), "displayResourceCategory.tpl", http.MethodGet},
-	"/resourceCategory/edit": {adaptTemplate(template_context_providers.ResourceCategoryCreateContextProvider), "createResourceCategory.tpl", http.MethodGet},
+	"/resourceCategory/new":       {adaptTemplate(template_context_providers.ResourceCategoryCreateContextProvider), "createResourceCategory.tpl", http.MethodGet},
+	"/resourceCategories":         {adaptTemplate(template_context_providers.ResourceCategoryListContextProvider), "listResourceCategories.tpl", http.MethodGet},
+	"/resourceCategory":           {adaptTemplate(template_context_providers.ResourceCategoryContextProvider), "displayResourceCategory.tpl", http.MethodGet},
+	"/resourceCategory/edit":      {adaptTemplate(template_context_providers.ResourceCategoryCreateContextProvider), "createResourceCategory.tpl", http.MethodGet},
+	"/resourceCategory/revisions": {adaptTemplate(template_context_providers.TemplateRevisionsContextProvider(models.TemplateCarrierResourceCategory)), "templateRevisions.tpl", http.MethodGet},
 
 	"/query/new":  {adaptTemplate(template_context_providers.QueryCreateContextProvider), "createQuery.tpl", http.MethodGet},
 	"/queries":    {adaptTemplate(template_context_providers.QueryListContextProvider), "listQueries.tpl", http.MethodGet},
@@ -820,6 +823,18 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/resourceCategory/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.ResourceCategory](basicResourceCategoryWriter, "resourceCategory"))
 	router.Methods(http.MethodPost).Path("/v1/resourceCategory/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.ResourceCategory](basicResourceCategoryWriter, "resourceCategory"))
 	router.Methods(http.MethodPost).Path("/v1/resourceCategory/previewDescription").HandlerFunc(scopedPreviewDescription[models.ResourceCategory](appContext, "resourceCategory"))
+
+	// Template Revision routes for the three Template Carriers. Reads need the
+	// carrier's edit capability too (authz_policy.go, and the operations check it
+	// again). The diff route is registered before {number} so it is not read as one.
+	for _, carrier := range templateRevisionCarriers {
+		base := carrier.apiPrefix + "/revisions"
+		router.Methods(http.MethodGet).Path(base).HandlerFunc(api_handlers.GetTemplateRevisionsHandler(carrier.carrierType, appContext))
+		router.Methods(http.MethodGet).Path(base + "/diff").HandlerFunc(api_handlers.GetTemplateRevisionDiffHandler(carrier.carrierType, appContext))
+		router.Methods(http.MethodGet).Path(base + "/{number}").HandlerFunc(api_handlers.GetTemplateRevisionHandler(carrier.carrierType, appContext))
+		router.Methods(http.MethodPost).Path(base + "/{number}/label").HandlerFunc(api_handlers.GetLabelTemplateRevisionHandler(carrier.carrierType, appContext))
+		router.Methods(http.MethodPost).Path(base + "/{number}/restore").HandlerFunc(api_handlers.GetRestoreTemplateRevisionHandler(carrier.carrierType, appContext))
+	}
 
 	// Template Partial routes (admin-only writes via isTaxonomyPath; reads open)
 	basicTemplatePartialWriter := application_context.NewEntityWriter[models.TemplatePartial](appContext)

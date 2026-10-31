@@ -64,6 +64,9 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 	// Resource Categories
 	registerResourceCategoryRoutes(registry)
 
+	// Template Revisions of all three carrier types
+	registerTemplateRevisionRoutes(registry)
+
 	// Template Partials
 	registerTemplatePartialRoutes(registry)
 
@@ -3729,4 +3732,65 @@ func registerTimelineRoutes(r *openapi.Registry) {
 		ResponseType:         timelineResponseType,
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
+}
+
+// registerTemplateRevisionRoutes documents the revision routes of each Template
+// Carrier type. They all take the carrier id as ?id= and need the carrier's
+// edit capability (admin for categories and resource categories, editor for
+// note types), including the reads.
+func registerTemplateRevisionRoutes(r *openapi.Registry) {
+	const access = " Needs the carrier's edit capability, not just read access."
+	// Array items and nested DTOs are emitted as partial schemas; these are
+	// complete wire shapes, so name every field.
+	r.SetPartialFields("TemplateRevisionSummary", "ID", "Number", "CarrierType", "CarrierID", "CreatedAt",
+		"CreatedByUserId", "Label", "Source", "Applied", "ChangedSlots", "RestoredFrom")
+	r.SetPartialFields("SlotDiff", "Slot", "Fields")
+	r.SetPartialFields("FieldDiff", "Field", "Hunks")
+	r.SetPartialFields("DiffHunk", "Op", "Lines")
+	withForbidden := func(route openapi.RouteInfo) openapi.RouteInfo {
+		route.ErrorResponses[http.StatusForbidden] = "The caller's role lacks the carrier's edit capability"
+		route.ErrorResponseTypes = map[int]reflect.Type{http.StatusForbidden: reflect.TypeOf(contracts.ErrorResponse{})}
+		return route
+	}
+	numberParam := func(route openapi.RouteInfo) openapi.RouteInfo {
+		return route.WithPathParam("number", "integer", "The revision's number within its carrier (#1, #2, ...).")
+	}
+	for _, c := range templateRevisionCarriers {
+		base := c.apiPrefix + "/revisions"
+		noun, tag, id := c.noun, c.tag, c.idPrefix
+
+		register := func(route openapi.RouteInfo) { r.Register(withForbidden(route)) }
+
+		register(openapi.NewRoute(http.MethodGet, base, "list"+id+"Revisions", "List a "+noun+"'s template revisions", tag).
+			WithIDParam("id", true).
+			WithResponse([]contracts.TemplateRevisionSummary{}).
+			WithDescription("Newest first, without snapshot content." + access))
+
+		diff := openapi.NewRoute(http.MethodGet, base+"/diff", "diff"+id+"Revisions", "Diff two template revisions of a "+noun, tag).
+			WithIDParam("id", true).
+			WithResponse(contracts.TemplateRevisionDiff{}).
+			WithDescription("Slot-grouped line diff of revision `from` against revision `to`, or against the current state when `to` is omitted. Unchanged slots are left out." + access)
+		diff.ExtraQueryParams = []openapi.QueryParam{
+			{Name: "from", Type: "integer", Required: true, Description: "Revision number on the left side."},
+			{Name: "to", Type: "integer", Description: "Revision number on the right side; omit for the carrier's current state."},
+		}
+		register(diff)
+
+		register(numberParam(openapi.NewRoute(http.MethodGet, base+"/{number}", "get"+id+"Revision", "Get one template revision of a "+noun, tag).
+			WithIDParam("id", true).
+			WithResponse(contracts.TemplateRevisionDetail{}).
+			WithDescription("The revision with its raw snapshot and the `editor` view to load into the edit form." + access)))
+
+		register(numberParam(openapi.NewRoute(http.MethodPost, base+"/{number}/label", "label"+id+"Revision", "Set or clear a template revision's label", tag).
+			WithIDParam("id", true).
+			WithRequest(query_models.TemplateRevisionLabelRequest{}).
+			WithResponse(contracts.TemplateRevisionSummary{}).
+			WithDescription("The label is the only mutable part of a revision; at most 200 characters, empty clears it." + access)))
+
+		register(numberParam(openapi.NewRoute(http.MethodPost, base+"/{number}/restore", "restore"+id+"Revision", "Restore a "+noun+"'s template revision", tag).
+			WithIDParam("id", true).
+			WithRequest(query_models.TemplateRevisionRestoreRequest{}).
+			WithResponse(contracts.TemplateRevisionSummary{}).
+			WithDescription("Saves the revision (or one slot of it) as the current templates and records a new revision with source `restore`; later revisions are kept. Runs the ordinary save validation and is refused with 400, writing nothing, when the revision no longer validates." + access)))
+	}
 }

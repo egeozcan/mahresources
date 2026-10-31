@@ -109,7 +109,7 @@ func newPostgresOwnershipFixture(t *testing.T, concurrency int) (*MahresourcesCo
 	db, dsn := pgContainer.CreateTestDBWithDSN(t)
 	if err := db.AutoMigrate(
 		&models.Resource{}, &models.ResourceVersion{}, &models.ResourceCategory{},
-		&models.Series{}, &models.Tag{}, &models.Group{}, &models.Note{}, &models.NoteType{},
+		&models.Series{}, &models.Tag{}, &models.Group{}, &models.Note{}, &models.NoteType{}, &models.TemplateRevision{},
 		&models.Category{}, &models.Preview{}, &models.ImageHash{}, &models.GroupRelation{},
 		&models.GroupRelationType{}, &models.NoteBlock{}, &models.User{}, &models.LogEntry{},
 		&models.PluginKV{}, &models.PluginState{}, &models.RuntimeSetting{},

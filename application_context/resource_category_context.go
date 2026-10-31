@@ -109,8 +109,16 @@ func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.Resou
 		resourceCategory.SectionConfig = types.JSON(query.SectionConfig)
 	}
 
-	if err := ctx.db.Create(&resourceCategory).Error; err != nil {
-		return nil, friendlyUniqueError("resource category", err)
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&resourceCategory).Error; err != nil {
+			return friendlyUniqueError("resource category", err)
+		}
+		_, err := ctx.recordTemplateRevision(tx, models.RevisionKindCreate, models.TemplateCarrierResourceCategory, resourceCategory.ID,
+			nil, models.NewTemplateSnapshot(models.TemplateCarrierResourceCategory, &resourceCategory), query.RevisionApplied)
+		return err
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	ctx.Logger().Info(models.LogActionCreate, "resourceCategory", &resourceCategory.ID, resourceCategory.Name, "Created resource category", nil)
@@ -123,11 +131,6 @@ func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.Resou
 	if err := ctx.requireTaxonomyRole("editing a resource category"); err != nil {
 		return nil, err
 	}
-	var resourceCategory models.ResourceCategory
-	if err := ctx.db.First(&resourceCategory, query.ID).Error; err != nil {
-		return nil, err
-	}
-
 	// Findings 17/93.
 	if err := validateCategoryMetadataIndexes(query.MetadataIndexes, "resource"); err != nil {
 		return nil, err
@@ -140,6 +143,35 @@ func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.Resou
 		return nil, err
 	}
 
+	var resourceCategory models.ResourceCategory
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		// Lock first, then read the pre-save state under the lock.
+		if err := lockTemplateCarrier(tx, &resourceCategory, query.ID); err != nil {
+			return err
+		}
+		before := models.NewTemplateSnapshot(models.TemplateCarrierResourceCategory, &resourceCategory)
+		applyResourceCategoryEditor(&resourceCategory, query)
+		if err := tx.Save(&resourceCategory).Error; err != nil {
+			return friendlyUniqueError("resource category", err)
+		}
+		_, err := ctx.recordTemplateRevision(tx, models.RevisionKindUpdate, models.TemplateCarrierResourceCategory, resourceCategory.ID,
+			before, models.NewTemplateSnapshot(models.TemplateCarrierResourceCategory, &resourceCategory), query.RevisionApplied)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	ctx.Logger().Info(models.LogActionUpdate, "resourceCategory", &resourceCategory.ID, resourceCategory.Name, "Updated resource category", nil)
+
+	ctx.InvalidateSearchCacheByType(EntityTypeResourceCategory)
+	return &resourceCategory, nil
+}
+
+// applyResourceCategoryEditor maps editor input onto the loaded resource
+// category. An empty SectionConfig means "keep the current one", which is why a
+// restore does not use it: it applies an exact target state instead.
+func applyResourceCategoryEditor(resourceCategory *models.ResourceCategory, query *query_models.ResourceCategoryEditor) {
 	if strings.TrimSpace(query.Name) != "" {
 		resourceCategory.Name = query.Name
 	}
@@ -179,15 +211,6 @@ func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.Resou
 	if query.SectionConfig != "" {
 		resourceCategory.SectionConfig = types.JSON(query.SectionConfig)
 	}
-
-	if err := ctx.db.Save(&resourceCategory).Error; err != nil {
-		return nil, friendlyUniqueError("resource category", err)
-	}
-
-	ctx.Logger().Info(models.LogActionUpdate, "resourceCategory", &resourceCategory.ID, resourceCategory.Name, "Updated resource category", nil)
-
-	ctx.InvalidateSearchCacheByType(EntityTypeResourceCategory)
-	return &resourceCategory, nil
 }
 
 func (ctx *MahresourcesContext) DeleteResourceCategory(resourceCategoryId uint) error {
@@ -206,6 +229,14 @@ func (ctx *MahresourcesContext) DeleteResourceCategory(resourceCategoryId uint) 
 
 	// Wrap in a transaction so that if the reassignment fails, nothing changes.
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		var locked models.ResourceCategory
+		if err := lockTemplateCarrier(tx, &locked, resourceCategoryId); err != nil {
+			return err
+		}
+		if err := models.DeleteTemplateRevisions(tx, models.TemplateCarrierResourceCategory, resourceCategoryId); err != nil {
+			return err
+		}
+
 		// Reassign resources to the default category instead of setting NULL.
 		// Done explicitly since SQLite FK constraints don't fire reliably.
 		if err := tx.Model(&models.Resource{}).Where("resource_category_id = ?", resourceCategoryId).Update("resource_category_id", ctx.DefaultResourceCategoryID).Error; err != nil {

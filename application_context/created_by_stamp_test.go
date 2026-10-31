@@ -33,7 +33,7 @@ func newStampTestContext(t *testing.T, authEnabled bool) *MahresourcesContext {
 		&models.Tag{},
 		&models.Category{},
 		&models.ResourceCategory{},
-		&models.NoteType{},
+		&models.NoteType{}, &models.TemplateRevision{},
 		&models.SavedMRQLQuery{},
 		&models.TemplatePartial{},
 		&models.Group{},

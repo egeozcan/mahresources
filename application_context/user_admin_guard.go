@@ -30,6 +30,8 @@ func stampedModels() []any {
 		&models.GroupRelationType{},
 		&models.ResourceVersion{},
 		&models.TemplatePartial{},
+		// A Template Revision outlives its author: it survives with a NULL creator.
+		&models.TemplateRevision{},
 		// Not content, but it carries the same column and for the same reason: a
 		// deleted user must not leave a dangling id behind on their download
 		// history. The rows survive with a NULL creator, which the visibility

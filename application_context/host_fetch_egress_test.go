@@ -46,7 +46,7 @@ func newHostFetchContext(t *testing.T, allowPrivate ...string) *MahresourcesCont
 	}
 	if err := db.AutoMigrate(
 		&models.Resource{}, &models.Note{}, &models.Tag{}, &models.Group{},
-		&models.Category{}, &models.NoteType{}, &models.ResourceCategory{},
+		&models.Category{}, &models.NoteType{}, &models.TemplateRevision{}, &models.ResourceCategory{},
 		&models.Series{}, &models.Preview{}, &models.LogEntry{},
 		&models.ResourceVersion{}, &models.NoteBlock{}, &models.User{}, &models.JobWriterEpoch{},
 	); err != nil {

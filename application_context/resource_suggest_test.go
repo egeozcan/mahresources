@@ -29,7 +29,7 @@ func newSuggestTestContext(t *testing.T) *MahresourcesContext {
 		sqlDB.SetMaxOpenConns(1)
 	}
 	if err := db.AutoMigrate(
-		&models.Category{}, &models.ResourceCategory{},
+		&models.Category{}, &models.TemplateRevision{}, &models.ResourceCategory{},
 		&models.Group{}, &models.Resource{}, &models.Note{},
 		&models.Tag{}, &models.ResourceSimilarity{},
 		// GetResource preloads clause.Associations, so every first-level

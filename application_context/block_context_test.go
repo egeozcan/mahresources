@@ -31,7 +31,7 @@ func createBlockTestContext(t *testing.T) *MahresourcesContext {
 		&models.Tag{},
 		&models.Group{},
 		&models.Category{},
-		&models.NoteType{},
+		&models.NoteType{}, &models.TemplateRevision{},
 		&models.Preview{},
 		&models.GroupRelation{},
 		&models.GroupRelationType{},

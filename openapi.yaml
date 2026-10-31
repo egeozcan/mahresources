@@ -262,6 +262,10 @@ components:
                     type: string
                 SectionConfig:
                     type: string
+                revisionApplied:
+                    items:
+                        type: string
+                    type: array
             type: object
         CategoryPartial:
             properties:
@@ -373,6 +377,15 @@ components:
             required:
                 - ok
             type: object
+        DiffHunkPartial:
+            properties:
+                lines:
+                    items:
+                        type: string
+                    type: array
+                op:
+                    type: string
+            type: object
         EntityIdQuery:
             properties:
                 ID:
@@ -430,6 +443,11 @@ components:
         EntityPickerResultPartial:
             type: object
         EntityPickerStylePartial:
+            type: object
+        ErrorResponse:
+            properties:
+                error:
+                    type: string
             type: object
         ExportEstimate:
             properties:
@@ -493,6 +511,15 @@ components:
                     type: boolean
                 subtree:
                     type: boolean
+            type: object
+        FieldDiffPartial:
+            properties:
+                field:
+                    type: string
+                hunks:
+                    items:
+                        $ref: '#/components/schemas/DiffHunkPartial'
+                    type: array
             type: object
         GlobalSearchQuery:
             properties:
@@ -1932,6 +1959,10 @@ components:
                     type: string
                 SectionConfig:
                     type: string
+                revisionApplied:
+                    items:
+                        type: string
+                    type: array
             type: object
         NoteTypePartial:
             properties:
@@ -2355,6 +2386,10 @@ components:
                     type: string
                 SectionConfig:
                     type: string
+                revisionApplied:
+                    items:
+                        type: string
+                    type: array
             type: object
         ResourceCategoryPartial:
             properties:
@@ -2937,6 +2972,15 @@ components:
                     nullable: true
                     type: string
             type: object
+        SlotDiffPartial:
+            properties:
+                fields:
+                    items:
+                        $ref: '#/components/schemas/FieldDiffPartial'
+                    type: array
+                slot:
+                    type: string
+            type: object
         SuggestedTagPartial:
             properties:
                 ID:
@@ -3075,6 +3119,139 @@ components:
                 Description:
                     type: string
                 Name:
+                    type: string
+            type: object
+        TemplateRevisionDetail:
+            properties:
+                applied:
+                    items:
+                        type: string
+                    type: array
+                carrierId:
+                    type: integer
+                carrierType:
+                    type: string
+                changedSlots:
+                    items:
+                        type: string
+                    type: array
+                createdAt:
+                    format: date-time
+                    readOnly: true
+                    type: string
+                createdByUserId:
+                    nullable: true
+                    type: integer
+                editor:
+                    additionalProperties: {}
+                    type: object
+                id:
+                    type: integer
+                label:
+                    type: string
+                number:
+                    type: integer
+                restoredFrom:
+                    nullable: true
+                    type: integer
+                snapshot:
+                    additionalProperties: {}
+                    type: object
+                source:
+                    type: string
+            type: object
+        TemplateRevisionDiff:
+            properties:
+                carrierId:
+                    type: integer
+                carrierType:
+                    type: string
+                from:
+                    type: integer
+                slots:
+                    items:
+                        $ref: '#/components/schemas/SlotDiffPartial'
+                    type: array
+                to:
+                    nullable: true
+                    type: integer
+            type: object
+        TemplateRevisionLabelRequest:
+            properties:
+                label:
+                    type: string
+            type: object
+        TemplateRevisionRestoreRequest:
+            properties:
+                includeCss:
+                    nullable: true
+                    type: boolean
+                slot:
+                    type: string
+            type: object
+        TemplateRevisionSummary:
+            properties:
+                applied:
+                    items:
+                        type: string
+                    type: array
+                carrierId:
+                    type: integer
+                carrierType:
+                    type: string
+                changedSlots:
+                    items:
+                        type: string
+                    type: array
+                createdAt:
+                    format: date-time
+                    readOnly: true
+                    type: string
+                createdByUserId:
+                    nullable: true
+                    type: integer
+                id:
+                    type: integer
+                label:
+                    type: string
+                number:
+                    type: integer
+                restoredFrom:
+                    nullable: true
+                    type: integer
+                source:
+                    type: string
+            type: object
+        TemplateRevisionSummaryPartial:
+            properties:
+                applied:
+                    items:
+                        type: string
+                    type: array
+                carrierId:
+                    type: integer
+                carrierType:
+                    type: string
+                changedSlots:
+                    items:
+                        type: string
+                    type: array
+                createdAt:
+                    format: date-time
+                    type: string
+                createdByUserId:
+                    nullable: true
+                    type: integer
+                id:
+                    type: integer
+                label:
+                    type: string
+                number:
+                    type: integer
+                restoredFrom:
+                    nullable: true
+                    type: integer
+                source:
                     type: string
             type: object
         TimelineBucketPartial:
@@ -4172,6 +4349,215 @@ paths:
             summary: Preview a custom template slot
             tags:
                 - shortcodes
+    /v1/category/revisions:
+        get:
+            description: Newest first, without snapshot content. Needs the carrier's edit capability, not just read access.
+            operationId: listCategoryRevisions
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/TemplateRevisionSummaryPartial'
+                                type: array
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: List a category's template revisions
+            tags:
+                - categories
+    /v1/category/revisions/{number}:
+        get:
+            description: The revision with its raw snapshot and the `editor` view to load into the edit form. Needs the carrier's edit capability, not just read access.
+            operationId: getCategoryRevision
+            parameters:
+                - description: 'The revision''s number within its carrier (#1, #2, ...).'
+                  in: path
+                  name: number
+                  required: true
+                  schema:
+                    type: integer
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TemplateRevisionDetail'
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Get one template revision of a category
+            tags:
+                - categories
+    /v1/category/revisions/{number}/label:
+        post:
+            description: The label is the only mutable part of a revision; at most 200 characters, empty clears it. Needs the carrier's edit capability, not just read access.
+            operationId: labelCategoryRevision
+            parameters:
+                - description: 'The revision''s number within its carrier (#1, #2, ...).'
+                  in: path
+                  name: number
+                  required: true
+                  schema:
+                    type: integer
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/TemplateRevisionLabelRequest'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/TemplateRevisionLabelRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TemplateRevisionSummary'
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Set or clear a template revision's label
+            tags:
+                - categories
+    /v1/category/revisions/{number}/restore:
+        post:
+            description: Saves the revision (or one slot of it) as the current templates and records a new revision with source `restore`; later revisions are kept. Runs the ordinary save validation and is refused with 400, writing nothing, when the revision no longer validates. Needs the carrier's edit capability, not just read access.
+            operationId: restoreCategoryRevision
+            parameters:
+                - description: 'The revision''s number within its carrier (#1, #2, ...).'
+                  in: path
+                  name: number
+                  required: true
+                  schema:
+                    type: integer
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/TemplateRevisionRestoreRequest'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/TemplateRevisionRestoreRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TemplateRevisionSummary'
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Restore a category's template revision
+            tags:
+                - categories
+    /v1/category/revisions/diff:
+        get:
+            description: Slot-grouped line diff of revision `from` against revision `to`, or against the current state when `to` is omitted. Unchanged slots are left out. Needs the carrier's edit capability, not just read access.
+            operationId: diffCategoryRevisions
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+                - description: Revision number on the left side.
+                  in: query
+                  name: from
+                  required: true
+                  schema:
+                    type: integer
+                - description: Revision number on the right side; omit for the carrier's current state.
+                  in: query
+                  name: to
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TemplateRevisionDiff'
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Diff two template revisions of a category
+            tags:
+                - categories
     /v1/download/cancel:
         post:
             deprecated: true
@@ -9621,6 +10007,215 @@ paths:
             summary: Preview a custom template slot
             tags:
                 - shortcodes
+    /v1/noteType/revisions:
+        get:
+            description: Newest first, without snapshot content. Needs the carrier's edit capability, not just read access.
+            operationId: listNoteTypeRevisions
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/TemplateRevisionSummaryPartial'
+                                type: array
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: List a note type's template revisions
+            tags:
+                - notes
+    /v1/noteType/revisions/{number}:
+        get:
+            description: The revision with its raw snapshot and the `editor` view to load into the edit form. Needs the carrier's edit capability, not just read access.
+            operationId: getNoteTypeRevision
+            parameters:
+                - description: 'The revision''s number within its carrier (#1, #2, ...).'
+                  in: path
+                  name: number
+                  required: true
+                  schema:
+                    type: integer
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TemplateRevisionDetail'
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Get one template revision of a note type
+            tags:
+                - notes
+    /v1/noteType/revisions/{number}/label:
+        post:
+            description: The label is the only mutable part of a revision; at most 200 characters, empty clears it. Needs the carrier's edit capability, not just read access.
+            operationId: labelNoteTypeRevision
+            parameters:
+                - description: 'The revision''s number within its carrier (#1, #2, ...).'
+                  in: path
+                  name: number
+                  required: true
+                  schema:
+                    type: integer
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/TemplateRevisionLabelRequest'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/TemplateRevisionLabelRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TemplateRevisionSummary'
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Set or clear a template revision's label
+            tags:
+                - notes
+    /v1/noteType/revisions/{number}/restore:
+        post:
+            description: Saves the revision (or one slot of it) as the current templates and records a new revision with source `restore`; later revisions are kept. Runs the ordinary save validation and is refused with 400, writing nothing, when the revision no longer validates. Needs the carrier's edit capability, not just read access.
+            operationId: restoreNoteTypeRevision
+            parameters:
+                - description: 'The revision''s number within its carrier (#1, #2, ...).'
+                  in: path
+                  name: number
+                  required: true
+                  schema:
+                    type: integer
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/TemplateRevisionRestoreRequest'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/TemplateRevisionRestoreRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TemplateRevisionSummary'
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Restore a note type's template revision
+            tags:
+                - notes
+    /v1/noteType/revisions/diff:
+        get:
+            description: Slot-grouped line diff of revision `from` against revision `to`, or against the current state when `to` is omitted. Unchanged slots are left out. Needs the carrier's edit capability, not just read access.
+            operationId: diffNoteTypeRevisions
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+                - description: Revision number on the left side.
+                  in: query
+                  name: from
+                  required: true
+                  schema:
+                    type: integer
+                - description: Revision number on the right side; omit for the carrier's current state.
+                  in: query
+                  name: to
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TemplateRevisionDiff'
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Diff two template revisions of a note type
+            tags:
+                - notes
     /v1/notes:
         get:
             description: Get all notes, paginated, with optional filters.
@@ -12128,6 +12723,215 @@ paths:
             summary: Preview a custom template slot
             tags:
                 - shortcodes
+    /v1/resourceCategory/revisions:
+        get:
+            description: Newest first, without snapshot content. Needs the carrier's edit capability, not just read access.
+            operationId: listResourceCategoryRevisions
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/TemplateRevisionSummaryPartial'
+                                type: array
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: List a resource category's template revisions
+            tags:
+                - resourceCategories
+    /v1/resourceCategory/revisions/{number}:
+        get:
+            description: The revision with its raw snapshot and the `editor` view to load into the edit form. Needs the carrier's edit capability, not just read access.
+            operationId: getResourceCategoryRevision
+            parameters:
+                - description: 'The revision''s number within its carrier (#1, #2, ...).'
+                  in: path
+                  name: number
+                  required: true
+                  schema:
+                    type: integer
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TemplateRevisionDetail'
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Get one template revision of a resource category
+            tags:
+                - resourceCategories
+    /v1/resourceCategory/revisions/{number}/label:
+        post:
+            description: The label is the only mutable part of a revision; at most 200 characters, empty clears it. Needs the carrier's edit capability, not just read access.
+            operationId: labelResourceCategoryRevision
+            parameters:
+                - description: 'The revision''s number within its carrier (#1, #2, ...).'
+                  in: path
+                  name: number
+                  required: true
+                  schema:
+                    type: integer
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/TemplateRevisionLabelRequest'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/TemplateRevisionLabelRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TemplateRevisionSummary'
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Set or clear a template revision's label
+            tags:
+                - resourceCategories
+    /v1/resourceCategory/revisions/{number}/restore:
+        post:
+            description: Saves the revision (or one slot of it) as the current templates and records a new revision with source `restore`; later revisions are kept. Runs the ordinary save validation and is refused with 400, writing nothing, when the revision no longer validates. Needs the carrier's edit capability, not just read access.
+            operationId: restoreResourceCategoryRevision
+            parameters:
+                - description: 'The revision''s number within its carrier (#1, #2, ...).'
+                  in: path
+                  name: number
+                  required: true
+                  schema:
+                    type: integer
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/TemplateRevisionRestoreRequest'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/TemplateRevisionRestoreRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TemplateRevisionSummary'
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Restore a resource category's template revision
+            tags:
+                - resourceCategories
+    /v1/resourceCategory/revisions/diff:
+        get:
+            description: Slot-grouped line diff of revision `from` against revision `to`, or against the current state when `to` is omitted. Unchanged slots are left out. Needs the carrier's edit capability, not just read access.
+            operationId: diffResourceCategoryRevisions
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+                - description: Revision number on the left side.
+                  in: query
+                  name: from
+                  required: true
+                  schema:
+                    type: integer
+                - description: Revision number on the right side; omit for the carrier's current state.
+                  in: query
+                  name: to
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TemplateRevisionDiff'
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: The caller's role lacks the carrier's edit capability
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Diff two template revisions of a resource category
+            tags:
+                - resourceCategories
     /v1/resources:
         get:
             operationId: listResources

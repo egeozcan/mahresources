@@ -58,7 +58,7 @@ func newPostgresPluginContext(t *testing.T, sources map[string]string) *Mahresou
 	db, dsn := pgContainer.CreateTestDBWithDSN(t)
 	if err := db.AutoMigrate(
 		&models.Resource{}, &models.Note{}, &models.Tag{}, &models.Group{},
-		&models.Category{}, &models.NoteType{}, &models.ResourceCategory{},
+		&models.Category{}, &models.NoteType{}, &models.TemplateRevision{}, &models.ResourceCategory{},
 		&models.Series{}, &models.Preview{}, &models.GroupRelation{},
 		&models.GroupRelationType{}, &models.ImageHash{}, &models.ResourceSimilarity{},
 		&models.ResourceVersion{}, &models.NoteBlock{}, &models.LogEntry{},

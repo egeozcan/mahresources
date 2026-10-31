@@ -62,6 +62,9 @@ func (a *pluginDBAdapter) boundContext(inv *plugin_system.Invocation) *Mahresour
 		bound = &clone
 	}
 	bound.pluginInvocation = inv
+	// Set after the bind, on both branches: WithPrincipal builds its context from
+	// the adapter's, which carries no source of its own.
+	bound.revisionSource = models.RevisionSourcePlugin
 	if inv != nil {
 		// pluginFetch is set for EVERY plugin invocation, not only those
 		// carrying a policy. Setting it alongside the policy made it
