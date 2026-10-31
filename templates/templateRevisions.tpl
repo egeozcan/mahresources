@@ -55,6 +55,7 @@
                                         <input type="text" maxlength="200" x-model="labelDraft"
                                                :id="'revision-label-input-' + rev.number" :data-label-input="rev.number"
                                                :data-testid="'revision-label-input-' + rev.number"
+                                               :readonly="savingLabel" :aria-busy="savingLabel.toString()"
                                                class="w-48 rounded-md border-stone-300 text-sm focus:border-amber-500 focus:ring-amber-500">
                                         <button type="submit" :disabled="savingLabel" :data-testid="'revision-label-save-' + rev.number"
                                                 class="inline-flex items-center px-2 py-1 text-xs font-mono font-medium text-white bg-amber-700 border border-transparent rounded-md hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 disabled:opacity-40 cursor-pointer">Save</button>

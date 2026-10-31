@@ -375,10 +375,90 @@ test.describe('Template Revisions history', () => {
     expect(state).toEqual(resolved);
   });
 
-  test('a revision that cannot be loaded says so', async ({ page, apiClient }) => {
-    const cat = await apiClient.createCategory(`Rev Missing ${Date.now()}`);
-    await page.goto(`/category/edit?id=${cat.ID}&loadRevision=99`);
-    await expect(page.getByTestId('revision-load-notice')).toContainText('Could not load revision #99');
-    await expect(page.locator('input[name="revisionApplied"]')).toHaveCount(0);
+  for (const failure of ['404', '403', 'abort', 'css-companion'] as const) {
+    test(`a load that fails (${failure}) unlocks the form and says so`, async ({ page, apiClient }) => {
+      const cat = await apiClient.createCategory(`Rev Fail ${failure} ${Date.now()}`, undefined, { CustomHeader: '<p>x</p>' });
+      let url = `/category/edit?id=${cat.ID}&loadRevision=1`;
+      let message = 'Could not load revision #1';
+      if (failure === '404') url = `/category/edit?id=${cat.ID}&loadRevision=99`;
+      if (failure === '404') message = 'Could not load revision #99';
+      if (failure === 'css-companion') {
+        url += '&slot=CustomHeaderCSS';
+        message = 'Could not load CustomHeaderCSS from revision #1';
+      }
+      if (failure === '403') {
+        await page.route('**/v1/category/revisions/1?*', (route) => route.fulfill({ status: 403, contentType: 'application/json', body: '{"error":"insufficient permissions"}' }));
+      }
+      if (failure === 'abort') {
+        await page.route('**/v1/category/revisions/1?*', (route) => route.abort());
+      }
+      await page.goto(url);
+      const notice = page.getByTestId('revision-load-notice');
+      await expect(notice).toContainText(message);
+      await expect(notice).toBeFocused();
+      const form = page.locator('form').first();
+      expect(await form.evaluate((f: HTMLFormElement) => f.inert)).toBe(false);
+      await expect(form).not.toHaveAttribute('aria-busy', 'true');
+      await expect(page.locator('input[name="revisionApplied"]')).toHaveCount(0);
+      // Editing works.
+      await page.locator('input[name="name"]').fill('still editable');
+      await expect(page.locator('input[name="name"]')).toHaveValue('still editable');
+    });
+  }
+
+  test('typing into the label input while its save is in flight is refused, not lost', async ({ page, apiClient }) => {
+    const cat = await apiClient.createCategory(`Rev Same Row ${Date.now()}`, undefined, { CustomHeader: '<p>x</p>' });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    await page.route(`**/v1/category/revisions/1/label?id=${cat.ID}`, async (route) => {
+      await gate;
+      await route.continue();
+    });
+    await page.goto(`/category/revisions?id=${cat.ID}`);
+    await page.getByTestId('revision-label-edit-1').click();
+    const input = page.getByTestId('revision-label-input-1');
+    await input.fill('saved');
+    await input.press('Enter');
+    await expect(input).toHaveJSProperty('readOnly', true);
+    await expect(page.getByTestId('revisions-status')).toContainText('Saving the label of revision 1');
+    await input.focus();
+    await page.keyboard.type('lost?');
+    await expect(input).toHaveValue('saved');
+    release();
+    await expect(page.getByTestId('revision-label-1')).toHaveText('saved');
+  });
+
+  test('a diff body that arrives after the selection changed is not committed', async ({ page, apiClient }) => {
+    const name = `Rev Stale Body ${Date.now()}`;
+    const cat = await apiClient.createCategory(name, undefined, { CustomHeader: '<p>a</p>' });
+    await postForm(page, '/v1/category', { ID: String(cat.ID), name, CustomHeader: '<p>b</p>' });
+    await postForm(page, '/v1/category', { ID: String(cat.ID), name, CustomSidebar: '<aside>s</aside>' });
+    // Headers of the first diff response arrive at once; its body waits for the test.
+    await page.addInitScript(() => {
+      const w = window as unknown as { __release?: () => void; __held?: boolean };
+      const gate = new Promise<void>((resolve) => { w.__release = resolve; });
+      const real = window.fetch.bind(window);
+      w.__held = false;
+      window.fetch = async (input, init) => {
+        const resp = await real(input, init);
+        const url = typeof input === 'string' ? input : (input as Request).url;
+        if (url.includes('/revisions/diff') && url.includes('to=2') && !w.__held) {
+          w.__held = true;
+          const json = resp.json.bind(resp);
+          resp.json = async () => { await gate; return json(); };
+        }
+        return resp;
+      };
+    });
+    await page.goto(`/category/revisions?id=${cat.ID}`);
+    await expect(page.getByTestId('revision-row-3')).toBeVisible();
+    await page.getByTestId('revision-from').selectOption('1');
+    await page.getByTestId('revision-to').selectOption('2'); // held: would show only the header change
+    await page.getByTestId('revision-to').selectOption('3'); // current answer
+    await expect(page.getByTestId('revision-diff-slot-CustomSidebar')).toBeVisible();
+    await page.evaluate(() => (window as unknown as { __release: () => void }).__release());
+    await page.waitForTimeout(500);
+    await expect(page.getByTestId('revision-diff-heading')).toContainText('#1 to revision #3');
+    await expect(page.getByTestId('revision-diff-slot-CustomSidebar')).toBeVisible();
   });
 });

@@ -292,6 +292,7 @@ export function templateRevisions({ carrierType, id, apiPrefix, editUrl } = {}) 
     async saveLabel(rev) {
       if (this.savingLabel) return;
       this.savingLabel = true;
+      this.status = `Saving the label of revision ${rev.number}...`;
       const session = this._labelSession;
       // Only the edit that submitted may close the form and move focus.
       const stillMine = () => session === this._labelSession && this.editingLabel === rev.number;

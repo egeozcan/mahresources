@@ -520,6 +520,8 @@ export function templateBundle({ carrier } = {}) {
     // slotFields is the editor keys one slot covers: its field and, when asked,
     // its CSS companion. [] when the revision has no such slot.
     slotFields(editor, slot, includeCss) {
+      // A CSS companion is not a slot of its own: it travels with its primary.
+      if (slot.endsWith('CSS') && slot !== 'CustomCSS') return [];
       if (!Object.prototype.hasOwnProperty.call(editor, slot)) return [];
       const fields = [slot];
       const css = `${slot}CSS`;
