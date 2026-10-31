@@ -70,9 +70,9 @@ export function sectionLabel(field) {
 
 // Carrier -> display label + list endpoint used to populate the "Copy from" picker.
 const CARRIERS = {
-  category: { label: 'Category', list: '/v1/categories' },
-  resourceCategory: { label: 'Resource Category', list: '/v1/resourceCategories' },
-  noteType: { label: 'Note Type', list: '/v1/note/noteTypes' },
+  category: { label: 'Category', list: '/v1/categories', revisions: '/v1/category/revisions' },
+  resourceCategory: { label: 'Resource Category', list: '/v1/resourceCategories', revisions: '/v1/resourceCategory/revisions' },
+  noteType: { label: 'Note Type', list: '/v1/note/noteTypes', revisions: '/v1/noteType/revisions' },
 };
 
 const BUNDLE_SCHEMA_VERSION = 1;
@@ -140,12 +140,24 @@ export function templateBundle({ carrier } = {}) {
     // The send was refused with 409: what would be sent changed after review.
     groundingChanged: false,
     _generationRequestId: 0,
+    // What this form applied before the save, posted as revisionApplied so the
+    // Template Revision it records says where the content came from.
+    appliedEntries: [],
+    // The "Loaded revision #N" notice; empty when nothing was loaded.
+    revisionNotice: '',
+    revisionNoticeKind: 'info',
     draftSegments,
     draftWarnings,
 
     async init() {
       this.sections = this.sectionOptions();
+      this.loadRevisionFromUrl();
       await Promise.all([this.loadSources(), this.loadPresets()]);
+    },
+
+    // recordApplied remembers one revisionApplied entry for the save.
+    recordApplied(entry) {
+      if (!this.appliedEntries.includes(entry)) this.appliedEntries = [...this.appliedEntries, entry];
     },
 
     // sectionOptions lists the sections the form can take: the carrier's slot
@@ -314,11 +326,11 @@ export function templateBundle({ carrier } = {}) {
     applyBundle(bundle) {
       if (!bundle || typeof bundle !== 'object') {
         this.notify('Not a valid template bundle.', 'warn');
-        return;
+        return false;
       }
       if (typeof bundle.schemaVersion === 'number' && bundle.schemaVersion > BUNDLE_SCHEMA_VERSION) {
         this.notify(`Bundle schema version ${bundle.schemaVersion} is newer than supported (${BUNDLE_SCHEMA_VERSION}).`, 'warn');
-        return;
+        return false;
       }
       const slots = bundle.slots || {};
       for (const [key, field] of Object.entries(SLOT_FIELDS)) {
@@ -336,6 +348,7 @@ export function templateBundle({ carrier } = {}) {
           'warn',
         );
       }
+      return true;
     },
 
     // ---- Copy from an existing category ------------------------------------
@@ -389,7 +402,7 @@ export function templateBundle({ carrier } = {}) {
       // Finding 154: copy clobbers exactly as hard as a preset does.
       const bundle = this.entityToBundle(obj, sourceCarrier);
       if (!await this.confirmOverwrite(`the template from "${obj.Name || 'the selected source'}"`, bundle)) return;
-      this.applyBundle(bundle);
+      if (this.applyBundle(bundle)) this.recordApplied(`copied:${sourceCarrier}:${id}`);
     },
 
     // ---- Export ------------------------------------------------------------
@@ -433,6 +446,129 @@ export function templateBundle({ carrier } = {}) {
       event.target.value = '';
     },
 
+    // ---- Load a Template Revision into the form ----------------------------
+
+    // loadRevisionFromUrl fills the form from ?loadRevision=<n>[&slot=<slot>
+    // &includeCss=0], which the History page links to. Nothing is saved: the
+    // user reviews the form and presses Save, and revisionApplied says so.
+    loadRevisionFromUrl() {
+      const params = new URLSearchParams(window.location.search);
+      const number = Number(params.get('loadRevision'));
+      const idInput = document.querySelector('form input[name="ID"]');
+      if (!Number.isInteger(number) || number < 1 || !idInput) return;
+      const slot = params.get('slot') || '';
+      const includeCss = params.get('includeCss') !== '0';
+      // A reload should show the saved state, not load the revision over edits.
+      params.delete('loadRevision');
+      params.delete('slot');
+      params.delete('includeCss');
+      const query = params.toString();
+      window.history.replaceState(null, '', window.location.pathname + (query ? `?${query}` : '') + window.location.hash);
+      this.loadRevision(idInput.value, number, slot, includeCss);
+    },
+
+    async loadRevision(carrierId, number, slot, includeCss) {
+      const what = slot ? `${slot} from revision #${number}` : `revision #${number}`;
+      try {
+        const resp = await fetch(`${CARRIERS[this.carrier].revisions}/${number}?id=${encodeURIComponent(carrierId)}`, { headers: { Accept: 'application/json' } });
+        if (!resp.ok) {
+          const body = await resp.json().catch(() => null);
+          this.announceRevision(`Could not load ${what}: ${(body && (body.error || body.Error)) || resp.status}`, 'warn');
+          return;
+        }
+        const revision = await resp.json();
+        const editor = revision.editor || {};
+        const fields = slot ? this.slotFields(editor, slot, includeCss) : Object.keys(editor);
+        if (!fields.length) {
+          this.announceRevision(`Could not load ${what}: this form has no such slot.`, 'warn');
+          return;
+        }
+        await this.whenEditorsReady();
+        for (const field of fields) this.setRevisionField(field, editor[field]);
+        this.recordApplied(slot ? `loaded:${number}:${slot}` : `loaded:${number}`);
+        this.announceRevision(`Loaded ${what}. Review the form, then save. Nothing is saved yet.`, 'info');
+      } catch (err) {
+        this.announceRevision(`Could not load ${what}: ${err.message || 'network error'}`, 'warn');
+      }
+    },
+
+    // slotFields is the editor keys one slot covers: its field and, when asked,
+    // its CSS companion. [] when the revision has no such slot.
+    slotFields(editor, slot, includeCss) {
+      if (!Object.prototype.hasOwnProperty.call(editor, slot)) return [];
+      const fields = [slot];
+      const css = `${slot}CSS`;
+      if (includeCss && Object.prototype.hasOwnProperty.call(editor, css)) fields.push(css);
+      return fields;
+    },
+
+    // setRevisionField writes one tracked field from a revision's editor payload.
+    // SectionConfig replaces the whole control state: the payload is already the
+    // server's resolved config, and merging it would keep stale keys (a merge of
+    // {"tags":false} over current defaults is not what the resolver produces).
+    setRevisionField(field, value) {
+      if (field === 'SectionConfig') {
+        this.replaceSectionConfig(value);
+        return;
+      }
+      const input = document.querySelector(`[name="${field}"][type="checkbox"]`);
+      if (input) {
+        input.checked = value === true;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        return;
+      }
+      const target = document.querySelector(`[name="${field}"]`);
+      if (target && target.tagName === 'TEXTAREA') {
+        // A plain textarea has no CodeMirror view; setEditor would look for one in
+        // whichever component happens to wrap it.
+        target.value = value || '';
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+        return;
+      }
+      this.setEditor(field, value);
+    },
+
+    replaceSectionConfig(jsonStr) {
+      const el = document.querySelector('[x-data^="sectionConfigForm"]');
+      if (!el || !window.Alpine) return;
+      let parsed;
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch {
+        this.announceRevision('The revision\'s section layout could not be read, so it was left as it is.', 'warn');
+        return;
+      }
+      if (!parsed || typeof parsed !== 'object') return;
+      const data = window.Alpine.$data(el);
+      if (data) data.config = parsed;
+    },
+
+    // whenEditorsReady waits for every CodeMirror editor on the form to exist;
+    // they mount after the page's load event, and a write before then is lost.
+    async whenEditorsReady() {
+      const deadline = Date.now() + 15000;
+      for (;;) {
+        const containers = [...document.querySelectorAll('[x-ref="editorContainer"]')];
+        if (containers.every((container) => container._cmReady)) {
+          await Promise.all(containers.map((container) => container._cmReady));
+          return;
+        }
+        if (Date.now() > deadline) return;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    },
+
+    // The notice takes focus: the person followed a link to get here, and this
+    // says what happened to the form.
+    announceRevision(text, kind) {
+      this.revisionNotice = text;
+      this.revisionNoticeKind = kind;
+      setTimeout(() => {
+        const notice = this.$refs && this.$refs.revisionNotice;
+        if (notice) notice.focus();
+      }, 0);
+    },
+
     // ---- Presets (work item 4) ---------------------------------------------
 
     async loadPresets() {
@@ -463,7 +599,7 @@ export function templateBundle({ carrier } = {}) {
       if (!preset) return;
       // Finding 154: this is the path the report reproduced on.
       if (!await this.confirmOverwrite(`the "${preset.name}" preset`, preset)) return;
-      this.applyBundle(preset);
+      if (this.applyBundle(preset)) this.recordApplied(`preset:${preset.name}`);
     },
 
     // ---- Whole-template generation -----------------------------------------
@@ -643,6 +779,7 @@ export function templateBundle({ carrier } = {}) {
         if (!confirmed || this.pendingDraft !== draft) return;
       }
       for (const field of fields) this.setEditor(field, draft.slots[field] || '');
+      this.recordApplied('generated');
       this.pendingDraft = null;
       this.notify(`Filled ${fields.length} slot(s) from your description. Review, then save.`, 'info');
       this._focusAfterPanelCloses();

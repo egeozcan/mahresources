@@ -3,6 +3,13 @@
           x-data="templateBundle({ carrier: '{{ carrier }}' })"
           data-testid="template-bundle-tools">
     <legend class="text-base font-semibold font-mono text-stone-800 px-2">Reuse &amp; Presets</legend>
+    {# What this form applied; each entry posts with the save as revisionApplied. #}
+    <template x-for="entry in appliedEntries" :key="entry">
+        <input type="hidden" name="revisionApplied" :value="entry">
+    </template>
+    <p x-show="revisionNotice" x-text="revisionNotice" role="status" tabindex="-1" x-ref="revisionNotice" data-testid="revision-load-notice"
+       class="border-l-4 border-t-4 p-3 text-sm focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-600"
+       :class="revisionNoticeKind === 'warn' ? 'border-red-700 bg-red-50 text-red-900' : 'border-green-700 bg-green-50 text-green-900'"></p>
     <p class="text-sm text-stone-600">Fill this form from an existing template, a preset, or an exported bundle. Nothing is saved until you submit.</p>
 
     <div class="space-y-4">
