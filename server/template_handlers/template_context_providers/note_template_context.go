@@ -497,6 +497,10 @@ func NoteTypeContextProvider(context NotePageContext) func(request *http.Request
 				Name: "Edit",
 				Url:  "/noteType/edit?id=" + strconv.Itoa(int(query.ID)),
 			},
+			"secondaryAction": template_entities.Entry{
+				Name: "History",
+				Url:  "/noteType/revisions?id=" + strconv.Itoa(int(query.ID)),
+			},
 			"deleteAction": template_entities.Entry{
 				Name: "Delete",
 				Url:  fmt.Sprintf("/v1/note/noteType/delete?Id=%v", noteType.ID),

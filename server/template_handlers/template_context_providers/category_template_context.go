@@ -141,6 +141,10 @@ func CategoryContextProvider(context CategoryPageContext) func(request *http.Req
 				Name: "Edit",
 				Url:  "/category/edit?id=" + strconv.Itoa(int(query.ID)),
 			},
+			"secondaryAction": template_entities.Entry{
+				Name: "History",
+				Url:  "/category/revisions?id=" + strconv.Itoa(int(query.ID)),
+			},
 			"deleteAction": template_entities.Entry{
 				Name:    "Delete",
 				Url:     "/v1/category/delete",

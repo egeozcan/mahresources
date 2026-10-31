@@ -10,6 +10,9 @@
     {% if category.ID %}
     <input type="hidden" value="{{ category.ID }}" name="ID">
     {% endif %}
+    {% if category.ID %}
+    <p class="text-sm"><a href="/category/revisions?id={{ category.ID }}" data-testid="template-history-link" class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700 rounded focus:outline-hidden focus:ring-2 focus:ring-amber-600">View template history</a></p>
+    {% endif %}
 
     {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=queryValues.name.0|default:category.Name required=true %}
     {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" value=queryValues.Description.0|default:category.Description shortcodes=true previewUrl="/v1/category/previewDescription" previewId=category.ID %}

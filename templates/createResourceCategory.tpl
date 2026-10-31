@@ -5,6 +5,9 @@
     {% if resourceCategory.ID %}
     <input type="hidden" value="{{ resourceCategory.ID }}" name="ID">
     {% endif %}
+    {% if resourceCategory.ID %}
+    <p class="text-sm"><a href="/resourceCategory/revisions?id={{ resourceCategory.ID }}" data-testid="template-history-link" class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700 rounded focus:outline-hidden focus:ring-2 focus:ring-amber-600">View template history</a></p>
+    {% endif %}
 
     {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=resourceCategory.Name required=true %}
     {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" value=resourceCategory.Description shortcodes=true previewUrl="/v1/resourceCategory/previewDescription" previewId=resourceCategory.ID %}

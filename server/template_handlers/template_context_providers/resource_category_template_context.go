@@ -131,6 +131,10 @@ func ResourceCategoryContextProvider(context ResourceCategoryPageContext) func(r
 				Name: "Edit",
 				Url:  "/resourceCategory/edit?id=" + strconv.Itoa(int(query.ID)),
 			},
+			"secondaryAction": template_entities.Entry{
+				Name: "History",
+				Url:  "/resourceCategory/revisions?id=" + strconv.Itoa(int(query.ID)),
+			},
 			"mainEntity":     resourceCategory,
 			"mainEntityType": "resourceCategory",
 		}

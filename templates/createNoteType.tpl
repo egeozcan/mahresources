@@ -10,6 +10,9 @@
     {% if noteType.ID %}
     <input type="hidden" value="{{ noteType.ID }}" name="ID">
     {% endif %}
+    {% if noteType.ID %}
+    <p class="text-sm"><a href="/noteType/revisions?id={{ noteType.ID }}" data-testid="template-history-link" class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700 rounded focus:outline-hidden focus:ring-2 focus:ring-amber-600">View template history</a></p>
+    {% endif %}
 
     {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=queryValues.name.0|default:noteType.Name required=true %}
     {% include "/partials/form/createFormMarkdownInput.tpl" with title="Description" name="Description" value=queryValues.Description.0|default:noteType.Description shortcodes=true previewUrl="/v1/noteType/previewDescription" previewId=noteType.ID %}
