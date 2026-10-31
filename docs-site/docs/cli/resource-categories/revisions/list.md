@@ -11,7 +11,10 @@ The table shows the revision NUMBER (#1, #2, ...), the SOURCE that
 recorded it (`create`, `form`, `api`, `cli`, `plugin`, `import`,
 `restore` or `baseline`), the slots it CHANGED compared with the
 previous revision, its LABEL, the USER ID and when it was CREATED. Pass
-`--json` for the full array, including the `applied` list.
+`--json` for the full array, including the `applied` list. With
+`--quiet` the output is the revision numbers, one per line, which are the
+numbers `show`, `diff`, `restore` and `label` take; it is not the revision
+`id`.
 
 ## Usage
 

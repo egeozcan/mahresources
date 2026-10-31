@@ -304,14 +304,109 @@ type diffHunk struct {
 	lines []string
 }
 
+// diffLine is one line of a flattened diff: op is ' ', '-' or '+'.
+type diffLine struct {
+	op        byte
+	text      string
+	noNewline bool // the side(s) this line ends has no terminating newline
+}
+
+// markLineTerminators handles the server splitting text on "\n": a side that
+// ends in a newline has a final empty token, which is the terminator and not a
+// line. It drops those tokens and flags the last line of a side that has no
+// newline. A shared last line whose sides differ in termination becomes a
+// delete and an insert, as unified diffs show it.
+func markLineTerminators(lines []diffLine) []diffLine {
+	oldLast, newLast := -1, -1
+	for i, l := range lines {
+		if l.op != '+' {
+			oldLast = i
+		}
+		if l.op != '-' {
+			newLast = i
+		}
+	}
+	oldTerm := oldLast >= 0 && lines[oldLast].text == ""
+	newTerm := newLast >= 0 && lines[newLast].text == ""
+	drop := map[int]bool{}
+	retag := map[int]byte{}
+	if oldTerm {
+		switch {
+		case lines[oldLast].op == '-' || (lines[oldLast].op == ' ' && oldLast == newLast):
+			drop[oldLast] = true
+		default: // an equal line the new side keeps as a real empty line
+			retag[oldLast] = '+'
+		}
+	}
+	if newTerm {
+		switch {
+		case lines[newLast].op == '+' || (lines[newLast].op == ' ' && oldLast == newLast):
+			drop[newLast] = true
+		default:
+			retag[newLast] = '-'
+		}
+	}
+	var out []diffLine
+	for i, l := range lines {
+		if drop[i] {
+			continue
+		}
+		if op, ok := retag[i]; ok {
+			l.op = op
+		}
+		out = append(out, l)
+	}
+	// Flag the unterminated last lines. Index again, since lines were dropped.
+	oldLast, newLast = -1, -1
+	for i, l := range out {
+		if l.op != '+' {
+			oldLast = i
+		}
+		if l.op != '-' {
+			newLast = i
+		}
+	}
+	if !oldTerm && oldLast >= 0 && !newTerm && newLast == oldLast && out[oldLast].op == ' ' {
+		out[oldLast].noNewline = true
+		return out
+	}
+	if !oldTerm && oldLast >= 0 {
+		out = splitSharedLast(out, oldLast, '-', &newLast)
+	}
+	if !newTerm && newLast >= 0 {
+		out = splitSharedLast(out, newLast, '+', nil)
+	}
+	return out
+}
+
+// splitSharedLast flags line i as unterminated for the side op names. A shared
+// line is first split into a delete and an insert so the flag attaches to one
+// side only.
+func splitSharedLast(lines []diffLine, i int, op byte, newLast *int) []diffLine {
+	if lines[i].op == ' ' {
+		del := diffLine{op: '-', text: lines[i].text}
+		ins := diffLine{op: '+', text: lines[i].text}
+		if op == '-' {
+			del.noNewline = true
+		} else {
+			ins.noNewline = true
+		}
+		out := append([]diffLine{}, lines[:i]...)
+		out = append(out, del, ins)
+		out = append(out, lines[i+1:]...)
+		if newLast != nil {
+			*newLast++
+		}
+		return out
+	}
+	lines[i].noNewline = true
+	return lines
+}
+
 // renderUnifiedDiff turns the server's hunks into unified-diff text with
 // `context` equal lines kept around each change and "@@ -a,b +c,d @@" headers.
 func renderUnifiedDiff(hunks []diffHunk, context int) string {
-	type line struct {
-		op   byte
-		text string
-	}
-	var lines []line
+	var lines []diffLine
 	for _, h := range hunks {
 		var op byte
 		switch h.op {
@@ -323,9 +418,10 @@ func renderUnifiedDiff(hunks []diffHunk, context int) string {
 			op = ' '
 		}
 		for _, t := range h.lines {
-			lines = append(lines, line{op, t})
+			lines = append(lines, diffLine{op: op, text: t})
 		}
 	}
+	lines = markLineTerminators(lines)
 	keep := make([]bool, len(lines))
 	for i, l := range lines {
 		if l.op == ' ' {
@@ -370,6 +466,9 @@ func renderUnifiedDiff(hunks []diffHunk, context int) string {
 			b.WriteByte(lines[k].op)
 			b.WriteString(lines[k].text)
 			b.WriteByte('\n')
+			if lines[k].noNewline {
+				b.WriteString("\\ No newline at end of file\n")
+			}
 		}
 		oldNo += oldN
 		newNo += newN

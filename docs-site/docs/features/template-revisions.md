@@ -51,7 +51,7 @@ A `baseline` revision carries the timestamp and user of the save that triggered 
 
 ### Carriers created without a revision
 
-Three creation paths write no revision. Each makes a carrier with empty or fixed templates, so nothing is lost, and the first edit records a `baseline` and then the new revision:
+Three creation paths write no revision. Each makes a carrier with empty or fixed templates, so nothing is lost, and the first save that changes a tracked field records a `baseline` and then the new revision:
 
 - the seeded Categories, Resource Categories and Note Types
 - the Category that a remote download creates by name
@@ -115,7 +115,7 @@ mr categories revisions diff --id 7 --from 2 --to 5
 
 There are two ways to bring an old state back.
 
-**Load into editor** is the way the UI restores. It opens the edit form with the whole revision, or with one slot, filled in but not saved, and shows a "Loaded revision #N" notice. A slot that has a CSS companion has an **Include its CSS** checkbox, ticked by default, on the History page. You review the form and save it like any edit, and the saved revision lists `loaded:<number>` or `loaded:<number>:<slot>` in its applied entries. Loading a revision replaces the form's section configuration with the server-resolved view, not a merge with what the form held.
+**Load into editor** is the way the UI restores. It opens the edit form with the whole revision, or with one slot, filled in but not saved, and shows a "Loaded revision #N" notice. A slot that has a CSS companion has an **Include its CSS** checkbox, ticked by default, on the History page. You review the form and save it like any edit, and the saved revision lists `loaded:<number>` or `loaded:<number>:<slot>` in its applied entries. Loading a whole revision, or the `SectionConfig` slot, replaces the form's section configuration with the server-resolved view, not a merge with what the form held. Loading any other single slot leaves the section configuration alone.
 
 **Restore** through the API or CLI saves directly:
 

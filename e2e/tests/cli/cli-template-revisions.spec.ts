@@ -56,6 +56,12 @@ for (const carrier of carriers) {
       expect(out[2]).toMatch(/^1\s+create/);
     });
 
+    test('--quiet prints revision numbers, not revision ids', async ({ cli }) => {
+      const list = revisions(cli, 'list') as Revision[];
+      const quiet = cli.runOrFail(carrier.plural, 'revisions', 'list', '--id', id, '--quiet').stdout.trim().split('\n');
+      expect(quiet).toEqual(list.map((r) => String(r.number)));
+    });
+
     test('an edit through the CLI records a cli revision for the changed slot', async ({ cli }) => {
       cli.runOrFail(carrier.singular, 'edit', '--id', id, '--custom-header', '<p>two</p>', '--custom-sidebar', '<p>side</p>');
       const list = revisions(cli, 'list') as Revision[];
