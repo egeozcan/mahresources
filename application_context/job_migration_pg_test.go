@@ -19,7 +19,7 @@ func TestJobMigrationPlaintextRetirementPostgresResumesAfterCrashMidScrub(t *tes
 	db, dsn := pgContainer.CreateTestDBWithDSN(t)
 	if err := db.AutoMigrate(
 		&models.Resource{}, &models.ResourceVersion{}, &models.ResourceCategory{},
-		&models.Series{}, &models.Tag{}, &models.Group{}, &models.Note{}, &models.NoteType{},
+		&models.Series{}, &models.Tag{}, &models.Group{}, &models.Note{}, &models.NoteType{}, &models.TemplateRevision{},
 		&models.Category{}, &models.Preview{}, &models.ImageHash{}, &models.GroupRelation{},
 		&models.GroupRelationType{}, &models.NoteBlock{}, &models.User{}, &models.LogEntry{},
 		&models.PluginKV{}, &models.PluginState{}, &models.RuntimeSetting{},
@@ -297,7 +297,7 @@ func newPostgresMigrationFilesystem() afero.Fs {
 func TestPostgresBlankPluginImportOutputEventSurvivesSecondVerification(t *testing.T) {
 	db, dsn := pgContainer.CreateTestDBWithDSN(t)
 	if err := db.AutoMigrate(
-		&models.Resource{}, &models.ResourceCategory{}, &models.PluginCommandRun{}, &models.PluginCommandImport{},
+		&models.Resource{}, &models.ResourceCategory{}, &models.TemplateRevision{}, &models.PluginCommandRun{}, &models.PluginCommandImport{},
 		&models.PluginCommandImportMap{}, &models.Job{}, &models.JobEvent{}, &models.JobEventSequence{},
 		&models.JobLink{}, &models.JobOutput{}, &models.JobReplayEnvelope{}, &models.JobLegacyHandle{},
 		&models.JobSourceMapping{},

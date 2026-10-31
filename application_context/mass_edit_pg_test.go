@@ -38,7 +38,7 @@ func newMassEditPGContextWithDSN(t *testing.T) (*MahresourcesContext, string) {
 	if err := db.AutoMigrate(
 		&models.Resource{}, &models.Group{}, &models.Tag{}, &models.Note{},
 		&models.Category{}, &models.ResourceCategory{}, &models.Series{},
-		&models.ResourceVersion{}, &models.Preview{}, &models.NoteType{},
+		&models.ResourceVersion{}, &models.Preview{}, &models.NoteType{}, &models.TemplateRevision{},
 		&models.GroupRelation{}, &models.GroupRelationType{}, &models.ImageHash{},
 		&models.ResourceSimilarity{}, &models.LogEntry{}, &models.NoteBlock{},
 		&models.PluginKV{}, &models.Query{},

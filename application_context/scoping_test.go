@@ -29,7 +29,7 @@ func newScopingTestContext(t *testing.T) *MahresourcesContext {
 		sqlDB.SetMaxOpenConns(1)
 	}
 	if err := db.AutoMigrate(
-		&models.Category{}, &models.ResourceCategory{},
+		&models.Category{}, &models.TemplateRevision{}, &models.ResourceCategory{},
 		&models.Group{}, &models.Resource{}, &models.Note{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)

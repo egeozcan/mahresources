@@ -20,7 +20,7 @@ func setupMRQLRenderDataTest(t *testing.T) (*MahresourcesContext, *gorm.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&models.Category{}, &models.ResourceCategory{}, &models.NoteType{}, &models.Group{}, &models.Resource{}, &models.Note{}); err != nil {
+	if err := db.AutoMigrate(&models.Category{}, &models.ResourceCategory{}, &models.NoteType{}, &models.TemplateRevision{}, &models.Group{}, &models.Resource{}, &models.Note{}); err != nil {
 		t.Fatal(err)
 	}
 	sqlDB, err := db.DB()

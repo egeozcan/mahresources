@@ -573,6 +573,7 @@ func main() {
 		&models.RuntimeSetting{},
 		&models.SavedMRQLQuery{},
 		&models.TemplatePartial{},
+		&models.TemplateRevision{}, // associationless: carrier_type + carrier_id, deleted with the carrier
 		&models.DownloadHistoryEntry{},
 		&models.ScheduledDownload{}, // no FK association; created_by_user_id is a scalar
 		// No FK association either; plugin_name/schedule_id is its own key and

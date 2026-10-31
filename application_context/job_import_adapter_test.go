@@ -42,7 +42,7 @@ func importTestContext(t *testing.T, name string) *MahresourcesContext {
 		t.Fatalf("open db: %v", err)
 	}
 	if err := db.AutoMigrate(
-		&models.ResourceCategory{}, &models.Group{}, &models.Resource{},
+		&models.ResourceCategory{}, &models.TemplateRevision{}, &models.Group{}, &models.Resource{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

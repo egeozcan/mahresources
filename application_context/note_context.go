@@ -507,19 +507,55 @@ func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteT
 	}
 
 	isNew := query.ID == 0
-	var noteType models.NoteType
-	if query.ID != 0 {
-		if err := ctx.db.First(&noteType, query.ID).Error; err != nil {
-			return nil, err
-		}
+	if isNew && strings.TrimSpace(query.Name) == "" {
+		return nil, errors.New("note type name must be non-empty")
 	}
 	if strings.TrimSpace(query.Name) != "" {
 		if err := ValidateEntityName(query.Name, "note type"); err != nil {
 			return nil, err
 		}
+	}
+
+	var noteType models.NoteType
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		kind := models.RevisionKindCreate
+		var before models.TemplateSnapshot
+		if !isNew {
+			// Lock first, then read the pre-save state under the lock.
+			if err := lockTemplateCarrier(tx, &noteType, query.ID); err != nil {
+				return err
+			}
+			kind = models.RevisionKindUpdate
+			before = models.NewTemplateSnapshot(models.TemplateCarrierNoteType, &noteType)
+		}
+		applyNoteTypeEditor(&noteType, query)
+		if err := tx.Save(&noteType).Error; err != nil {
+			return err
+		}
+		_, err := ctx.recordTemplateRevision(tx, kind, models.TemplateCarrierNoteType, noteType.ID,
+			before, models.NewTemplateSnapshot(models.TemplateCarrierNoteType, &noteType), query.RevisionApplied)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if isNew {
+		ctx.Logger().Info(models.LogActionCreate, "noteType", &noteType.ID, noteType.Name, "Created note type", nil)
+	} else {
+		ctx.Logger().Info(models.LogActionUpdate, "noteType", &noteType.ID, noteType.Name, "Updated note type", nil)
+	}
+
+	ctx.InvalidateSearchCacheByType(EntityTypeNoteType)
+	return &noteType, nil
+}
+
+// applyNoteTypeEditor maps editor input onto the loaded note type. An empty
+// SectionConfig means "keep the current one", which is why a restore does not
+// use it: it applies an exact target state instead.
+func applyNoteTypeEditor(noteType *models.NoteType, query *query_models.NoteTypeEditor) {
+	if strings.TrimSpace(query.Name) != "" {
 		noteType.Name = query.Name
-	} else if isNew {
-		return nil, errors.New("note type name must be non-empty")
 	}
 	noteType.Description = query.Description
 	noteType.CustomHeader = query.CustomHeader
@@ -551,18 +587,6 @@ func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteT
 	if query.SectionConfig != "" {
 		noteType.SectionConfig = types.JSON(query.SectionConfig)
 	}
-	if err := ctx.db.Save(&noteType).Error; err != nil {
-		return nil, err
-	}
-
-	if isNew {
-		ctx.Logger().Info(models.LogActionCreate, "noteType", &noteType.ID, noteType.Name, "Created note type", nil)
-	} else {
-		ctx.Logger().Info(models.LogActionUpdate, "noteType", &noteType.ID, noteType.Name, "Updated note type", nil)
-	}
-
-	ctx.InvalidateSearchCacheByType(EntityTypeNoteType)
-	return &noteType, nil
 }
 
 func (ctx *MahresourcesContext) DeleteNoteType(noteTypeId uint) error {
@@ -580,11 +604,20 @@ func (ctx *MahresourcesContext) DeleteNoteType(noteTypeId uint) error {
 	// is Notes, and deleting a type must SET NULL on notes (not cascade-delete them).
 	// Explicitly clear NoteTypeId since SQLite's PRAGMA foreign_keys is a no-op
 	// inside transactions, so FK constraints (OnDelete:SET NULL) don't fire reliably.
-	if err := ctx.db.Model(&models.Note{}).Where("note_type_id = ?", noteTypeId).Update("note_type_id", nil).Error; err != nil {
-		return err
-	}
-
-	err := ctx.db.Delete(&noteType).Error
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		// Take the carrier lock first, like a save does.
+		var locked models.NoteType
+		if err := lockTemplateCarrier(tx, &locked, noteTypeId); err != nil {
+			return err
+		}
+		if err := tx.Model(&models.Note{}).Where("note_type_id = ?", noteTypeId).Update("note_type_id", nil).Error; err != nil {
+			return err
+		}
+		if err := models.DeleteTemplateRevisions(tx, models.TemplateCarrierNoteType, noteTypeId); err != nil {
+			return err
+		}
+		return tx.Delete(&noteType).Error
+	})
 	if err == nil {
 		ctx.Logger().Info(models.LogActionDelete, "noteType", &noteTypeId, noteTypeName, "Deleted note type", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeNoteType)

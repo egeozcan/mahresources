@@ -30,6 +30,10 @@ type CategoryCreator struct {
 	MetaSchema                  string
 	MetadataIndexes             *string
 	SectionConfig               string
+	// RevisionApplied lists what the edit form applied before this save (a
+	// preset, AI generation, copy from another carrier, a loaded revision).
+	// The server keeps only the entries it recognises. See models.SanitizeRevisionApplied.
+	RevisionApplied []string `json:"revisionApplied,omitempty" schema:"revisionApplied"`
 }
 
 type CategoryEditor struct {

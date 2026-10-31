@@ -154,7 +154,7 @@ func setupDetectTestContext(t *testing.T) *MahresourcesContext {
 	dbName := fmt.Sprintf("file:%s?mode=memory&cache=private", t.Name())
 	db, err := gorm.Open(sqlite.Open(dbName), &gorm.Config{})
 	require.NoError(t, err)
-	err = db.AutoMigrate(&models.ResourceCategory{}, &models.Resource{}, &models.LogEntry{})
+	err = db.AutoMigrate(&models.ResourceCategory{}, &models.TemplateRevision{}, &models.Resource{}, &models.LogEntry{})
 	require.NoError(t, err)
 
 	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default"}
@@ -271,7 +271,7 @@ func setupLocalResourceDetectContext(t *testing.T) *MahresourcesContext {
 		&models.Series{},
 		&models.LogEntry{},
 		&models.Category{},
-		&models.NoteType{},
+		&models.NoteType{}, &models.TemplateRevision{},
 		&models.PluginKV{},
 	)
 	require.NoError(t, err)

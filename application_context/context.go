@@ -490,6 +490,13 @@ type MahresourcesContext struct {
 	// not survive the trip" — and those must not both mean "skip the layers".
 	pluginFetch bool
 
+	// revisionSource is where a Template Carrier save on this context came from
+	// (form, api, cli or plugin), recorded on the Template Revision it writes.
+	// WithRequest sets it from the request; the plugin adapter sets it when it
+	// binds a context. Empty means "api". Advisory provenance, never an
+	// authorization input.
+	revisionSource string
+
 	// deferredHooks is set only on a context inside a plugin transaction
 	// (RunInTransaction). While it is set, RunAfterPluginHooks queues rather
 	// than dispatches: an after-hook announces a write, and inside an open
@@ -1362,6 +1369,7 @@ func (ctx *MahresourcesContext) WithRequest(r *http.Request) any {
 	// Create a shallow copy to avoid modifying the original
 	ctxCopy := *ctx
 	ctxCopy.currentRequest = r
+	ctxCopy.revisionSource = revisionSourceForRequest(r)
 	// Carry the authenticated principal and apply group-subtree scoping so that
 	// write handlers (which already route through WithRequest) are confined to a
 	// group-limited principal's subtree.

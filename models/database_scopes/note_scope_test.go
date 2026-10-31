@@ -18,7 +18,7 @@ func newNoteTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("failed to open in-memory DB: %v", err)
 	}
-	if err := db.AutoMigrate(&models.NoteType{}, &models.Note{}); err != nil {
+	if err := db.AutoMigrate(&models.NoteType{}, &models.TemplateRevision{}, &models.Note{}); err != nil {
 		t.Fatalf("failed to migrate NoteType/Note tables: %v", err)
 	}
 	return db

@@ -37,7 +37,7 @@ func TestDeleteRacingAValidatedGroupIsRefusedPG(t *testing.T) {
 	db, dsn := pgContainer.CreateTestDBWithDSN(t)
 	if err := db.AutoMigrate(
 		&models.Resource{}, &models.Group{}, &models.Tag{}, &models.Note{},
-		&models.Category{}, &models.ResourceCategory{}, &models.Series{},
+		&models.Category{}, &models.TemplateRevision{}, &models.ResourceCategory{}, &models.Series{},
 		&models.ResourceVersion{}, &models.Preview{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)

@@ -19,6 +19,10 @@ var (
 	_ contracts.TemplatePartialWriter  = (*MahresourcesContext)(nil)
 	_ contracts.TemplatePartialDeleter = (*MahresourcesContext)(nil)
 
+	// Template Revisions
+	_ contracts.TemplateRevisionReader = (*MahresourcesContext)(nil)
+	_ contracts.TemplateRevisionWriter = (*MahresourcesContext)(nil)
+
 	// Download history (the durable record behind /downloads)
 	_ contracts.DownloadHistoryReader   = (*MahresourcesContext)(nil)
 	_ contracts.DownloadHistoryWriter   = (*MahresourcesContext)(nil)

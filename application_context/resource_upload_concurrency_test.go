@@ -86,7 +86,7 @@ func migrateWALTestSchema(t *testing.T, db *gorm.DB) {
 		&models.Tag{},
 		&models.Group{},
 		&models.Category{},
-		&models.NoteType{},
+		&models.NoteType{}, &models.TemplateRevision{},
 		&models.Preview{},
 		&models.GroupRelation{},
 		&models.GroupRelationType{},

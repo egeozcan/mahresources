@@ -23,7 +23,7 @@ import (
 // COMMITTED every chunk's query would see the move the instant it commits.
 func TestAGroupSelectionIsReadFromOneSnapshotPG(t *testing.T) {
 	db, dsn := pgContainer.CreateTestDBWithDSN(t)
-	require.NoError(t, db.AutoMigrate(&models.Group{}, &models.Resource{}, &models.ResourceCategory{}, &models.ResourceReduction{}))
+	require.NoError(t, db.AutoMigrate(&models.Group{}, &models.Resource{}, &models.ResourceCategory{}, &models.TemplateRevision{}, &models.ResourceReduction{}))
 	readOnly, err := sqlx.Connect("pgx", dsn)
 	require.NoError(t, err)
 	t.Cleanup(func() { readOnly.Close() })

@@ -33,7 +33,7 @@ func newSharedFileContext(t *testing.T) *MahresourcesContext {
 	}
 	if err := db.AutoMigrate(
 		&models.Group{}, &models.Resource{}, &models.Note{}, &models.Tag{},
-		&models.Category{}, &models.ResourceCategory{}, &models.NoteType{},
+		&models.Category{}, &models.ResourceCategory{}, &models.NoteType{}, &models.TemplateRevision{},
 		&models.Series{}, &models.Query{}, &models.SavedMRQLQuery{}, &models.TemplatePartial{},
 		&models.NoteBlock{}, &models.GroupRelation{}, &models.GroupRelationType{},
 		&models.ResourceVersion{}, &models.User{}, &models.SavedSearch{}, &models.UserSetting{}, &models.Session{}, &models.ApiToken{},

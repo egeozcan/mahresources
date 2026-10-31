@@ -45,7 +45,7 @@ func TestApplyImport_NoGUIDResourceMarksRetryUnsafe(t *testing.T) {
 		t.Fatalf("open db: %v", err)
 	}
 	if err := db.AutoMigrate(
-		&models.ResourceCategory{}, &models.Group{}, &models.Resource{},
+		&models.ResourceCategory{}, &models.TemplateRevision{}, &models.Group{}, &models.Resource{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestApplyImport_SkipPolicyMarksResultRetryUnsafe(t *testing.T) {
 	}
 	if err := db.AutoMigrate(
 		&models.ResourceCategory{}, &models.Category{}, &models.Group{},
-		&models.Tag{}, &models.NoteType{}, &models.Note{},
+		&models.Tag{}, &models.NoteType{}, &models.TemplateRevision{}, &models.Note{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

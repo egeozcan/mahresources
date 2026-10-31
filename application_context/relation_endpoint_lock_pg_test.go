@@ -28,7 +28,7 @@ import (
 // relation's insert, which comes after the check.
 func TestARelationHoldsItsEndpointsUntilItCommitsPG(t *testing.T) {
 	db, dsn := pgContainer.CreateTestDBWithDSN(t)
-	if err := db.AutoMigrate(&models.Category{}, &models.Group{}, &models.GroupRelationType{}, &models.GroupRelation{}); err != nil {
+	if err := db.AutoMigrate(&models.Category{}, &models.TemplateRevision{}, &models.Group{}, &models.GroupRelationType{}, &models.GroupRelation{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	readOnly, err := sqlx.Connect("pgx", dsn)

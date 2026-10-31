@@ -71,7 +71,7 @@ func TestRenderMRQLCustomTemplatesBatchesCarrierQueries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&models.ResourceCategory{}, &models.Resource{}); err != nil {
+	if err := db.AutoMigrate(&models.ResourceCategory{}, &models.TemplateRevision{}, &models.Resource{}); err != nil {
 		t.Fatal(err)
 	}
 	category := models.ResourceCategory{Name: "batch", CustomMRQLResult: "card"}
