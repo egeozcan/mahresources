@@ -160,7 +160,7 @@ func openPersistentCommandTestContext(t *testing.T, dbPath, pluginDir string, fi
 	if err := db.AutoMigrate(
 		&models.Query{}, &models.Series{}, &models.Resource{}, &models.ResourceVersion{},
 		&models.Note{}, &models.NoteBlock{}, &models.Tag{}, &models.Group{},
-		&models.Category{}, &models.ResourceCategory{}, &models.NoteType{}, &models.Preview{},
+		&models.Category{}, &models.ResourceCategory{}, &models.NoteType{}, &models.TemplateRevision{}, &models.Preview{},
 		&models.GroupRelation{}, &models.GroupRelationType{}, &models.ImageHash{},
 		&models.ResourceSimilarity{}, &models.LogEntry{}, &models.PluginState{}, &models.PluginKV{},
 		&models.SavedMRQLQuery{}, &models.TemplatePartial{}, &models.RuntimeSetting{}, &models.User{},

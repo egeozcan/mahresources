@@ -25,23 +25,24 @@ type Client struct {
 // `mr auth login`), every request is authenticated with it via a Bearer header.
 // When the server has auth disabled the token is simply ignored.
 func New(baseURL string) *Client {
-	hc := &http.Client{}
-	if token := ResolveToken(baseURL); token != "" {
-		hc.Transport = &authTransport{token: token, base: http.DefaultTransport}
-	}
+	hc := &http.Client{Transport: &authTransport{token: ResolveToken(baseURL), base: http.DefaultTransport}}
 	return &Client{
 		BaseURL:    strings.TrimRight(baseURL, "/"),
 		httpClient: hc,
 	}
 }
 
-// authTransport injects an Authorization: Bearer header on every request.
+// authTransport injects an Authorization: Bearer header on every request when
+// it holds a token, and always marks the request as coming from the mr CLI.
+// The server records that as the source of a Template Revision; it is
+// provenance only, never an authorization input.
 type authTransport struct {
 	token string
 	base  http.RoundTripper
 }
 
 func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.Header.Set("X-Mahresources-Client", "mr")
 	if t.token != "" && req.Header.Get("Authorization") == "" {
 		req.Header.Set("Authorization", "Bearer "+t.token)
 	}

@@ -821,6 +821,18 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/resourceCategory/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.ResourceCategory](basicResourceCategoryWriter, "resourceCategory"))
 	router.Methods(http.MethodPost).Path("/v1/resourceCategory/previewDescription").HandlerFunc(scopedPreviewDescription[models.ResourceCategory](appContext, "resourceCategory"))
 
+	// Template Revision routes for the three Template Carriers. Reads need the
+	// carrier's edit capability too (authz_policy.go, and the operations check it
+	// again). The diff route is registered before {number} so it is not read as one.
+	for _, carrier := range templateRevisionCarriers {
+		base := carrier.apiPrefix + "/revisions"
+		router.Methods(http.MethodGet).Path(base).HandlerFunc(api_handlers.GetTemplateRevisionsHandler(carrier.carrierType, appContext))
+		router.Methods(http.MethodGet).Path(base + "/diff").HandlerFunc(api_handlers.GetTemplateRevisionDiffHandler(carrier.carrierType, appContext))
+		router.Methods(http.MethodGet).Path(base + "/{number}").HandlerFunc(api_handlers.GetTemplateRevisionHandler(carrier.carrierType, appContext))
+		router.Methods(http.MethodPost).Path(base + "/{number}/label").HandlerFunc(api_handlers.GetLabelTemplateRevisionHandler(carrier.carrierType, appContext))
+		router.Methods(http.MethodPost).Path(base + "/{number}/restore").HandlerFunc(api_handlers.GetRestoreTemplateRevisionHandler(carrier.carrierType, appContext))
+	}
+
 	// Template Partial routes (admin-only writes via isTaxonomyPath; reads open)
 	basicTemplatePartialWriter := application_context.NewEntityWriter[models.TemplatePartial](appContext)
 	router.Methods(http.MethodGet).Path("/v1/templatePartials").HandlerFunc(api_handlers.GetTemplatePartialsHandler(appContext))

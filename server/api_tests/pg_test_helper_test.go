@@ -60,6 +60,7 @@ func SetupPostgresTestEnv(t *testing.T) *TestContext {
 		&models.PluginKV{},
 		&models.SavedMRQLQuery{},
 		&models.TemplatePartial{},
+		&models.TemplateRevision{},
 		&models.Group{},
 		&models.GroupRelationType{},
 		&models.Resource{},

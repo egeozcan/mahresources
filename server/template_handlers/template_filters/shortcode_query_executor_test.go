@@ -25,7 +25,7 @@ func setupExecutorTestContext(t *testing.T) (*application_context.MahresourcesCo
 	}
 	if err := db.AutoMigrate(
 		&models.Query{}, &models.Resource{}, &models.Note{}, &models.Tag{},
-		&models.Group{}, &models.Category{}, &models.NoteType{}, &models.Preview{},
+		&models.Group{}, &models.Category{}, &models.NoteType{}, &models.TemplateRevision{}, &models.Preview{},
 		&models.GroupRelation{}, &models.GroupRelationType{}, &models.ImageHash{},
 		&models.ResourceSimilarity{}, &models.LogEntry{}, &models.NoteBlock{},
 		&models.SavedMRQLQuery{},

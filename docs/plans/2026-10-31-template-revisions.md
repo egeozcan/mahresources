@@ -114,7 +114,7 @@ The source is advisory provenance, never an authorization input.
 ## Work items
 
 ### 1. Model and storage
-- [ ] `models.TemplateRevision`:
+- [x] `models.TemplateRevision`:
   - `ID`, `CreatedAt`, `CreatedByUserId`
   - `CarrierType` (`category` | `resourceCategory` | `noteType`), `CarrierID`, `Number`
   - `Snapshot types.JSON`
@@ -122,11 +122,11 @@ The source is advisory provenance, never an authorization input.
   - `Label` (size 200)
   - `RestoredFrom *uint`
   - unique index on (`CarrierType`, `CarrierID`, `Number`)
-- [ ] Add to both `AutoMigrate` lists in `main.go` (562 and 1109).
-- [ ] One place that says which fields each carrier type tracks. Write a drift guard test that fails when
+- [x] Add to both `AutoMigrate` lists in `main.go` (562 and 1109).
+- [x] One place that says which fields each carrier type tracks. Write a drift guard test that fails when
   a `Custom*` field is added to a carrier model but missing from the tracked set
   (follow the slot drift guards from the template slot expansion).
-- [ ] **Carrier lock protocol**, shared by save, restore and delete:
+- [x] **Carrier lock protocol**, shared by save, restore and delete:
   1. Open one transaction. The shared functions read the carrier outside any transaction today
      (`category_context.go:171`, `resource_category_context.go:127`,
      `note_context.go:512`) and save on `ctx.db`, so each must be moved inside one.
@@ -139,11 +139,11 @@ The source is advisory provenance, never an authorization input.
   Under the lock, numbering cannot collide. The unique index is a backstop that fails
   the whole transaction; there is no in-transaction retry, because a Postgres
   unique violation aborts the transaction.
-- [ ] Every write inside goes through the transaction's handle, never `ctx.db` or a
+- [x] Every write inside goes through the transaction's handle, never `ctx.db` or a
   logger built from the outer context (`sqlite-transactions.md` second bullet).
 
 ### 2. Recording
-- [ ] `recordTemplateRevision(tx, kind, carrierType, before, after, source, applied)`
+- [x] `recordTemplateRevision(tx, kind, carrierType, before, after, source, applied)`
   dispatches on `kind` **before** any no-op check, exactly as the table in decision 8 says:
   - `create` / `import`: write #1 unconditionally. There is no baseline and no no-op check. Empty templates
     are a valid create (`category_context.go:88-122`).
@@ -152,7 +152,7 @@ The source is advisory provenance, never an authorization input.
   - `restore`: write the next number unconditionally, with `RestoredFrom`.
   - `update`: compare the tracked fields; if none changed, return. Otherwise, if the carrier
     has no revisions, write the `baseline` (pre-save state) first, then the new revision.
-- [ ] **Snapshots store raw values; comparison uses a canonical view.**
+- [x] **Snapshots store raw values; comparison uses a canonical view.**
   - The snapshot keeps each field exactly as stored, malformed or not. Old MetaSchema can be
     invalid (`meta_schema.go:11-17`), and import copies MetaSchema and AutoDetectRules
     verbatim (`groupio/apply_import.go:571, 669, 762, 768`).
@@ -166,20 +166,20 @@ The source is advisory provenance, never an authorization input.
       the raw text when they do not
   - Canonicalisation never fails a save. Repairing an invalid MetaSchema must record
     baseline (invalid, raw) + new revision.
-- [ ] Call it from the three shared functions, inside their existing transaction
+- [x] Call it from the three shared functions, inside their existing transaction
   (wrap a save in one if it has none).
-- [ ] Group import: write `import` revision #1 for each carrier it creates, with
+- [x] Group import: write `import` revision #1 for each carrier it creates, with
   the carrier insert and its revision in one transaction per carrier. Schema-definition
   creation has no enclosing transaction today (`groupio/apply_import.go:86, 608-610,
   699-701`). If the revision write failed after the carrier committed, a retry would
   reuse the carrier (`:594-605, 696-698`) and never record it. Test a failure between
   the two inserts.
-- [ ] Carrier delete: delete its revisions in the delete transaction (all three
+- [x] Carrier delete: delete its revisions in the delete transaction (all three
   delete functions).
 
 ### 3. Diff and restore
-- [ ] Server-side line diff. Check `go.mod` for an existing diff library before adding one.
-- [ ] `RestoreTemplateRevision(carrierType, carrierID, number, slot *string)` builds
+- [x] Server-side line diff. Check `go.mod` for an existing diff library before adding one.
+- [x] `RestoreTemplateRevision(carrierType, carrierID, number, slot *string)` builds
   the target state (whole snapshot, or current state with one slot plus its CSS replaced)
   and saves it with source `restore`, under the carrier lock, with the same permission
   check and validation as the shared function. It must not go through the shared
@@ -189,27 +189,27 @@ The source is advisory provenance, never an authorization input.
   restored. Factor the shared function into "map editor input to a target state" (with
   the keep-current rule) and "persist a target state" (exact), and have restore call
   only the second.
-- [ ] Restore still runs the ordinary save validation (MetaSchema,
+- [x] Restore still runs the ordinary save validation (MetaSchema,
   `meta_schema.go:31-50`; Resource Category detection rules,
   `resource_category_context.go:135-140`). It never bypasses it. A revision whose raw content no longer
   validates (old malformed MetaSchema, for example) is refused with an error naming the
   field, and records nothing. The user repairs it by loading the revision into the editor,
   fixing the field and saving. Test that a refused restore writes no revision and
   changes no field.
-- [ ] **Plugin hook boundaries.** Run before-hooks before the carrier transaction
+- [x] **Plugin hook boundaries.** Run before-hooks before the carrier transaction
   opens, and after-hooks only after it commits. `WithTransaction` only swaps the db
   handle (`context.go:1557-1564`), and ordinary hook calls have no transaction binding
   (`:1193-1205`), so a hook that writes while the carrier transaction holds SQLite's
   writer lock would block on it. Keep the existing deferral inside a plugin
   transaction (`deferredHooks`, `:1257-1269`) unchanged.
-- [ ] Restore audit log entry with `{fromRevision, toRevision}`.
+- [x] Restore audit log entry with `{fromRevision, toRevision}`.
 
 ### 4. REST + OpenAPI
-- [ ] `GET .../revisions` (list), `GET .../revisions/{n}`, `GET .../revisions/diff?from=&to=`
+- [x] `GET .../revisions` (list), `GET .../revisions/{n}`, `GET .../revisions/diff?from=&to=`
   (`to` defaults to current), `POST .../revisions/{n}/label`, `POST .../revisions/{n}/restore`
   (optional `slot`), for each of the three carrier types. Match the existing route
   naming (`/v1/category/...`) and register every route in OpenAPI.
-- [ ] Permission check on every route, per decision 14, **including the GETs**. The
+- [x] Permission check on every route, per decision 14, **including the GETs**. The
   path gates give taxonomy and editor GETs only `capRead` (`server/authz_policy.go:87-103`), and
   edit pages are deliberately readable by lower roles (`:59-62`). So prefix coverage
   does not protect revision list, get or diff, or the History page. Give them explicit
@@ -298,6 +298,114 @@ E2E (Playwright):
 CLI doctests for each new subcommand.
 
 Run the full suite (Go unit, E2E browser, CLI) on SQLite and Postgres before calling this done.
+
+## API contract (lane 1)
+
+All routes take the carrier's ID as the query parameter `id` and answer JSON. Every one needs the
+carrier's edit capability, GETs included: admin for Category and Resource Category, editor for
+Note Type (403 otherwise, with `{"error": "insufficient permissions"}`).
+
+| Carrier | `carrierType` | API prefix | History page (reserved, UI lane adds the template) |
+|---|---|---|---|
+| Category | `category` | `/v1/category` | `/category/revisions?id=` |
+| Resource Category | `resourceCategory` | `/v1/resourceCategory` | `/resourceCategory/revisions?id=` |
+| Note Type | `noteType` | `/v1/noteType` | `/noteType/revisions?id=` |
+
+The `.json` and `.body` variants of a History page path are gated the same way. The table lives in
+`server/template_revision_carriers.go`.
+
+| Method and path (under the prefix) | Purpose | Body or query |
+|---|---|---|
+| `GET /revisions?id=` | list, newest first | none |
+| `GET /revisions/{number}?id=` | one revision with content | none |
+| `GET /revisions/diff?id=&from=&to=` | slot-grouped line diff; `to` omitted means the current state | `from` required |
+| `POST /revisions/{number}/label?id=` | set, change or clear the label (at most 200 characters) | `{"label": "..."}` |
+| `POST /revisions/{number}/restore?id=` | restore the whole revision, or one slot | `{"slot": "CustomHeader", "includeCss": true}`, both optional |
+
+Errors: 400 invalid (unknown slot, overlong label, a revision that no longer validates, missing `id` or
+`from`), 403 role, 404 unknown carrier or revision number.
+
+Saving still goes through the existing endpoints. The edit form (and `mr`) post `revisionApplied`
+alongside the other fields: repeated values or one comma-separated value, for example
+`preset:dashboard`, `generated`, `copied:category:12`, `loaded:3`, `loaded:3:CustomHeader`. Anything
+else is dropped. A save is recorded with source `form` only when the request's `Accept` header contains
+`text/html`, which a normal browser form submit sends; a `fetch` that sends `Accept: application/json`
+is recorded as `api` unless it also sends `X-Mahresources-Client: mr`.
+
+### Summary (list items, label and restore responses)
+
+```json
+{
+  "id": 41, "number": 3, "carrierType": "category", "carrierId": 7,
+  "createdAt": "2026-10-31T12:00:00Z", "createdByUserId": 2,
+  "label": "before redesign",
+  "source": "form",
+  "applied": ["preset:dashboard", "loaded:1:CustomHeader"],
+  "changedSlots": ["CustomHeader", "CustomSidebar"],
+  "restoredFrom": 1
+}
+```
+
+`source` is one of `create`, `form`, `api`, `cli`, `plugin`, `import`, `restore`, `baseline`.
+`restoredFrom` (only for `restore`) is the revision **number** restored. `changedSlots` are slot names
+(a slot and its `*CSS` sibling count as one), computed against the state before the save; for `#1` they
+are the slots that have content. A `baseline` revision's `createdAt` and `createdByUserId` are those of
+the save that triggered it, not of the original author.
+
+### Detail (`GET /revisions/{number}`)
+
+The summary fields plus:
+
+- `snapshot`: the raw stored value of every tracked field the revision recorded, keyed by Go field name
+  (strings, and a bool for `ApplyTemplatesToShares`). `SectionConfig` is the raw text. A key the revision
+  lacks is a slot added later.
+- `editor`: the value of every tracked field as the edit form must load it. Missing keys are empty
+  strings or false, and `SectionConfig` is the Go resolver's output as a JSON string. **Load the editor
+  from `editor`, never from `snapshot`**, and replace the section config control state wholesale.
+
+### Diff (`GET /revisions/diff`)
+
+```json
+{
+  "carrierType": "category", "carrierId": 7, "from": 1, "to": 3,
+  "slots": [
+    { "slot": "CustomHeader",
+      "fields": [
+        { "field": "CustomHeader",
+          "hunks": [
+            { "op": "equal",  "lines": ["<div>"] },
+            { "op": "delete", "lines": ["old"] },
+            { "op": "insert", "lines": ["new"] } ] },
+        { "field": "CustomHeaderCSS", "hunks": [ ... ] } ] } ]
+}
+```
+
+`to` is absent when the right side is the current state. Unchanged slots and fields are left out. `op` is
+`equal`, `insert` or `delete`; consecutive lines with one op share a hunk. `MetaSchema`,
+`SectionConfig` and `AutoDetectRules` are diffed as sorted-key pretty-printed JSON, or as raw text when
+they do not parse. The valid slot names per carrier type are `models.TemplateSlots(carrierType)`; slot
+names for `slot` in a restore are the primary field names (`CustomHeader`, not `CustomHeaderCSS`).
+
+## Deviations (lane 1)
+
+- **AutoMigrate lists.** `main.go` has one entity list (line 562); the one at 1109 migrates the Job
+  tables. `TemplateRevision` is in the entity list, in `server/api_tests` (SQLite and Postgres harnesses)
+  and in the 45 test files that carry their own list, because every carrier create, update and delete
+  now touches the table.
+- **Snapshot column is `text`, not JSON/JSONB.** Postgres JSONB reorders keys and renormalises
+  numbers; the snapshot should keep the exact bytes.
+- **`restoredFrom` stores the revision number**, not the global row ID, since the UI shows "restored
+  from #N".
+- **Note Type revision routes sit under `/v1/noteType/revisions`.** `/v1/note/noteType` is the
+  create/edit/delete prefix; both are editor paths, so the gate is the same.
+- **Restore fires the Category update hooks** (`before_category_update`, `after_category_update`). The
+  before-hook can veto; edits it makes to name or description are ignored, since restore touches neither.
+- **`DeleteNoteType` is now one transaction.** It used to issue the note update and the delete as two
+  statements; the carrier lock and the revision delete needed an enclosing transaction.
+- **`mr` always installs its transport**, so `X-Mahresources-Client: mr` is sent even with no token.
+- **The arch gate test is unchanged.** The revision operations carry neither "Categor" nor "NoteType"
+  in their names, so it never matches them; `TestRevision_ReadsAndWritesNeedTheCarriersEditCapability`
+  and `TestTemplateRevisionRoleMatrix` pin the guards instead.
 
 ## Review
 

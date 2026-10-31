@@ -70,6 +70,15 @@ func statusCodeForError(err error, fallback int) int {
 		return http.StatusConflict
 	}
 
+	// Template Revision refusals, typed because the wording ("rejected",
+	// "is invalid") matches nothing in the scan below.
+	if errors.Is(err, application_context.ErrTemplateRevisionNotFound) {
+		return http.StatusNotFound
+	}
+	if errors.Is(err, application_context.ErrTemplateRevisionInvalid) {
+		return http.StatusBadRequest
+	}
+
 	// A dependency the deployment does not have. Not the caller's fault and not
 	// a missing resource, so neither 400 nor 404: the request is well formed and
 	// the video is there, and what cannot be done is the operation. Typed for the
