@@ -1176,3 +1176,71 @@ test.describe('Whole-template sections, failed slots and Apply', () => {
     await expect(page.getByTestId('template-bundle-apply')).toBeFocused();
   });
 });
+
+// Every successful Apply, from any generate surface, is attributed on the save
+// the form posts: the revision records `generated` in its applied list.
+test.describe('Generated content is attributed on the saved revision', () => {
+  const surfaces = [
+    {
+      name: 'a per-slot pair',
+      field: 'CustomHeader',
+      reply: { target: 'bundle', valid: true, slots: { CustomHeader: '<h1>G</h1>', CustomHeaderCSS: 'h1{color:red}' } },
+      input: 'CustomHeader',
+      expected: '<h1>G</h1>',
+    },
+    {
+      name: 'the shared CustomCSS',
+      field: 'CustomCSS',
+      reply: { target: 'slot', valid: true, content: '.g{color:red}' },
+      input: 'CustomCSS',
+      expected: '.g{color:red}',
+    },
+    {
+      name: 'the MetaSchema',
+      field: 'MetaSchema',
+      reply: { target: 'metaschema', valid: true, content: '{"type":"object","properties":{"a":{"type":"string"}}}' },
+      input: 'MetaSchema',
+      expected: '{"type":"object","properties":{"a":{"type":"string"}}}',
+    },
+  ];
+
+  for (const surface of surfaces) {
+    test(`${surface.name} records generated`, async ({ page, apiClient }) => {
+      const cat = await apiClient.createCategory(`Generated ${surface.field} ${Date.now()}`);
+      await page.route('**/v1/category/generateTemplate', withDisclosure(async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(surface.reply) });
+      }));
+      await page.goto(`/category/edit?id=${cat.ID}`);
+      await page.getByTestId(`generate-prompt-${surface.field}`).fill('something');
+      await page.getByTestId(`generate-button-${surface.field}`).click();
+      await sendDisclosure(page);
+      await page.getByTestId(`generate-apply-${surface.field}`).click();
+      await expect(page.locator(`input[name="${surface.input}"]`)).toHaveValue(surface.expected);
+      await expect(page.locator('input[name="revisionApplied"][value="generated"]')).toHaveCount(1);
+
+      await page.getByRole('button', { name: 'Save', exact: true }).click();
+      await page.waitForURL(/\/category\?id=/);
+      const revisions = await (await page.request.get(`/v1/category/revisions?id=${cat.ID}`)).json();
+      expect(revisions[0]).toMatchObject({ source: 'form', applied: ['generated'] });
+    });
+  }
+
+  test('the whole-template panel records generated', async ({ page, apiClient }) => {
+    const cat = await apiClient.createCategory(`Generated bundle ${Date.now()}`);
+    await page.route('**/v1/category/generateTemplate', withDisclosure(async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        target: 'bundle', valid: true, slots: { CustomHeader: '<h1>B</h1>', CustomHeaderCSS: '' },
+      }) });
+    }));
+    await page.goto(`/category/edit?id=${cat.ID}`);
+    await page.getByTestId('template-bundle-generate-prompt').fill('a card');
+    await page.getByTestId('template-bundle-generate-button').click();
+    await sendDisclosure(page);
+    await page.getByTestId('template-bundle-apply').click();
+    await expect(page.locator('input[name="revisionApplied"][value="generated"]')).toHaveCount(1);
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.waitForURL(/\/category\?id=/);
+    const revisions = await (await page.request.get(`/v1/category/revisions?id=${cat.ID}`)).json();
+    expect(revisions[0]).toMatchObject({ source: 'form', applied: ['generated'] });
+  });
+});

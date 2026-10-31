@@ -103,6 +103,7 @@ export function templateRevisions({ carrierType, id, apiPrefix, editUrl } = {}) 
     editingLabel: null,
     labelDraft: '',
     savingLabel: false,
+    _labelSession: 0,
 
     async init() {
       this.root = this.$el;
@@ -164,6 +165,15 @@ export function templateRevisions({ carrierType, id, apiPrefix, editUrl } = {}) 
     },
 
     async onSelectionChange() {
+      if (!this.from) {
+        // Nothing selected: a response still on its way must not install later.
+        this._diffRequest++;
+        this.diff = null;
+        this.diffLoading = false;
+        this.diffError = '';
+        this.status = '';
+        return;
+      }
       await this.loadDiff({ focusResult: false });
     },
 
@@ -174,28 +184,26 @@ export function templateRevisions({ carrierType, id, apiPrefix, editUrl } = {}) 
       this.diffError = '';
       const params = { from: String(this.from) };
       if (this.to) params.to = String(this.to);
+      let prepared = null;
+      let failure = '';
       try {
         const resp = await fetch(this.url('/diff', params), { headers: { Accept: 'application/json' } });
-        if (requestId !== this._diffRequest) return;
-        if (!resp.ok) {
-          this.diff = null;
-          this.diffError = await this.errorText(resp);
-          return;
-        }
-        this.diff = this.prepareDiff(await resp.json());
-        this.status = this.diff.slots.length
-          ? `Showing ${this.diff.slots.length} changed ${this.diff.slots.length === 1 ? 'slot' : 'slots'}.`
-          : 'No differences.';
+        // Decode before the freshness check: a stale body is read here, not committed.
+        if (resp.ok) prepared = this.prepareDiff(await resp.json());
+        else failure = await this.errorText(resp);
       } catch (err) {
-        if (requestId !== this._diffRequest) return;
-        this.diff = null;
-        this.diffError = err.message || 'Network error';
-      } finally {
-        if (requestId === this._diffRequest) {
-          this.diffLoading = false;
-          if (focusResult) this.focusDiffHeading();
-        }
+        failure = err.message || 'Network error';
       }
+      if (requestId !== this._diffRequest) return;
+      this.diffLoading = false;
+      this.diff = prepared;
+      this.diffError = failure;
+      if (prepared) {
+        this.status = prepared.slots.length
+          ? `Showing ${prepared.slots.length} changed ${prepared.slots.length === 1 ? 'slot' : 'slots'}.`
+          : 'No differences.';
+      }
+      if (focusResult) this.focusDiffHeading();
     },
 
     prepareDiff(data) {
@@ -264,6 +272,8 @@ export function templateRevisions({ carrierType, id, apiPrefix, editUrl } = {}) 
     // ---- Labels --------------------------------------------------------------
 
     startLabelEdit(rev) {
+      if (this.savingLabel) return;
+      this._labelSession++;
       this.editingLabel = rev.number;
       this.labelDraft = rev.label || '';
       setTimeout(() => {
@@ -273,6 +283,8 @@ export function templateRevisions({ carrierType, id, apiPrefix, editUrl } = {}) 
     },
 
     cancelLabelEdit(number) {
+      if (this.savingLabel) return;
+      this._labelSession++;
       this.editingLabel = null;
       this.focusLabelButton(number);
     },
@@ -280,6 +292,9 @@ export function templateRevisions({ carrierType, id, apiPrefix, editUrl } = {}) 
     async saveLabel(rev) {
       if (this.savingLabel) return;
       this.savingLabel = true;
+      const session = this._labelSession;
+      // Only the edit that submitted may close the form and move focus.
+      const stillMine = () => session === this._labelSession && this.editingLabel === rev.number;
       try {
         const resp = await fetch(this.url(`/${rev.number}/label`), {
           method: 'POST',
@@ -289,14 +304,16 @@ export function templateRevisions({ carrierType, id, apiPrefix, editUrl } = {}) 
         if (!resp.ok) {
           this.status = `Could not save the label: ${await this.errorText(resp)}`;
           const input = this.root.querySelector(`[data-label-input="${rev.number}"]`);
-          if (input) input.focus();
+          if (input && stillMine()) input.focus();
           return;
         }
         const saved = await resp.json();
         this.revisions = this.revisions.map((r) => (r.number === rev.number ? { ...r, label: saved.label } : r));
-        this.editingLabel = null;
         this.status = saved.label ? `Saved the label of revision ${rev.number}.` : `Cleared the label of revision ${rev.number}.`;
-        this.focusLabelButton(rev.number);
+        if (stillMine()) {
+          this.editingLabel = null;
+          this.focusLabelButton(rev.number);
+        }
       } catch (err) {
         this.status = `Could not save the label: ${err.message || 'network error'}`;
       } finally {

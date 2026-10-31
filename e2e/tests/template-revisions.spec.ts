@@ -244,6 +244,137 @@ test.describe('Template Revisions history', () => {
     expect(JSON.parse(detail.editor.AutoDetectRules)).toEqual(rulesA);
   });
 
+  test('the form is locked while a revision loads, so a typed edit is never overwritten', async ({ page, apiClient }) => {
+    const name = `Rev Busy ${Date.now()}`;
+    const rulesA = { contentTypes: ['image/png'], priority: 10 };
+    const rc = await apiClient.createResourceCategory(name, undefined, { AutoDetectRules: JSON.stringify(rulesA) });
+    await postForm(page, '/v1/resourceCategory', { ID: String(rc.ID), name, AutoDetectRules: JSON.stringify({ contentTypes: ['image/jpeg'], priority: 5 }) });
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    await page.route(`**/v1/resourceCategory/revisions/1?id=${rc.ID}`, async (route) => {
+      await gate;
+      await route.continue();
+    });
+    await page.goto(`/resourceCategory/edit?id=${rc.ID}&loadRevision=1`);
+    const form = page.locator('form').first();
+    await expect(form).toHaveAttribute('aria-busy', 'true');
+    expect(await form.evaluate((f: HTMLFormElement) => f.inert)).toBe(true);
+    await expect(page.getByRole('status').filter({ hasText: 'The form is locked until it arrives' }).first()).toBeAttached();
+    // Typing and saving are both out of reach until the revision lands.
+    await expect(page.locator('textarea[name="AutoDetectRules"]').click({ timeout: 700 })).rejects.toThrow();
+    await expect(page.getByRole('button', { name: 'Save', exact: true }).click({ timeout: 700 })).rejects.toThrow();
+
+    release();
+    await expect(page.getByTestId('revision-load-notice')).toContainText('Loaded revision #1');
+    await expect(form).not.toHaveAttribute('aria-busy', 'true');
+    expect(await form.evaluate((f: HTMLFormElement) => f.inert)).toBe(false);
+    expect(JSON.parse(await page.locator('textarea[name="AutoDetectRules"]').inputValue())).toEqual(rulesA);
+    // After the load an edit is the user's and stays.
+    await page.locator('textarea[name="AutoDetectRules"]').fill('{"priority": 1}');
+    await expect(page.locator('textarea[name="AutoDetectRules"]')).toHaveValue('{"priority": 1}');
+  });
+
+  test('a slow label save cannot close or refocus a different row, which cannot be edited meanwhile', async ({ page, apiClient }) => {
+    const name = `Rev Slow Label ${Date.now()}`;
+    const cat = await apiClient.createCategory(name, undefined, { CustomHeader: '<p>a</p>' });
+    await postForm(page, '/v1/category', { ID: String(cat.ID), name, CustomHeader: '<p>b</p>' });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    await page.route(`**/v1/category/revisions/1/label?id=${cat.ID}`, async (route) => {
+      await gate;
+      await route.continue();
+    });
+    await page.goto(`/category/revisions?id=${cat.ID}`);
+    await page.getByTestId('revision-label-edit-1').click();
+    await page.getByTestId('revision-label-input-1').fill('first');
+    await page.getByTestId('revision-label-input-1').press('Enter');
+    // While it is in flight the other row cannot start a draft that completion would discard.
+    await expect(page.getByTestId('revision-label-edit-2')).toBeDisabled();
+    release();
+    await expect(page.getByTestId('revision-label-1')).toHaveText('first');
+    await expect(page.getByTestId('revision-label-edit-1')).toBeFocused();
+    await expect(page.getByTestId('revision-label-edit-2')).toBeEnabled();
+    // A draft started afterwards is untouched by the earlier save.
+    await page.getByTestId('revision-label-edit-2').click();
+    await page.getByTestId('revision-label-input-2').fill('second');
+    await expect(page.getByTestId('revision-label-input-2')).toHaveValue('second');
+  });
+
+  test('clearing From drops the diff and a response still on its way does not bring it back', async ({ page, apiClient }) => {
+    const name = `Rev Clear ${Date.now()}`;
+    const cat = await apiClient.createCategory(name, undefined, { CustomHeader: '<p>a</p>' });
+    await postForm(page, '/v1/category', { ID: String(cat.ID), name, CustomHeader: '<p>b</p>' });
+    await page.goto(`/category/revisions?id=${cat.ID}`);
+    await page.getByTestId('revision-compare-1').click();
+    await expect(page.getByTestId('revision-diff-slot-CustomHeader')).toBeVisible();
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/v1/category/revisions/diff*', async (route) => {
+      await gate;
+      await route.continue();
+    });
+    await page.getByTestId('revision-to').selectOption('2');
+    await page.getByTestId('revision-from').selectOption('');
+    await expect(page.getByTestId('revision-diff')).toHaveCount(0);
+    await expect(page.getByTestId('revision-slot-load-from-CustomHeader')).toHaveCount(0);
+    release();
+    await page.waitForTimeout(500);
+    await expect(page.getByTestId('revision-diff')).toHaveCount(0);
+  });
+
+  test('loading a slot with its CSS ticked takes the revision CSS too, and saves it', async ({ page, apiClient }) => {
+    const name = `Rev Css Default ${Date.now()}`;
+    const cat = await apiClient.createCategory(name, undefined, { CustomHeader: '<p>old</p>' });
+    await postForm(page, '/v1/category', { ID: String(cat.ID), name, CustomHeader: '<p>old</p>', CustomHeaderCSS: '.old { color: red; }' });
+    await postForm(page, '/v1/category', { ID: String(cat.ID), name, CustomHeader: '<p>cur</p>', CustomHeaderCSS: '.cur { color: blue; }' });
+
+    await page.goto(`/category/revisions?id=${cat.ID}`);
+    await page.getByTestId('revision-compare-2').click();
+    await expect(page.getByTestId('revision-slot-css-CustomHeader')).toBeChecked();
+    await page.getByTestId('revision-slot-load-from-CustomHeader').click();
+    await expect(page.getByTestId('revision-load-notice')).toContainText('Loaded CustomHeader from revision #2');
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<p>old</p>');
+    await expect(page.locator('input[name="CustomHeaderCSS"]')).toHaveValue('.old { color: red; }');
+    await save(page, '/category');
+    const detail = await revisionDetail(page, '/v1/category', cat.ID, 4);
+    expect(detail.editor).toMatchObject({ CustomHeader: '<p>old</p>', CustomHeaderCSS: '.old { color: red; }' });
+  });
+
+  test('a load replaces the section control state wholesale, leaving no stale key', async ({ page, apiClient }) => {
+    const name = `Rev Wholesale ${Date.now()}`;
+    const cat = await apiClient.createCategory(name, undefined, { CustomHeader: '<p>a</p>', SectionConfig: '{"tags":false}' });
+    await postForm(page, '/v1/category', { ID: String(cat.ID), name, CustomHeader: '<p>b</p>' });
+    const detail = await revisionDetail(page, '/v1/category', cat.ID, 1);
+    const resolved = JSON.parse(detail.editor.SectionConfig);
+
+    // Hold the load until a stale key is in the control state.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    await page.route(`**/v1/category/revisions/1?id=${cat.ID}`, async (route) => {
+      await gate;
+      await route.continue();
+    });
+    await page.goto(`/category/edit?id=${cat.ID}&loadRevision=1`);
+    await page.evaluate(() => {
+      const el = document.querySelector('[x-data^="sectionConfigForm"]') as HTMLElement;
+      const data = (window as unknown as { Alpine: { $data(e: Element): { config: Record<string, unknown> } } }).Alpine.$data(el);
+      data.config.staleKey = 'left over';
+    });
+    release();
+    await expect(page.getByTestId('revision-load-notice')).toContainText('Loaded revision #1');
+
+    const posted = JSON.parse(await page.locator('input[name="SectionConfig"]').inputValue());
+    expect(posted).toEqual(resolved);
+    expect(posted).not.toHaveProperty('staleKey');
+    const state = await page.evaluate(() => {
+      const el = document.querySelector('[x-data^="sectionConfigForm"]') as HTMLElement;
+      return JSON.parse(JSON.stringify((window as unknown as { Alpine: { $data(e: Element): { config: unknown } } }).Alpine.$data(el).config));
+    });
+    expect(state).toEqual(resolved);
+  });
+
   test('a revision that cannot be loaded says so', async ({ page, apiClient }) => {
     const cat = await apiClient.createCategory(`Rev Missing ${Date.now()}`);
     await page.goto(`/category/edit?id=${cat.ID}&loadRevision=99`);

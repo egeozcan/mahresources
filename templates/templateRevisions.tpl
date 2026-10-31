@@ -70,10 +70,10 @@
                                             :aria-label="'Compare revision ' + rev.number + ' with the current state'"
                                             :data-testid="'revision-compare-' + rev.number"
                                             class="inline-flex items-center px-2 py-1 text-xs font-mono font-medium text-stone-700 bg-stone-100 border border-stone-300 rounded-md hover:bg-stone-200 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">Compare with current</button>
-                                    <button type="button" @click="startLabelEdit(rev)"
+                                    <button type="button" @click="startLabelEdit(rev)" :disabled="savingLabel"
                                             :aria-label="'Edit label of revision ' + rev.number"
                                             :data-label-button="rev.number" :data-testid="'revision-label-edit-' + rev.number"
-                                            class="inline-flex items-center px-2 py-1 text-xs font-mono font-medium text-stone-700 bg-stone-100 border border-stone-300 rounded-md hover:bg-stone-200 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">Edit label</button>
+                                            class="inline-flex items-center px-2 py-1 text-xs font-mono font-medium text-stone-700 bg-stone-100 border border-stone-300 rounded-md hover:bg-stone-200 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 disabled:opacity-40 cursor-pointer">Edit label</button>
                                     <a :href="loadWholeUrl(rev.number)"
                                        :aria-label="'Load revision ' + rev.number + ' into the editor'"
                                        :data-testid="'revision-load-' + rev.number"

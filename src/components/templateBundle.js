@@ -12,6 +12,7 @@
 //
 // Slot key -> hidden-input field name on the form.
 import { askToConfirm } from './confirmDialog.js';
+import { announceApplied, REVISION_APPLIED_EVENT } from './revisionApplied.js';
 import { draftSegments, draftWarnings } from './templateDraftReview.js';
 import { afterDialogTeardown, returnFocusToGenerate, reviewDisclosure } from './generationDisclosure.js';
 
@@ -151,6 +152,7 @@ export function templateBundle({ carrier } = {}) {
 
     async init() {
       this.sections = this.sectionOptions();
+      document.addEventListener(REVISION_APPLIED_EVENT, (event) => this.recordApplied(event.detail.entry));
       this.loadRevisionFromUrl();
       await Promise.all([this.loadSources(), this.loadPresets()]);
     },
@@ -464,11 +466,32 @@ export function templateBundle({ carrier } = {}) {
       params.delete('includeCss');
       const query = params.toString();
       window.history.replaceState(null, '', window.location.pathname + (query ? `?${query}` : '') + window.location.hash);
-      this.loadRevision(idInput.value, number, slot, includeCss);
+      this.loadRevision(idInput.value, number, slot, includeCss, idInput.form);
     },
 
-    async loadRevision(carrierId, number, slot, includeCss) {
+    // setFormBusy keeps the form from being edited or submitted while a revision
+    // is on its way: the response would overwrite whatever was typed meanwhile.
+    // inert blocks pointer, keyboard and focus; the live region is outside the
+    // form because inert content is not announced.
+    setFormBusy(form, text) {
+      if (!form) return;
+      form.inert = !!text;
+      if (text) form.setAttribute('aria-busy', 'true');
+      else form.removeAttribute('aria-busy');
+      if (!this._busyRegion) {
+        this._busyRegion = document.createElement('div');
+        this._busyRegion.className = 'sr-only';
+        this._busyRegion.setAttribute('role', 'status');
+        document.body.appendChild(this._busyRegion);
+      }
+      setTimeout(() => { this._busyRegion.textContent = text; }, 0);
+    },
+
+    async loadRevision(carrierId, number, slot, includeCss, form) {
       const what = slot ? `${slot} from revision #${number}` : `revision #${number}`;
+      this.revisionNotice = `Loading ${what}. The form is locked until it arrives.`;
+      this.revisionNoticeKind = 'info';
+      this.setFormBusy(form, `Loading ${what}. The form is locked until it arrives.`);
       try {
         const resp = await fetch(`${CARRIERS[this.carrier].revisions}/${number}?id=${encodeURIComponent(carrierId)}`, { headers: { Accept: 'application/json' } });
         if (!resp.ok) {
@@ -489,6 +512,8 @@ export function templateBundle({ carrier } = {}) {
         this.announceRevision(`Loaded ${what}. Review the form, then save. Nothing is saved yet.`, 'info');
       } catch (err) {
         this.announceRevision(`Could not load ${what}: ${err.message || 'network error'}`, 'warn');
+      } finally {
+        this.setFormBusy(form, '');
       }
     },
 
@@ -779,7 +804,7 @@ export function templateBundle({ carrier } = {}) {
         if (!confirmed || this.pendingDraft !== draft) return;
       }
       for (const field of fields) this.setEditor(field, draft.slots[field] || '');
-      this.recordApplied('generated');
+      announceApplied('generated');
       this.pendingDraft = null;
       this.notify(`Filled ${fields.length} slot(s) from your description. Review, then save.`, 'info');
       this._focusAfterPanelCloses();

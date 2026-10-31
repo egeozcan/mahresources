@@ -1,4 +1,5 @@
 import { askToConfirm } from './confirmDialog.js';
+import { announceApplied } from './revisionApplied.js';
 import { afterDialogTeardown, returnFocusToGenerate, reviewDisclosure } from './generationDisclosure.js';
 import { changedSince, draftSegments, draftWarnings } from './templateDraftReview.js';
 
@@ -275,6 +276,7 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
         if (!confirmed || this.generatedFields !== draft) return;
       }
       for (const { view, text } of edits) view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+      announceApplied('generated');
       this.discardGenerated();
       this.generationStatus = 'Generated draft applied.';
       this._focusAfterPanelCloses();
