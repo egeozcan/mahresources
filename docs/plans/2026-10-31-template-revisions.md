@@ -301,7 +301,7 @@ Run the full suite (Go unit, E2E browser, CLI) on SQLite and Postgres before cal
 
 ## API contract (lane 1)
 
-All routes take the carrier's ID as the query parameter `id` and answer JSON. Every one needs the
+All routes take the carrier's ID as the query parameter `id` and answer JSON on success. Errors go through `http_utils.HandleError` like every other `/v1` handler, so a request that accepts HTML gets an HTML error page; clients send `Accept: application/json`. Every one needs the
 carrier's edit capability, GETs included: admin for Category and Resource Category, editor for
 Note Type (403 otherwise, with `{"error": "insufficient permissions"}`).
 
