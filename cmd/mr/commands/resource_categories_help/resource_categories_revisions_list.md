@@ -1,0 +1,32 @@
+---
+outputShape: Array of revision summaries, newest first, with id, number, carrierType, carrierId, createdAt, createdByUserId, label, source, applied, changedSlots and restoredFrom
+exitCodes: 0 on success; 1 on any error
+relatedCmds: resource-categories revisions show, resource-categories revisions diff, resource-category edit
+---
+
+# Long
+
+List the revisions of a resource category, newest first. `--id` is required.
+The table shows the revision NUMBER (#1, #2, ...), the SOURCE that
+recorded it (`create`, `form`, `api`, `cli`, `plugin`, `import`,
+`restore` or `baseline`), the slots it CHANGED compared with the
+previous revision, its LABEL, the USER ID and when it was CREATED. Pass
+`--json` for the full array, including the `applied` list. With
+`--quiet` the output is the revision numbers, one per line, which are the
+numbers `show`, `diff`, `restore` and `label` take; it is not the revision
+`id`.
+
+# Example
+
+  # List the revisions of a resource category
+  mr resource-categories revisions list --id 3
+
+  # Print only the revision numbers
+  mr resource-categories revisions list --id 3 --json | jq -r '.[].number'
+
+  # mr-doctest: a new resource category has one create revision, and a CLI edit adds one
+  ID=$(mr resource-category create --name "rev-$$-$RANDOM" --json | jq -r .ID)
+  mr resource-categories revisions list --id "$ID" --json | jq -e 'length == 1 and .[0].number == 1 and .[0].source == "create"'
+  mr resource-category edit --id "$ID" --custom-header '<h1>Hi</h1>'
+  mr resource-categories revisions list --id "$ID" --json | jq -e 'length == 2 and .[0].number == 2 and .[0].source == "cli" and .[0].changedSlots == ["CustomHeader"]'
+  mr resource-category delete "$ID"

@@ -244,14 +244,14 @@ The source is advisory provenance, never an authorization input.
 - [ ] Presets, generation and copy append their `revisionApplied` entries.
 
 ### 6. CLI
-- [ ] `revisions list|show|diff|restore|label` under `categories`, `resource-categories`
+- [x] `revisions list|show|diff|restore|label` under `categories`, `resource-categories`
   and `note-types`, plus their help files.
 
 ### 7. Docs
-- [ ] docs-site page for template revisions (under `docs-site/docs/features/`, next to
+- [x] docs-site page for template revisions (under `docs-site/docs/features/`, next to
   `custom-templates.md`) and a link from `custom-templates.md`.
-- [ ] CLI reference pages for the new subcommands.
-- [ ] Link from the in-app category-template docs to the History page.
+- [x] CLI reference pages for the new subcommands.
+- [x] Link from the in-app category-template docs to the History page.
 
 ## Verification
 
@@ -412,3 +412,14 @@ names for `slot` in a restore are the primary field names (`CustomHeader`, not `
 ## Review
 
 (to fill in after implementation)
+
+## Deviations (lane 3)
+
+- **Command group.** The `revisions` group hangs off the plural commands (`mr categories|resource-categories|note-types revisions ...`), as decision 17 says, not the singular `category` commands where `edit` lives. The carrier ID is `--id` on every leaf, matching `edit`; the revision number is positional.
+- **Label argument.** `label <number> [text]` takes the text as an optional second argument and requires exactly one of text and `--clear`.
+- **`--no-css` without `--slot`** is refused client-side, since the server only reads `includeCss` with a slot.
+- **`diff` text output** renders the server's full-file hunks as a unified diff with three lines of context and `@@` headers, per field. `--json` prints the server response unchanged.
+- **`show` text output** prints the metadata, then each non-empty stored field under a `--- Field ---` header. `--json` prints the response, including `editor`.
+- **Role denial is not in the CLI E2E.** The `cli` Playwright project runs an auth-disabled server, so a non-admin token cannot be exercised there. Role assertions stay in the Go API tests of lane 1.
+- **In-app docs.** The History link in the Reference panels was dropped: lane 2 puts a "View template history" link atop each edit form and a "History" action on display pages. The docs-site link from `custom-templates.md` stays.
+- **docs-site page text for the History page** (columns, compare, label, Load into editor) follows decisions 10 and 12 and the lane 2 template; recheck it against the final UI.
