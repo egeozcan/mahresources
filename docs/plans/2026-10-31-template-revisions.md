@@ -423,12 +423,9 @@ names for `slot` in a restore are the primary field names (`CustomHeader`, not `
   revision's `editor` payload. The History page's "Include its CSS" box is per slot and only shown for
   slots that have a companion (every `Custom*` slot except `CustomCSS`).
 - **Long unchanged runs in a diff are folded** (more than 8 equal lines keep 3 of context each side).
-- **`generated` is exercised by the existing generation specs' code path only**; no new E2E drives the
-  AI provider.
-
-## Review
-
-(to fill in after implementation)
+- **`generated`** is recorded by every generation Apply (whole template, per slot, CustomCSS, MetaSchema)
+  through `announceApplied` in `src/components/revisionApplied.js`; four mocked-provider tests in
+  `template-generate.spec.ts` save and assert it.
 
 ## Deviations (lane 3)
 
@@ -440,3 +437,35 @@ names for `slot` in a restore are the primary field names (`CustomHeader`, not `
 - **Role denial is not in the CLI E2E.** The `cli` Playwright project runs an auth-disabled server, so a non-admin token cannot be exercised there. Role assertions stay in the Go API tests of lane 1.
 - **In-app docs.** The History link in the Reference panels was dropped: lane 2 puts a "View template history" link atop each edit form and a "History" action on display pages. The docs-site link from `custom-templates.md` stays.
 - **docs-site page text for the History page** (columns, compare, label, Load into editor) follows decisions 10 and 12 and the lane 2 template; recheck it against the final UI.
+
+## Review
+
+Built in three lanes (backend + REST, History UI + editor loading, CLI + docs), each reviewed by pi
+until a round had no P0/P1 finding:
+
+| Lane | Blocking findings per round |
+|---|---|
+| Backend + REST | 3, 0 |
+| CLI + docs | 1, 0 |
+| UI | 3, 1, 2, 0 |
+
+Every UI blocker was a different path to losing unsaved input (an edit made during an async
+revision load, a label draft closed by another row's save, a draft typed during its own save, a
+draft reset on reopen, input typed before the bundle initialised). The final shape: the edit form
+is server-rendered `inert` when `?loadRevision` is present, a load refuses before touching any field
+when a code editor failed to mount, and only one label editor can be open, read-only while saving.
+
+Accepted, not fixed:
+- On a `?loadRevision` URL the form stays inert if `main.js` never loads; the edit page is not
+  usable without the bundle anyway, and a plain-edit link is rendered.
+- Revision API errors follow `http_utils.HandleError`'s content negotiation like every `/v1` route.
+
+Follow-ups:
+- Existing `groupio` `TestApplyImport_*` tests use fixed shared-cache database names and fail under
+  `-count=2` (untouched by this work).
+- A stale-form check for concurrent edits (decision 18).
+
+Final gates on the merged branch: Go SQLite 47/47 packages; Go Postgres (`mrql`, `server/api_tests`,
+`application_context`, `groupio`, `models`) all ok; E2E browser + CLI on SQLite 2723 passed, 5 skipped,
+0 failed; E2E on Postgres 2723 passed, 4 skipped, 1 flaky
+(`regressions/compare-difference-measurement.spec.ts:720`, compare page, untouched here).
