@@ -351,11 +351,25 @@ test.describe.serial('compare page registration and scale', () => {
     expect(centred.x - frame.x).toBeGreaterThan(10);
     expect(centred.y - frame.y).toBeGreaterThan(10);
 
-    await page.getByRole('button', { name: /^Anchor/ }).click();
-    const cornered = (await lead.boundingBox())!;
-    // Within the frame's 1px border, which the image sits inside.
-    expect(Math.abs(cornered.x - frame.x)).toBeLessThanOrEqual(2);
-    expect(Math.abs(cornered.y - frame.y)).toBeLessThanOrEqual(2);
+    // Offsets from the frame's corner, both rects read in one pass. Clicking
+    // Anchor can scroll the toolbar into view, and boundingBox() is viewport
+    // relative, so a frame measured before the click is off by the scroll.
+    const cornerOffset = async (image: Locator) => {
+      const [f, i] = [(await box.boundingBox())!, (await image.boundingBox())!];
+      return { x: Math.abs(i.x - f.x), y: Math.abs(i.y - f.y) };
+    };
+    const withinBorder = async (image: Locator, axes: ('x' | 'y')[]) => {
+      // Within the frame's 1px border, which the image sits inside.
+      await expect.poll(async () => {
+        const offset = await cornerOffset(image);
+        return axes.every((axis) => offset[axis] <= 2) || offset;
+      }).toBe(true);
+    };
+
+    const anchor = page.getByRole('button', { name: /^Anchor/ });
+    await anchor.click();
+    await expect(anchor).toHaveAttribute('aria-pressed', 'true');
+    await withinBorder(lead, ['x', 'y']);
 
     // Only the older version is asserted, and deliberately: the newer one
     // defines the frame in both axes, so it has no slack and sits at the corner
@@ -364,15 +378,12 @@ test.describe.serial('compare page registration and scale', () => {
     // that passes for the wrong reason. What it can say is that the version
     // with no slack does not move, which an anchor implemented as a translation
     // rather than a margin would break.
-    const trailBefore = (await trail.boundingBox())!;
-    expect(Math.abs(trailBefore.x - frame.x)).toBeLessThanOrEqual(2);
-    expect(Math.abs(trailBefore.y - frame.y)).toBeLessThanOrEqual(2);
+    await withinBorder(trail, ['x', 'y']);
 
     // And it holds under Fit, where the older version fills the width and the
     // slack that gets taken up is vertical.
     await page.getByRole('radio', { name: 'Fit to frame' }).click();
-    const fitted = (await lead.boundingBox())!;
-    expect(Math.abs(fitted.y - frame.y)).toBeLessThanOrEqual(2);
+    await withinBorder(lead, ['y']);
   });
 
   test('the anchor control refuses in Stretch, where there is no slack to take up', async ({ page }) => {
