@@ -76,6 +76,24 @@
         <iframe x-ref="frame" sandbox="allow-scripts" title="Template slot preview"
                 class="w-full h-96 bg-white border-0"></iframe>
 
+        {# Always present and given text, not revealed: a live region that merely #}
+        {# appears is not reliably announced (see the CSS-slot note above).        #}
+        <p class="sr-only" aria-live="polite"
+           x-text="renderErrors.length ? renderErrors.length + (renderErrors.length === 1 ? ' render error' : ' render errors') + ' in the preview, listed below it.' : ''"></p>
+
+        {# A failed shortcode shows only its name in the frame; the reason is in a #}
+        {# hover-only title attribute. List each one in full.                      #}
+        <div x-show="renderErrors.length" class="border-t border-red-200 bg-red-50 px-3 py-2">
+            <h3 class="text-xs font-mono font-semibold text-red-800 mb-1">Render errors</h3>
+            <ul class="space-y-1">
+                <template x-for="(re, idx) in renderErrors" :key="idx">
+                    <li class="text-xs font-mono text-red-800">
+                        <span class="font-semibold" x-text="re.label"></span><span x-text="(re.count > 1 ? ' (×' + re.count + ')' : '') + (re.detail ? ': ' : '')"></span><span class="whitespace-pre-wrap break-words" x-text="re.detail"></span>
+                    </li>
+                </template>
+            </ul>
+        </div>
+
         <div x-show="issues.length" class="border-t border-stone-200 px-3 py-2 space-y-0.5">
             <template x-for="(iss, idx) in issues" :key="idx">
                 <div class="text-xs font-mono"

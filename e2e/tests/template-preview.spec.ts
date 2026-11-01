@@ -223,4 +223,31 @@ test.describe('Template live preview', () => {
     await page.waitForTimeout(600); // debounce + request
     await expect(page.locator('#tp-suggestions-group li')).toHaveCount(0);
   });
+
+  test('a failed shortcode is explained in full under the frame', async ({ page, apiClient }) => {
+    const category = await apiClient.createCategory(`Render Error Preview ${Date.now()}`);
+    await apiClient.createGroup({ name: `Render Error Target ${Date.now()}`, categoryId: category.ID });
+    await page.goto(`/category/edit?id=${category.ID}`);
+    await expect(page.locator('#tp-entity-group')).not.toHaveValue('');
+
+    await page.locator('.cm-content[aria-label="Custom Header"]').fill('<p>[plugin:no-such-plugin:chart]</p>[mrql query="type = bogus (("]');
+
+    // The frame shows only the marker; the reason is in a hover-only title,
+    // so the pane lists it below.
+    const frame = page.frameLocator('iframe[title="Template slot preview"]');
+    await expect(frame.locator('.shortcode-error')).toHaveText('⚠ plugin:no-such-plugin:chart');
+    const errors = page.locator('h3', { hasText: 'Render errors' }).locator('..');
+    await expect(errors).toBeVisible();
+    await expect(errors).toContainText(
+      'plugin:no-such-plugin:chart: shortcode "plugin:no-such-plugin:chart" not found',
+    );
+    // The list matches the server's marker markup as text, so this pins both
+    // shapes against the real renderer.
+    await expect(errors.locator('li', { hasText: /^\s*mrql: \S/ })).toHaveCount(1);
+    await expect(page.locator('p[aria-live="polite"]', { hasText: '2 render errors in the preview' })).toHaveCount(1);
+
+    await page.locator('.cm-content[aria-label="Custom Header"]').fill('<p>fine</p>');
+    await expect(frame.locator('p')).toHaveText('fine');
+    await expect(errors).toBeHidden();
+  });
 });

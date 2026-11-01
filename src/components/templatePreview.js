@@ -64,6 +64,43 @@ const LIST_ENDPOINTS = {
   note: '/v1/notes',
 };
 
+// The server's failure markers, exactly as shortcodes/markers.go,
+// mrql_handler.go and conditional_handler.go write them. They are matched in
+// the raw text rather than in a parsed document, because a marker can land
+// where a parser does not see elements: inside a <style> (a raw-text element),
+// a <template> body, or a CSS buffer. Their text and title are HTML-escaped by
+// the server, so neither can contain "<" or '"'.
+const MARKER_PATTERN =
+  /<span class="shortcode-error[^"]*" title="([^"]*)">⚠ ([^<]*)<\/span>|<(?:div|span) class="(?:mrql-results )?mrql-error[^"]*">([^<]*)<\/(?:div|span)>/g;
+
+function decodeEntities(text) {
+  return new DOMParser().parseFromString(`<!doctype html><body>${text}`, 'text/html').body.textContent || '';
+}
+
+// renderErrorsFrom lists the shortcode failures in a rendered slot. A failing
+// shortcode renders a short marker in place with the reason only in its title
+// attribute, a tooltip an author has to find by hovering, so the pane spells
+// each one out under the frame. MRQL errors carry their whole message as text.
+// Repeats collapse with a count, since an [each] loop repeats the same failure
+// once per item.
+export function renderErrorsFrom(html) {
+  // Most renders are clean; skip the scan unless a marker could be present.
+  if (!html || !html.includes('-error')) return [];
+  /** @type {Map<string, { label: string, detail: string, count: number }>} */
+  const seen = new Map();
+  for (const [, title, label, mrql] of html.matchAll(MARKER_PATTERN)) {
+    const err =
+      mrql !== undefined
+        ? { label: 'mrql', detail: decodeEntities(mrql) }
+        : { label: decodeEntities(label), detail: decodeEntities(title) };
+    const key = `${err.label}\u0000${err.detail}`;
+    const prev = seen.get(key);
+    if (prev) prev.count++;
+    else seen.set(key, { ...err, count: 1 });
+  }
+  return [...seen.values()];
+}
+
 function normalizeList(data) {
   if (Array.isArray(data)) return data;
   if (data && Array.isArray(data.items)) return data.items;
@@ -128,6 +165,8 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
     usingUnscopedSample: false,
     /** @type {{ severity: string, message: string, start?: number, end?: number }[]} */
     issues: [],
+    /** @type {{ label: string, detail: string, count: number }[]} */
+    renderErrors: [],
     /** @type {ReturnType<typeof setTimeout>|null} */
     _refreshTimer: null,
     /** @type {ReturnType<typeof setTimeout>|null} */
@@ -350,6 +389,7 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
         if (!this.categoryId) {
           this.error = 'Save this category first, then reopen the form to preview the list header.';
           this.issues = [];
+          this.renderErrors = [];
           this.loading = false;
           this._renderFrame('', '', null);
           return;
@@ -362,6 +402,7 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
           'Nothing to preview against yet — this category has no ' +
           `${this.entityType}s, and none exist to borrow. Pick one above, or create one first.`;
         this.issues = [];
+        this.renderErrors = [];
         this.loading = false;
         this._renderFrame('', '', null);
         return;
@@ -401,6 +442,7 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
           const err = await resp.json().catch(() => ({}));
           if (seq !== this._refreshSeq) return;
           this.error = err.error || `Preview failed (${resp.status})`;
+          this.renderErrors = [];
           this.loading = false;
           return;
         }
@@ -417,10 +459,14 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
         // as page text — a document no saved template can produce. Keyed on the
         // slot the request was built from, not on the two halves reading alike,
         // which for a markup slot means two documents however similar they are.
+        // A shortcode failing in a stylesheet buffer renders its marker there
+        // too. On the CSS slot `html` is that same buffer a second time.
+        this.renderErrors = renderErrorsFrom(cssSlot ? data.css || '' : (data.html || '') + (data.css || ''));
         this._renderFrame(cssSlot ? '' : data.html || '', data.css || '', data.entity);
       } catch (e) {
         if (seq !== this._refreshSeq) return;
         this.error = 'Preview request failed.';
+        this.renderErrors = [];
       }
       this.loading = false;
     },
