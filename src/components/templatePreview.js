@@ -5,6 +5,7 @@
 // (src/csrf.js).
 
 import * as userSettings from '../userSettings.js';
+import { stripTemplateComments } from './templateCommentRanges.js';
 
 // `only` restricts a slot to one carrier: the surface it renders on exists for
 // that carrier alone (there is no group table view, no note lightbox), so the
@@ -410,12 +411,14 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       this.loading = true;
       this.error = '';
       const content = this._readSlot(this.slot);
-      // Match TemplateCSS's production cascade: shared styles, then companion styles.
+      // Match the production cascade (TemplateCSSParts joined by JoinCSS):
+      // shared styles, then companion styles, each field's template comments
+      // removed on their own so an unclosed one cannot hide the next field.
       const pickerSlot = this.slot === 'CustomEntityPickerResult' || this.slot === 'CustomEntityPickerResultCSS';
       const cssFields = pickerSlot
         ? [CSS_SLOT, 'CustomEntityPickerResultCSS']
         : [CSS_SLOT, ...this.slots.filter((s) => s.name !== CSS_SLOT && s.name !== 'CustomEntityPickerResultCSS' && s.name.endsWith('CSS')).map((s) => s.name)];
-      const css = cssFields.map((name) => this._readSlot(name)).filter(Boolean).join('\n');
+      const css = cssFields.map((name) => stripTemplateComments(this._readSlot(name) || '')).filter(Boolean).join('\n');
       try {
         // The slot names which buffer `content` is. With CustomCSS selected it
         // is a stylesheet, which carries no <style> wrapper to say so, and the

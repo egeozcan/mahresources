@@ -32,6 +32,11 @@ func RenderPropertyShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
 	var text string
 	if ok {
 		text = formatPropertyValue(field, sc.Attrs["format"], sc.Attrs["layout"])
+		// A Description's template comments hide wherever it is shown, here
+		// included (and in the default MRQL cards, which read it through this).
+		if path == "Description" || strings.HasSuffix(path, ".Description") {
+			text = stripTemplateComments(text)
+		}
 	}
 
 	if text == "" {

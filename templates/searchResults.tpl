@@ -30,7 +30,7 @@
                                     <span class="ml-2 text-xs font-medium text-stone-600">{{ item.DisplayType }}</span>
                                 {% endif %}
                                 {% if item.Description %}
-                                    <div class="text-sm text-stone-600">{{ item.Description|truncatechars:160 }}</div>
+                                    <div class="text-sm text-stone-600">{{ item.Description|strip_template_comments|truncatechars:160 }}</div>
                                 {% endif %}
                             </li>
                         {% endfor %}

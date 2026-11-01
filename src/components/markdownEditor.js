@@ -7,6 +7,7 @@
 // to it. If loading fails the textarea simply stays.
 import * as commands from './markdownCommands.js';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
+import { templateCommentRanges } from './templateCommentRanges.js';
 
 // About six lines of the editor's text, then up to 60% of the viewport.
 const MIN_HEIGHT = '9rem';
@@ -77,6 +78,7 @@ export function markdownEditor({
         { markdown },
         { mentionCompletionSource },
         shortcodeMod,
+        commentMod,
       ] = await Promise.all([
         import('@codemirror/view'),
         import('@codemirror/state'),
@@ -86,6 +88,7 @@ export function markdownEditor({
         import('@codemirror/lang-markdown'),
         import('./markdownMentions.js'),
         shortcodes ? import('./shortcodeCompletion.js') : Promise.resolve(null),
+        shortcodes ? import('./templateComments.js') : Promise.resolve(null),
       ]);
       // Closed (an inline editor cancelled) before the imports landed.
       if (this._destroyed) return;
@@ -97,6 +100,7 @@ export function markdownEditor({
         sources.push(shortcodeMod.shortcodeCompletionSource(() => ''));
         shortcodeExtensions.push(shortcodeMod.shortcodeAutoTrigger(), shortcodeMod.shortcodeHoverTooltip());
       }
+      if (commentMod) shortcodeExtensions.push(...commentMod.templateCommentExtensions(templateCommentRanges));
 
       const contentAttributes = { 'aria-multiline': 'true' };
       if (this._labelId) contentAttributes['aria-labelledby'] = this._labelId;

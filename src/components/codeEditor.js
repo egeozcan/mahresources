@@ -1,4 +1,5 @@
 import { templateGeneration } from './templateGeneration.js';
+import { templateCommentRanges } from './templateCommentRanges.js';
 
 // The mounted editor's minimum height in pixels, and its maximum.
 const MIN_EDITOR_HEIGHT = 200;
@@ -105,9 +106,10 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
       let shortcodeMod = null;
       if (shortcodes) {
         try {
-          const [lintMod, completionMod] = await Promise.all([
+          const [lintMod, completionMod, commentMod] = await Promise.all([
             import('./shortcodeLint.js'),
             import('./shortcodeCompletion.js'),
+            import('./templateComments.js'),
           ]);
           shortcodeMod = lintMod;
           // Meta-path autocomplete reads the MetaSchema being edited in the same form.
@@ -118,6 +120,7 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
           };
           shortcodeExtensions = [
             ...lintMod.shortcodeLintExtensions(mode),
+            ...commentMod.templateCommentExtensions(templateCommentRanges),
             // Override completion with a combined source: shortcode completions
             // inside [ ... ] brackets, delegating to the html/css source elsewhere.
             autocompletion({ override: [completionMod.shortcodeOverrideSource(mode, schemaProvider)] }),

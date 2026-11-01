@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"mahresources/mrql"
+	"mahresources/templatecomment"
 )
 
 // Lint severity levels.
@@ -115,7 +116,7 @@ func KnownFromBuiltins() KnownShortcodes {
 var conditionalOperators = []string{"eq", "neq", "gt", "lt", "gte", "lte", "in", "contains", "matches", "empty", "not-empty"}
 
 // builtinBaseNames is used for near-miss detection of misspelled shortcodes.
-var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "using"}
+var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "using", "comment"}
 
 // looseBracketPattern finds bracket expressions that lead with an identifier,
 // used to detect shortcode-looking brackets that did not parse as real
@@ -125,7 +126,42 @@ var looseBracketPattern = regexp.MustCompile(`\[/?([a-zA-Z][a-zA-Z0-9_:-]*)`)
 // Lint parses shortcode markup and returns diagnostics. It never executes any
 // shortcode: all checks are pure parsing plus (optionally) an MRQL syntax check
 // on query attributes. Issues are returned sorted by start offset.
+//
+// Template comments are removed before rendering, so the text linted is the
+// text with them removed: what is inside one is not checked, and what removing
+// one joins together is. Offsets are mapped back to input.
 func Lint(input string, opts LintOptions) []LintIssue {
+	comments := templatecomment.StripMapped(input)
+	toOriginal := comments.ToOriginal
+	issues := lintText(comments.Text, opts)
+	for i := range issues {
+		start := toOriginal(issues[i].Start)
+		end := templatecomment.EndToOriginal(toOriginal, issues[i].End)
+		issues[i].Start, issues[i].End = start, max(end, start)
+	}
+	for _, o := range comments.Unclosed {
+		issues = append(issues, LintIssue{Start: o.Start, End: o.End, Severity: SeverityError,
+			Message: "[comment] is never closed, so everything after it is hidden: add [/comment]"})
+	}
+	for _, c := range comments.Strays {
+		issues = append(issues, LintIssue{Start: c.Start, End: c.End, Severity: SeverityWarning,
+			Message: "[/comment] has no matching [comment] and is removed"})
+	}
+	sortLintIssues(issues)
+	return issues
+}
+
+func sortLintIssues(issues []LintIssue) {
+	sort.SliceStable(issues, func(i, j int) bool {
+		if issues[i].Start != issues[j].Start {
+			return issues[i].Start < issues[j].Start
+		}
+		return issues[i].End < issues[j].End
+	})
+}
+
+// lintText is Lint over text with no template comments left in it.
+func lintText(input string, opts LintOptions) []LintIssue {
 	var issues []LintIssue
 	add := func(start, end int, severity, msg string) {
 		issues = append(issues, LintIssue{Start: start, End: end, Severity: severity, Message: msg})
@@ -147,6 +183,24 @@ func Lint(input string, opts LintOptions) []LintIssue {
 	}
 
 	tokens := matchTokens(input)
+
+	// A shortcode inside an HTML comment still runs, and the comment reaches the
+	// browser. A stylesheet has no HTML comments, so CSS is left alone.
+	if htmlComments := htmlCommentSpans(input); !opts.CSSMode && len(htmlComments) > 0 {
+		next := 0
+		for _, tk := range tokens { // sorted by start, like htmlComments
+			for next < len(htmlComments) && htmlComments[next].End <= tk.start {
+				next++
+			}
+			if next == len(htmlComments) {
+				break
+			}
+			if !tk.closing && htmlComments[next].Start < tk.start {
+				add(tk.start, tk.end, SeverityInfo,
+					"["+tk.name+"] inside an HTML comment still runs and is sent to the browser: use [comment]…[/comment] to remove it")
+			}
+		}
+	}
 
 	// Track real token start offsets so the loose-bracket scan can skip them.
 	realStarts := make(map[int]bool, len(tokens))
@@ -467,12 +521,7 @@ func Lint(input string, opts LintOptions) []LintIssue {
 		}
 	}
 
-	sort.SliceStable(issues, func(i, j int) bool {
-		if issues[i].Start != issues[j].Start {
-			return issues[i].Start < issues[j].Start
-		}
-		return issues[i].End < issues[j].End
-	})
+	sortLintIssues(issues)
 	return issues
 }
 

@@ -160,12 +160,12 @@
                         {% if sc.Description && resource.Description %}
                         <div class="group relative bg-stone-50 border border-stone-200 hover:border-stone-300 rounded-lg px-4 py-3 col-span-2 md:col-span-3">
                             <dt class="text-xs text-stone-500 font-mono">Description</dt>
-                            <dd class="text-sm mt-0.5 font-sans">{{ resource.Description }}
+                            <dd class="text-sm mt-0.5 font-sans">{{ resource.Description|strip_template_comments }}
                             <button
                                 type="button"
                                 class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-stone-400 hover:text-stone-600 p-0.5"
                                 aria-label="Copy Description"
-                                @click="updateClipboard('{{ resource.Description|escapejs }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
+                                @click="updateClipboard('{{ resource.Description|strip_template_comments|escapejs }}'); $el.textContent = '✓'; setTimeout(() => $el.textContent = '⧉', 1000)"
                             >⧉</button></dd>
                         </div>
                         {% endif %}

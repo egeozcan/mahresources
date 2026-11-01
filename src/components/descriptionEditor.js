@@ -1,5 +1,6 @@
 import { selectionForElement } from './bulkSelection.js';
 import { SHORTCODE_ENTITY_TYPES } from './markdownEditor.js';
+import { stripTemplateComments } from './templateCommentRanges.js';
 /**
  * The inline description editor used by `templates/partials/description.tpl`,
  * which twelve templates include on both detail pages and list cards.
@@ -214,14 +215,16 @@ export function descriptionEditor({ url = '' } = {}) {
         /**
          * Show the value just stored, after a save that did not reload. Markdown
          * and shortcodes stay unrendered until the next page load, which is the
-         * trade for not moving the user's focus.
+         * trade for not moving the user's focus. Template comments are removed,
+         * as the server removes them from the rendered Description.
          */
         _showPlainText(value) {
             const display = this.rootEl.querySelector('[data-description-display]');
             if (!display) return;
             const paragraph = document.createElement('p');
-            if (value) {
-                paragraph.textContent = value;
+            const shown = stripTemplateComments(value || '');
+            if (shown) {
+                paragraph.textContent = shown;
             } else {
                 paragraph.textContent = 'No description';
                 paragraph.className = 'text-stone-500 italic';

@@ -31,7 +31,7 @@
     </div>
 
     {% if hoverEntity.Description %}
-    <div class="hovercard-desc mt-1 text-xs text-stone-500">{{ hoverEntity.Description|truncatechars:160 }}</div>
+    <div class="hovercard-desc mt-1 text-xs text-stone-500">{{ hoverEntity.Description|strip_template_comments|truncatechars:160 }}</div>
     {% endif %}
 </div>
 {% else %}

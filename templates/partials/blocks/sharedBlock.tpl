@@ -1,7 +1,7 @@
 {# with block= shareToken= resourceHashMap= groupDataMap= #}
 {% if block.Type == "text" %}
     <div class="prose prose-sm max-w-none">
-        {{ block.Content.text|default:""|markdown2|safe }}
+        {{ block.Content.text|default:""|strip_template_comments|markdown2|safe }}
     </div>
 {% elif block.Type == "heading" %}
     {# The note title is the page h1, so block headings shift down one level (level N renders as h(N+1)), capped at h6 for levels 5-6. #}
@@ -112,7 +112,7 @@
         <span class="group-reference-tooltip inline-flex items-center px-2 py-0.5 bg-stone-100 rounded text-stone-600 ml-1 cursor-default relative"
               tabindex="0"
               data-group-name="{{ groupData.Name }}"
-              data-group-description="{{ groupData.Description|default:'' }}"
+              data-group-description="{{ groupData.Description|default:''|strip_template_comments }}"
               data-group-category="{{ groupData.CategoryName|default:'' }}">
             {{ groupData.Name }}
             <div class="tooltip-content hidden absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-stone-900 text-white text-xs rounded-lg shadow-lg">
@@ -121,7 +121,7 @@
                 <div class="text-stone-400 text-xs mb-1">{{ groupData.CategoryName }}</div>
                 {% endif %}
                 {% if groupData.Description %}
-                <div class="text-stone-300 mt-1">{{ groupData.Description|truncatechars:150 }}</div>
+                <div class="text-stone-300 mt-1">{{ groupData.Description|strip_template_comments|truncatechars:150 }}</div>
                 {% endif %}
                 <div class="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-stone-900"></div>
             </div>

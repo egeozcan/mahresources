@@ -14,8 +14,8 @@
         <div class="{% if preview %}description-preview-content{% else %}contents{% endif %}"{% if descriptionEditUrl %} @dblclick="startEditing()" title="Double-click to edit"{% endif %} data-description-display>
             {% autoescape off %}
                 {% if description %}
-                    {% if !preview %}{% process_shortcodes description|markdown2|render_mentions descriptionEntity %}{% endif %}
-                    {% if preview %}{{ description|escape }}{% endif %}
+                    {% if !preview %}{% process_shortcodes description|strip_template_comments|markdown2|render_mentions descriptionEntity %}{% endif %}
+                    {% if preview %}{{ description|strip_template_comments|escape }}{% endif %}
                 {% else %}
                     <p class="text-stone-500 italic">No description</p>
                 {% endif %}

@@ -481,6 +481,7 @@ Shortcodes let you embed dynamic content in custom templates without writing Alp
 - **`[lazy]`** / **`[details]`** -- Defer rendering until the block scrolls into view or is opened
 - **`[reload]`** -- Button that re-renders the innermost `[lazy]`/`[details]` block, or else the whole custom-content slot, in place
 - **`[using]`** -- Render a block with another group, resource or note (the owner, or an ID from metadata) as the entity
+- **`[comment]`** -- Comment out a section. The server removes it before rendering, so its shortcodes never run and it is never rendered. An HTML comment still runs its shortcodes and is sent to the browser.
 
 Plugins can also register custom shortcodes via `mah.shortcode()`.
 

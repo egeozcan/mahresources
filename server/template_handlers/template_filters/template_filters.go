@@ -70,6 +70,12 @@ func init() {
 		fmt.Println("error when registering entityPath filter", entityPathErr)
 	}
 
+	commentsErr := pongo2.RegisterFilter("strip_template_comments", stripTemplateCommentsFilter)
+
+	if commentsErr != nil {
+		fmt.Println("error when registering strip_template_comments filter", commentsErr)
+	}
+
 	mentionsErr := pongo2.RegisterFilter("render_mentions", renderMentionsFilter)
 
 	if mentionsErr != nil {

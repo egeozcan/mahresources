@@ -82,6 +82,10 @@ type PrincipalScope interface {
 type Deps struct {
 	DB    *gorm.DB
 	Scope PrincipalScope
+	// Summary, when set, turns an entity's Description into the text a result
+	// shows, before it is truncated. The caller supplies it so search/ does not
+	// depend on the template engine.
+	Summary func(description string) string
 }
 
 // opCtx binds the shared Service to one call's Deps, for the duration of that
@@ -90,12 +94,22 @@ type Deps struct {
 // context.
 type opCtx struct {
 	*Service
-	db    *gorm.DB
-	scope PrincipalScope
+	db      *gorm.DB
+	scope   PrincipalScope
+	summary func(string) string
 }
 
 func (s *Service) op(d Deps) *opCtx {
-	return &opCtx{Service: s, db: d.DB, scope: d.Scope}
+	return &opCtx{Service: s, db: d.DB, scope: d.Scope, summary: d.Summary}
+}
+
+// resultDescription is the description a result shows: the Summary of the
+// entity's Description, truncated.
+func (ctx *opCtx) resultDescription(description string) string {
+	if ctx.summary != nil {
+		description = ctx.summary(description)
+	}
+	return truncateDescription(description, 100)
 }
 
 // restricted reports whether the caller is confined. A missing resolver is

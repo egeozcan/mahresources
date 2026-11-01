@@ -207,21 +207,21 @@ func pickerCarrier(entity string, raw any) (key, body, css string, owner *uint) 
 		if c := v.Category; c != nil {
 			key = fmt.Sprintf("%s:%d", entity, c.ID)
 			body = c.CustomEntityPickerResult
-			css = c.CustomCSS + "\n" + c.CustomEntityPickerResultCSS
+			css = shortcodes.JoinCSS(c.CustomCSS, c.CustomEntityPickerResultCSS)
 		}
 	case models.Resource:
 		owner = v.OwnerId
 		if c := v.ResourceCategory; c != nil {
 			key = fmt.Sprintf("%s:%d", entity, c.ID)
 			body = c.CustomEntityPickerResult
-			css = c.CustomCSS + "\n" + c.CustomEntityPickerResultCSS
+			css = shortcodes.JoinCSS(c.CustomCSS, c.CustomEntityPickerResultCSS)
 		}
 	case models.Note:
 		owner = v.OwnerId
 		if c := v.NoteType; c != nil {
 			key = fmt.Sprintf("%s:%d", entity, c.ID)
 			body = c.CustomEntityPickerResult
-			css = c.CustomCSS + "\n" + c.CustomEntityPickerResultCSS
+			css = shortcodes.JoinCSS(c.CustomCSS, c.CustomEntityPickerResultCSS)
 		}
 	}
 	return

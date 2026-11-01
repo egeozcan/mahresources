@@ -286,6 +286,13 @@
 [/using]</code></pre>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[comment]…[/comment]</code>
+                        &mdash; comment out part of the template. The server removes everything inside before any shortcode runs, so none of it is rendered. An HTML comment still runs its shortcodes and is sent to the browser. Comments nest; the opener accepts attributes such as reason="…" and ignores them; it ends at its first ] and fits on one line.
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[comment reason="old sidebar"]
+  &lt;aside&gt;[mrql query='type = "note"' format="list"]&lt;/aside&gt;
+[/comment]</code></pre>
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[plugin:name:shortcode attr="val"]</code>
                         &mdash; render a plugin-provided shortcode. See each plugin's docs page for available shortcodes.
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[plugin:meta-editors:star-rating path="rating"]

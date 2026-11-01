@@ -3,6 +3,7 @@ package application_context
 import (
 	"mahresources/models/query_models"
 	"mahresources/search"
+	"mahresources/shortcodes"
 )
 
 // Facade over the search package. It exists so that moving global search out of
@@ -43,7 +44,7 @@ func (s searchScope) IsRestricted() bool {
 // entirely by the GORM callbacks reading that handle, so a stale one returns
 // another tenant's rows.
 func (ctx *MahresourcesContext) searchDeps() search.Deps {
-	return search.Deps{DB: ctx.db, Scope: searchScope{ctx: ctx}}
+	return search.Deps{DB: ctx.db, Scope: searchScope{ctx: ctx}, Summary: shortcodes.StripTemplateComments}
 }
 
 // GlobalSearch performs a unified search across all entity types.

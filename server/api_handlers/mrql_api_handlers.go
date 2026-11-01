@@ -363,7 +363,7 @@ func renderMRQLCustomTemplates(appCtx MRQLAPIContext, result *application_contex
 				Entity: r, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 			}
 			applyAPIPresentationContext(&mctx, data, "resource", r.OwnerId, r.ID)
-			r.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "resource", r.ResourceCategory.ID, r.ResourceCategory.TemplateCSS(), mctx, pluginRenderer, executor) +
+			r.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "resource", r.ResourceCategory.ID, shortcodes.JoinCSS(r.ResourceCategory.TemplateCSSParts()...), mctx, pluginRenderer, executor) +
 				shortcodes.Process(reqCtx, r.ResourceCategory.CustomMRQLResult, mctx, pluginRenderer, executor)
 		}
 	}
@@ -384,7 +384,7 @@ func renderMRQLCustomTemplates(appCtx MRQLAPIContext, result *application_contex
 				Entity: n, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 			}
 			applyAPIPresentationContext(&mctx, data, "note", n.OwnerId, n.ID)
-			n.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "note", n.NoteType.ID, n.NoteType.TemplateCSS(), mctx, pluginRenderer, executor) +
+			n.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "note", n.NoteType.ID, shortcodes.JoinCSS(n.NoteType.TemplateCSSParts()...), mctx, pluginRenderer, executor) +
 				shortcodes.Process(reqCtx, n.NoteType.CustomMRQLResult, mctx, pluginRenderer, executor)
 		}
 	}
@@ -405,7 +405,7 @@ func renderMRQLCustomTemplates(appCtx MRQLAPIContext, result *application_contex
 				Entity: g, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 			}
 			applyAPIPresentationContext(&mctx, data, "group", g.OwnerId, g.ID)
-			g.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "group", g.Category.ID, g.Category.TemplateCSS(), mctx, pluginRenderer, executor) +
+			g.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "group", g.Category.ID, shortcodes.JoinCSS(g.Category.TemplateCSSParts()...), mctx, pluginRenderer, executor) +
 				shortcodes.Process(reqCtx, g.Category.CustomMRQLResult, mctx, pluginRenderer, executor)
 		}
 	}
@@ -448,7 +448,7 @@ func renderMRQLGroupedCustomTemplates(appCtx MRQLAPIContext, result *application
 						Entity: r, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 					}
 					applyAPIPresentationContext(&mctx, data, "resource", r.OwnerId, r.ID)
-					r.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "resource", r.ResourceCategory.ID, r.ResourceCategory.TemplateCSS(), mctx, pluginRenderer, executor) +
+					r.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "resource", r.ResourceCategory.ID, shortcodes.JoinCSS(r.ResourceCategory.TemplateCSSParts()...), mctx, pluginRenderer, executor) +
 						shortcodes.Process(reqCtx, r.ResourceCategory.CustomMRQLResult, mctx, pluginRenderer, executor)
 				}
 			}
@@ -470,7 +470,7 @@ func renderMRQLGroupedCustomTemplates(appCtx MRQLAPIContext, result *application
 						Entity: n, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 					}
 					applyAPIPresentationContext(&mctx, data, "note", n.OwnerId, n.ID)
-					n.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "note", n.NoteType.ID, n.NoteType.TemplateCSS(), mctx, pluginRenderer, executor) +
+					n.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "note", n.NoteType.ID, shortcodes.JoinCSS(n.NoteType.TemplateCSSParts()...), mctx, pluginRenderer, executor) +
 						shortcodes.Process(reqCtx, n.NoteType.CustomMRQLResult, mctx, pluginRenderer, executor)
 				}
 			}
@@ -492,7 +492,7 @@ func renderMRQLGroupedCustomTemplates(appCtx MRQLAPIContext, result *application
 						Entity: g, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 					}
 					applyAPIPresentationContext(&mctx, data, "group", g.OwnerId, g.ID)
-					g.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "group", g.Category.ID, g.Category.TemplateCSS(), mctx, pluginRenderer, executor) +
+					g.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "group", g.Category.ID, shortcodes.JoinCSS(g.Category.TemplateCSSParts()...), mctx, pluginRenderer, executor) +
 						shortcodes.Process(reqCtx, g.Category.CustomMRQLResult, mctx, pluginRenderer, executor)
 				}
 			}

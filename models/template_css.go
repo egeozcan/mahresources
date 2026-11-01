@@ -1,9 +1,9 @@
 package models
 
-import "strings"
-
-// TemplateCSS combines shared and per-slot global styles in a stable cascade order.
-func (c Category) TemplateCSS() string {
+// TemplateCSSParts lists the shared and per-slot global styles in their stable
+// cascade order. The template engine joins them (shortcodes.JoinCSS), removing
+// each one's template comments on its own first.
+func (c Category) TemplateCSSParts() []string {
 	parts := []string{c.CustomCSS}
 	if c.CustomHeaderCSS != "" {
 		parts = append(parts, c.CustomHeaderCSS)
@@ -35,9 +35,9 @@ func (c Category) TemplateCSS() string {
 	if c.CustomMRQLResultCSS != "" {
 		parts = append(parts, c.CustomMRQLResultCSS)
 	}
-	return strings.Join(parts, "\n")
+	return parts
 }
-func (c ResourceCategory) TemplateCSS() string {
+func (c ResourceCategory) TemplateCSSParts() []string {
 	parts := []string{c.CustomCSS}
 	if c.CustomHeaderCSS != "" {
 		parts = append(parts, c.CustomHeaderCSS)
@@ -75,9 +75,9 @@ func (c ResourceCategory) TemplateCSS() string {
 	if c.CustomMRQLResultCSS != "" {
 		parts = append(parts, c.CustomMRQLResultCSS)
 	}
-	return strings.Join(parts, "\n")
+	return parts
 }
-func (c NoteType) TemplateCSS() string {
+func (c NoteType) TemplateCSSParts() []string {
 	parts := []string{c.CustomCSS}
 	if c.CustomHeaderCSS != "" {
 		parts = append(parts, c.CustomHeaderCSS)
@@ -106,5 +106,5 @@ func (c NoteType) TemplateCSS() string {
 	if c.CustomMRQLResultCSS != "" {
 		parts = append(parts, c.CustomMRQLResultCSS)
 	}
-	return strings.Join(parts, "\n")
+	return parts
 }

@@ -150,8 +150,8 @@ func customCSSForEntity(entity any) (entityType string, catID uint, css string, 
 		return
 	}
 	css = cssField.String()
-	if carrier, hasCompanions := catField.Interface().(interface{ TemplateCSS() string }); hasCompanions {
-		css = carrier.TemplateCSS()
+	if carrier, hasCompanions := catField.Interface().(interface{ TemplateCSSParts() []string }); hasCompanions {
+		css = shortcodes.JoinCSS(carrier.TemplateCSSParts()...)
 	}
 	return entityType, uint(idField.Uint()), css, true
 }

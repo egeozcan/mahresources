@@ -39,7 +39,7 @@ type DocExample struct {
 
 // BuiltinDoc documents one built-in shortcode (meta, datetime, pills,
 // property, mrql, conditional, link, each, item, partial, lazy, details,
-// reload, using).
+// reload, using, comment).
 type BuiltinDoc struct {
 	Name        string          `json:"name"`
 	Syntax      string          `json:"syntax"`
@@ -308,6 +308,17 @@ func BuiltinDocs() []BuiltinDoc {
 				{Title: "The owning group", Code: "[using rel=\"owner\"]\n  <h3>[link][property path=\"Name\"][/link]</h3>\n  Status: [meta path=\"status\" inline=\"true\"]\n[else]\n  <p>No owner.</p>\n[/using]"},
 				{Title: "An ID stored in Meta", Code: "[using type=\"group\" id-path=\"client\"]\n  Client: [property path=\"Name\"]\n[/using]"},
 				{Title: "First result of a query", Code: "[using query='type = note AND name = $name ORDER BY created DESC' param-name=\"Index\"]\n  [property path=\"Description\"]\n[/using]"},
+			},
+		},
+		{
+			Name:        "comment",
+			Syntax:      `[comment]...[/comment]`,
+			Description: "Comments out part of a template or Description. Everything between [comment] and [/comment] is removed on the server before any other shortcode is read, so nothing inside runs and none of it is rendered. An HTML comment is different: the shortcodes inside it still run and the comment is sent to the browser. Comments nest. An unclosed [comment] hides everything after it, and a [/comment] with no opener is removed; the linter reports both. The opener accepts any attributes, such as reason=\"…\", and ignores them; it ends at its first ], so a value cannot contain one, and it must fit on one line. There is no way to write a literal [comment] on the page.",
+			IsBlock:     BlockRequired,
+			Attrs:       []DocAttr{},
+			Examples: []DocExample{
+				{Title: "Hide a section", Code: "[comment]\n  <h3>Related</h3>\n  [mrql query=\"type = note\"]\n[/comment]"},
+				{Title: "Say why", Code: "[comment reason=\"old sidebar\"]<aside>[meta path=\"legacy\"]</aside>[/comment]"},
 			},
 		},
 	}

@@ -75,7 +75,9 @@ func GetPreviewDescriptionHandler(ctx TemplatePreviewContext, entityType string,
 			}
 		}
 
-		html := template_filters.RenderDescriptionMarkup(req.Text)
+		// Template comments go before markdown, which would otherwise encode
+		// what is inside them first.
+		html := template_filters.RenderDescriptionMarkup(shortcodes.StripTemplateComments(req.Text))
 		if entity != nil && descriptionEntityLoader(ctx, entityType) != nil {
 			if metaCtx := template_filters.BuildMetaContextForEntity(entity, ctx); metaCtx != nil {
 				reqCtx, cancel := buildMRQLAPIRenderContext(request.Context(), ctx, false)

@@ -11,7 +11,7 @@
     {% if !note.HasTextBlock %}
     {% autoescape off %}
         <div class="prose lg:prose-xl max-w-full font-sans">
-        {{ note.Description|markdown2 }}
+        {{ note.Description|strip_template_comments|markdown2 }}
         </div>
     {% endautoescape %}
     {% endif %}

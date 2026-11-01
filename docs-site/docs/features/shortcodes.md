@@ -16,7 +16,7 @@ Shortcodes are bracket-delimited expressions embedded in the custom template slo
 The parser recognizes these patterns:
 
 - **Built-in inline:** `[meta ...]`, `[property ...]`, `[item ...]`, `[partial ...]`
-- **Built-in block:** `[conditional ...]...[/conditional]`, `[each ...]...[/each]`, `[lazy]...[/lazy]`, `[details ...]...[/details]`
+- **Built-in block:** `[conditional ...]...[/conditional]`, `[each ...]...[/each]`, `[lazy]...[/lazy]`, `[details ...]...[/details]`, `[using ...]...[/using]`, `[comment]...[/comment]`
 - **Built-in inline or block:** `[mrql ...]` or `[mrql ...]...[/mrql]`, `[link ...]` or `[link ...]...[/link]`, `[reload ...]` or `[reload ...]...[/reload]`
 - **Plugin:** `[plugin:plugin-name:shortcode-name ...]`
 
@@ -40,6 +40,7 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 | `[details]` | Block | Defer server rendering until a disclosure is opened |
 | `[reload]` | Inline or block | Re-render the nearest deferred block or custom-content slot on demand |
 | `[using]` | Block | Render the body with another group, resource or note as the entity |
+| `[comment]` | Block | Remove a section on the server so it never runs or renders |
 
 ### Block Syntax
 
@@ -970,6 +971,31 @@ A lookup by `id`, `id-path`, `id-prop` or `rel` searches globally: the `[mrql]` 
   No index note yet.
 [/using]
 ```
+
+## `[comment]` -- Comment out a section
+
+`[comment]...[/comment]` removes everything between the tags on the server, before any other shortcode is read. Nothing inside runs: a commented-out `[mrql]` never queries, and a half-written `[conditional]` cannot pair with a closer outside the comment. None of it is rendered: it is absent from the HTML of the slot, the description, list-card and search previews, and the live preview. The edit form still holds the source, as it does for the rest of the template.
+
+An HTML comment works differently. `<!-- [mrql ...] -->` still runs the query, and the comment and its expanded output are sent to the browser. The editor lint marks a shortcode inside an HTML comment with a hint pointing to `[comment]`.
+
+```
+[comment reason="old sidebar"]
+  <aside>[mrql query='type = "note"' format="list"]</aside>
+[/comment]
+```
+
+### Rules
+
+- **Where it applies:** every custom template slot (including `CustomCSS`), Template Partials, entity descriptions, and every body the engine expands while rendering: a partial's content, an `[each]` body, and an MRQL result template. Descriptions and note text blocks drop comments wherever they are rendered for reading, including where shortcodes are not processed: list-card previews, hover cards, shared notes and their blocks, the note text view, the resource Description row, search results, and `[property path="Description"]`. Views that show the source itself keep it: the edit form and the group compare page's Description diff.
+- **Nesting:** comments nest, so a section that already holds a comment can be commented out. `[comment] A [comment] B [/comment] C [/comment]` removes all of it.
+- **Unclosed opener:** a `[comment]` without `[/comment]` hides everything after it in that slot. The lint reports it as an error.
+- **Stray closer:** a `[/comment]` with no opener is removed. The lint reports it as a warning.
+- **Attributes:** the opener accepts any attributes, such as `reason="..."`, and ignores them. The opener ends at its first `]`, even inside quotes, so an attribute value cannot contain `]`, and it must fit on one line: `[comment` with a line break before its `]` is plain text.
+- **Whitespace:** only the text from `[comment` to `[/comment]` is removed. Line breaks around it stay.
+- **Joined tags:** if removing a comment joins the text around it into a new `[comment]` or `[/comment]`, that is removed too, for up to 16 rounds. `[comm[comment][/comment]ent]` becomes `[comment]`, which then hides what follows.
+- **CSS fields:** each CSS field is handled on its own before the fields are joined into one stylesheet, so an unclosed `[comment]` in `CustomCSS` does not hide a companion field such as `CustomHeaderCSS`.
+- **Lint:** the lint skips the contents of a comment, so unfinished shortcodes inside it are not flagged.
+- **No escape:** there is no way to write a literal `[comment]` on the page.
 
 ## Plugin Shortcodes
 

@@ -454,7 +454,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 			r.ResourceCategory.CustomHoverCard = shortcodes.Process(reqCtx, r.ResourceCategory.CustomHoverCard, metaCtx, pluginRenderer, executor)
 			r.ResourceCategory.CustomPreview = shortcodes.Process(reqCtx, r.ResourceCategory.CustomPreview, metaCtx, pluginRenderer, executor)
 			r.ResourceCategory.CustomLightbox = shortcodes.Process(reqCtx, r.ResourceCategory.CustomLightbox, metaCtx, pluginRenderer, executor)
-			r.ResourceCategory.CustomCSS = shortcodes.Process(reqCtx, r.ResourceCategory.TemplateCSS(), metaCtx, pluginRenderer, executor)
+			r.ResourceCategory.CustomCSS = shortcodes.Process(reqCtx, shortcodes.JoinCSS(r.ResourceCategory.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
 		}
 	case "group":
 		if g, ok := mainEntity.(*models.Group); ok && g.Category != nil {
@@ -477,7 +477,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 			g.Category.CustomDetailFooter = shortcodes.Process(reqCtx, g.Category.CustomDetailFooter, metaCtx, pluginRenderer, executor)
 			g.Category.CustomHoverCard = shortcodes.Process(reqCtx, g.Category.CustomHoverCard, metaCtx, pluginRenderer, executor)
 			g.Category.CustomOwnEntities = shortcodes.Process(reqCtx, g.Category.CustomOwnEntities, metaCtx, pluginRenderer, executor)
-			g.Category.CustomCSS = shortcodes.Process(reqCtx, g.Category.TemplateCSS(), metaCtx, pluginRenderer, executor)
+			g.Category.CustomCSS = shortcodes.Process(reqCtx, shortcodes.JoinCSS(g.Category.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
 		}
 	case "note":
 		if n, ok := mainEntity.(*models.Note); ok && n.NoteType != nil {
@@ -498,7 +498,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 			n.NoteType.CustomAvatar = shortcodes.Process(reqCtx, n.NoteType.CustomAvatar, metaCtx, pluginRenderer, executor)
 			n.NoteType.CustomDetailFooter = shortcodes.Process(reqCtx, n.NoteType.CustomDetailFooter, metaCtx, pluginRenderer, executor)
 			n.NoteType.CustomHoverCard = shortcodes.Process(reqCtx, n.NoteType.CustomHoverCard, metaCtx, pluginRenderer, executor)
-			n.NoteType.CustomCSS = shortcodes.Process(reqCtx, n.NoteType.TemplateCSS(), metaCtx, pluginRenderer, executor)
+			n.NoteType.CustomCSS = shortcodes.Process(reqCtx, shortcodes.JoinCSS(n.NoteType.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
 		}
 	}
 }

@@ -47,8 +47,10 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 		return err
 	}
 	entity := entityVal.Interface()
+	// An entity with no shortcode context (a Tag, a Query) still has its
+	// template comments removed, as every other Description does.
 	if entity == nil {
-		_, _ = writer.WriteString(content)
+		_, _ = writer.WriteString(shortcodes.StripTemplateComments(content))
 		return nil
 	}
 
@@ -60,7 +62,7 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 	}
 	metaCtx := buildMetaContext(entity, scopeResolver)
 	if metaCtx == nil {
-		_, _ = writer.WriteString(content)
+		_, _ = writer.WriteString(shortcodes.StripTemplateComments(content))
 		return nil
 	}
 

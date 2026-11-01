@@ -17,3 +17,9 @@ _Avoid_: Note text, paragraph
 **Query Text**:
 The SQL a saved Query runs. It is code, not prose, and is never rendered as markdown.
 _Avoid_: Query description, query body
+
+### Templates
+
+**Template comment**:
+A region of a template or a Description that is removed before it renders. Nothing inside it runs, and none of it is rendered.
+_Avoid_: HTML comment (that one is sent to the browser), commented-out shortcode

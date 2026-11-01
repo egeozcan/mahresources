@@ -1,4 +1,5 @@
 // src/components/blockEditor.js
+import { stripTemplateComments } from './templateCommentRanges.js';
 const MIN_CHAR = 'a'.charCodeAt(0); // 97
 const MAX_CHAR = 'z'.charCodeAt(0); // 122
 
@@ -483,7 +484,8 @@ export function blockEditor(noteId, initialBlocks = []) {
       if (outdated) el.setAttribute('aria-busy', 'true');
       else el.removeAttribute('aria-busy');
       el.classList.toggle('opacity-60', outdated);
-      const painted = html === undefined ? { text: text || '' } : { html };
+      // The plain-text fallback shows what the server would: no template comments.
+      const painted = html === undefined ? { text: stripTemplateComments(text || '') } : { html };
       if (el._painted && el._painted.html === painted.html && el._painted.text === painted.text) return;
       el._painted = painted;
       const Alpine = window.Alpine;

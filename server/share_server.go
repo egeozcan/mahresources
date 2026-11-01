@@ -584,14 +584,13 @@ func (s *ShareServer) processShareTemplates(note *models.Note) (header, css stri
 		header = shortcodes.Process(reqCtx, note.NoteType.CustomHeader, *metaCtx, nil, nil)
 	}
 	if note.NoteType.CustomCSS != "" || note.NoteType.CustomHeaderCSS != "" {
-		styles := note.NoteType.CustomCSS
-		if note.NoteType.CustomHeaderCSS != "" {
-			if styles != "" {
-				styles += "\n"
+		var parts []string
+		for _, part := range []string{note.NoteType.CustomCSS, note.NoteType.CustomHeaderCSS} {
+			if part != "" {
+				parts = append(parts, part)
 			}
-			styles += note.NoteType.CustomHeaderCSS
 		}
-		css = shortcodes.Process(reqCtx, styles, *metaCtx, nil, nil)
+		css = shortcodes.Process(reqCtx, shortcodes.JoinCSS(parts...), *metaCtx, nil, nil)
 	}
 	return header, css
 }

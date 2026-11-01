@@ -181,6 +181,10 @@ func Process(reqCtx context.Context, input string, ctx MetaShortcodeContext, ren
 }
 
 func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor, depth int) string {
+	// Template comments go first, at every depth, so nothing inside one is
+	// parsed or run, whether it sits in a slot, a partial body or an [each].
+	input = stripTemplateComments(input)
+
 	if depth >= maxRecursionDepth {
 		// Emit the content as-is (it may be meaningful text), but when it still
 		// contains unexpanded shortcodes, append a comment so an author reading
@@ -276,6 +280,8 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 						// template engine.
 						if depth+1 < maxRecursionDepth {
 							replacement = processWithDepth(reqCtx, replacement, ctx, renderer, executor, depth+1)
+						} else {
+							replacement = stripTemplateComments(replacement)
 						}
 					} else if errors.Is(err, ErrPluginUnavailable) {
 						// Not a failure: this caller may not reach this plugin.
