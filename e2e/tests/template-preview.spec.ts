@@ -251,3 +251,139 @@ test.describe('Template live preview', () => {
     await expect(errors).toBeHidden();
   });
 });
+
+// The pane normally sits below the whole Templates fieldset, far from the slot
+// being edited. Docked, it follows the slot: directly after its cluster.
+test.describe('Template preview docked under the slot', () => {
+  const pane = '[data-template-preview-pane]';
+
+  // The anchor the pane directly follows: a cluster's name, or the pane's
+  // home after the Templates fieldset.
+  async function paneFollows(page: import('@playwright/test').Page) {
+    return page.locator(pane).evaluate((el) => {
+      let prev = el.previousElementSibling;
+      return prev?.getAttribute('data-template-cluster') ?? (prev?.tagName === 'FIELDSET' ? 'templates' : prev?.querySelector('input[name="CustomCSS"]') ? 'CustomCSS' : 'other');
+    });
+  }
+
+  test('docking follows the selected slot and undocking returns the pane', async ({ page, apiClient }) => {
+    const category = await apiClient.createCategory(`Dock Cat ${Date.now()}`);
+    await apiClient.createGroup({ name: `Dock Target ${Date.now()}`, categoryId: category.ID });
+    await page.goto(`/category/edit?id=${category.ID}`);
+    await expect(page.locator('#tp-entity-group')).not.toHaveValue('');
+    expect(await paneFollows(page)).toBe('templates');
+
+    await page.locator('#tp-dock-group').check();
+    // The default slot is Header.
+    expect(await paneFollows(page)).toBe('CustomHeader');
+    await expect(page.locator('#tp-dock-group')).toBeFocused();
+
+    await page.locator('#tp-slot-group').selectOption('CustomSidebarCSS');
+    expect(await paneFollows(page)).toBe('CustomSidebar');
+    await page.locator('#tp-slot-group').selectOption('CustomCSS');
+    expect(await paneFollows(page)).toBe('CustomCSS');
+
+    // The choice is remembered.
+    await page.reload();
+    await expect(page.locator('#tp-dock-group')).toBeChecked();
+    await expect.poll(() => paneFollows(page)).toBe('CustomHeader');
+
+    await page.locator('#tp-dock-group').uncheck();
+    expect(await paneFollows(page)).toBe('templates');
+    await page.reload();
+    await expect(page.locator('#tp-dock-group')).not.toBeChecked();
+    expect(await paneFollows(page)).toBe('templates');
+  });
+
+  test('docked, focusing a slot editor selects that slot and previews it there', async ({ page, apiClient }) => {
+    const category = await apiClient.createCategory(`Dock Focus Cat ${Date.now()}`);
+    const groupName = `Dock Focus Target ${Date.now()}`;
+    await apiClient.createGroup({ name: groupName, categoryId: category.ID });
+    await page.goto(`/category/edit?id=${category.ID}`);
+    await expect(page.locator('#tp-entity-group')).toHaveValue(groupName);
+    await page.locator('#tp-dock-group').check();
+
+    const summary = page.locator('.cm-content[aria-label="Custom Summary"]');
+    await summary.click();
+    await expect(page.locator('#tp-slot-group')).toHaveValue('CustomSummary');
+    expect(await paneFollows(page)).toBe('CustomSummary');
+    await expect(summary).toBeFocused();
+
+    await page.keyboard.type('SUM=[property path="Name"]');
+    const frame = page.frameLocator('iframe[title="Template slot preview"]');
+    await expect(frame.locator('body')).toContainText(`SUM=${groupName}`);
+
+    // Moving within the followed cluster leaves the pane, and its frame, alone.
+    const srcdocFrame = () => page.frames().find((f) => f.url() === 'about:srcdoc')!;
+    await srcdocFrame().evaluate(() => { (window as { __kept?: boolean }).__kept = true; });
+    await page.locator('.cm-content[aria-label="Custom Summary CSS"]').click();
+    await expect(page.locator('#tp-slot-group')).toHaveValue('CustomSummary');
+    expect(await srcdocFrame().evaluate(() => (window as { __kept?: boolean }).__kept)).toBe(true);
+
+    // The shared Custom CSS editor keeps the current slot.
+    await page.locator('.cm-content[aria-label="Custom CSS"]').click();
+    await expect(page.locator('#tp-slot-group')).toHaveValue('CustomSummary');
+    expect(await paneFollows(page)).toBe('CustomSummary');
+  });
+
+  test('docked, focus is followed while the preview entity is still loading', async ({ page, apiClient }) => {
+    const category = await apiClient.createCategory(`Dock Slow Cat ${Date.now()}`);
+    const groupName = `Dock Slow Target ${Date.now()}`;
+    await apiClient.createGroup({ name: groupName, categoryId: category.ID });
+    await page.addInitScript(() => localStorage.setItem('templatePreview:docked', '1'));
+
+    // Hold the default-entity lookup until focus has moved.
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    await page.route(/\/v1\/groups\?maxResults=1/, async (route) => {
+      await held;
+      await route.continue();
+    });
+    await page.goto(`/category/edit?id=${category.ID}`);
+    await expect.poll(() => paneFollows(page)).toBe('CustomHeader');
+
+    const summary = page.locator('.cm-content[aria-label="Custom Summary"]');
+    await summary.fill('SLOW=[property path="Name"]');
+    await expect(page.locator('#tp-slot-group')).toHaveValue('CustomSummary');
+    expect(await paneFollows(page)).toBe('CustomSummary');
+
+    release();
+    await expect(page.locator('#tp-entity-group')).toHaveValue(groupName);
+    const frame = page.frameLocator('iframe[title="Template slot preview"]');
+    await expect(frame.locator('body')).toContainText(`SLOW=${groupName}`);
+  });
+
+  test('a keyboard slot change keeps focus on the Slot control', async ({ page, apiClient }) => {
+    const category = await apiClient.createCategory(`Dock Keys Cat ${Date.now()}`);
+    await apiClient.createGroup({ name: `Dock Keys Target ${Date.now()}`, categoryId: category.ID });
+    await page.goto(`/category/edit?id=${category.ID}`);
+    await expect(page.locator('#tp-entity-group')).not.toHaveValue('');
+    await page.locator('#tp-dock-group').check();
+
+    const slot = page.locator('#tp-slot-group');
+    await slot.focus();
+    // Type-to-select: arrow keys open the popup on macOS instead of changing
+    // the value of a closed select.
+    await page.keyboard.press('d'); // Header -> Detail Footer: the pane moves
+    await expect(slot).toHaveValue('CustomDetailFooter');
+    expect(await paneFollows(page)).toBe('CustomDetailFooter');
+    await expect(slot).toBeFocused();
+    // And it stays on screen where it was operated.
+    await expect(slot).toBeInViewport();
+  });
+
+  test('note type and resource category editors dock the same way', async ({ page, apiClient }) => {
+    const noteType = await apiClient.createNoteType(`Dock NT ${Date.now()}`);
+    await page.goto(`/noteType/edit?id=${noteType.ID}`);
+    await page.locator('#tp-dock-note').check();
+    await page.locator('#tp-slot-note').selectOption('CustomSidebar');
+    expect(await paneFollows(page)).toBe('CustomSidebar');
+
+    const rc = await apiClient.createResourceCategory(`Dock RC ${Date.now()}`);
+    await page.goto(`/resourceCategory/edit?id=${rc.ID}`);
+    // localStorage carries the choice across editors.
+    await expect(page.locator('#tp-dock-resource')).toBeChecked();
+    await page.locator('#tp-slot-resource').selectOption('CustomPreview');
+    expect(await paneFollows(page)).toBe('CustomPreview');
+  });
+});

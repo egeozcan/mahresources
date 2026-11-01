@@ -51,6 +51,10 @@ const SLOTS = [
 // None of them ever puts the buffer in body flow.
 const CSS_SLOT = 'CustomCSS';
 
+// Per-browser layout choice: show the pane under the slot being edited rather
+// than below the whole Templates fieldset.
+const DOCKED_KEY = 'templatePreview:docked';
+
 export function slotsForEntityType(entityType) {
   return SLOTS.filter((s) => !s.only || s.only === entityType);
 }
@@ -175,9 +179,44 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
     /** @type {HTMLFormElement|null} */
     _form: null,
     _refreshSeq: 0,
+    docked: false,
+    // Captured in init(): the pane itself, and a marker where the template put
+    // it, so undocking can return it there.
+    /** @type {HTMLElement|null} */
+    _pane: null,
+    /** @type {Comment|null} */
+    _home: null,
 
     async init() {
       this._form = this.$root.closest('form');
+      this._pane = this.$root;
+      // Docking places the pane among the form's slot clusters.
+      if (this._form) {
+        this._home = document.createComment('template preview home');
+        this._pane.before(this._home);
+        try {
+          this.docked = localStorage.getItem(DOCKED_KEY) === '1';
+        } catch (e) {
+          /* storage unavailable: stay undocked */
+        }
+        // After Alpine's synchronous initial walk: it continues from this
+        // element's next sibling, and a pane moved now would send it back over
+        // clusters it has already initialized.
+        if (this.docked) queueMicrotask(() => this._dock());
+        // Docked, the pane follows the cluster focus enters. The Custom CSS
+        // editor has no cluster and keeps the slot: alone it renders no markup.
+        // Registered before the entity lookup below, so focus that moves while
+        // it is pending is still followed; the refresh at the end of init()
+        // then renders whichever slot is selected.
+        this._form.addEventListener('focusin', (e) => {
+          if (!this.docked || !(e.target instanceof Element) || this._pane?.contains(e.target)) return;
+          const name = e.target.closest('[data-template-cluster]')?.getAttribute('data-template-cluster');
+          if (!name || name === this.slot.replace(/CSS$/, '') || !this.slots.some((s) => s.name === name)) return;
+          this.slot = name;
+          this._dock();
+          this.refresh();
+        });
+      }
 
       // Publish carrier + selection to a shared store so the per-slot generate
       // buttons (on separate codeEditor islands) can ground on the same sample
@@ -358,7 +397,48 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
     },
 
     onSlotChange() {
+      if (this.docked) this._dock();
       this.refresh();
+    },
+
+    onDockChange() {
+      try {
+        localStorage.setItem(DOCKED_KEY, this.docked ? '1' : '0');
+      } catch (e) {
+        /* ignore quota errors */
+      }
+      if (this.docked) this._dock();
+      else if (this._home) this._placeAfter(this._home);
+    },
+
+    // _dock moves the pane under the selected slot's cluster, or under the
+    // Custom CSS editor row for the shared stylesheet.
+    _dock() {
+      if (!this._form) return;
+      const anchor =
+        this.slot === CSS_SLOT
+          ? this._form.querySelector(`input[name="${CSS_SLOT}"]`)?.parentElement?.parentElement
+          : this._form.querySelector(`[data-template-cluster="${this.slot.replace(/CSS$/, '')}"]`);
+      if (anchor) this._placeAfter(anchor);
+    },
+
+    // _placeAfter moves the pane only when it is not already there, since a
+    // re-inserted iframe reloads its document. Alpine sees a move, not a
+    // removal, so the component survives. Reparenting blurs a focused control
+    // inside the pane and shifts whatever is below its old spot, so the
+    // focused element is refocused and kept at the same viewport position.
+    _placeAfter(anchor) {
+      const pane = this._pane;
+      if (!pane || anchor.nextSibling === pane) return;
+      const active = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+        ? document.activeElement
+        : null;
+      const top = active?.getBoundingClientRect().top;
+      anchor.after(pane);
+      if (!active || top === undefined) return;
+      if (document.activeElement !== active) active.focus({ preventScroll: true });
+      const delta = active.getBoundingClientRect().top - top;
+      if (delta) window.scrollBy(0, delta);
     },
 
     _scheduleRefresh() {

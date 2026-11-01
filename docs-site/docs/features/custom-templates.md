@@ -801,6 +801,7 @@ Below the template fields, a **Live preview** pane renders a selected slot again
 
 - Pick the entity to render against. When editing an existing category or note type, the search and the default pick are restricted to entities of that category (the choice is remembered per category in the browser). On the create form, where no entity can belong to the new category yet, the pick falls back to all entities and defaults to the most recent one.
 - Choose which slot to preview from the dropdown.
+- Check **Show under the slot being edited** to move the pane directly below the selected slot's fieldset (below the Custom CSS editor for the CSS slot). While it is checked, choosing a slot from the dropdown moves the pane under it, and moving focus into a slot's controls selects that slot. The Custom CSS editor keeps the current slot, since the shared stylesheet adds no markup of its own. Unchecking returns the pane below the template fields. The choice is remembered in the browser.
 - The result renders in a sandboxed `<iframe>` that includes the app's CSS and JS bundle, so `[meta]` web components and Alpine widgets hydrate. The sandbox is origin-isolated, so widgets that need API calls are non-functional in preview -- a note in the pane states this.
 - The rendered slot is wrapped in the same `x-data="{ entity: ... }"` Alpine scope the display pages provide, so expressions like `x-text="entity.Name"` behave as they will on the real page.
 - Edits refresh the preview automatically (debounced).

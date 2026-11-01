@@ -1,5 +1,5 @@
 {# categoryId = ID of the category/noteType being edited (null on the create form): entity search and the default pick are restricted to it. #}
-<div class="mt-6 border-t border-stone-200 pt-5"
+<div class="mt-6 border-t border-stone-200 pt-5" data-template-preview-pane
      x-data="templatePreview({ entityType: '{{ entityType }}', previewPath: '{{ previewPath }}', generatePath: '{{ generatePath }}', categoryId: {{ categoryId|default:"null" }} })">
     <div class="border border-stone-300 rounded-md overflow-hidden">
         <div class="flex flex-wrap items-end gap-3 p-3 border-b border-stone-200 bg-stone-50">
@@ -44,6 +44,18 @@
                 Refresh
             </button>
             <span x-show="loading" role="status" class="text-xs text-stone-500 font-mono">Rendering…</span>
+
+            <div class="w-full">
+                <label for="tp-dock-{{ entityType }}" class="inline-flex items-center gap-1.5 text-xs font-mono text-stone-700 cursor-pointer">
+                    <input id="tp-dock-{{ entityType }}" type="checkbox" x-model="docked" @change="onDockChange()"
+                           aria-describedby="tp-dock-hint-{{ entityType }}"
+                           class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+                    Show under the slot being edited
+                </label>
+                <p id="tp-dock-hint-{{ entityType }}" class="text-[11px] text-stone-600 mt-0.5">
+                    Moving focus into a slot's controls selects that slot and moves the preview under it. The Custom CSS editor keeps the current slot.
+                </p>
+            </div>
         </div>
 
         <p x-show="error" x-text="error" role="alert" class="text-xs text-red-600 font-mono px-3 py-2"></p>
