@@ -431,6 +431,14 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 		executor = template_filters.BuildQueryExecutor(appCtx)
 	}
 
+	// Each slot gets the same reloadable region the process_shortcodes tag gives
+	// it, so a [reload] button in the lightbox re-renders its slot in place
+	// instead of falling back to reloading the whole page.
+	processSlot := func(raw string, metaCtx shortcodes.MetaShortcodeContext) string {
+		rendered := shortcodes.Process(reqCtx, raw, metaCtx, pluginRenderer, executor)
+		return template_filters.WrapReloadableRegion(rendered, raw, metaCtx, appCtx)
+	}
+
 	switch entityType {
 	case "resource":
 		if r, ok := mainEntity.(*models.Resource); ok && r.ResourceCategory != nil {
@@ -446,14 +454,14 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 				RootGroupID:   rootID,
 			}
 			template_filters.EnrichMetaContextPresentation(&metaCtx, r)
-			r.ResourceCategory.CustomHeader = shortcodes.Process(reqCtx, r.ResourceCategory.CustomHeader, metaCtx, pluginRenderer, executor)
-			r.ResourceCategory.CustomSidebar = shortcodes.Process(reqCtx, r.ResourceCategory.CustomSidebar, metaCtx, pluginRenderer, executor)
-			r.ResourceCategory.CustomSummary = shortcodes.Process(reqCtx, r.ResourceCategory.CustomSummary, metaCtx, pluginRenderer, executor)
-			r.ResourceCategory.CustomAvatar = shortcodes.Process(reqCtx, r.ResourceCategory.CustomAvatar, metaCtx, pluginRenderer, executor)
-			r.ResourceCategory.CustomDetailFooter = shortcodes.Process(reqCtx, r.ResourceCategory.CustomDetailFooter, metaCtx, pluginRenderer, executor)
-			r.ResourceCategory.CustomHoverCard = shortcodes.Process(reqCtx, r.ResourceCategory.CustomHoverCard, metaCtx, pluginRenderer, executor)
-			r.ResourceCategory.CustomPreview = shortcodes.Process(reqCtx, r.ResourceCategory.CustomPreview, metaCtx, pluginRenderer, executor)
-			r.ResourceCategory.CustomLightbox = shortcodes.Process(reqCtx, r.ResourceCategory.CustomLightbox, metaCtx, pluginRenderer, executor)
+			r.ResourceCategory.CustomHeader = processSlot(r.ResourceCategory.CustomHeader, metaCtx)
+			r.ResourceCategory.CustomSidebar = processSlot(r.ResourceCategory.CustomSidebar, metaCtx)
+			r.ResourceCategory.CustomSummary = processSlot(r.ResourceCategory.CustomSummary, metaCtx)
+			r.ResourceCategory.CustomAvatar = processSlot(r.ResourceCategory.CustomAvatar, metaCtx)
+			r.ResourceCategory.CustomDetailFooter = processSlot(r.ResourceCategory.CustomDetailFooter, metaCtx)
+			r.ResourceCategory.CustomHoverCard = processSlot(r.ResourceCategory.CustomHoverCard, metaCtx)
+			r.ResourceCategory.CustomPreview = processSlot(r.ResourceCategory.CustomPreview, metaCtx)
+			r.ResourceCategory.CustomLightbox = processSlot(r.ResourceCategory.CustomLightbox, metaCtx)
 			r.ResourceCategory.CustomCSS = shortcodes.Process(reqCtx, shortcodes.JoinCSS(r.ResourceCategory.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
 		}
 	case "group":
@@ -470,13 +478,13 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 				RootGroupID:   appCtx.ResolveRootScopeID(g.ID),
 			}
 			template_filters.EnrichMetaContextPresentation(&metaCtx, g)
-			g.Category.CustomHeader = shortcodes.Process(reqCtx, g.Category.CustomHeader, metaCtx, pluginRenderer, executor)
-			g.Category.CustomSidebar = shortcodes.Process(reqCtx, g.Category.CustomSidebar, metaCtx, pluginRenderer, executor)
-			g.Category.CustomSummary = shortcodes.Process(reqCtx, g.Category.CustomSummary, metaCtx, pluginRenderer, executor)
-			g.Category.CustomAvatar = shortcodes.Process(reqCtx, g.Category.CustomAvatar, metaCtx, pluginRenderer, executor)
-			g.Category.CustomDetailFooter = shortcodes.Process(reqCtx, g.Category.CustomDetailFooter, metaCtx, pluginRenderer, executor)
-			g.Category.CustomHoverCard = shortcodes.Process(reqCtx, g.Category.CustomHoverCard, metaCtx, pluginRenderer, executor)
-			g.Category.CustomOwnEntities = shortcodes.Process(reqCtx, g.Category.CustomOwnEntities, metaCtx, pluginRenderer, executor)
+			g.Category.CustomHeader = processSlot(g.Category.CustomHeader, metaCtx)
+			g.Category.CustomSidebar = processSlot(g.Category.CustomSidebar, metaCtx)
+			g.Category.CustomSummary = processSlot(g.Category.CustomSummary, metaCtx)
+			g.Category.CustomAvatar = processSlot(g.Category.CustomAvatar, metaCtx)
+			g.Category.CustomDetailFooter = processSlot(g.Category.CustomDetailFooter, metaCtx)
+			g.Category.CustomHoverCard = processSlot(g.Category.CustomHoverCard, metaCtx)
+			g.Category.CustomOwnEntities = processSlot(g.Category.CustomOwnEntities, metaCtx)
 			g.Category.CustomCSS = shortcodes.Process(reqCtx, shortcodes.JoinCSS(g.Category.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
 		}
 	case "note":
@@ -492,12 +500,12 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 				RootGroupID:   rootID,
 			}
 			template_filters.EnrichMetaContextPresentation(&metaCtx, n)
-			n.NoteType.CustomHeader = shortcodes.Process(reqCtx, n.NoteType.CustomHeader, metaCtx, pluginRenderer, executor)
-			n.NoteType.CustomSidebar = shortcodes.Process(reqCtx, n.NoteType.CustomSidebar, metaCtx, pluginRenderer, executor)
-			n.NoteType.CustomSummary = shortcodes.Process(reqCtx, n.NoteType.CustomSummary, metaCtx, pluginRenderer, executor)
-			n.NoteType.CustomAvatar = shortcodes.Process(reqCtx, n.NoteType.CustomAvatar, metaCtx, pluginRenderer, executor)
-			n.NoteType.CustomDetailFooter = shortcodes.Process(reqCtx, n.NoteType.CustomDetailFooter, metaCtx, pluginRenderer, executor)
-			n.NoteType.CustomHoverCard = shortcodes.Process(reqCtx, n.NoteType.CustomHoverCard, metaCtx, pluginRenderer, executor)
+			n.NoteType.CustomHeader = processSlot(n.NoteType.CustomHeader, metaCtx)
+			n.NoteType.CustomSidebar = processSlot(n.NoteType.CustomSidebar, metaCtx)
+			n.NoteType.CustomSummary = processSlot(n.NoteType.CustomSummary, metaCtx)
+			n.NoteType.CustomAvatar = processSlot(n.NoteType.CustomAvatar, metaCtx)
+			n.NoteType.CustomDetailFooter = processSlot(n.NoteType.CustomDetailFooter, metaCtx)
+			n.NoteType.CustomHoverCard = processSlot(n.NoteType.CustomHoverCard, metaCtx)
 			n.NoteType.CustomCSS = shortcodes.Process(reqCtx, shortcodes.JoinCSS(n.NoteType.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
 		}
 	}

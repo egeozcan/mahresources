@@ -5,9 +5,10 @@
 // from the button:
 //   1. the innermost <lazy-shortcode>/<details-shortcode> it sits inside, which
 //      already holds the sealed token for its own body;
-//   2. otherwise the [data-shortcode-region] wrapper the process_shortcodes tag
-//      puts around a custom-content slot that contains a reload button, whose
-//      token seals the whole slot;
+//   2. otherwise the [data-shortcode-region] wrapper the server puts around a
+//      custom-content slot that contains a reload button (the process_shortcodes
+//      tag on pages, the JSON render on the lightbox), whose token seals the
+//      whole slot;
 //   3. otherwise the page, which is all that is left on surfaces that cannot
 //      re-render a slot in place (share pages, live preview, list-header
 //      carriers).

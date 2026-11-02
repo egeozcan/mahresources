@@ -110,19 +110,20 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 		metaCtx.ForceReadOnly = metaCtx.ForceReadOnly || !principal.CanWrite()
 	}
 	result := shortcodes.Process(reqCtx, content, *metaCtx, pluginRenderer, executor)
-	result = wrapReloadableRegion(result, content, *metaCtx, appCtx)
+	result = WrapReloadableRegion(result, content, *metaCtx, appCtx)
 	if _, writeErr := writer.WriteString(result); writeErr != nil {
 		return ctx.Error(fmt.Sprintf("process_shortcodes: write error: %s", writeErr), nil)
 	}
 	return nil
 }
 
-// wrapReloadableRegion wraps a rendered custom-content slot in a region element
+// WrapReloadableRegion wraps a rendered custom-content slot in a region element
 // carrying a sealed token of the slot's raw body, so a [reload] button in that
 // slot can re-render the whole slot through /v1/shortcodes/deferred. The token
 // is the same (entityType, entityID, body) seal [lazy] and [details] mint, which
 // is what lets one endpoint serve all three: a region is simply a body that was
-// rendered eagerly and can be asked for again.
+// rendered eagerly and can be asked for again. The JSON render path
+// (processShortcodesForJSON, which feeds the lightbox) wraps its slots here too.
 //
 // It is emitted only when the rendered slot actually contains a reload button.
 // During this page render a [reload] inside a deferred [lazy]/[details] block is
@@ -133,7 +134,7 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 // walks the DOM at click time, so those resolve to that host rather than here.
 // Carrier slots (CustomListHeader) are skipped because the endpoint cannot load a
 // Category by (type, id); a [reload] there falls back to reloading the page.
-func wrapReloadableRegion(rendered, raw string, metaCtx shortcodes.MetaShortcodeContext, appCtx PageRenderContext) string {
+func WrapReloadableRegion(rendered, raw string, metaCtx shortcodes.MetaShortcodeContext, appCtx PageRenderContext) string {
 	appCtx = pageRenderContext(appCtx)
 	if appCtx == nil || !shortcodes.ContainsReloadButton(rendered) || !shortcodes.IsDeferrableEntity(metaCtx) {
 		return rendered

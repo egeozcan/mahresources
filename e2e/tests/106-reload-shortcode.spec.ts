@@ -7,6 +7,7 @@
  * Both go through POST /v1/shortcodes/deferred, the endpoint [lazy] already uses.
  */
 import { test, expect } from '../fixtures/base.fixture';
+import path from 'path';
 
 const deferredPost = (r: { url(): string; request(): { method(): string } }) =>
   r.url().includes('/v1/shortcodes/deferred') && r.request().method() === 'POST';
@@ -343,6 +344,63 @@ test.describe('[reload] shortcode', () => {
     } finally {
       await apiClient.deleteGroup(group.ID).catch(() => {});
       await apiClient.deleteCategory(cat.ID).catch(() => {});
+    }
+  });
+
+  test('reloads the lightbox info panel slot in place instead of the page', async ({
+    apiClient,
+    page,
+  }) => {
+    const stamp = Date.now();
+    const before = `before-${stamp}`;
+    const after = `after-${stamp}`;
+
+    // The lightbox does not render through the process_shortcodes tag: it reads
+    // the slot from the resource's JSON response and drops it in with x-html.
+    const rc = await apiClient.createResourceCategory(`Reload LB RC ${stamp}`, 'reloadlb', {
+      CustomLightbox: `<div class="lb-wrap">STATUS:<span class="lb-val">[meta path="status"]</span>[reload]<span class="lb-btn">Refresh</span>[/reload]</div>`,
+    });
+    const ownerCat = await apiClient.createCategory(`Reload LB Owner Cat ${stamp}`, 'reloadlbowner', {});
+    const owner = await apiClient.createGroup({ name: `Reload LB Owner ${stamp}`, categoryId: ownerCat.ID });
+    const resource = await apiClient.createResource({
+      filePath: path.join(__dirname, '../test-assets/sample-image-21.png'),
+      name: `Reload LB Res ${stamp}`,
+      ownerId: owner.ID,
+      resourceCategoryId: rc.ID,
+      meta: JSON.stringify({ status: before }),
+    });
+
+    try {
+      await page.goto(`/resources?OwnerId=${owner.ID}`);
+      await page.waitForLoadState('load');
+      await page.locator('[data-lightbox-item]').first().click();
+      const lightbox = page.getByRole('dialog', { name: `Reload LB Res ${stamp}`, exact: true });
+      await expect(lightbox).toBeVisible();
+      await lightbox.locator('button[title="Resource info"]').click();
+
+      const panel = lightbox.locator('[data-edit-panel]');
+      await expect(panel.locator('.lb-val')).toContainText(before);
+      await expect(panel.locator('[data-shortcode-region]')).toHaveCount(1);
+
+      await page.evaluate(() => {
+        (window as any).__reloadProbe = 'kept';
+      });
+
+      await apiClient.editMeta('resource', resource.ID, 'status', JSON.stringify(after));
+
+      const resp = page.waitForResponse(deferredPost);
+      await panel.locator('.lb-btn').click();
+      await resp;
+
+      await expect(panel.locator('.lb-val')).toContainText(after);
+      // A page reload would have closed the lightbox and dropped the probe.
+      expect(await page.evaluate(() => (window as any).__reloadProbe)).toBe('kept');
+      await expect(lightbox).toBeVisible();
+    } finally {
+      await apiClient.deleteResource(resource.ID).catch(() => {});
+      await apiClient.deleteGroup(owner.ID).catch(() => {});
+      await apiClient.deleteCategory(ownerCat.ID).catch(() => {});
+      await apiClient.deleteResourceCategory(rc.ID).catch(() => {});
     }
   });
 
