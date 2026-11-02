@@ -12,6 +12,7 @@ import (
 	"mahresources/application_context"
 	"mahresources/auth"
 	"mahresources/constants"
+	"mahresources/deferredtoken"
 	"mahresources/models"
 	"mahresources/mrql"
 	"mahresources/plugin_system"
@@ -407,6 +408,13 @@ func resolveEntityScope(appCtx *application_context.MahresourcesContext, entityT
 func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManager, appCtx *application_context.MahresourcesContext, reqCtx context.Context) {
 	reqCtx = plugin_system.WithMRQLCache(reqCtx)
 	reqCtx = shortcodes.WithPartialResolver(reqCtx, template_filters.BuildPartialResolver(appCtx))
+	// [autorefresh] can be asked for again here, but [lazy]/[details] stay
+	// inline: no deferred signer is installed on this path.
+	if appCtx != nil {
+		reqCtx = shortcodes.WithRefreshSigner(reqCtx, func(entityType string, entityID uint, body string) string {
+			return deferredtoken.Seal(appCtx.DeferredSigningKey(), entityType, entityID, body)
+		})
+	}
 	mainEntity := ctx["mainEntity"]
 	entityType, _ := ctx["mainEntityType"].(string)
 	if mainEntity == nil || entityType == "" {

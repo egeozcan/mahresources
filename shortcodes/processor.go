@@ -137,6 +137,26 @@ func deferredSignerFrom(ctx context.Context) DeferredSigner {
 	return s
 }
 
+type refreshSignerKey struct{}
+
+// WithRefreshSigner returns a context carrying the signer [autorefresh] seals its
+// body with. It is separate from WithDeferredSigner because the two answer
+// different questions: the deferred signer decides whether [lazy]/[details]
+// defer their body, while this one only decides whether an eagerly rendered
+// [autorefresh] body can be asked for again. The lightbox's JSON render installs
+// this one alone, so [lazy] stays inline there while [autorefresh] still works.
+func WithRefreshSigner(ctx context.Context, signer DeferredSigner) context.Context {
+	return context.WithValue(ctx, refreshSignerKey{}, signer)
+}
+
+func refreshSignerFrom(ctx context.Context) DeferredSigner {
+	if ctx == nil {
+		return nil
+	}
+	s, _ := ctx.Value(refreshSignerKey{}).(DeferredSigner)
+	return s
+}
+
 // Process parses shortcodes in input and replaces them with rendered HTML.
 // Built-in "meta" and "property" shortcodes are handled directly.
 // "mrql" shortcodes use the provided executor callback (left as-is if nil).
@@ -256,6 +276,8 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 			replacement = RenderDetailsShortcode(reqCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "reload":
 			replacement = RenderReloadShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+		case sc.Name == "autorefresh":
+			replacement = RenderAutorefreshShortcode(reqCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "item":
 			// [item] only has meaning inside an [each] block, where the each
 			// handler substitutes it before this dispatch runs. A bare [item]

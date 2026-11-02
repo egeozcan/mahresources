@@ -247,9 +247,11 @@ func buildMRQLAPIRenderContext(parent context.Context, appCtx mrqlRenderContext,
 	reqCtx = shortcodes.WithPartialResolver(reqCtx, template_filters.BuildPartialResolver(appCtx))
 	reqCtx = shortcodes.WithQueryBudget(reqCtx, appCtx.MRQLPageQueryBudget())
 	if deferredSigner {
-		reqCtx = shortcodes.WithDeferredSigner(reqCtx, func(entityType string, entityID uint, body string) string {
+		seal := func(entityType string, entityID uint, body string) string {
 			return deferredtoken.Seal(appCtx.DeferredSigningKey(), entityType, entityID, body)
-		})
+		}
+		reqCtx = shortcodes.WithDeferredSigner(reqCtx, seal)
+		reqCtx = shortcodes.WithRefreshSigner(reqCtx, seal)
 	}
 	return reqCtx, cancel
 }

@@ -278,7 +278,7 @@ func BuiltinDocs() []BuiltinDoc {
 		{
 			Name:        "reload",
 			Syntax:      `[reload]`,
-			Description: "A button that re-renders content on the server without navigating. It reloads the innermost [lazy] or [details] block it sits inside. Outside those it reloads the whole custom-content slot it was written in (header, sidebar, summary or avatar). Where neither can be re-rendered on its own (share pages, live preview) it reloads the page. Self-closing it renders a circular-arrow icon button; wrap a block body to use that content as the button face instead. Keep the body to text or icons: a button may not contain links or other interactive elements.",
+			Description: "A button that re-renders content on the server without navigating. It reloads the innermost [lazy], [details] or [autorefresh] block it sits inside. Outside those it reloads the whole custom-content slot it was written in (header, sidebar, summary or avatar). Where neither can be re-rendered on its own (share pages, live preview) it reloads the page. Self-closing it renders a circular-arrow icon button; wrap a block body to use that content as the button face instead. Keep the body to text or icons: a button may not contain links or other interactive elements.",
 			IsBlock:     BlockOptional,
 			Attrs: []DocAttr{
 				{Name: "label", Type: "string", Default: "Reload", Description: "Accessible name for the button. The default applies whenever the button face carries no text of its own (the icon, or a body that is only an image or an svg), and that case also gets it as a tooltip. When the button has visible text, keep that text inside this value."},
@@ -287,6 +287,19 @@ func BuiltinDocs() []BuiltinDoc {
 				{Title: "Icon button", Code: `[reload]`},
 				{Title: "Refresh one deferred block", Code: "[lazy]\n  [reload label=\"Refresh open tasks\"]\n  [mrql query='type = \"note\"' format=\"list\"]\n[/lazy]"},
 				{Title: "Labelled button", Code: `[reload]Refresh[/reload]`},
+			},
+		},
+		{
+			Name:        "autorefresh",
+			Syntax:      `[autorefresh]...[/autorefresh]`,
+			Description: "Re-renders its body on the server whenever an inline editor saves, without reloading the page. It refreshes after a [meta], [pills] or [datetime] with editable=\"true\" saves this entity anywhere on the page, or saves any entity from inside the block (an editor in an [mrql] result list, say). Edits made within a quarter of a second of each other cause one refresh. Wrap only what depends on the edited values: everything in the body is replaced, so an editor inside it closes and loses unsaved input when another edit lands. A [reload] inside it reloads this block. On share pages and in the live preview the body renders once and does not refresh. An [item] from an enclosing [each] is not available inside it.",
+			IsBlock:     BlockRequired,
+			Attrs: []DocAttr{
+				{Name: "on", Type: "enum", Default: "edit", Description: "What triggers a refresh. edit is the only trigger.", Enum: []string{"edit"}},
+			},
+			Examples: []DocExample{
+				{Title: "A badge that follows an editable field", Code: "[pills path=\"status\" editable=\"true\"]\n[autorefresh]\n  [conditional path=\"status\" eq=\"done\"]<span class=\"badge\">Done</span>[/conditional]\n[/autorefresh]"},
+				{Title: "Bare values in attributes", Code: "[autorefresh]\n  <span data-status=\"[meta path='status' inline='true']\">[meta path=\"status\" inline=\"true\"]</span>\n[/autorefresh]", Notes: "A value written with inline=\"true\" is plain text, so it never updates on its own after an edit."},
 			},
 		},
 		{

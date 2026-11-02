@@ -514,6 +514,9 @@ export class MetaShortcode extends LitElement {
     if (this._saving) return;
     if (this.dateTime === 'true' && this._dateInvalid) return;
     this._saving = true;
+    // An [autorefresh] block notes which blocks hold this editor now, because a
+    // refresh landing during the save can replace the editor before it reports.
+    document.dispatchEvent(new CustomEvent('meta-shortcode-saving', { detail: { source: this } }));
 
     let value = this._editValue !== undefined ? this._editValue : this._value;
     if (value === undefined) {
@@ -552,9 +555,11 @@ export class MetaShortcode extends LitElement {
       this._flash = 'success';
       setTimeout(this._act(() => { this._flash = null; }), 1000);
 
-      // Notify other meta-shortcode elements on the same entity to refresh
+      // Notify other meta-shortcode elements on the same entity to refresh.
+      // source lets an [autorefresh] block tell an edit made inside it from one
+      // made elsewhere on the page.
       document.dispatchEvent(new CustomEvent('meta-shortcode-updated', {
-        detail: { entityType: this.entityType, entityId: this.entityId, meta: result.meta },
+        detail: { entityType: this.entityType, entityId: this.entityId, meta: result.meta, source: this },
       }));
     } catch (err) {
       console.error('Meta shortcode save error:', err);

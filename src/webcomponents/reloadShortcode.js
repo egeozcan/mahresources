@@ -3,8 +3,8 @@
 // The server renders an inert <reload-shortcode><button>: no token, no target.
 // Which content a button refreshes is decided here, at click time, by walking up
 // from the button:
-//   1. the innermost <lazy-shortcode>/<details-shortcode> it sits inside, which
-//      already holds the sealed token for its own body;
+//   1. the innermost <lazy-shortcode>/<details-shortcode>/<autorefresh-shortcode>
+//      it sits inside, which already holds the sealed token for its own body;
 //   2. otherwise the [data-shortcode-region] wrapper the server puts around a
 //      custom-content slot that contains a reload button (the process_shortcodes
 //      tag on pages, the JSON render on the lightbox), whose token seals the
@@ -20,7 +20,7 @@
 import { reloadInto } from './deferredShortcodes.js';
 import { parkFocus } from '../utils/focus.js';
 
-const DEFERRED_HOSTS = 'lazy-shortcode, details-shortcode';
+const DEFERRED_HOSTS = 'lazy-shortcode, details-shortcode, autorefresh-shortcode';
 const REGION_ATTR = 'data-shortcode-region';
 const BUTTON_SELECTOR = 'reload-shortcode > button';
 // Mirrors defaultReloadLabel in shortcodes/reload_handler.go.

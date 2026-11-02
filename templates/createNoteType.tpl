@@ -262,12 +262,21 @@
                     </div>
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[reload]</code>
-                        &mdash; a button that re-renders content in place, without navigating. It refreshes the innermost [lazy] or [details] block around it, or the whole custom-content slot when it sits outside both. Self-closing renders a circular-arrow icon; wrap a body to use that as the button face instead.
+                        &mdash; a button that re-renders content in place, without navigating. It refreshes the innermost [lazy], [details] or [autorefresh] block around it, or the whole custom-content slot when it sits outside both. Self-closing renders a circular-arrow icon; wrap a body to use that as the button face instead.
                         <br><span class="text-stone-400 ml-4">
                             <b class="text-stone-500">label</b>="accessible name"
                         </span>
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[lazy][reload label="Refresh tasks"][mrql query='type = "note"' format="list"][/lazy]
 [reload]Refresh[/reload]</code></pre>
+                    </div>
+                    <div>
+                        <code class="bg-stone-100 px-1 rounded">[autorefresh]…[/autorefresh]</code>
+                        &mdash; re-renders its body in place whenever an inline editor ([meta], [pills] or [datetime] with editable) saves this entity, or saves anything inside the block. Wrap only what depends on the edited values: an editor inside the body closes when it refreshes. Share pages and the live preview render it once.
+                        <br><span class="text-stone-400 ml-4">
+                            <b class="text-stone-500">on</b>="edit"
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[pills path="status" editable="true"]
+[autorefresh][conditional path="status" eq="done"]Done[/conditional][/autorefresh]</code></pre>
                     </div>
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[using type="group" id="…"]…[else]…[/using]</code>

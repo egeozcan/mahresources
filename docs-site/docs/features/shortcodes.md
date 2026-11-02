@@ -39,6 +39,7 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 | `[lazy]` | Block | Defer server rendering until the block scrolls into view |
 | `[details]` | Block | Defer server rendering until a disclosure is opened |
 | `[reload]` | Inline or block | Re-render the nearest deferred block or custom-content slot on demand |
+| `[autorefresh]` | Block | Re-render the body after an inline editor saves |
 | `[using]` | Block | Render the body with another group, resource or note as the entity |
 | `[comment]` | Block | Remove a section on the server so it never runs or renders |
 
@@ -872,9 +873,9 @@ A button that re-renders content on the server and swaps it into the page. Which
 
 Walking up from the button, the first of these wins:
 
-1. **The innermost enclosing `[lazy]` or `[details]` block.** It already carries a sealed token for its own body, so only that block is re-rendered.
-2. **Otherwise the whole custom-content slot the button was written in**, which is any slot the `process_shortcodes` tag renders against a group, resource, or note: CustomHeader, CustomDetailFooter, CustomSidebar, CustomPreview, CustomOwnEntities, CustomSummary, CustomAvatar, CustomHoverCard, CustomCell, or a description. The `process_shortcodes` tag wraps such a slot in `<div class="shortcode-region" data-shortcode-region="TOKEN">`, where the token seals the whole raw slot body the same way `[lazy]` seals its own. The wrapper is emitted only when the rendered slot actually contains a reload button and the slot is rendering against a group, resource, or note, so slots without a `[reload]` are byte-for-byte unchanged. It is `display: contents`, so it adds no layout box.
-3. **Otherwise the page** (`window.location.reload()`). Anywhere the walk finds neither a deferred block nor a region, the button falls straight through to a page reload without attempting a request. That covers every surface whose slots are rendered outside the `process_shortcodes` tag or without a signer: the public share server, the category-template live preview, the JSON rendering of the `Custom*` slots, and `CustomMRQLResult` cards on `/mrql`. It also covers the `CustomListHeader` and `CustomListFooter` carrier slots, whose `category` / `resource_category` / `note_type` context the deferred endpoint cannot load by id.
+1. **The innermost enclosing `[lazy]`, `[details]` or `[autorefresh]` block.** It already carries a sealed token for its own body, so only that block is re-rendered.
+2. **Otherwise the whole custom-content slot the button was written in**, which is any slot the `process_shortcodes` tag renders against a group, resource, or note: CustomHeader, CustomDetailFooter, CustomSidebar, CustomPreview, CustomOwnEntities, CustomSummary, CustomAvatar, CustomHoverCard, CustomCell, or a description. The JSON rendering of the `Custom*` slots does the same for every slot but the CSS, which is how `CustomLightbox` (or the `CustomSidebar` the lightbox falls back to) gets one in the lightbox's info panel. Both wrap such a slot in `<div class="shortcode-region" data-shortcode-region="TOKEN">`, where the token seals the whole raw slot body the same way `[lazy]` seals its own. The wrapper is emitted only when the rendered slot actually contains a reload button and the slot is rendering against a group, resource, or note, so slots without a `[reload]` are byte-for-byte unchanged. It is `display: contents`, so it adds no layout box.
+3. **Otherwise the page** (`window.location.reload()`). Anywhere the walk finds neither a deferred block nor a region, the button falls straight through to a page reload without attempting a request. That covers every surface whose slots are rendered without a signing key: the public share server, the category-template live preview, and `CustomMRQLResult` cards on `/mrql`. It also covers the `CustomListHeader` and `CustomListFooter` carrier slots, whose `category` / `resource_category` / `note_type` context the deferred endpoint cannot load by id.
 
 Cases 1 and 2 fetch `POST /v1/shortcodes/deferred`, the endpoint `[lazy]` and `[details]` use. `TEMPLATE_SIGNING_KEY` applies to region tokens exactly as it does to `[lazy]`/`[details]` tokens.
 
@@ -906,6 +907,51 @@ Because this is a proximity walk, a `[reload]` placed inside a `[lazy]` body ref
   - **A `[lazy]` or `[details]` inside a `[reload]`.** Both emit a block-level element, which a button may not contain. Each renders its own `⚠` marker in place. This is also what stops the deferred-nesting case above from reaching the page by way of a `[partial]`, whose source the checks on the button's own body never see.
 - A region token carries the slot's own source, so a `[reload]` in a `CustomSummary` adds one sealed copy of that slot per card on a list page. The sealed token runs about **1.34x the size of the raw slot body** (base64 over a nonce and an authentication tag), so a 2 KB `CustomSummary` adds roughly 2.7 KB per card -- about 135 KB on a 50-card page. The ciphertext is randomised, so identical slots across cards do not compress against each other. This scales with cards rendered per page, not with database size. Putting the `[reload]` inside a `[lazy]` mints no region at all, because the block's own token (which `[lazy]` seals regardless) serves the button. That only shrinks the page when the deferred body is smaller than the whole slot, but it never adds a second copy on top.
 - A description is sealed **after** its Markdown and mention filters have run, so a `[reload]` written in one re-evaluates the shortcodes inside it but replays the surrounding prose as it stood when the page loaded. Edits to the description text itself need a page load.
+
+## `[autorefresh]` -- Re-render after an edit
+
+Renders its body with the page, then re-renders it on the server whenever an inline editor saves. An inline editor is a `[meta]`, `[pills]` or `[datetime]` with `editable="true"`. Use it around content the server expands once and that does not otherwise follow an edit: `[conditional]` branches, `[meta inline="true"]` values, `[mrql]` results and plugin output. A `[meta]` element without `inline` already updates itself.
+
+```
+[pills path="status" editable="true"]
+[autorefresh]
+  [conditional path="status" eq="done"]<span class="badge">Done</span>[/conditional]
+[/autorefresh]
+```
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `on` | No | `edit` | What triggers a refresh. `edit` is the only accepted value; anything else renders a `⚠ autorefresh` marker, and the linter flags it |
+
+### What triggers a refresh
+
+A block refreshes after a save when either holds:
+
+- **The save was for the entity the block was rendered for**, wherever the editor sits on the page. An editor in `CustomHeader` refreshes a block in `CustomSidebar`.
+- **The editor that saved sits inside the block**, whatever entity it edited. An editor inside a `[using]` or an `[mrql]` item template inside the block counts.
+
+Saves less than 250 ms apart are coalesced: each save restarts the timer, and when it runs out every block that matched any of them refreshes once. When a block that is refreshing sits inside another that is also refreshing, only the outer one is fetched, since its re-render rebuilds the inner one.
+
+Saves made any other way do not trigger it: the metadata panel, the lightbox edit fields, the API, or another browser tab.
+
+### How it works
+
+The server wraps the rendered body in `<autorefresh-shortcode data-token="TOKEN" data-entity-type="…" data-entity-id="…">`. The token seals the block's **raw** body the same way `[lazy]` seals its own, so a refresh re-evaluates every shortcode in it against the current entity. The element is `display: contents` and adds no layout box. A refresh fetches `POST /v1/shortcodes/deferred`, the endpoint `[lazy]`, `[details]` and `[reload]` use, and behaves like a `[reload]` of a deferred block: the current content stays on screen dimmed while the request is in flight, the Alpine `entity` scope is refreshed along with the markup, and a newer refresh or reload of an overlapping area wins over an older one.
+
+The host is emitted on full pages, in content those pages load through `[lazy]` and `[details]`, and in the lightbox's info panel. Everywhere else the body renders with no wrapper and never refreshes: the public share server, the category-template live preview, `CustomMRQLResult` cards on `/mrql`, and the `CustomListHeader` and `CustomListFooter` carrier slots.
+
+A `[reload]` inside an `[autorefresh]` reloads that block, not the slot around it.
+
+### Limitations
+
+- **Everything in the body is replaced.** An editor inside the block closes when the block refreshes, and one that was open with unsaved input loses it. Wrap only the content that depends on the edited values, and keep other editors outside. If focus was inside the block when it refreshed, it moves to the control in the same position in the fresh content; when there is none, it goes to the refreshed content, or the nearest element beside it that can take focus.
+- A failed refresh leaves the previous content as it was, with no message: the edit itself has already been saved.
+- An `[item]` from an enclosing `[each]` renders nothing inside it, as inside any block other than `[each]` itself.
+- It cannot go inside a `[reload]` button face; it renders a `⚠` marker there, and the linter flags it.
+- The token carries the block's source, so each block adds about 1.34x its raw body size to the page, as `[lazy]` does.
+- **JavaScript is required** for the refresh. The body itself renders without it.
 
 ## `[using]` -- Switch to another entity
 

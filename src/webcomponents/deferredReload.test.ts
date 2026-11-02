@@ -110,6 +110,21 @@ describe('reloadInto', () => {
     await expect(first).resolves.toBe(false);
   });
 
+  it('calls beforeSwap with the old content still in place, and only for a swap that lands', async () => {
+    const el = fakeEl();
+    const seen: string[] = [];
+
+    const first = reloadInto(el, el, 'token-a', undefined, () => seen.push(`first saw ${el.innerHTML}`));
+    const second = reloadInto(el, el, 'token-b', undefined, () => seen.push(`second saw ${el.innerHTML}`));
+    pending[1].resolve('from second');
+    pending[0].resolve('from first');
+    await second;
+    await first;
+
+    // The caller reads focus at this moment, so it has to be the old markup.
+    expect(seen).toEqual(['second saw original']);
+  });
+
   it('rejects a failure that is still the current attempt', async () => {
     const el = fakeEl();
 

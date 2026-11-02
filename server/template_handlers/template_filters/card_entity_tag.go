@@ -49,7 +49,7 @@ const cardEntityScope = `x-data="{ entity: JSON.parse($el.dataset.entity) }"`
 // entity only when its markup reads `entity`. Every other card gets the fields
 // the list code itself reads (scalars, tags for Edit Tags, the category id for
 // bulk-action filters, UpdatedAt for deferred shortcodes) with Meta left as an
-// empty object. A [lazy] or [reload] body rendered later still binds to the full
+// empty object. A [lazy], [reload] or [autorefresh] body rendered later still binds to the full
 // entity: its response merges the entity into the scope it lands in.
 type cardEntityNode struct {
 	entity  pongo2.IEvaluator

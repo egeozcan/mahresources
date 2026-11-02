@@ -153,9 +153,9 @@ A button that **re-renders content on the server without navigating**. Both the 
 
 What gets reloaded is resolved in the browser at click time by walking up from the button:
 
-1. the innermost enclosing `[lazy]` or `[details]` block, if there is one -- only that block re-renders;
-2. otherwise the whole custom-content slot being rendered (`CustomHeader`, `CustomSidebar`, `CustomSummary`, `CustomAvatar`, or a description). A `[reload]` inside a `CustomMRQLResult` card reloads the slot holding the `[mrql]`, not the card;
-3. otherwise the page -- share pages, the live preview iframe, the carrier slots (`CustomListHeader`, `CustomListFooter`), JSON-rendered slots, and `/mrql` result cards.
+1. the innermost enclosing `[lazy]`, `[details]` or `[autorefresh]` block, if there is one -- only that block re-renders;
+2. otherwise the whole custom-content slot being rendered (`CustomHeader`, `CustomSidebar`, `CustomSummary`, `CustomAvatar`, `CustomLightbox` in the lightbox, or a description). A `[reload]` inside a `CustomMRQLResult` card reloads the slot holding the `[mrql]`, not the card;
+3. otherwise the page -- share pages, the live preview iframe, the carrier slots (`CustomListHeader`, `CustomListFooter`), and `/mrql` result cards.
 
 So pair `[reload]` with `[lazy]` to scope the refresh to that one block, and place it outside any deferred block to refresh the entire slot. Prefer the paired form in `CustomSummary`: a bare `[reload]` makes every card on a list page carry a sealed copy of the slot's source (about 1.34x the slot's own size, per card), while one inside a `[lazy]` reuses the token that block seals anyway. Steps 1 and 2 go through the same deferred-render fetch `[lazy]` and `[details]` use; the current content stays on screen dimmed while the request is in flight, and is left exactly as it was if the request fails. Requires JavaScript.
 
@@ -163,6 +163,22 @@ So pair `[reload]` with `[lazy]` to scope the refresh to that one block, and pla
 [reload]
 [reload label="Refresh stock"]Refresh stock[/reload]
 [lazy][reload label="Refresh open tasks"][mrql query='type = "note"' format="list"][/lazy]
+```
+
+### `[autorefresh]`
+
+A block that **re-renders its body on the server after an inline editor saves** (`[meta]`, `[pills]` or `[datetime]` with `editable="true"`). Use it around what the server expands once and would otherwise go stale after an edit: `[conditional]` branches, `[meta inline="true"]` values, `[mrql]` results, plugin output.
+
+- It refreshes when the save was for the entity it was rendered for (an editor anywhere on the page, in any slot), or when the editor that saved sits inside it (whatever entity that editor edits, e.g. inside a `[using]`).
+- Saves under 250 ms apart cause one refresh. Nested blocks refresh once, through the outermost.
+- `on="edit"` is the only accepted value of its one attribute, and the default.
+- Everything in the body is replaced, so an editor inside it closes and loses unsaved input. Wrap only the dependent content; keep other editors outside.
+- A `[reload]` inside it reloads just the block. It cannot go inside a `[reload]` button face.
+- Works on full pages, in `[lazy]`/`[details]` content and in the lightbox. On share pages, the live preview, `/mrql` result cards and the carrier slots it renders once and never refreshes. Requires JavaScript for the refresh.
+
+```
+[pills path="status" editable="true"]
+[autorefresh][conditional path="status" eq="done"]<span class="badge">Done</span>[/conditional][/autorefresh]
 ```
 
 ### `[using]`

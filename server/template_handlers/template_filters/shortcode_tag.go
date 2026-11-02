@@ -154,7 +154,8 @@ func WrapReloadableRegion(rendered, raw string, metaCtx shortcodes.MetaShortcode
 // resolver, the inline-MRQL query budget, and — when appCtx is available — the
 // deferred-render signer that makes [lazy]/[details] emit signed placeholders the
 // frontend resolves via /v1/shortcodes/deferred (every other render surface omits
-// the signer and renders those blocks inline).
+// the signer and renders those blocks inline), and the refresh signer [autorefresh]
+// seals its body with.
 //
 // Both tags stash the result in ctx.Public["_reqCtxWithCache"] and reuse it, so
 // whichever runs first on a page (the custom_css tag renders in <head>, before the
@@ -176,9 +177,11 @@ func buildPageRenderContext(reqCtx context.Context, appCtx PageRenderContext) co
 	reqCtx = shortcodes.WithPartialResolver(reqCtx, BuildPartialResolver(partials))
 	reqCtx = shortcodes.WithQueryBudget(reqCtx, pageQueryBudget(appCtx))
 	if appCtx != nil {
-		reqCtx = shortcodes.WithDeferredSigner(reqCtx, func(entityType string, entityID uint, body string) string {
+		seal := func(entityType string, entityID uint, body string) string {
 			return deferredtoken.Seal(appCtx.DeferredSigningKey(), entityType, entityID, body)
-		})
+		}
+		reqCtx = shortcodes.WithDeferredSigner(reqCtx, seal)
+		reqCtx = shortcodes.WithRefreshSigner(reqCtx, seal)
 	}
 	return reqCtx
 }

@@ -2543,15 +2543,15 @@ Response: {"issues": [{"start", "end", "severity" ("error"|"warning"|"info"),
 		Method:      http.MethodPost,
 		Path:        "/v1/shortcodes/deferred",
 		OperationID: "renderDeferredShortcode",
-		Summary:     "Render a deferred [lazy]/[details] block or a [reload] region",
+		Summary:     "Render a deferred [lazy]/[details] block, an [autorefresh] block or a [reload] region",
 		Description: `Renders a template body on demand — invoked by the frontend when a [lazy] block
-scrolls into view, a [details] disclosure is first opened, or a [reload] button is
-activated.
+scrolls into view, a [details] disclosure is first opened, a [reload] button is
+activated, or an inline editor saves while an [autorefresh] block is on the page.
 
 Request body fields:
   - token (string, required) — the sealed token emitted during the display-page
-    render, either in a block's placeholder or on the region wrapper a slot
-    containing a [reload] button is given. It authenticates the exact entity and
+    render, either in a block's placeholder or host element, or on the region
+    wrapper a slot containing a [reload] button is given. It authenticates the exact entity and
     template body the server itself produced; no client-supplied template text is
     trusted.
 

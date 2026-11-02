@@ -116,7 +116,7 @@ func KnownFromBuiltins() KnownShortcodes {
 var conditionalOperators = []string{"eq", "neq", "gt", "lt", "gte", "lte", "in", "contains", "matches", "empty", "not-empty"}
 
 // builtinBaseNames is used for near-miss detection of misspelled shortcodes.
-var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "using", "comment"}
+var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "comment"}
 
 // looseBracketPattern finds bracket expressions that lead with an identifier,
 // used to detect shortcode-looking brackets that did not parse as real
@@ -347,6 +347,15 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			if insideSpans(tk.start, reloadSpans) {
 				add(tk.start, tk.end, SeverityError,
 					"[reload] cannot contain another [reload]")
+			}
+		case "autorefresh":
+			if on, set := tk.attrs["on"]; set && strings.TrimSpace(on) != "edit" {
+				add(tk.start, tk.end, SeverityError,
+					`[autorefresh] on= accepts only "edit"`)
+			}
+			if insideSpans(tk.start, reloadSpans) {
+				add(tk.start, tk.end, SeverityError,
+					"[autorefresh] cannot be used inside a [reload] button face")
 			}
 		case "lazy", "details":
 			// Both emit a block, and a button takes phrasing content only. The

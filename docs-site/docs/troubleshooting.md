@@ -167,7 +167,7 @@ Disk usage depends on the number of *unique* file contents across all versions. 
 
 ### Can I run multiple instances?
 
-**With PostgreSQL:** Yes, multiple Mahresources instances can connect to the same PostgreSQL database. Two things need attention across processes. Set `TEMPLATE_SIGNING_KEY` to the same value on every process, or deferred `[lazy]`, `[details]` and `[reload]` blocks fail to open when a reveal lands on a different process than the page render (see [Shortcodes](./features/shortcodes.md)). Upload deduplication is enforced per process, so two processes uploading byte-identical, not-yet-stored content at the same moment can each create a resource.
+**With PostgreSQL:** Yes, multiple Mahresources instances can connect to the same PostgreSQL database. Two things need attention across processes. Set `TEMPLATE_SIGNING_KEY` to the same value on every process, or deferred `[lazy]`, `[details]`, `[reload]` and `[autorefresh]` blocks fail to open when a reveal or refresh lands on a different process than the page render (see [Shortcodes](./features/shortcodes.md)). Upload deduplication is enforced per process, so two processes uploading byte-identical, not-yet-stored content at the same moment can each create a resource.
 
 **With SQLite:** Only one instance should write to a SQLite database at a time. Concurrent writes cause "database is locked" errors. `-db-readonly-dsn` does not change this: it supplies a separate connection used only to run saved raw-SQL queries, so a query cannot write to the database. It does not turn an instance read-only, and it does not make a second SQLite writer safe.
 

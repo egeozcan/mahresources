@@ -3887,6 +3887,11 @@ reload-shortcode {
 .shortcode-region {
   display: contents;
 }
+/* [autorefresh] wraps content that renders where the author wrote it, so its
+   host adds no box either. */
+autorefresh-shortcode {
+  display: contents;
+}
 .reload-shortcode-button {
   display: inline-flex;
   align-items: center;
@@ -3935,7 +3940,8 @@ reload-shortcode {
   opacity: 0.8;
 }
 /* A region generates no box, so opacity on it does nothing: dim its children. */
-.shortcode-region.deferred-reloading > * {
+.shortcode-region.deferred-reloading > *,
+autorefresh-shortcode.deferred-reloading > * {
   opacity: 0.8;
 }
 .reload-shortcode-error {

@@ -229,11 +229,11 @@ A whole-template request uses a planning call followed by section pairs whenever
 
 ## Deferred Render Signing Key
 
-The `[lazy]`, `[details]` and `[reload]` shortcodes defer part of a template and hand the browser a sealed token to open it with. The key that seals those tokens is configured with an environment variable only.
+The `[lazy]`, `[details]`, `[reload]` and `[autorefresh]` shortcodes hand the browser a sealed token to render part of a template with later. The key that seals those tokens is configured with an environment variable only.
 
 | Env Variable | Default | Description |
 |--------------|---------|-------------|
-| `TEMPLATE_SIGNING_KEY` | (per-boot random) | Secret used to seal the `[lazy]`, `[details]` and `[reload]` deferred-render tokens |
+| `TEMPLATE_SIGNING_KEY` | (per-boot random) | Secret used to seal the `[lazy]`, `[details]`, `[reload]` and `[autorefresh]` deferred-render tokens |
 
 When it is unset, each process generates a random key at boot, so a deferred region rendered by one process cannot be opened by another. Set it to a shared value across every process in a multi-process or load-balanced deployment. See [Shortcodes](../features/shortcodes.md).
 

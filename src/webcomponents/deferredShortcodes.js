@@ -207,10 +207,14 @@ function overlaps(a, b) {
 // over while we were waiting?" A region has no reveal path to bump the generation
 // counter, so it uses this to notice that a page morph re-rendered it underneath.
 //
+// beforeSwap, when given, runs immediately before the new markup replaces the old,
+// and only for a swap that lands. It is the last moment the content being thrown
+// away can still be inspected, which is when [autorefresh] reads what has focus.
+//
 // Resolves true when the swap was applied and false when it was abandoned, so the
 // caller does not report success for a result nobody saw. Rejects when the fetch
 // fails.
-export function reloadInto(host, contentEl, token, isStale) {
+export function reloadInto(host, contentEl, token, isStale, beforeSwap) {
   supersede(contentEl);
   const generation = (reloadGenerations.get(contentEl) || 0) + 1;
   reloadGenerations.set(contentEl, generation);
@@ -244,6 +248,7 @@ export function reloadInto(host, contentEl, token, isStale) {
       // content is right here in a way it would not be on first reveal, where
       // refusing would leave nothing at all.
       if (!entityIsCurrent(contentEl, entity)) return false;
+      if (typeof beforeSwap === 'function') beforeSwap();
       contentEl.innerHTML = html;
       applyEntity(contentEl, entity);
       hydrate(contentEl);
