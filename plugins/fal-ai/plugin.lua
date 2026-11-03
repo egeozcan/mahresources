@@ -280,8 +280,12 @@ end
 -- Upload one base64 data URI's bytes to fal's CDN. Returns its URL or
 -- (nil, reason).
 local function fal_cdn_upload(cdn, data_uri, file_name)
-    local mime, b64 = data_uri:match("^data:([^;,]+);base64,(.*)$")
+    -- Matching the full base64 payload exceeds gopher-lua's pattern limit on
+    -- large images. Split literally and match only the short data URI header.
+    local comma = data_uri:find(",", 1, true)
+    local mime = comma and data_uri:sub(1, comma - 1):match("^data:([^;,]+);base64$")
     if not mime then return nil, "not a base64 data URI" end
+    local b64 = data_uri:sub(comma + 1)
     local bytes, decode_err = mah.util.base64.decode(b64)
     if not bytes then return nil, decode_err end
     local resp = mah.http.post_sync(cdn.upload_url, bytes, {

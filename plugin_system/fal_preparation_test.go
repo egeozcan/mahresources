@@ -111,12 +111,12 @@ func falPreparationWithCDN(t testing.TB, uri string, cdn falCDN, submittedURL ..
 	return func(action, params string) (map[string]any, int, time.Duration) {
 		reads, payload = 0, nil
 		start := time.Now()
-		if err := L.DoString(`actions["` + action + `"]({entity_id=1, job_id="test", params=` + params + `})`); err != nil {
+		if err := L.DoString(`action_result = actions["` + action + `"]({entity_id=1, job_id="test", params=` + params + `})`); err != nil {
 			t.Fatal(err)
 		}
 		elapsed := time.Since(start)
 		if payload == nil {
-			t.Fatal("action failed before reaching HTTP submission")
+			t.Fatalf("action failed before reaching HTTP submission: %s", L.GetField(L.GetGlobal("action_result"), "message"))
 		}
 		return payload, reads, elapsed
 	}
@@ -342,4 +342,60 @@ func TestFalPreparationUploadsImagesToTheCDN(t *testing.T) {
 			t.Errorf("uploaded to %q", uploadedTo)
 		}
 	})
+}
+
+func TestFalColorizeUploadsLargeInputs(t *testing.T) {
+	// The upload seam only decodes base64. Binary bytes above the Lua pattern
+	// recursion limit reproduce the failure without image compression affecting
+	// the payload size; the live failure had a 1,076,579-byte data URI.
+	raw := strings.Repeat("\x00\x01\x7f\x80\xfe\xff", 140_000)
+	uri := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString([]byte(raw))
+	const uploadedURL = "https://v3.fal.media/files/b/test/input.jpg"
+	for _, model := range []string{"ddcolor", "topaz_colorize"} {
+		for _, failUpload := range []bool{false, true} {
+			name := model + "/uploaded"
+			if failUpload {
+				name = model + "/inline fallback"
+			}
+			t.Run(name, func(t *testing.T) {
+				uploads := 0
+				cdn := func(url, body string, headers map[string]string) map[string]any {
+					if strings.Contains(url, "/storage/auth/token") {
+						return map[string]any{"status_code": 200, "body": `{"token":"test-token"}`}
+					}
+					uploads++
+					if body != raw || headers["Content-Type"] != "image/jpeg" {
+						t.Error("upload changed the image bytes or MIME type")
+					}
+					if failUpload {
+						return map[string]any{"status_code": 500, "body": "unavailable"}
+					}
+					return map[string]any{"status_code": 200, "body": `{"access_url":"` + uploadedURL + `"}`}
+				}
+				payload, _, _ := falPreparationWithCDN(t, uri, cdn)("colorize", `{model="`+model+`"}`)
+				want := uploadedURL
+				if failUpload {
+					want = uri
+				}
+				if uploads != 1 || payload["image_url"] != want {
+					t.Errorf("uploads=%d; model did not receive the expected image URL", uploads)
+				}
+			})
+		}
+	}
+}
+
+func TestFalCDNUploadInvalidBase64FallsBack(t *testing.T) {
+	const uri = "data:image/jpeg;base64,!invalid!"
+	cdn := func(url, body string, headers map[string]string) map[string]any {
+		if strings.Contains(url, "/storage/auth/token") {
+			return map[string]any{"status_code": 200, "body": `{"token":"test-token"}`}
+		}
+		t.Error("invalid base64 must not be uploaded")
+		return map[string]any{"error": "unexpected upload"}
+	}
+	payload, _, _ := falPreparationWithCDN(t, uri, cdn)("colorize", `{}`)
+	if payload["image_url"] != uri {
+		t.Error("invalid base64 must preserve the original inline input")
+	}
 }

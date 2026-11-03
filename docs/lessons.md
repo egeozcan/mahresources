@@ -2,6 +2,14 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## Keep mahlayf's deployment checkout clean
+
+Mahlayf updates itself on push. Make and verify fixes in the development
+checkout, then use the normal push deployment when authorized. Do not patch
+files or reload plugins directly on mahlayf unless the user explicitly requests
+a live hotfix. SSH access for diagnosis does not authorize changing the
+deployment workflow. Check the deployment mechanism before applying a fix.
+
 ## Lock every writer that derives denormalized state from one aggregate
 
 Locking only the operation that edits an aggregate does not protect derived
