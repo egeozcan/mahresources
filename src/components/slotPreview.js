@@ -17,6 +17,7 @@ import {
   renderErrorsFrom,
 } from './templatePreviewRender.js';
 import { REFRESH_ALL_EVENT } from './templatePreview.js';
+import { REVISION_WRITE_EVENT } from './templateBundle.js';
 
 const EDIT_DEBOUNCE_MS = 700;
 
@@ -48,6 +49,8 @@ export function slotPreview({ entityType = 'group', slot = 'CustomHeader', previ
     waiting: false,
     loading: false,
     error: '',
+    // What the slot history dialog last loaded into this slot's editor.
+    appliedNote: '',
     /** @type {{ severity: string, message: string, start?: number, end?: number }[]} */
     issues: [],
     /** @type {{ label: string, detail: string, count: number }[]} */
@@ -78,6 +81,10 @@ export function slotPreview({ entityType = 'group', slot = 'CustomHeader', previ
         if (changed === this.slot || changed?.endsWith('CSS')) this.invalidate(true);
       });
       this._form?.addEventListener(REFRESH_ALL_EVENT, () => this.invalidate(false));
+      document.addEventListener(REVISION_WRITE_EVENT, (e) => {
+        const detail = /** @type {CustomEvent} */ (e).detail || {};
+        if ((detail.fields || []).includes(this.slot)) this.appliedNote = detail.notice || '';
+      });
       if (typeof IntersectionObserver === 'function') {
         this._observer = new IntersectionObserver(
           (entries) => {

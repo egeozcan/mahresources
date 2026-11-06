@@ -368,7 +368,7 @@ Unlike the other slots, both are processed with **the category/type itself as th
 </div>
 ```
 
-Style them from the same `CustomCSS` field: the markup ships inside a `custom-list-header` or `custom-list-footer` wrapper. The live preview pane on the edit form previews both against the category itself; it is only available once the category has been saved.
+Style them from the same `CustomCSS` field: the markup ships inside a `custom-list-header` or `custom-list-footer` wrapper. Their previews on the edit form render against the category itself, so they work only once the category has been saved.
 
 The footer sits below the results and above the pager, so it reads as the end of the content rather than as page chrome.
 
@@ -798,14 +798,17 @@ The Category, Resource Category, and Note Type edit forms provide a feedback loo
 
 ### Live preview
 
-Below the template fields, a **Live preview** pane renders a selected slot against a real entity without saving:
+Every template slot's fieldset ends with its own preview, which renders that slot against a real entity without saving:
 
-- Pick the entity to render against. When editing an existing category or note type, the search and the default pick are restricted to entities of that category (the choice is remembered per category in the browser). On the create form, where no entity can belong to the new category yet, the pick falls back to all entities and defaults to the most recent one.
-- Choose which slot to preview from the dropdown.
-- Check **Show under the slot being edited** to move the pane directly below the selected slot's fieldset (below the Custom CSS editor for the CSS slot). While it is checked, choosing a slot from the dropdown moves the pane under it, and moving focus into a slot's controls selects that slot. The Custom CSS editor keeps the current slot, since the shared stylesheet adds no markup of its own. Unchecking returns the pane below the template fields. The choice is remembered in the browser.
-- The result renders in a sandboxed `<iframe>` that includes the app's CSS and JS bundle, so `[meta]` web components and Alpine widgets hydrate. The sandbox is origin-isolated, so widgets that need API calls are non-functional in preview -- a note in the pane states this.
+- Pick the entity to render against once, in **Preview against** at the top of the template fields. Every slot preview uses it. When editing an existing category or note type, the search and the default pick are restricted to entities of that category (the choice is remembered per category in the browser). On the create form, where no entity can belong to the new category yet, the pick falls back to all entities and defaults to the most recent one. When the category has no members yet, the previews borrow an entity from elsewhere and say so.
+- The List Header and List Footer previews render against the category itself, so they work only once the category has been saved.
+- Each preview renders its slot with the full CSS cascade from the form: `CustomCSS` first, then every slot's CSS companion (the Entity Picker Result preview uses only `CustomCSS` and its own companion, as the picker does). `CustomCSS` has no preview of its own, since the shared stylesheet adds no markup; editing it re-renders the slot previews.
+- A preview renders the first time it scrolls into view. Editing its slot, or any CSS field, re-renders it after a short pause if it is in view; a preview out of view renders when it is next seen. **Refresh** re-renders one preview and **Refresh all previews** re-renders every visible one.
+- The result renders in a sandboxed `<iframe>` that includes the app's CSS and JS bundle, so `[meta]` web components and Alpine widgets hydrate. The sandbox is origin-isolated, so widgets that need API calls are non-functional in preview; the note under **Preview against** states this.
 - The rendered slot is wrapped in the same `x-data="{ entity: ... }"` Alpine scope the display pages provide, so expressions like `x-text="entity.Name"` behave as they will on the real page.
-- Edits refresh the preview automatically (debounced).
+- A failed shortcode shows only its name in the frame, so each preview lists its render errors in full below the frame, along with lint issues.
+
+On the edit form, each slot's preview has a **History** button, and the Custom CSS editor has one too. It opens the slot's previous versions in a dialog where you can compare one with the editor, preview it and apply it. See [Slot history on the edit form](./template-revisions.md#slot-history-on-the-edit-form).
 
 Preview executes MRQL and plugin shortcodes, so it is gated at the same permission level as saving the template: **admin** for Category and Resource Category, **editor** for Note Type. To keep it responsive on large deployments, `[mrql]` result limits are capped during preview.
 

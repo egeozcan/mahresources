@@ -392,9 +392,10 @@ export function slotHistory({ apiPrefix = '', carrierId = 0, entityType = 'group
       const fields = this.appliedFields();
       const editor = detail.editor;
       const what = `${detail.slot} from revision #${detail.number}`;
-      // Closed first: the page is no longer inert, so the notice the write
-      // announces can take focus, and focus does not go back to the opener.
-      this.close({ restore: false });
+      // Closed first, so the page is no longer inert when the editors change.
+      // Focus goes back to the History button; the slot's preview, right
+      // beside it, announces what was loaded.
+      this.close();
       document.dispatchEvent(
         new CustomEvent(REVISION_WRITE_EVENT, {
           detail: {

@@ -628,18 +628,22 @@ export function templateBundle({ carrier } = {}) {
 
     // writeRevision is the synchronous half of applying a revision's slot from
     // the slot history dialog, which has already waited on editorsReady: it
-    // writes the fields, records where they came from, and says so.
+    // writes the fields, records where they came from, and says so. The slot's
+    // own preview announces it where the reader is; this notice is the record.
     writeRevision({ editor, fields, entry, notice }) {
       for (const field of fields) this.setRevisionField(field, editor[field]);
       this.recordApplied(entry);
-      this.announceRevision(notice, 'info');
+      this.announceRevision(notice, 'info', { focus: false });
     },
 
     // The notice takes focus: the person followed a link to get here, and this
     // says what happened to the form.
-    announceRevision(text, kind) {
+    // The slot history dialog passes focus: false: it applies in place, and its
+    // History button takes focus back, so the reader stays at the slot.
+    announceRevision(text, kind, { focus = true } = {}) {
       this.revisionNotice = text;
       this.revisionNoticeKind = kind;
+      if (!focus) return;
       setTimeout(() => {
         const notice = this.$refs && this.$refs.revisionNotice;
         if (notice) notice.focus();

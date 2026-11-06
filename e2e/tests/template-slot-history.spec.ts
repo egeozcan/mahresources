@@ -104,10 +104,14 @@ test.describe('Slot history popup', () => {
     await expect(dialog(page)).toHaveCount(0);
     await expect(header).toHaveValue('<p>one</p>');
     await expect(css).toHaveValue('.mine {}');
-    const notice = page.getByTestId('revision-load-notice');
-    await expect(notice).toContainText('Loaded CustomHeader from revision #1');
-    await expect(notice).toContainText('Nothing is saved yet');
-    await expect(notice).toBeFocused();
+    // Focus stays at the slot: back on its History button, with the load
+    // announced in the slot's preview. The form's notice keeps the record.
+    await expect(page.getByTestId('slot-history-CustomHeader')).toBeFocused();
+    const status = page.getByTestId('slot-preview-applied-CustomHeader');
+    await expect(status).toHaveAttribute('role', 'status');
+    await expect(status).toContainText('Loaded CustomHeader from revision #1');
+    await expect(status).toContainText('Nothing is saved yet');
+    await expect(page.getByTestId('revision-load-notice')).toContainText('Loaded CustomHeader from revision #1');
 
     // With it (the default).
     await openHistory(page, 'CustomHeader');
