@@ -127,3 +127,20 @@ Vitest:
 ## Risks
 - **Request load:** about 13 iframes, each loading `/public/dist/main.js`. Lazy rendering, plus refreshing only visible previews, keeps a normal page to 2–4 renders at a time.
 - **Unsaved-input loss** (the class every earlier revision-UI blocker came from): Apply only writes after `editorsReady`. The dialog never navigates. An entity switch never touches editors.
+
+## Review
+
+Done on branch `feat/per-slot-preview-and-history` (7c5495ac through the round-3 fix). Deviations from the plan above:
+
+- **Apply keeps focus at the slot.** The plan had Apply focus the form's revision notice. That notice sits in the Reuse & Presets panel at the top of the form, so focusing it scrolled the author away from the slot they had just changed (found in the manual check). Focus now returns to the History button, and a status region beside the button announces the load; the form notice still records it. The status empties before it takes the new text, so applying the same revision twice is announced twice, and Custom CSS, which has no preview, has one too.
+- **The write is a synchronous event, not an exported function.** `templateBundle` exports `editorsReady`; the write goes through `REVISION_WRITE_EVENT`, which `templateBundle.writeRevision` handles synchronously with its existing `setRevisionField` and `recordApplied`. That kept the editor plumbing in one component.
+- **Headings.** The slot preview heading is an h2 (render errors h3): the nearest heading before it is the page's h1, and axe `heading-order` failed on h3/h4.
+- **Drift guard.** `internal/arch/template_slot_wiring_test.go` read `SLOTS` from `templatePreview.js`; it now reads `templatePreviewRender.js`.
+
+pi reviews (GPT-6.1-sol, high):
+- Plan: round 1 (4 P1, 4 P2), round 2 (3 P2), all folded in.
+- Code: round 1 (3: stale list error body, store published after the default lookup so Generate saw no endpoint, debounced render after scroll-away), round 2 (2 a11y: no announcement for Custom CSS, identical text not re-announced), round 3 (1: diff stale when an editor changes under the open dialog), round 4 clean. Each fix has a vitest or E2E test that failed first.
+
+Gates on f019704f: Go unit passed; vitest 2461 passed; browser + CLI E2E 2753 passed, 1 flaky (`compare-difference-measurement.spec.ts:720`, compare page, untouched here); Postgres Go (`mrql`, `api_tests`) passed; Postgres E2E 2755 passed. The round-3 fix after it was verified with vitest (1359 component tests) and the history and preview specs (23 passed). Baseline on master before the change: Go unit passed, vitest 2453, E2E 2741 passed with 1 flaky (`compare-registration-scale`).
+
+Known gap, out of scope: the Preview against combobox (carried over unchanged) has no arrow-key navigation or `aria-activedescendant`; moving it onto `src/selector/` is its own change.
