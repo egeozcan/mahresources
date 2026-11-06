@@ -5,6 +5,7 @@
  * editor dims the region and lints an unclosed opener.
  */
 import { test, expect } from '../../fixtures/base.fixture';
+import { previewEntityChip } from '../../helpers/template-preview-entity';
 
 test.describe('[comment] template comments', () => {
   let categoryId: number;
@@ -63,7 +64,7 @@ test.describe('[comment] template comments', () => {
 
     const entityInput = page.locator('#tp-entity-group');
     await expect(entityInput).toBeVisible({ timeout: 10000 });
-    await expect(entityInput).not.toHaveValue('', { timeout: 10000 });
+    await expect(previewEntityChip(page)).toHaveCount(1, { timeout: 10000 });
 
     const header = page.locator('.cm-content[aria-label="Custom Header"]');
     await expect(header).toBeVisible({ timeout: 10000 });

@@ -1,8 +1,9 @@
 # Selector architecture
 
 Every entity picker in the application — the shared form field, the lightbox tag editor, the
-entity picker's filters, the compare pages, the paste-upload panel — is built from one headless
-selector core plus a thin Alpine rendering adapter. This document is the reference for adding a
+entity picker's filters, the compare pages, the paste-upload panel, the category editors'
+"Preview against" field — is built from one headless selector core plus a thin Alpine rendering
+adapter. This document is the reference for adding a
 selector, changing one, or integrating another module with one.
 
 Source layout:

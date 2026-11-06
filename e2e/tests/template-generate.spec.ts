@@ -7,6 +7,7 @@
  */
 import type { Locator, Page, Route } from '@playwright/test';
 import { test, expect } from '../fixtures/base.fixture';
+import { previewEntityChip } from '../helpers/template-preview-entity';
 
 // The disclosure the server returns for a dry run (decision 11): the generate
 // stubs answer it automatically, and only the real request reaches the handler.
@@ -415,7 +416,7 @@ test.describe('Generated drafts do not run before Apply', () => {
         });
       }));
       await page.goto(`/category/edit?id=${category.ID}`);
-      await expect(page.locator('#tp-entity-group')).toHaveValue(groupName, { timeout: 10000 });
+      await expect(previewEntityChip(page)).toHaveAttribute('aria-label', `Remove ${groupName}`, { timeout: 10000 });
       const frame = page.frameLocator('[data-slot-preview="CustomHeader"] iframe');
       const iframe = page.locator('[data-slot-preview="CustomHeader"] iframe');
       // Previews render the first time they are seen.
@@ -462,7 +463,7 @@ test.describe('Generated drafts do not run before Apply', () => {
     }));
     await page.goto(`/category/edit?id=${category.ID}`);
     // An active preview: the entity is loaded and a render has completed.
-    await expect(page.locator('#tp-entity-group')).toHaveValue(groupName, { timeout: 10000 });
+    await expect(previewEntityChip(page)).toHaveAttribute('aria-label', `Remove ${groupName}`, { timeout: 10000 });
     const iframe = page.locator('[data-slot-preview="CustomHeader"] iframe');
     await refreshPreviewAndSettle(page);
     const srcdocBefore = (await iframe.getAttribute('srcdoc')) ?? '';

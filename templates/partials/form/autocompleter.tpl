@@ -63,10 +63,11 @@
                     aria-controls="{{ id }}-listbox"
                     {% if title %}aria-labelledby="{{ id }}-label"{% endif %}
                     {% if isRequired %}aria-required="true"{% endif %}
+                    {# `describedBy` names a hint rendered outside the partial. #}
                     {# aria-invalid is bound, not static: it has to become true when the #}
                     {# server rejects the submit and errorMessage is populated. #}
                     :aria-invalid="errorMessage ? 'true' : null"
-                    :aria-describedby="errorMessage ? '{{ id }}-error' : {% if isRequired %}'{{ id }}-required'{% else %}null{% endif %}"
+                    :aria-describedby="errorMessage ? '{{ id }}-error' : {% if isRequired %}'{{ id }}-required'{% elif describedBy %}'{{ describedBy }}'{% else %}null{% endif %}"
                     aria-owns="{{ id }}-listbox"
                     :aria-activedescendant="selectedIndex >= 0 ? '{{ id }}-result-' + selectedIndex : null"
             >

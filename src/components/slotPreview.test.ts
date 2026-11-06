@@ -478,6 +478,26 @@ describe('preview context', () => {
         expect(component.entityId).toBe(9);
         expect(stored.templatePreview).toMatchObject({ entityId: 9 });
     });
+
+    test('a pick in the shared selector publishes it, and removing it leaves nothing to preview', async () => {
+        const stored = stubStore();
+        const removeItem = vi.fn();
+        vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem });
+        vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => [] })));
+
+        const component = templatePreviewContext({ entityType: 'group', categoryId: 7 });
+        await component.init();
+        expect(component.scopeParameters()).toEqual({ categoryId: 7 });
+
+        const chosen = { key: 9, label: 'Chosen', raw: { ID: 9, Name: 'Chosen' } };
+        component.onEntityChange({ previous: [], current: [chosen], added: [chosen], removed: [], reason: 'select' });
+        expect(stored.templatePreview).toMatchObject({ entityId: 9, ready: true });
+
+        component.onEntityChange({ previous: [chosen], current: [], added: [], removed: [chosen], reason: 'remove' });
+        expect(component.entityId).toBeNull();
+        expect(stored.templatePreview).toMatchObject({ entityId: 0, ready: true });
+        expect(removeItem).toHaveBeenCalledWith('templatePreview:group:7');
+    });
 });
 
 // Equal-specificity companion rules must override shared rules exactly as on saved pages.

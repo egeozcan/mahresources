@@ -2,7 +2,9 @@
 // Templates fieldset on the category / resource category / note type edit
 // forms. It chooses the one entity every slot preview (slotPreview.js) renders
 // against, and publishes it to the `templatePreview` store, which the previews
-// and the per-slot generate buttons read.
+// and the per-slot generate buttons read. The search field itself is the shared
+// single-entity selector (src/selector/); this component scopes its searches,
+// seeds it with the remembered or default entity, and listens for picks.
 
 import { ensurePreviewStore } from './templatePreviewRender.js';
 
@@ -43,6 +45,7 @@ function entityName(it) {
  *
  * @typedef {object} TemplatePreviewContextMagics
  * @property {HTMLElement} $root The element carrying this component's x-data.
+ * @property {(callback: () => void) => void} $nextTick Runs the callback after Alpine's next render.
  */
 
 /**
@@ -59,31 +62,29 @@ export function templatePreviewContext({ entityType = 'group', categoryId = null
     /** @type {number|string|null} */
     entityId: null,
     entityLabel: '',
-    query: '',
-    /** @type {{ id: number, name: string }[]} */
-    suggestions: [],
-    open: false,
     // Set when the preview fell back to an entity outside this category because
     // the category has no members yet. Said once here, since the author would
     // otherwise reasonably assume the sample carries the category's own meta
     // (WS6, finding 29).
     usingUnscopedSample: false,
     ready: false,
-    /** @type {ReturnType<typeof setTimeout>|null} */
-    _searchTimer: null,
-    _searchSeq: 0,
+    /** @type {HTMLElement|null} */
+    _fieldEl: null,
     // Bumped by every deliberate pick, so a default lookup that answers after
     // one is discarded instead of replacing it.
     _pickSeq: 0,
 
     async init() {
+      // Captured here: $root is the calling element inside a method.
+      this._fieldEl = this.$root?.querySelector('[data-tp-entity-field] [data-selector-profile]');
       // Restore last-used entity for this entity type.
       try {
         const saved = JSON.parse(localStorage.getItem(this._storageKey()) || 'null');
         if (saved && saved.id) {
           this.entityId = saved.id;
           this.entityLabel = saved.label || `#${saved.id}`;
-          this.query = this.entityLabel;
+          // The selector initializes after this component, so seed it once it has.
+          this.$nextTick?.(() => this._showInSelector());
         }
       } catch (e) {
         /* ignore malformed storage */
@@ -127,6 +128,21 @@ export function templatePreviewContext({ entityType = 'group', categoryId = null
       return `&${CATEGORY_PARAMS[this.entityType]}=${encodeURIComponent(this.categoryId)}`;
     },
 
+    // The same scope as request parameters for the shared selector's searches
+    // and its Browse dialog, which call this per request.
+    scopeParameters() {
+      if (!this.categoryId) return {};
+      return { [CATEGORY_PARAMS[this.entityType]]: this.categoryId };
+    },
+
+    // _showInSelector mirrors the chosen entity into the shared field without
+    // announcing it as a pick: the selector did not choose it.
+    _showInSelector() {
+      const field = this._fieldEl && globalThis.Alpine?.$data?.(this._fieldEl);
+      if (!field?._replaceSelection) return;
+      field._replaceSelection(this.entityId ? [{ ID: this.entityId, Name: this.entityLabel }] : [], { silent: true });
+    },
+
     async _loadDefaultEntity(pickSeq) {
       const stale = () => pickSeq !== this._pickSeq;
       try {
@@ -162,41 +178,12 @@ export function templatePreviewContext({ entityType = 'group', categoryId = null
       }
     },
 
-    onSearchInput() {
-      if (this._searchTimer) clearTimeout(this._searchTimer);
-      this._searchTimer = setTimeout(() => this._search(), 250);
-    },
-
-    async _search() {
-      const seq = ++this._searchSeq;
-      const q = this.query.trim();
-      if (!q) {
-        this.suggestions = [];
-        this.open = false;
-        return;
-      }
-      try {
-        const resp = await fetch(
-          `${LIST_ENDPOINTS[this.entityType]}?name=${encodeURIComponent(q)}&maxResults=8${this._scopeParam()}`,
-        );
-        if (!resp.ok || seq !== this._searchSeq) return;
-        const items = normalizeList(await resp.json());
-        if (seq !== this._searchSeq) return;
-        this.suggestions = items.slice(0, 8).map((it) => ({ id: entityId(it), name: entityName(it) }));
-        this.open = this.suggestions.length > 0;
-      } catch (e) {
-        /* ignore search failure */
-      }
-    },
-
     _selectEntity(it) {
       const id = entityId(it);
       const name = entityName(it);
       this.entityId = id;
       this.entityLabel = name;
-      this.query = name;
-      this.suggestions = [];
-      this.open = false;
+      this._showInSelector();
       try {
         localStorage.setItem(this._storageKey(), JSON.stringify({ id, label: name }));
       } catch (e) {
@@ -211,9 +198,30 @@ export function templatePreviewContext({ entityType = 'group', categoryId = null
       this._pickSeq++;
       // A pick is a settled choice even while the default lookup is pending.
       this.usingUnscopedSample = false;
-      this._searchSeq++;
       this.ready = true;
       this._selectEntity(it);
+    },
+
+    // onEntityChange receives the shared selector's change record for a pick
+    // or a removal made in the field. Removing the chip leaves nothing to
+    // preview against until another entity is picked.
+    onEntityChange(change) {
+      const picked = change.current[0]?.raw;
+      if (picked) {
+        this.pick(picked);
+        return;
+      }
+      this._pickSeq++;
+      this.usingUnscopedSample = false;
+      this.ready = true;
+      this.entityId = null;
+      this.entityLabel = '';
+      try {
+        localStorage.removeItem(this._storageKey());
+      } catch (e) {
+        /* ignore storage errors */
+      }
+      this._publishStore();
     },
 
     refreshAll() {

@@ -5,6 +5,7 @@
  * inside a sandboxed iframe.
  */
 import { test, expect } from '../fixtures/base.fixture';
+import { previewEntityChip } from '../helpers/template-preview-entity';
 import type { Page, Request } from '@playwright/test';
 
 // Scrolls a cluster's preview into view (previews render lazily, the first
@@ -36,7 +37,7 @@ test.describe('Template live preview', () => {
     const groupName = `Picker Target ${Date.now()}`;
     await apiClient.createGroup({ name: groupName, categoryId: category.ID });
     await page.goto(`/category/edit?id=${category.ID}`);
-    await expect(page.locator('#tp-entity-group')).toHaveValue(groupName);
+    await expect(previewEntityChip(page)).toHaveAttribute('aria-label', `Remove ${groupName}`);
     await page.locator('.cm-content[aria-label="Entity Picker Result"]').fill('<b>[property path="Name"]</b>');
     await page.locator('.cm-content[aria-label="Entity Picker Result CSS"]').fill('.entity-picker-result b { color: rgb(12, 34, 56); }');
     const result = (await showPreview(page, 'CustomEntityPickerResult')).locator('.entity-picker-result b');
@@ -55,7 +56,7 @@ test.describe('Template live preview', () => {
     // The shared picker defaults to the most recent group.
     const entityInput = page.locator('#tp-entity-group');
     await expect(entityInput).toBeVisible({ timeout: 10000 });
-    await expect(entityInput).toHaveValue(groupName, { timeout: 10000 });
+    await expect(previewEntityChip(page)).toHaveAttribute('aria-label', `Remove ${groupName}`, { timeout: 10000 });
 
     const header = page.locator('.cm-content[aria-label="Custom Header"]');
     await expect(header).toBeVisible({ timeout: 10000 });
@@ -89,7 +90,7 @@ test.describe('Template live preview', () => {
     await apiClient.createGroup({ name: groupName, categoryId: category.ID });
 
     await page.goto('/category/new');
-    await expect(page.locator('#tp-entity-group')).toHaveValue(groupName, { timeout: 10000 });
+    await expect(previewEntityChip(page)).toHaveAttribute('aria-label', `Remove ${groupName}`, { timeout: 10000 });
 
     const header = page.locator('.cm-content[aria-label="Custom Header"]');
     await header.click();
@@ -136,7 +137,7 @@ test.describe('Template live preview', () => {
     await apiClient.createGroup({ name: `CSS Target ${stamp}`, categoryId: category.ID });
 
     await page.goto(`/category/edit?id=${category.ID}`);
-    await expect(page.locator('#tp-entity-group')).not.toHaveValue('');
+    await expect(previewEntityChip(page)).toHaveCount(1);
     const frame = await showPreview(page, 'CustomHeader');
     await expect(frame.locator(`#${headerProbe}`)).toHaveCount(1);
 
@@ -170,11 +171,11 @@ test.describe('Template live preview', () => {
 
     await page.goto(`/category/edit?id=${catA.ID}`);
     const entityInput = page.locator('#tp-entity-group');
-    await expect(entityInput).toHaveValue(inA, { timeout: 10000 });
+    await expect(previewEntityChip(page)).toHaveAttribute('aria-label', `Remove ${inA}`, { timeout: 10000 });
 
     await entityInput.fill(inB);
     await page.waitForTimeout(600); // debounce + request
-    await expect(page.locator('#tp-suggestions-group li')).toHaveCount(0);
+    await expect(page.locator('#tp-entity-group-listbox [role="option"]')).toHaveCount(0);
   });
 
   test('picking another entity re-renders the visible previews', async ({ page, apiClient }) => {
@@ -189,17 +190,50 @@ test.describe('Template live preview', () => {
 
     await page.goto(`/category/edit?id=${category.ID}`);
     const entityInput = page.locator('#tp-entity-group');
-    await expect(entityInput).not.toHaveValue('');
-    const current = await entityInput.inputValue();
+    await expect(previewEntityChip(page)).toHaveCount(1);
+    const current = ((await previewEntityChip(page).getAttribute('aria-label')) ?? '').replace(/^Remove /, '');
     const other = current === first ? second : first;
     const frame = await showPreview(page, 'CustomHeader');
     await expect(frame.locator('body')).toContainText(`HDR=${current}`);
 
     await entityInput.fill(other);
-    await page.locator('#tp-suggestions-group li', { hasText: other }).click();
-    await expect(entityInput).toHaveValue(other);
+    await page.locator('#tp-entity-group-listbox [role="option"]', { hasText: other }).click();
+    await expect(previewEntityChip(page)).toHaveAttribute('aria-label', `Remove ${other}`);
     await showPreview(page, 'CustomHeader');
     await expect(frame.locator('body')).toContainText(`HDR=${other}`);
+  });
+
+  test('the entity search is navigable with the arrow keys and Enter', async ({ page, apiClient }) => {
+    const stamp = Date.now();
+    const category = await apiClient.createCategory(`Keys Cat ${stamp}`, undefined, {
+      CustomHeader: 'HDR=[property path="Name"]',
+    });
+    await apiClient.createGroup({ name: `Keys One ${stamp}`, categoryId: category.ID });
+    await apiClient.createGroup({ name: `Keys Two ${stamp}`, categoryId: category.ID });
+    // The chosen entity is left out of the suggestions, so three leave two to move between.
+    await apiClient.createGroup({ name: `Keys Three ${stamp}`, categoryId: category.ID });
+
+    await page.goto(`/category/edit?id=${category.ID}`);
+    await expect(previewEntityChip(page)).toHaveCount(1);
+    const entityInput = page.locator('#tp-entity-group');
+    await entityInput.fill(`Keys`);
+    const options = page.locator('#tp-entity-group-listbox [role="option"]');
+    await expect(options).toHaveCount(2);
+
+    // Each ArrowDown moves the active option, which the combobox names.
+    await entityInput.press('ArrowDown');
+    const firstActive = await entityInput.getAttribute('aria-activedescendant');
+    await entityInput.press('ArrowDown');
+    const active = await entityInput.getAttribute('aria-activedescendant');
+    expect(active).toBeTruthy();
+    expect(active).not.toBe(firstActive);
+    const target = (await page.locator(`#${active}`).innerText()).trim();
+    await expect(page.locator(`#${active}`)).toHaveAttribute('aria-selected', 'true');
+
+    await entityInput.press('Enter');
+    await expect(previewEntityChip(page)).toHaveAttribute('aria-label', `Remove ${target}`);
+    const frame = await showPreview(page, 'CustomHeader');
+    await expect(frame.locator('body')).toContainText(`HDR=${target}`);
   });
 
   test('previews render lazily and only for the slot that changed', async ({ page, apiClient }) => {
@@ -208,7 +242,7 @@ test.describe('Template live preview', () => {
     const slots = recordPreviewRequests(page);
 
     await page.goto(`/category/edit?id=${category.ID}`);
-    await expect(page.locator('#tp-entity-group')).not.toHaveValue('');
+    await expect(previewEntityChip(page)).toHaveCount(1);
     // The page opens at the top, far above the last cluster.
     await page.waitForTimeout(1500);
     expect(slots).not.toContain('CustomEntityPickerResult');
@@ -230,7 +264,7 @@ test.describe('Template live preview', () => {
     const category = await apiClient.createCategory(`Render Error Preview ${Date.now()}`);
     await apiClient.createGroup({ name: `Render Error Target ${Date.now()}`, categoryId: category.ID });
     await page.goto(`/category/edit?id=${category.ID}`);
-    await expect(page.locator('#tp-entity-group')).not.toHaveValue('');
+    await expect(previewEntityChip(page)).toHaveCount(1);
 
     await page.locator('.cm-content[aria-label="Custom Header"]').fill('<p>[plugin:no-such-plugin:chart]</p>[mrql query="type = bogus (("]');
 
