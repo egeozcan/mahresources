@@ -169,6 +169,7 @@ type fakeJobListReader struct {
 	counted     []jobs.Filter
 	counts      func(jobs.Filter) map[string]int64
 	outputs     map[string][]jobs.Output
+	outputsErr  error
 	listErr     error
 }
 
@@ -193,7 +194,7 @@ func (f *fakeJobListReader) CountJobsByState(filter jobs.Filter) (map[string]int
 }
 
 func (f *fakeJobListReader) GetOpenableJobOutputs(jobID string) ([]jobs.Output, error) {
-	return f.outputs[jobID], nil
+	return f.outputs[jobID], f.outputsErr
 }
 
 func (f *fakeJobListReader) VisibleJobKinds() []string {
@@ -469,6 +470,50 @@ func TestJobRowShowsAResultLinkForASucceededJob(t *testing.T) {
 	}
 	if rows[1].Title != "Download" || rows[1].FailureMessage != "404" || rows[1].Progress != nil {
 		t.Fatalf("failed row = %+v", rows[1])
+	}
+}
+
+func TestJobCardLinksToTheResourceADuplicateDownloadFound(t *testing.T) {
+	template, err := pongo2.FromFile("../../../templates/partials/job.tpl")
+	if err != nil {
+		t.Fatalf("load Job card template: %v", err)
+	}
+	existing := jobs.Output{Key: application_context.JobDownloadExistingResourceOutput, Type: jobs.OutputTypeEntity,
+		Label: "Existing resource", Availability: jobs.OutputAvailable}
+	removed := existing
+	removed.Availability = jobs.OutputAvailability("removed")
+	for _, tc := range []struct {
+		name    string
+		outputs []jobs.Output
+		err     error
+		linked  bool
+	}{
+		{name: "available", outputs: []jobs.Output{existing}, linked: true},
+		{name: "removed", outputs: []jobs.Output{removed}},
+		{name: "outside viewer scope"},
+		{name: "read failed", outputs: []jobs.Output{existing}, err: fmt.Errorf("database is locked")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := &fakeJobListReader{outputs: map[string][]jobs.Output{"duplicate": tc.outputs}, outputsErr: tc.err}
+			row := jobRow(reader, jobs.Snapshot{
+				ID: "duplicate", Kind: application_context.JobKindRemoteDownload, Title: "cat.jpg", State: jobs.StateFailed,
+				Failure: &jobs.Failure{Code: application_context.JobDownloadResourceExistsCode, Message: "already exists (#1)"},
+			})
+			rendered, err := template.Execute(pongo2.Context{"job": row})
+			if err != nil {
+				t.Fatalf("render Job card: %v", err)
+			}
+			if linked := strings.Contains(rendered, `href="/v1/jobs/duplicate/outputs?key=existing-resource"`); linked != tc.linked {
+				t.Fatalf("collision link present = %v, want %v: %s", linked, tc.linked, rendered)
+			}
+			if tc.linked && (!strings.Contains(rendered, `aria-label="View existing resource for cat.jpg"`) ||
+				!strings.Contains(rendered, ">View existing resource</a>")) {
+				t.Fatalf("collision link lacks its visible or accessible label: %s", rendered)
+			}
+			if !strings.Contains(rendered, "already exists (#1)") || strings.Contains(rendered, `data-testid="job-result-link"`) {
+				t.Fatalf("the failed Job must retain its reason and offer no result: %s", rendered)
+			}
+		})
 	}
 }
 

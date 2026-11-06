@@ -60,6 +60,9 @@
         {% endif %}
 
         {% if job.FailureMessage %}<p class="mt-2 break-words text-sm text-red-800">{{ job.FailureMessage }}</p>{% endif %}
+        {% if job.FailureLink.URL %}
+        <p class="mt-2"><a href="{{ job.FailureLink.URL }}" aria-label="{{ job.FailureLink.AccessibleLabel }}" class="text-sm font-medium text-red-900 underline decoration-red-400 underline-offset-2 hover:decoration-red-900" data-testid="job-failure-link">{{ job.FailureLink.Label }}</a></p>
+        {% endif %}
 
         <details class="mt-2 text-xs text-stone-600" data-job-details>
             <summary class="cursor-pointer font-medium text-amber-900">Details</summary>

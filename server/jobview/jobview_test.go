@@ -201,6 +201,39 @@ func TestResultLinkForNeverOffersTheResourceADuplicateCollidedWith(t *testing.T)
 	}
 }
 
+func TestFailureLinkForOnlyOffersTheCurrentCollisionsResource(t *testing.T) {
+	existing := jobs.Output{Key: application_context.JobDownloadExistingResourceOutput, Type: jobs.OutputTypeEntity,
+		Label: "Existing resource", Availability: jobs.OutputAvailable}
+	job := jobs.Snapshot{ID: "duplicate", Kind: application_context.JobKindRemoteDownload, Title: "cat.jpg", State: jobs.StateFailed,
+		Failure: &jobs.Failure{Code: application_context.JobDownloadResourceExistsCode}}
+	link := FailureLinkFor(job, []jobs.Output{existing})
+	if link.URL != "/v1/jobs/duplicate/outputs?key=existing-resource" || link.Label != "View existing resource" ||
+		link.AccessibleLabel != "View existing resource for cat.jpg" {
+		t.Fatalf("collision link = %+v", link)
+	}
+	for _, tc := range []struct {
+		name    string
+		state   jobs.State
+		failure *jobs.Failure
+		output  jobs.Output
+	}{
+		{"replayed success", jobs.StateSucceeded, job.Failure, existing},
+		{"another failure", jobs.StateFailed, &jobs.Failure{Code: "http-404"}, existing},
+		{"no failure", jobs.StateFailed, nil, existing},
+		{"removed resource", jobs.StateFailed, job.Failure, jobs.Output{Key: existing.Key, Type: existing.Type, Availability: jobs.OutputAvailability("removed")}},
+		{"created resource", jobs.StateFailed, job.Failure, jobs.Output{Key: "resource", Type: existing.Type, Availability: jobs.OutputAvailable}},
+		{"another output type", jobs.StateFailed, job.Failure, jobs.Output{Key: existing.Key, Type: jobs.OutputTypeArtifact, Availability: jobs.OutputAvailable}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := job
+			snapshot.State, snapshot.Failure = tc.state, tc.failure
+			if link := FailureLinkFor(snapshot, []jobs.Output{tc.output}); link != (ResultLink{}) {
+				t.Fatalf("offered collision link %+v", link)
+			}
+		})
+	}
+}
+
 func TestResultLinkForFallsBackToAPluginActionDestination(t *testing.T) {
 	reference, _ := json.Marshal(map[string]string{"redirect": "/note?id=12"})
 	output := jobs.Output{Key: "result", Type: jobs.OutputTypeSummary, Availability: jobs.OutputAvailable, Reference: reference}
