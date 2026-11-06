@@ -23,7 +23,7 @@ func (ctx *MahresourcesContext) BulkAddTagsToNotes(query *query_models.BulkEditQ
 
 	uniqueNoteIds := deduplicateUints(query.ID)
 
-	return ctx.db.Transaction(func(tx *gorm.DB) error {
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		// Verify all note IDs exist
 		var noteCount int64
 		if err := tx.Model(&models.Note{}).Where("id IN ?", uniqueNoteIds).Count(&noteCount).Error; err != nil {
@@ -51,6 +51,7 @@ func (ctx *MahresourcesContext) BulkAddTagsToNotes(query *query_models.BulkEditQ
 		}
 		return nil
 	})
+	return ctx.invalidateAfterTagAssociation(EntityTypeNote, err)
 }
 
 func (ctx *MahresourcesContext) BulkRemoveTagsFromNotes(query *query_models.BulkEditQuery) error {
@@ -62,7 +63,7 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromNotes(query *query_models.Bulk
 	}
 
 	uniqueNoteIds := deduplicateUints(query.ID)
-	return ctx.db.Transaction(func(tx *gorm.DB) error {
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		// RBAC: verify all note IDs are visible (the scope callback filters this
 		// Count) so a group-limited principal cannot strip tags from out-of-subtree
 		// notes via the raw DELETE below.
@@ -78,6 +79,7 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromNotes(query *query_models.Bulk
 			query.ID, query.EditedId,
 		).Error
 	})
+	return ctx.invalidateAfterTagAssociation(EntityTypeNote, err)
 }
 
 func (ctx *MahresourcesContext) BulkAddGroupsToNotes(query *query_models.BulkEditQuery) error {

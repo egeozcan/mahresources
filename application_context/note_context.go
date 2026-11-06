@@ -654,7 +654,7 @@ func (ctx *MahresourcesContext) AddTagsToNote(noteId uint, tagIds []uint) error 
 	}
 	note := models.Note{ID: noteId}
 	tags := BuildAssociationSlice(tagIds, TagFromID)
-	return ctx.db.Model(&note).Association("Tags").Append(&tags)
+	return ctx.invalidateAfterTagAssociation(EntityTypeNote, ctx.db.Model(&note).Association("Tags").Append(&tags))
 }
 
 // RemoveTagsFromNote removes tags from a note by ID.
@@ -664,7 +664,7 @@ func (ctx *MahresourcesContext) RemoveTagsFromNote(noteId uint, tagIds []uint) e
 	}
 	note := models.Note{ID: noteId}
 	tags := BuildAssociationSlice(tagIds, TagFromID)
-	return ctx.db.Model(&note).Association("Tags").Delete(&tags)
+	return ctx.invalidateAfterTagAssociation(EntityTypeNote, ctx.db.Model(&note).Association("Tags").Delete(&tags))
 }
 
 // AddGroupsToNote appends groups to a note by ID.

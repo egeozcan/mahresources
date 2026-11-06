@@ -330,7 +330,7 @@ func (ctx *MahresourcesContext) BulkAddTagsToGroups(query *query_models.BulkEdit
 	uniqueEditedIds := deduplicateUints(query.EditedId)
 	uniqueGroupIds := deduplicateUints(query.ID)
 
-	return ctx.db.Transaction(func(tx *gorm.DB) error {
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		// Verify all group IDs exist
 		var groupCount int64
 		if err := tx.Model(&models.Group{}).Where("id IN ?", uniqueGroupIds).Count(&groupCount).Error; err != nil {
@@ -358,6 +358,7 @@ func (ctx *MahresourcesContext) BulkAddTagsToGroups(query *query_models.BulkEdit
 		}
 		return nil
 	})
+	return ctx.invalidateAfterTagAssociation(EntityTypeGroup, err)
 }
 
 func (ctx *MahresourcesContext) BulkRemoveTagsFromGroups(query *query_models.BulkEditQuery) error {
@@ -369,7 +370,7 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromGroups(query *query_models.Bul
 	}
 
 	uniqueGroupIds := deduplicateUints(query.ID)
-	return ctx.db.Transaction(func(tx *gorm.DB) error {
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		// RBAC: verify all group IDs are visible (scope callback filters this Count).
 		var groupCount int64
 		if err := tx.Model(&models.Group{}).Where("id IN ?", uniqueGroupIds).Count(&groupCount).Error; err != nil {
@@ -383,6 +384,7 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromGroups(query *query_models.Bul
 			query.ID, query.EditedId,
 		).Error
 	})
+	return ctx.invalidateAfterTagAssociation(EntityTypeGroup, err)
 }
 
 func (ctx *MahresourcesContext) BulkAddMetaToGroups(query *query_models.BulkEditMetaQuery) error {
