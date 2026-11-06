@@ -121,7 +121,9 @@ export function slotPreview({ entityType = 'group', slot = 'CustomHeader', previ
       if (this._timer) clearTimeout(this._timer);
       this._timer = null;
       if (!this.visible) return;
-      if (debounce) this._timer = setTimeout(() => this.refresh(), EDIT_DEBOUNCE_MS);
+      // Rechecked when the pause ends: a preview scrolled away meanwhile stays
+      // stale and renders when it is next seen.
+      if (debounce) this._timer = setTimeout(() => this.visible && this.refresh(), EDIT_DEBOUNCE_MS);
       else this.refresh();
     },
 

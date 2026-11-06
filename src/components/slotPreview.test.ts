@@ -374,6 +374,22 @@ describe('slot preview startup', () => {
         expect(bodyOf(frame.srcdoc)).not.toContain('stale');
     });
 
+    test('a debounced render does not fire once the preview has scrolled away', () => {
+        vi.useFakeTimers();
+        const fetchMock = stubFetch();
+        const component = slotPreview({ entityType: 'group', previewPath: '/p', categoryId: 7 });
+        component._form = formWith({ CustomHeader: 'x' });
+        component.entityId = 1;
+        component.entityReady = true;
+        component.visible = true;
+        component.invalidate(true);
+        component.visible = false;
+        vi.advanceTimersByTime(1000);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(component.stale).toBe(true);
+        vi.useRealTimers();
+    });
+
     test('off screen, an invalidation only marks the preview stale', () => {
         const fetchMock = stubFetch();
         const component = slotPreview({ entityType: 'group', previewPath: '/p', categoryId: 7 });
@@ -418,6 +434,23 @@ describe('preview context', () => {
         expect(component.entityId).toBe(42);
         expect(stored.templatePreview).toMatchObject({ entityId: 42, ready: true, categoryId: 7 });
         expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    test('publishes the carrier and generate endpoint before the default lookup answers', async () => {
+        const stored = stubStore();
+        vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {} });
+        vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+
+        const component = templatePreviewContext({ entityType: 'group', categoryId: 7, generatePath: '/v1/category/generateTemplate' });
+        void component.init();
+        await Promise.resolve();
+
+        expect(stored.templatePreview).toMatchObject({
+            categoryId: 7,
+            generatePath: '/v1/category/generateTemplate',
+            entityType: 'group',
+            ready: false,
+        });
     });
 
     test('a default lookup answering after a pick does not replace the pick', async () => {

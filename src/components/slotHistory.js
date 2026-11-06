@@ -146,7 +146,9 @@ export function slotHistory({ apiPrefix = '', carrierId = 0, entityType = 'group
         });
         if (session !== this._session) return;
         if (!resp.ok) {
-          this.error = await this._errorText(resp);
+          const text = await this._errorText(resp);
+          if (session !== this._session) return;
+          this.error = text;
         } else {
           const all = (await resp.json()) || [];
           if (session !== this._session) return;

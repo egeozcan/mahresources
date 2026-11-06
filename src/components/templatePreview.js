@@ -89,6 +89,9 @@ export function templatePreviewContext({ entityType = 'group', categoryId = null
         /* ignore malformed storage */
       }
 
+      // The carrier and the generate endpoint first, unsettled: the generate
+      // buttons need them whether or not an entity is ever found.
+      this._publishStore();
       const pickSeq = this._pickSeq;
       if (!this.entityId) await this._loadDefaultEntity(pickSeq);
       // A pick made meanwhile has already published.

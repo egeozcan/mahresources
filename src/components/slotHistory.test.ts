@@ -33,3 +33,46 @@ describe('linesToHunks', () => {
         expect(unifiedRows(hunks).map((row) => row.op)).toEqual(['insert', 'insert']);
     });
 });
+
+describe('slot history freshness', () => {
+    test("a closed dialog's late error body does not land in the next dialog", async () => {
+        const { slotHistory } = await import('./slotHistory.js');
+        let releaseBody: () => void = () => {};
+        const bodyHeld = new Promise<void>((resolve) => {
+            releaseBody = resolve;
+        });
+        let calls = 0;
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => {
+                calls++;
+                if (calls === 1) {
+                    return {
+                        ok: false,
+                        status: 500,
+                        json: async () => {
+                            await bodyHeld;
+                            return { error: 'STALE HEADER ERROR' };
+                        },
+                    };
+                }
+                return new Promise(() => {}); // the second list request stays pending
+            }),
+        );
+        const component = slotHistory({ apiPrefix: '/v1/category', carrierId: 4 });
+        component._form = document.createElement('form');
+
+        const first = component.open({ slot: 'CustomHeader', label: 'Custom Header' });
+        await vi.waitFor(() => expect(calls).toBe(1));
+        component.close({ restore: false });
+        void component.open({ slot: 'CustomSidebar', label: 'Custom Sidebar' });
+        await vi.waitFor(() => expect(calls).toBe(2));
+        releaseBody();
+        await first;
+
+        expect(component.slot).toBe('CustomSidebar');
+        expect(component.error).toBe('');
+        expect(component.loading).toBe(true);
+        vi.unstubAllGlobals();
+    });
+});
