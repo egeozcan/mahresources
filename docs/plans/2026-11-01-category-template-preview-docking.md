@@ -1,5 +1,7 @@
 # Category template preview: dock under the slot being edited
 
+Superseded on 2026-11-06 by `2026-11-06-per-slot-preview-and-history.md`: every slot now has its own preview, so the single pane and its dock option were removed.
+
 Request: on the Category, Resource Category and Note Type editors, let the author show the live preview right after the template slot editor, instead of only at the bottom of the long Templates fieldset.
 
 ## Behavior

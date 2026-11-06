@@ -35,7 +35,9 @@ function withDisclosure(handler: (route: Route) => Promise<void>) {
 // outlast the preview's 700ms input debounce, so no refresh is still pending.
 async function refreshPreviewAndSettle(page: Page) {
   const rendered = page.waitForResponse((r) => r.url().includes('/previewTemplate'));
-  await page.getByRole('button', { name: 'Refresh' }).click();
+  const preview = page.locator('[data-slot-preview="CustomHeader"]');
+  await preview.scrollIntoViewIfNeeded();
+  await preview.getByRole('button', { name: /^Refresh/ }).click();
   await rendered;
   await page.waitForTimeout(900);
 }
@@ -414,8 +416,10 @@ test.describe('Generated drafts do not run before Apply', () => {
       }));
       await page.goto(`/category/edit?id=${category.ID}`);
       await expect(page.locator('#tp-entity-group')).toHaveValue(groupName, { timeout: 10000 });
-      const frame = page.frameLocator('iframe[title="Template slot preview"]');
-      const iframe = page.locator('iframe[title="Template slot preview"]');
+      const frame = page.frameLocator('[data-slot-preview="CustomHeader"] iframe');
+      const iframe = page.locator('[data-slot-preview="CustomHeader"] iframe');
+      // Previews render the first time they are seen.
+      await iframe.scrollIntoViewIfNeeded();
       // Let the first render land, so the comparison below is against it.
       await expect.poll(async () => (await iframe.getAttribute('srcdoc')) ?? '', { timeout: 10000 }).toContain('<html');
       await page.waitForTimeout(500);
@@ -459,7 +463,7 @@ test.describe('Generated drafts do not run before Apply', () => {
     await page.goto(`/category/edit?id=${category.ID}`);
     // An active preview: the entity is loaded and a render has completed.
     await expect(page.locator('#tp-entity-group')).toHaveValue(groupName, { timeout: 10000 });
-    const iframe = page.locator('iframe[title="Template slot preview"]');
+    const iframe = page.locator('[data-slot-preview="CustomHeader"] iframe');
     await refreshPreviewAndSettle(page);
     const srcdocBefore = (await iframe.getAttribute('srcdoc')) ?? '';
     expect(srcdocBefore).toContain('<html');

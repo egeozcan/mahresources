@@ -23,7 +23,7 @@ type slotCarrier struct {
 	model      any
 	form       string // create form template
 	tplVar     string // the pongo2 variable the form binds
-	entityType string // templatePreview.js `only` value
+	entityType string // templatePreviewRender.js `only` value
 }
 
 var slotCarriers = []slotCarrier{
@@ -74,7 +74,7 @@ func TestEveryCustomSlotHasAnEditor(t *testing.T) {
 // cannot be previewed; a slot missing from the second is silently dropped by
 // "Copy from…", by an export, and by a whole-template generation.
 func TestEveryCustomSlotIsInTheFrontEndSlotMaps(t *testing.T) {
-	preview := readRepoFile(t, "src/components/templatePreview.js")
+	preview := readRepoFile(t, "src/components/templatePreviewRender.js")
 	bundle := readRepoFile(t, "src/components/templateBundle.js")
 
 	// { name: 'CustomX', label: '…' , only: 'resource' }
@@ -93,10 +93,10 @@ func TestEveryCustomSlotIsInTheFrontEndSlotMaps(t *testing.T) {
 		for _, field := range customSlotFields(c.model) {
 			only, listed := previewSlots[field]
 			if !listed {
-				t.Errorf("templatePreview.js SLOTS is missing %s", field)
+				t.Errorf("templatePreviewRender.js SLOTS is missing %s", field)
 			} else if only != "" && only != c.entityType {
 				// A field present on two carriers must not be pinned to one.
-				t.Errorf("templatePreview.js pins %s to only:'%s', but %T declares it too", field, only, c.model)
+				t.Errorf("templatePreviewRender.js pins %s to only:'%s', but %T declares it too", field, only, c.model)
 			}
 			if !strings.Contains(bundle, "'"+field+"',") {
 				t.Errorf("templateBundle.js SLOT_FIELDS is missing %s", field)

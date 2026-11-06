@@ -98,6 +98,17 @@ Each carrier has a History page. Its edit page links to it with **View template 
 
 The page lists the revisions with their number, time, user, source, label and changed slots. Each row has **Compare with current**, **Edit label** and **Load into editor** actions. A revision with no user shows as System.
 
+## Slot history on the edit form
+
+On the edit form, every slot's preview has a **History** button, and the Custom CSS editor has one too. The create form has none, since a new carrier has no revisions. The button opens a dialog for that slot:
+
+- It lists the revisions that changed the slot or its CSS companion, newest first, with number, source, time and label.
+- Choosing a revision shows a line diff of the slot, and of its CSS companion, between that revision (left) and what the editor holds now, unsaved edits included. The diff is computed in the browser, unified by default with a **Side by side** option. When the revision matches the editor, the dialog says so.
+- It previews the revision's version of the slot against the entity chosen in **Preview against**, with the revision's CSS companion when **Include its CSS** is ticked (the default) and the form's other CSS as it is now. Custom CSS has no markup, so its dialog shows the diff only.
+- **Apply #N to the editor** writes the slot, and its CSS companion when **Include its CSS** is ticked, into the editor and closes the dialog. Focus returns to the History button, and the slot's preview says what was loaded. Nothing is saved: undo in the editor still works, and the next save lists `loaded:<number>:<slot>` in its applied entries.
+
+Escape, **Close** and **Cancel** close the dialog without changing anything and return focus to the History button.
+
 ## Comparing revisions
 
 A diff compares two revisions, or one revision against the carrier's current state, which is the default. It is grouped by slot and shows only the slots and fields that changed. On the History page the **From** and **To** selects pick the two sides, and **Compare with current** on a row compares that revision with the current state. Each changed field is a line diff, shown unified by default with a **Side by side** option, and long runs of unchanged lines are folded to three lines of context. The server computes the diff.
@@ -115,7 +126,7 @@ mr categories revisions diff --id 7 --from 2 --to 5
 
 There are two ways to bring an old state back.
 
-**Load into editor** is the way the UI restores. It opens the edit form with the whole revision, or with one slot, filled in but not saved, and shows a "Loaded revision #N" notice. A slot that has a CSS companion has an **Include its CSS** checkbox, ticked by default, on the History page. You review the form and save it like any edit, and the saved revision lists `loaded:<number>` or `loaded:<number>:<slot>` in its applied entries. Loading a whole revision, or the `SectionConfig` slot, replaces the form's section configuration with the server-resolved view, not a merge with what the form held. Loading any other single slot leaves the section configuration alone.
+**Load into editor** and the edit form's [slot history](#slot-history-on-the-edit-form) are the ways the UI restores. **Load into editor** opens the edit form with the whole revision, or with one slot, filled in but not saved, and shows a "Loaded revision #N" notice. A slot that has a CSS companion has an **Include its CSS** checkbox, ticked by default, on the History page. You review the form and save it like any edit, and the saved revision lists `loaded:<number>` or `loaded:<number>:<slot>` in its applied entries. Loading a whole revision, or the `SectionConfig` slot, replaces the form's section configuration with the server-resolved view, not a merge with what the form held. Loading any other single slot leaves the section configuration alone.
 
 **Restore** through the API or CLI saves directly:
 

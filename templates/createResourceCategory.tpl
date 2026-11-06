@@ -18,6 +18,7 @@
 
     {% include "/partials/form/templateBundleTools.tpl" with carrier="resourceCategory" %}
 
+    {% with tpEntityType="resource" tpPreviewPath="/v1/resourceCategory/previewTemplate" tpGeneratePath="/v1/resourceCategory/generateTemplate" tpApiPrefix="/v1/resourceCategory" tpCarrierId=resourceCategory.ID %}
     <fieldset class="rounded-lg border border-stone-200 bg-stone-50/50 p-4 sm:p-6 space-y-2" x-data="{ showTemplateDocs: false }">
         <legend class="text-base font-semibold font-mono text-stone-800 px-2">Custom Templates</legend>
         <p class="text-xs text-stone-500">Generate updates this template and its CSS together. Review both before saving.</p>
@@ -326,6 +327,7 @@
             </div>
         </div>
 
+        {% include "/partials/form/templatePreviewContext.tpl" %}
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomHeader">
         <legend class="text-sm font-medium px-2">Custom Header</legend>
         <p class="text-xs text-stone-500">Generate updates this template and its CSS together. Review both before saving.</p>
@@ -334,6 +336,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header" name="CustomHeader" value=resourceCategory.CustomHeader mode="html" description="Top of the resource detail page, above the description." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header CSS" name="CustomHeaderCSS" value=resourceCategory.CustomHeaderCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomHeader" label="Custom Header" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomDetailFooter">
         <legend class="text-sm font-medium px-2">Custom Detail Footer</legend>
@@ -343,6 +346,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Detail Footer" name="CustomDetailFooter" value=resourceCategory.CustomDetailFooter mode="html" description="Bottom of the resource detail page, below every built-in section." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Detail Footer CSS" name="CustomDetailFooterCSS" value=resourceCategory.CustomDetailFooterCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomDetailFooter" label="Custom Detail Footer" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomSidebar">
         <legend class="text-sm font-medium px-2">Custom Sidebar</legend>
@@ -352,6 +356,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=resourceCategory.CustomSidebar mode="html" description="The resource detail page sidebar. Also the lightbox panel, unless Custom Lightbox is set." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar CSS" name="CustomSidebarCSS" value=resourceCategory.CustomSidebarCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomSidebar" label="Custom Sidebar" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomPreview">
         <legend class="text-sm font-medium px-2">Custom Preview</legend>
@@ -361,6 +366,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Preview" name="CustomPreview" value=resourceCategory.CustomPreview mode="html" description="Sidebar, directly above the built-in preview image — for file types it cannot show (PDF, 3D, audio, an embed). It adds to the preview image rather than replacing it." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Preview CSS" name="CustomPreviewCSS" value=resourceCategory.CustomPreviewCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomPreview" label="Custom Preview" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomLightbox">
         <legend class="text-sm font-medium px-2">Custom Lightbox</legend>
@@ -370,6 +376,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Lightbox" name="CustomLightbox" value=resourceCategory.CustomLightbox mode="html" description="The lightbox details panel, which is dark and narrow. Falls back to Custom Sidebar when empty." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Lightbox CSS" name="CustomLightboxCSS" value=resourceCategory.CustomLightboxCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomLightbox" label="Custom Lightbox" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomSummary">
         <legend class="text-sm font-medium px-2">Custom Summary</legend>
@@ -379,6 +386,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=resourceCategory.CustomSummary mode="html" description="On resource cards in list views, below the title." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary CSS" name="CustomSummaryCSS" value=resourceCategory.CustomSummaryCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomSummary" label="Custom Summary" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomAvatar">
         <legend class="text-sm font-medium px-2">Custom Avatar</legend>
@@ -388,6 +396,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=resourceCategory.CustomAvatar mode="html" description="Shown next to the category name on resource cards. Resources keep their thumbnail — there is no initials avatar to replace." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar CSS" name="CustomAvatarCSS" value=resourceCategory.CustomAvatarCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomAvatar" label="Custom Avatar" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomHoverCard">
         <legend class="text-sm font-medium px-2">Custom Hover Card</legend>
@@ -397,6 +406,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Hover Card" name="CustomHoverCard" value=resourceCategory.CustomHoverCard mode="html" description="The hover card shown when a resource link is hovered. Falls back to Custom Summary when empty, so set it only when hover should differ from the card." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Hover Card CSS" name="CustomHoverCardCSS" value=resourceCategory.CustomHoverCardCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomHoverCard" label="Custom Hover Card" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomCell">
         <legend class="text-sm font-medium px-2">Custom Table Cell</legend>
@@ -406,6 +416,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Table Cell" name="CustomCell" value=resourceCategory.CustomCell mode="html" description="One extra cell per row in the resources details table, and only when the list is filtered to exactly this category. Output the cell body, not a &lt;td&gt;." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Table Cell CSS" name="CustomCellCSS" value=resourceCategory.CustomCellCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomCell" label="Custom Table Cell" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomListHeader">
         <legend class="text-sm font-medium px-2">Custom List Header</legend>
@@ -415,6 +426,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Header" name="CustomListHeader" value=resourceCategory.CustomListHeader mode="html" description="Top of resource list pages filtered to exactly this category. Rendered against the category itself, not a resource: [property path=&quot;Name&quot;] is the category name, [meta] is empty, and [mrql] runs at global scope." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Header CSS" name="CustomListHeaderCSS" value=resourceCategory.CustomListHeaderCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomListHeader" label="Custom List Header" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomListFooter">
         <legend class="text-sm font-medium px-2">Custom List Footer</legend>
@@ -424,6 +436,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Footer" name="CustomListFooter" value=resourceCategory.CustomListFooter mode="html" description="Bottom of resource list pages filtered to exactly this category, below the results. Rendered against the category itself, not a resource: [property path=&quot;Name&quot;] is the category name, [meta] is empty, and [mrql] runs at global scope." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Footer CSS" name="CustomListFooterCSS" value=resourceCategory.CustomListFooterCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomListFooter" label="Custom List Footer" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomMRQLResult">
         <legend class="text-sm font-medium px-2">Custom MRQL Result</legend>
@@ -433,6 +446,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result" name="CustomMRQLResult" value=resourceCategory.CustomMRQLResult mode="html" description="Server-rendered in [mrql] results. Shortcodes work; Alpine directives do not." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result CSS" name="CustomMRQLResultCSS" value=resourceCategory.CustomMRQLResultCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomMRQLResult" label="Custom MRQL Result" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomEntityPickerResult">
         <legend class="px-2 text-sm font-semibold text-stone-700">Entity Picker Result</legend>
@@ -441,11 +455,14 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Entity Picker Result" name="CustomEntityPickerResult" value=resourceCategory.CustomEntityPickerResult mode="html" description="Content of one resource result in the entity picker. Leave empty for the default card. The host owns selection controls; use shortcodes, not Alpine directives." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Entity Picker Result CSS" name="CustomEntityPickerResultCSS" value=resourceCategory.CustomEntityPickerResultCSS mode="css" description="Global styles loaded with shared CustomCSS in the picker. Target .entity-picker-result to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomEntityPickerResult" label="Entity Picker Result" %}
         </fieldset>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=resourceCategory.CustomCSS mode="css" description="Injected as a &lt;style&gt; block on the resource detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template. Styles every slot above." shortcodes=true generate=true %}
+        <div class="flex flex-wrap justify-end gap-2">{% include "/partials/form/slotHistoryButton.tpl" with slot="CustomCSS" label="Custom CSS" %}</div>
     </fieldset>
+    {% include "/partials/form/slotHistoryDialog.tpl" %}
+    {% endwith %}
 
-    {% include "/partials/form/templatePreviewPane.tpl" with entityType="resource" previewPath="/v1/resourceCategory/previewTemplate" generatePath="/v1/resourceCategory/generateTemplate" categoryId=resourceCategory.ID %}
     {# Findings 19/101: `flex-1` is `flex: 1 1 0%` with the flex default          #}
     {# min-width:auto, so this column could not shrink below the CodeMirror        #}
     {# editor's min-content width — measured 1098px wide inside a 358px row, which #}

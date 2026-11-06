@@ -220,7 +220,8 @@ test.describe('finding 95 — the sandboxed preview iframe stops flooding the co
 
     await page.setViewportSize(DESKTOP);
     await page.goto(`/category/edit?id=${cat.ID}`);
-    // The preview renders on init; wait for the frame to have a document.
+    // The Header preview renders once it is seen; wait for its frame to have a document.
+    await page.locator('[data-slot-preview="CustomHeader"]').scrollIntoViewIfNeeded();
     await page.waitForTimeout(4000);
 
     const settingsErrors = () =>
@@ -230,14 +231,14 @@ test.describe('finding 95 — the sandboxed preview iframe stops flooding the co
     // saw it climb 6 -> 18 -> 30).
     expect(settingsErrors(), `console errors: ${consoleErrors.join(' | ')}`).toBe(0);
 
-    await page.getByRole('button', { name: 'Refresh' }).first().click();
+    await page.locator('[data-slot-preview="CustomHeader"]').getByRole('button', { name: /^Refresh/ }).click();
     await page.waitForTimeout(4000);
     expect(settingsErrors(), `after refresh: ${consoleErrors.join(' | ')}`).toBe(0);
 
     // Positive control: the preview really did render, so "no errors" is not
     // satisfied by a frame that never ran the bundle.
     const frameHasContent = await page.evaluate(() => {
-      const f = document.querySelector('iframe[title="Template slot preview"]') as HTMLIFrameElement;
+      const f = document.querySelector('[data-slot-preview="CustomHeader"] iframe') as HTMLIFrameElement;
       return (f?.getAttribute('srcdoc') || '').includes('/public/dist/main.js');
     });
     expect(frameHasContent).toBe(true);

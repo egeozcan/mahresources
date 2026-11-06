@@ -8,7 +8,8 @@ vi.hoisted(() => {
     globalThis.fetch = (async () => ({ ok: false, status: 401, json: async () => ({}) })) as unknown as typeof fetch;
 });
 
-import { renderErrorsFrom, templatePreview } from './templatePreview.js';
+import { renderErrorsFrom } from './templatePreviewRender.js';
+import { slotPreview } from './slotPreview.js';
 
 // A shortcode that fails renders a short inline marker in the frame ("⚠
 // plugin:data-views:pie-chart") with the actual reason only in its title
@@ -90,12 +91,13 @@ describe('template preview refresh', () => {
                 }),
             })),
         );
-        const component = templatePreview({ entityType: 'group', previewPath: '/p', categoryId: 7 });
+        const component = slotPreview({ entityType: 'group', previewPath: '/p', categoryId: 7 });
         component._form = {
             querySelector: () => ({ value: '[plugin:a:b]' }),
         } as unknown as HTMLFormElement;
         component.$refs = {};
         component.entityId = 1;
+        component.entityReady = true;
         component.slot = 'CustomHeader';
 
         await component.refresh();
@@ -105,12 +107,13 @@ describe('template preview refresh', () => {
 
     function previewWith(respond: () => unknown) {
         vi.stubGlobal('fetch', vi.fn(async () => respond()));
-        const component = templatePreview({ entityType: 'group', previewPath: '/p', categoryId: 7 });
+        const component = slotPreview({ entityType: 'group', previewPath: '/p', categoryId: 7 });
         component._form = {
             querySelector: () => ({ value: 'x' }),
         } as unknown as HTMLFormElement;
         component.$refs = {};
         component.entityId = 1;
+        component.entityReady = true;
         return component;
     }
 
@@ -120,17 +123,11 @@ describe('template preview refresh', () => {
     });
     const marker = (name: string) => `<span class="shortcode-error" title="why">⚠ ${name}</span>`;
 
-    test('lists failures in the CSS buffer too, once each on the CSS slot', async () => {
+    test('lists failures in the CSS buffer too', async () => {
         const component = previewWith(() => ok({ html: marker('plugin:h:h'), css: marker('plugin:c:c') }));
         component.slot = 'CustomHeader';
         await component.refresh();
         expect(component.renderErrors.map((e) => e.label)).toEqual(['plugin:h:h', 'plugin:c:c']);
-
-        // On a CSS slot the request sends one buffer as both halves.
-        const css = previewWith(() => ok({ html: marker('plugin:c:c'), css: marker('plugin:c:c') }));
-        css.slot = 'CustomCSS';
-        await css.refresh();
-        expect(css.renderErrors).toEqual([{ label: 'plugin:c:c', detail: 'why', count: 1 }]);
     });
 
     test('a failed refresh does not leave the previous render errors standing', async () => {

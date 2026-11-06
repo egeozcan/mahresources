@@ -23,6 +23,7 @@
 
     {% include "/partials/form/templateBundleTools.tpl" with carrier="noteType" %}
 
+    {% with tpEntityType="note" tpPreviewPath="/v1/noteType/previewTemplate" tpGeneratePath="/v1/noteType/generateTemplate" tpApiPrefix="/v1/noteType" tpCarrierId=noteType.ID %}
     <fieldset class="rounded-lg border border-stone-200 bg-stone-50/50 p-4 sm:p-6 space-y-2" x-data="{ showTemplateDocs: false }">
         <legend class="text-base font-semibold font-mono text-stone-800 px-2">Custom Templates</legend>
         <p class="text-xs text-stone-500">Generate updates this template and its CSS together. Review both before saving.</p>
@@ -319,6 +320,7 @@
             </div>
         </div>
 
+        {% include "/partials/form/templatePreviewContext.tpl" %}
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomHeader">
         <legend class="text-sm font-medium px-2">Custom Header</legend>
         <p class="text-xs text-stone-500">Generate updates this template and its CSS together. Review both before saving.</p>
@@ -327,6 +329,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header" name="CustomHeader" value=noteType.CustomHeader mode="html" description="Top of the note detail page, above the description." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header CSS" name="CustomHeaderCSS" value=noteType.CustomHeaderCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomHeader" label="Custom Header" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomDetailFooter">
         <legend class="text-sm font-medium px-2">Custom Detail Footer</legend>
@@ -336,6 +339,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Detail Footer" name="CustomDetailFooter" value=noteType.CustomDetailFooter mode="html" description="Bottom of the note detail page, below every built-in section." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Detail Footer CSS" name="CustomDetailFooterCSS" value=noteType.CustomDetailFooterCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomDetailFooter" label="Custom Detail Footer" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomSidebar">
         <legend class="text-sm font-medium px-2">Custom Sidebar</legend>
@@ -345,6 +349,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=noteType.CustomSidebar mode="html" description="The note detail page sidebar." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar CSS" name="CustomSidebarCSS" value=noteType.CustomSidebarCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomSidebar" label="Custom Sidebar" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomSummary">
         <legend class="text-sm font-medium px-2">Custom Summary</legend>
@@ -354,6 +359,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=noteType.CustomSummary mode="html" description="On note cards in list views, below the title." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary CSS" name="CustomSummaryCSS" value=noteType.CustomSummaryCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomSummary" label="Custom Summary" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomAvatar">
         <legend class="text-sm font-medium px-2">Custom Avatar</legend>
@@ -363,6 +369,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=noteType.CustomAvatar mode="html" description="Replaces the default initials avatar on note cards." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar CSS" name="CustomAvatarCSS" value=noteType.CustomAvatarCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomAvatar" label="Custom Avatar" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomHoverCard">
         <legend class="text-sm font-medium px-2">Custom Hover Card</legend>
@@ -372,6 +379,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Hover Card" name="CustomHoverCard" value=noteType.CustomHoverCard mode="html" description="The hover card shown when a note link is hovered. Falls back to Custom Summary when empty, so set it only when hover should differ from the card." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Hover Card CSS" name="CustomHoverCardCSS" value=noteType.CustomHoverCardCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomHoverCard" label="Custom Hover Card" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomListHeader">
         <legend class="text-sm font-medium px-2">Custom List Header</legend>
@@ -381,6 +389,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Header" name="CustomListHeader" value=noteType.CustomListHeader mode="html" description="Top of note list pages filtered to exactly this note type. Rendered against the note type itself, not a note: [property path=&quot;Name&quot;] is the note type name, [meta] is empty, and [mrql] runs at global scope." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Header CSS" name="CustomListHeaderCSS" value=noteType.CustomListHeaderCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomListHeader" label="Custom List Header" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomListFooter">
         <legend class="text-sm font-medium px-2">Custom List Footer</legend>
@@ -390,6 +399,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Footer" name="CustomListFooter" value=noteType.CustomListFooter mode="html" description="Bottom of note list pages filtered to exactly this note type, below the results. Rendered against the note type itself, not a note: [property path=&quot;Name&quot;] is the note type name, [meta] is empty, and [mrql] runs at global scope." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Footer CSS" name="CustomListFooterCSS" value=noteType.CustomListFooterCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomListFooter" label="Custom List Footer" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomMRQLResult">
         <legend class="text-sm font-medium px-2">Custom MRQL Result</legend>
@@ -399,6 +409,7 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result" name="CustomMRQLResult" value=noteType.CustomMRQLResult mode="html" description="Server-rendered in [mrql] results. Shortcodes work; Alpine directives do not." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result CSS" name="CustomMRQLResultCSS" value=noteType.CustomMRQLResultCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomMRQLResult" label="Custom MRQL Result" %}
         </fieldset>
         <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomEntityPickerResult">
         <legend class="px-2 text-sm font-semibold text-stone-700">Entity Picker Result</legend>
@@ -407,8 +418,10 @@
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Entity Picker Result" name="CustomEntityPickerResult" value=noteType.CustomEntityPickerResult mode="html" description="Content of one note result in the entity picker. Leave empty for the default card. The host owns selection controls; use shortcodes, not Alpine directives." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Entity Picker Result CSS" name="CustomEntityPickerResultCSS" value=noteType.CustomEntityPickerResultCSS mode="css" description="Global styles loaded with shared CustomCSS in the picker. Target .entity-picker-result to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomEntityPickerResult" label="Entity Picker Result" %}
         </fieldset>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=noteType.CustomCSS mode="css" description="Injected as a &lt;style&gt; block on the note detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template. Styles every slot above." shortcodes=true generate=true %}
+        <div class="flex flex-wrap justify-end gap-2">{% include "/partials/form/slotHistoryButton.tpl" with slot="CustomCSS" label="Custom CSS" %}</div>
 
         <div class="mt-4 border-t border-stone-200 pt-4">
             <label class="flex items-start gap-2 text-sm cursor-pointer">
@@ -422,8 +435,9 @@
             </label>
         </div>
     </fieldset>
+    {% include "/partials/form/slotHistoryDialog.tpl" %}
+    {% endwith %}
 
-    {% include "/partials/form/templatePreviewPane.tpl" with entityType="note" previewPath="/v1/noteType/previewTemplate" generatePath="/v1/noteType/generateTemplate" categoryId=noteType.ID %}
     {# Findings 19/101: `flex-1` is `flex: 1 1 0%` with the flex default          #}
     {# min-width:auto, so this column could not shrink below the CodeMirror        #}
     {# editor's min-content width — measured 1098px wide inside a 358px row, which #}

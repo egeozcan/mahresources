@@ -1129,7 +1129,7 @@ func TestTextareasKeepTheirNativeRole(t *testing.T) {
 // does not catch this, which is why it survived a sweep that keeps KNOWN_ISSUES
 // empty.
 //
-// The rule is scoped to <button>, not to every role="option": templatePreviewPane.tpl
+// The rule is scoped to <button>, not to every role="option": templatePreviewContext.tpl
 // and blockEditor.tpl's block picker are roving-tabindex listboxes on <li>, where
 // tabindex="0" on the active option is correct. Requiring the attribute to be
 // *declared* rather than to equal "-1" keeps a future roving <button> listbox
