@@ -107,7 +107,7 @@ test.describe('Slot history popup', () => {
     // Focus stays at the slot: back on its History button, with the load
     // announced in the slot's preview. The form's notice keeps the record.
     await expect(page.getByTestId('slot-history-CustomHeader')).toBeFocused();
-    const status = page.getByTestId('slot-preview-applied-CustomHeader');
+    const status = page.getByTestId('slot-applied-CustomHeader');
     await expect(status).toHaveAttribute('role', 'status');
     await expect(status).toContainText('Loaded CustomHeader from revision #1');
     await expect(status).toContainText('Nothing is saved yet');
@@ -120,6 +120,22 @@ test.describe('Slot history popup', () => {
     await dialog(page).getByRole('button', { name: 'Apply #2 to the editor' }).click();
     await expect(header).toHaveValue('<p>two</p>');
     await expect(css).toHaveValue('.two { color: rgb(1, 2, 3); }');
+
+    // Applying the same revision again is announced again: the status empties first.
+    await page.locator('.cm-content[aria-label="Custom Header"]').fill('<p>edited</p>');
+    await expect(status).toContainText('revision #2');
+    await openHistory(page, 'CustomHeader');
+    await dialog(page).getByTestId('slot-history-rev-2').check();
+    await status.evaluate((el) => {
+      const seen: string[] = [];
+      (window as unknown as { __statusTexts: string[] }).__statusTexts = seen;
+      new MutationObserver(() => seen.push(el.textContent || '')).observe(el, { childList: true, characterData: true, subtree: true });
+    });
+    await dialog(page).getByRole('button', { name: 'Apply #2 to the editor' }).click();
+    await expect(header).toHaveValue('<p>two</p>');
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { __statusTexts: string[] }).__statusTexts))
+      .toEqual(['', 'Loaded CustomHeader from revision #2. Review the form, then save. Nothing is saved yet.']);
 
     // Nothing was saved until now.
     expect((await listRevisions(page, '/v1/category', cat.ID))[0].number).toBe(4);
@@ -188,6 +204,12 @@ test.describe('Slot history popup', () => {
     await expect(dialog(page).getByTestId('slot-history-unified-CustomCSS').locator('[data-op="delete"]')).toContainText('.a { color: red; }');
     await expect(dialog(page).getByTestId('slot-history-css-note')).toContainText('no markup');
     await expect(dialog(page).locator('iframe')).toHaveCount(0);
+
+    // Custom CSS has no preview, and still announces its Apply beside its button.
+    await dialog(page).getByRole('button', { name: 'Apply #1 to the editor' }).click();
+    await expect(page.getByTestId('slot-history-CustomCSS')).toBeFocused();
+    await expect(page.getByTestId('slot-applied-CustomCSS')).toContainText('Loaded CustomCSS from revision #1');
+    await expect(page.locator('input[name="CustomCSS"]')).toHaveValue('.a { color: red; }');
   });
 
   test('the create form has no History buttons', async ({ page }) => {

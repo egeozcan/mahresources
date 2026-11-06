@@ -10,9 +10,6 @@
         {% include "/partials/form/slotHistoryButton.tpl" %}
     </div>
 
-    {# Always present and given text, so the load is announced where the reader is: focus returns to the History button above. #}
-    <p role="status" data-testid="slot-preview-applied-{{ slot }}" x-text="appliedNote"
-       :class="appliedNote ? 'text-xs text-green-900 bg-green-50 border-l-4 border-green-700 px-3 py-2' : ''"></p>
     <p x-show="waiting" class="text-xs text-stone-600 font-mono px-3 py-2">Choosing an entity to preview against…</p>
     <p x-show="error" x-text="error" role="alert" class="text-xs text-red-700 font-mono px-3 py-2"></p>
 

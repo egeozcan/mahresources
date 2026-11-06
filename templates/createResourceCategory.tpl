@@ -458,7 +458,7 @@
         {% include "/partials/form/slotPreview.tpl" with slot="CustomEntityPickerResult" label="Entity Picker Result" %}
         </fieldset>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=resourceCategory.CustomCSS mode="css" description="Injected as a &lt;style&gt; block on the resource detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template. Styles every slot above." shortcodes=true generate=true %}
-        <div class="flex justify-end">{% include "/partials/form/slotHistoryButton.tpl" with slot="CustomCSS" label="Custom CSS" %}</div>
+        <div class="flex flex-wrap justify-end gap-2">{% include "/partials/form/slotHistoryButton.tpl" with slot="CustomCSS" label="Custom CSS" %}</div>
     </fieldset>
     {% include "/partials/form/slotHistoryDialog.tpl" %}
     {% endwith %}
