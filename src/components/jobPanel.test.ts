@@ -312,6 +312,39 @@ describe('Job Center panel', () => {
         expect(panel.resultOutput({ ...job, state: 'running' })).toBeNull();
     });
 
+    test('links duplicate-hash failures to the available existing resource using cached outputs and the live failure', () => {
+        const panel = jobPanel();
+        const job = {
+            id: 'duplicate', title: 'photo.jpg', kind: 'remote-download', state: 'failed', version: 3,
+            failure: { code: 'resource-exists', message: 'resource already exists with ID 42' },
+        };
+        const existing = {
+            key: 'existing-resource', type: 'entity', label: 'Existing resource', availability: 'available',
+            url: '/v1/jobs/duplicate/outputs?key=existing-resource',
+        };
+        panel.details[job.id] = { ...job, outputs: [existing] };
+
+        expect(panel.failureOutput(job)).toBe(existing);
+        expect(panel.outputLinkURL(panel.failureOutput(job))).toBe(existing.url);
+        expect(panel.outputLinkLabel(panel.failureOutput(job))).toBe('View existing resource');
+        expect(panel.outputLinkAccessibleLabel(panel.failureOutput(job))).toBe('View existing resource');
+        expect(panel.resultOutput(job)).toBeNull();
+
+        // Cached output descriptors must not turn a later, different failure
+        // (or a snapshot with no failure) back into the earlier collision.
+        expect(panel.failureOutput({ ...job, failure: { code: 'http-status', message: 'HTTP 500' } })).toBeNull();
+        const { failure: _failure, ...withoutFailure } = job;
+        expect(panel.failureOutput(withoutFailure)).toBeNull();
+        expect(panel.failureOutput({ ...job, state: 'running' })).toBeNull();
+        expect(panel.failureOutput({ ...job, state: 'succeeded' })).toBeNull();
+        expect(panel.resultOutput({ ...job, state: 'succeeded' })).toBeNull();
+
+        panel.details[job.id].outputs[0].availability = 'unavailable';
+        expect(panel.failureOutput(job)).toBeNull();
+        delete panel.details[job.id];
+        expect(panel.failureOutput(job)).toBeNull();
+    });
+
     test('keeps the existing Cmd/Ctrl+Shift+D shortcut and toggles the dialog', () => {
         vi.stubGlobal('document', {
             activeElement: null,

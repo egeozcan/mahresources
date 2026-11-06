@@ -106,6 +106,7 @@ type JobRow struct {
 	// running card's server-rendered bar and figures current between stream frames.
 	ProgressSnapshotJSON string
 	Result               jobview.ResultLink
+	FailureLink          jobview.ResultLink
 	// Owner names whose Job this is, for an administrator reading somebody
 	// else's: empty for the viewer's own Jobs and for work that never had an
 	// owner.
@@ -847,12 +848,14 @@ func jobRow(reader JobListReader, snapshot jobs.Snapshot) JobRow {
 			row.FailureMessage = strings.TrimSpace(snapshot.Failure.Code)
 		}
 	}
-	if snapshot.State == jobs.StateSucceeded {
-		// A result link needs the outputs the viewer may open. One read per
-		// succeeded row on the page, bounded by the page size; a Job whose outputs
-		// cannot be read simply offers no link.
+	if snapshot.State == jobs.StateSucceeded || (snapshot.State == jobs.StateFailed && snapshot.Failure != nil &&
+		snapshot.Failure.Code == application_context.JobDownloadResourceExistsCode) {
+		// Result and collision links need the outputs the viewer may open. One
+		// read per succeeded or duplicate row, bounded by the page size; a Job
+		// whose outputs cannot be read simply offers no link.
 		if outputs, err := reader.GetOpenableJobOutputs(snapshot.ID); err == nil {
 			row.Result = jobview.ResultLinkFor(snapshot, outputs)
+			row.FailureLink = jobview.FailureLinkFor(snapshot, outputs)
 		}
 	}
 	// The owner and the failure are for the page's own announcement of a change

@@ -25,11 +25,15 @@ import {
     lifecycleAnnouncement,
     commandLabel,
     commandDismissLabel,
+    failureOutput,
     failureText,
     jobCommands,
     jobName,
     mergeJobSnapshot,
     advertisedOutputs,
+    outputLinkURL,
+    outputLinkLabel,
+    outputLinkAccessibleLabel,
     reduceJobStreamEvent,
     resultAccessibleLabel,
     resultLinkLabel,
@@ -1740,9 +1744,13 @@ export function jobPanel() {
         // The list row carries the live state; the detail carries the outputs.
         resultSource(job) {
             const detail = this.details[job?.id] || job;
-            return { ...detail, ...job, outputs: advertisedOutputs(detail) };
+            return { ...detail, ...job, failure: job?.failure, outputs: advertisedOutputs(detail) };
         },
 
+        failureOutput(job) { return failureOutput(this.resultSource(job)); },
+        outputLinkURL(output) { return outputLinkURL(output); },
+        outputLinkLabel(output) { return outputLinkLabel(output); },
+        outputLinkAccessibleLabel(output) { return outputLinkAccessibleLabel(output); },
         resultOutput(job) { return resultOutput(this.resultSource(job)); },
         resultURL(job) { return resultURL(this.resultSource(job)); },
         resultLinkLabel(job) { return resultLinkLabel(this.resultSource(job)); },
