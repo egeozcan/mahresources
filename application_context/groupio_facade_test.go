@@ -16,6 +16,7 @@ import (
 	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/models"
+	"mahresources/models/query_models"
 )
 
 // Tests for the transaction, scope, and actor semantics of the import/export
@@ -462,5 +463,57 @@ func TestScopedHandle_BeginInheritsScopeAndActor(t *testing.T) {
 	}
 	if len(groups) != 1 {
 		t.Errorf("query through tx returned %d groups, want 1 (the scope root)", len(groups))
+	}
+}
+
+// An import writes groups, notes, resources and their tags in batches that
+// commit as they go, so search results cached before the import must be
+// dropped once it has written anything.
+func TestImport_DropsCachedSearchResults(t *testing.T) {
+	const term = "zzimportcacheterm"
+	srcCtx := createFacadeContext(t, "facade_search_src")
+	root := &models.Group{Name: term}
+	mustCreateFacade(t, srcCtx, root)
+
+	var tarBuf bytes.Buffer
+	if err := srcCtx.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{root.ID},
+		Scope:        archive.ExportScope{Subtree: true, OwnedNotes: true},
+		SchemaDefs:   archive.ExportSchemaDefs{CategoriesAndTypes: true, Tags: true},
+	}, &tarBuf, func(ev ProgressEvent) {}); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	dstCtx := createFacadeContext(t, "facade_search_dst")
+	search := func() int {
+		t.Helper()
+		out, err := dstCtx.GlobalSearch(&query_models.GlobalSearchQuery{Query: term, Limit: 50})
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		return len(out.Results)
+	}
+	if n := search(); n != 0 {
+		t.Fatalf("destination already matches %q (%d results), so the test proves nothing", term, n)
+	}
+
+	jobID := "facade-search-001"
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	if err := dstCtx.fs.MkdirAll("_imports", 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := afero.WriteFile(dstCtx.fs, tarPath, tarBuf.Bytes(), 0644); err != nil {
+		t.Fatalf("stage tar: %v", err)
+	}
+	plan, err := dstCtx.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("ParseImport: %v", err)
+	}
+	if _, err := dstCtx.ApplyImport(context.Background(), jobID, importPlanPathFor(jobID), facadeDecisions(plan), facadeSink{}); err != nil {
+		t.Fatalf("ApplyImport: %v", err)
+	}
+
+	if n := search(); n == 0 {
+		t.Fatal("the imported group is missing from search: the pre-import empty result was served from cache")
 	}
 }

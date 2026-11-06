@@ -11,8 +11,8 @@ import (
 // and the five methods keep their signatures.
 
 // Entity type constants, re-declared so the 13 files in this package that use
-// them (and the 31 InvalidateSearchCacheByType call sites across 12 of them)
-// need no edit. They are untyped string constants, so these are the same values,
+// them (and every InvalidateSearchCacheByType call site among them) need no
+// edit. They are untyped string constants, so these are the same values,
 // not merely equal ones.
 const (
 	EntityTypeResource         = search.EntityTypeResource

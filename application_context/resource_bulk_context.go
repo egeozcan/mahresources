@@ -278,7 +278,7 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromResources(query *query_models.
 		})
 	}
 
-	return err
+	return ctx.invalidateAfterTagAssociation(EntityTypeResource, err)
 }
 
 func (ctx *MahresourcesContext) BulkReplaceTagsFromResources(query *query_models.BulkEditQuery) error {
@@ -336,7 +336,7 @@ func (ctx *MahresourcesContext) BulkReplaceTagsFromResources(query *query_models
 		})
 	}
 
-	return err
+	return ctx.invalidateAfterTagAssociation(EntityTypeResource, err)
 }
 
 func (ctx *MahresourcesContext) BulkAddMetaToResources(query *query_models.BulkEditMetaQuery) error {
@@ -468,7 +468,7 @@ func (ctx *MahresourcesContext) BulkAddTagsToResources(query *query_models.BulkE
 		})
 	}
 
-	return err
+	return ctx.invalidateAfterTagAssociation(EntityTypeResource, err)
 }
 
 func (ctx *MahresourcesContext) BulkAddGroupsToResources(query *query_models.BulkEditQuery) error {

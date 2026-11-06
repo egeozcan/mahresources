@@ -86,8 +86,16 @@ func (ctx *MahresourcesContext) ParseImport(cancelCtx context.Context, jobID, ta
 }
 
 // ApplyImport executes a reviewed import plan.
+//
+// The import commits its rows in batches, so a failure part way through still
+// leaves rows behind. A non-nil result means the database phase started, and
+// every cached search result is dropped then, whether or not it finished.
 func (ctx *MahresourcesContext) ApplyImport(cancelCtx context.Context, parseJobID, planPath string, decisions *ImportDecisions, sink download_queue.ProgressSink) (*ImportApplyResult, error) {
-	return ctx.groupio.ApplyImport(ctx.groupioDeps(), cancelCtx, parseJobID, planPath, decisions, sink)
+	result, err := ctx.groupio.ApplyImport(ctx.groupioDeps(), cancelCtx, parseJobID, planPath, decisions, sink)
+	if result != nil {
+		ctx.ClearSearchCache()
+	}
+	return result, err
 }
 
 // LoadImportPlan reads back a previously persisted import plan.
