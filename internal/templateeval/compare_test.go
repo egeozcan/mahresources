@@ -182,8 +182,9 @@ func TestCorpusShape(t *testing.T) {
 }
 
 func TestFixtureChecksumIsStable(t *testing.T) {
-	if FixtureChecksum() != FixtureChecksum() || len(FixtureChecksum()) != 64 {
-		t.Fatalf("checksum %q", FixtureChecksum())
+	first, second := FixtureChecksum(), FixtureChecksum()
+	if first != second || len(first) != 64 {
+		t.Fatalf("checksum %q, then %q", first, second)
 	}
 }
 

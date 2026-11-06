@@ -45,7 +45,7 @@ type schemaExtensionsContract struct {
 func currentContract() []byte {
 	c := schemaExtensionsContract{OptOut: DisplayOptOutValues, Formats: SchemaFormatsWithUI(), ComplexKeys: LabeledEnumComplexKeys}
 	for _, r := range BuiltinDisplayRenderers() {
-		c.Renderers = append(c.Renderers, contractRenderer{Name: r.Name, Shapes: r.Shapes, FieldTypes: r.FieldTypes})
+		c.Renderers = append(c.Renderers, contractRenderer(r))
 	}
 	b, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {

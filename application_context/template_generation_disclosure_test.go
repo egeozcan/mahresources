@@ -205,7 +205,7 @@ func TestGroundingHashCoversDestinationAndIsStable(t *testing.T) {
 	hash := func(cfg TemplateGenerationConfig, endpoint string) string {
 		return disclose(cfg, endpoint).GroundingHash
 	}
-	if hash(base, deepseek) != hash(base, deepseek) {
+	if first, second := hash(base, deepseek), hash(base, deepseek); first != second {
 		t.Fatal("two disclosures of unchanged data hash differently")
 	}
 	model := base
