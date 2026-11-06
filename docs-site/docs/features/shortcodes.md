@@ -82,7 +82,7 @@ A shortcode that cannot be expanded never leaks its raw `[…]` source. Instead,
 - **An unclosed `[conditional]`** (used without `[/conditional]`) renders the same inline marker -- it can't gate anything as written. The template lint flags this at edit time.
 - **Structural stops** render an HTML comment rather than visible noise: the recursion depth cap emits `<!-- mr:shortcode depth limit reached -->`, and a context that deliberately wires no query executor or plugin renderer emits `<!-- mr:mrql unavailable in this context -->` / `<!-- mr:using unavailable in this context -->` / `<!-- mr:plugin unavailable in this context -->`.
 
-A `<!-- mr: ... -->` comment means expansion stopped on purpose, either because the surface has no query or plugin support or because the depth cap was reached. It is not a failed query. A red `⚠` marker means a plugin shortcode or a `[reload]` failed, and its `title` attribute says why. A failing `[mrql]` shows a red `mrql-error` message instead.
+A `<!-- mr: ... -->` comment means expansion stopped on purpose, either because the surface has no query or plugin support or because the depth cap was reached. It is not a failed query. A red `⚠` marker means a shortcode failed or was written wrongly: a failing plugin shortcode, a malformed plugin shortcode name, an unclosed `[conditional]` or `[using]`, a bad `[using]` target, or a nested `[reload]`. Its `title` attribute says why. A failing `[mrql]` shows a red `mrql-error` message instead.
 
 ## `[meta]` -- Metadata Display
 
@@ -269,7 +269,7 @@ The existing value determines the format: ISO dates, times, and timestamps retai
 [datetime path="followUp" editable="true"]
 ```
 
-`default` is shown when the stored value is empty. `hide-empty` hides an empty value outside edit mode, so an optional date does not leave a placeholder on every card. Do not combine `hide-empty` with `editable` on the same field: an empty field then has nothing to click, so it can never be filled in from that slot.
+`default` is shown when the stored value is empty. If both are set, `hide-empty` wins outside edit mode, so the `default` is not shown there. `hide-empty` hides an empty value outside edit mode, so an optional date does not leave a placeholder on every card. Do not combine `hide-empty` with `editable` on the same field: an empty field then has nothing to click, so it can never be filled in from that slot.
 
 Layouts use these Go reference-time tokens: `2006` (year), `January`/`Jan`/`01`/`1` (month), `02`/`2` (day), `15` (24-hour hour), `03`/`3` (12-hour hour), `04`/`4` (minute), `05`/`5` (second), `PM`/`pm`, `.000` (fraction, one to nine zeros), and `Z07:00`/`-07:00`/`Z0700`/`-0700` (offset). Other characters are literal. Use `input-layout` for non-ISO values, including ambiguous day/month formats. `layout` only changes the display, never the saved representation. The native picker edits fractions up to milliseconds; opening and saving without changing the input preserves all stored fractional digits.
 
@@ -369,10 +369,10 @@ Embeds MRQL query results inline. Executes a query and renders the results in on
 <p>Uploads this week: <strong>[mrql query="type = resource AND created > -7d" value="count" limit="100"]</strong> (at most 100 are counted)</p>
 ```
 
-Pick the row a scalar reads with `ORDER BY` and `LIMIT 1` on an aggregated query. This gives the largest file size across all resources, in bytes:
+Pick the row a scalar reads with `ORDER BY` on an aggregated query: `value=` reads the first row. A `LIMIT` in the query text is replaced by the shortcode's `limit` attribute, so leave it out. This gives the largest file size across all resources, in bytes:
 
 ```html
-<p>Largest file: [mrql query="type = resource GROUP BY contentType MAX(fileSize) ORDER BY max_fileSize DESC LIMIT 1" value="max_fileSize"] bytes</p>
+<p>Largest file: [mrql query="type = resource GROUP BY contentType MAX(fileSize) ORDER BY max_fileSize DESC" value="max_fileSize"] bytes</p>
 ```
 
 - `value="count"` -- the flat item count, the bucket count (bucketed), or the row count (aggregated).
@@ -970,7 +970,7 @@ A button that re-renders content on the server and swaps it into the page. Which
 [reload]Refresh[/reload]
 ```
 
-A typical use is a sidebar that shows a live list. The button refreshes the whole sidebar slot, because it sits outside any `[lazy]` or `[details]` block:
+A typical use is a sidebar that shows a live list. The button refreshes the whole sidebar slot, because it sits outside any `[lazy]`, `[details]` or `[autorefresh]` block:
 
 ```html
 <h3>Open to-dos</h3>
@@ -1235,17 +1235,17 @@ The `{total}` placeholder counts every match, while the list shows only the firs
 
 ### A section that appears only with content
 
-A `[conditional]` on a query result, with the query itself deferred until the section scrolls into view:
+A `[conditional]` on a query result, inside `[lazy]` so that both the count query and the list query wait until the section scrolls into view:
 
 ```html
-[conditional mrql='type = note AND tags = "todo"' gt="0"]
-  <h3>To-dos</h3>
-  [lazy]
+[lazy]
+  [conditional mrql='type = note AND tags = "todo"' gt="0"]
+    <h3>To-dos</h3>
     [mrql query='type = note AND tags = "todo"' format=list limit=5]
-  [/lazy]
-[else]
-  <p class="text-stone-500">No to-dos.</p>
-[/conditional]
+  [else]
+    <p class="text-stone-500">No to-dos.</p>
+  [/conditional]
+[/lazy]
 ```
 
 ### A list with an empty state
