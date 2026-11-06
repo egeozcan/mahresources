@@ -51,6 +51,18 @@ test('a download of bytes the library already holds fails as a conflict and link
     await expect(failure).toContainText('Failure type: Conflict');
     await failure.getByRole('link', { name: 'View existing resource' }).click();
     await expect(page).toHaveURL(new RegExp(`${resourceLocation.replace(/[?]/g, '\\?')}$`));
+
+    await page.goto('/jobs');
+    const card = page.locator(`[data-job-id="${ids[1]}"]`).filter({ has: page.getByTestId('job-state') });
+    await expect(card).toContainText('already exists');
+    await card.getByRole('link', { name: 'View existing resource' }).click();
+    await expect(page).toHaveURL(new RegExp(`${resourceLocation.replace(/[?]/g, '\\?')}$`));
+
+    await page.getByRole('button', { name: 'Open Jobs panel', exact: true }).click();
+    const row = page.locator(`[data-job-panel-row][data-job-id="${ids[1]}"]`);
+    await expect(row).toContainText('already exists');
+    await row.getByRole('link', { name: 'View existing resource' }).click();
+    await expect(page).toHaveURL(new RegExp(`${resourceLocation.replace(/[?]/g, '\\?')}$`));
   } finally {
     server.close();
   }

@@ -142,7 +142,12 @@
                                         <p x-show="scheduledText(job)" x-cloak class="mt-1 text-xs text-stone-700" data-job-panel-scheduled x-text="scheduledText(job)"></p>
 
                                         {# The reason a job failed, as its Kind recorded it; the /jobs detail page shows the same text. #}
-                                        <p x-show="failureText(job)" x-cloak class="mt-1 break-words text-xs text-red-800" data-job-panel-failure><span class="font-medium">Reason:</span> <span class="whitespace-pre-wrap" x-text="failureText(job)"></span></p>
+                                        <p x-show="failureText(job)" x-cloak class="mt-1 break-words text-xs text-red-800" data-job-panel-failure>
+                                            <span class="font-medium">Reason:</span> <span class="whitespace-pre-wrap" x-text="failureText(job)"></span>
+                                            <template x-if="failureOutput(job)">
+                                                <a :href="outputLinkURL(failureOutput(job))" :aria-label="outputLinkAccessibleLabel(failureOutput(job))" data-job-panel-failure-link class="inline-flex min-h-6 items-center rounded px-1.5 font-medium text-amber-800 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700" x-text="outputLinkLabel(failureOutput(job))"></a>
+                                            </template>
+                                        </p>
                                         {# Why a blocked job is blocked, as its blocked event recorded it; the Job page's timeline has the rest. #}
                                         <p x-show="blockedText(job)" x-cloak class="mt-1 break-words text-xs text-amber-900" data-job-panel-blocked><span class="font-medium">Reason:</span> <span x-text="blockedText(job)"></span></p>
 

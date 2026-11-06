@@ -23,12 +23,38 @@ func SummaryDestinationURL(jobKind string, output jobs.Output) string {
 	return application_context.JobSummaryDestination(jobKind, output)
 }
 
-// ResultLink is the one link a finished Job offers straight from a list: what
-// it made.
+// ResultLink is a labeled link a Job offers straight from a list.
 type ResultLink struct {
 	URL             string
 	Label           string
 	AccessibleLabel string
+}
+
+// FailureLinkFor links to the resource a failed download collided with, using
+// only the outputs the viewer may open. A replay retains published outputs, so
+// this link belongs only to the current resource-exists failure, never to a
+// different failure or to what a succeeded Job made.
+func FailureLinkFor(job jobs.Snapshot, outputs []jobs.Output) ResultLink {
+	if job.State != jobs.StateFailed || job.Failure == nil || job.Failure.Code != application_context.JobDownloadResourceExistsCode {
+		return ResultLink{}
+	}
+	for _, output := range outputs {
+		if output.Key != application_context.JobDownloadExistingResourceOutput ||
+			output.Type != jobs.OutputTypeEntity || output.Availability != jobs.OutputAvailable {
+			continue
+		}
+		label := "View existing resource"
+		accessibleLabel := label
+		context := strings.TrimSpace(job.Title)
+		if context == "" {
+			context = job.Kind
+		}
+		if context != "" {
+			accessibleLabel += " for " + context
+		}
+		return ResultLink{URL: OutputURL(job.ID, output.Key), Label: label, AccessibleLabel: accessibleLabel}
+	}
+	return ResultLink{}
 }
 
 // ResultLinkFor picks a succeeded Job's result link from the outputs the viewer
