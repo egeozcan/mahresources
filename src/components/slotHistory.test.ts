@@ -76,3 +76,29 @@ describe('slot history freshness', () => {
         vi.unstubAllGlobals();
     });
 });
+
+describe('slot history diff follows the editor', () => {
+    test('an editor change while the dialog is open recomputes the diff', async () => {
+        const { slotHistory } = await import('./slotHistory.js');
+        const form = document.createElement('form');
+        form.innerHTML = '<input name="CustomHeader" value="<p>before</p>"><input name="CustomHeaderCSS" value="">';
+        const component = slotHistory({ apiPrefix: '/v1/category', carrierId: 4 });
+        component._form = form;
+        component.$root = form as unknown as HTMLElement;
+        component.$watch = () => {};
+        component.init();
+        component.isOpen = true;
+        component.slot = 'CustomHeader';
+        component.detail = Object.freeze({ session: component._session, slot: 'CustomHeader', number: 1, editor: { CustomHeader: '<p>old</p>', CustomHeaderCSS: '' } });
+        component.computeDiff();
+        expect(component.diffFields[0].unified.some((r: { text?: string }) => r.text === '<p>before</p>')).toBe(true);
+
+        // A formatter finishing late rewrites the editor under the open dialog.
+        (form.querySelector('input[name="CustomHeader"]') as HTMLInputElement).value = '<p>formatted</p>';
+        form.dispatchEvent(new CustomEvent('template-slot-changed', { bubbles: true, detail: { name: 'CustomHeader' } }));
+
+        const texts = component.diffFields[0].unified.map((r: { text?: string }) => r.text);
+        expect(texts).toContain('<p>formatted</p>');
+        expect(texts).not.toContain('<p>before</p>');
+    });
+});

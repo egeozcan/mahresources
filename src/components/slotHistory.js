@@ -110,6 +110,15 @@ export function slotHistory({ apiPrefix = '', carrierId = 0, entityType = 'group
     init() {
       this._form = this.$root.closest('form');
       window.addEventListener(OPEN_SLOT_HISTORY_EVENT, (e) => this.open(/** @type {CustomEvent} */ (e).detail || {}));
+      // The page is inert while the dialog is open, but an editor can still
+      // change under it (a formatter or a generation finishing late). The diff
+      // must show what Apply would replace, so it follows the editor.
+      this._form?.addEventListener('template-slot-changed', (e) => {
+        const name = /** @type {CustomEvent} */ (e).detail?.name;
+        if (!this.isOpen || !this.detail || !name) return;
+        if (name === this.slot || name === cssCompanion(this.slot)) this.computeDiff();
+        if (name.endsWith('CSS')) this.renderPreview();
+      });
       ensurePreviewStore();
       this.$watch('$store.templatePreview.entityGen', () => {
         if (this.isOpen && this.detail) this.renderPreview();
