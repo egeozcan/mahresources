@@ -75,7 +75,8 @@ test.describe('[comment] template comments', () => {
     // Unclosed: hides to the end, flagged as an error.
     await expect(scope.locator('.cm-lint-marker-error').first()).toBeVisible({ timeout: 10000 });
 
-    const frame = page.frameLocator('iframe[title="Template slot preview"]');
+    await page.locator('[data-slot-preview="CustomHeader"]').scrollIntoViewIfNeeded();
+    const frame = page.frameLocator('[data-slot-preview="CustomHeader"] iframe');
     await expect(frame.locator('body')).toContainText('preview-shown', { timeout: 10000 });
     await expect(frame.locator('body')).not.toContainText('preview-hidden');
 

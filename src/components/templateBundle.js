@@ -116,6 +116,32 @@ export async function fetchAllPages(url, fetchImpl = fetch) {
   return { items, complete: false, reason: 'cap' };
 }
 
+// editorsReady waits until every CodeMirror editor the load would write has a
+// view: they mount after the page's load event, and a write before then is
+// lost. It answers false when one failed to mount (its chunk did not load) or
+// never appeared, so the caller can refuse before changing any field.
+// Exported for the slot history dialog, which waits on it before it enables Apply.
+export async function editorsReady(fields) {
+  const deadline = Date.now() + 15000;
+  const containerOf = (field) => {
+    const input = document.querySelector(`[name="${field}"]`);
+    if (!input || input.tagName === 'TEXTAREA' || input.type === 'checkbox' || field === 'SectionConfig') return undefined;
+    return input.closest('[x-data]')?.querySelector('[x-ref="editorContainer"]') || null;
+  };
+  for (;;) {
+    const containers = fields.map(containerOf).filter((c) => c !== undefined);
+    if (containers.every((container) => container && container._cmReady)) {
+      const views = await Promise.all(containers.map((container) => container._cmReady));
+      return views.every(Boolean);
+    }
+    if (Date.now() > deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+// The slot history dialog dispatches this, synchronously, to write a revision's slot.
+export const REVISION_WRITE_EVENT = 'template-revision-write';
+
 export function templateBundle({ carrier } = {}) {
   return {
     carrier,
@@ -153,6 +179,7 @@ export function templateBundle({ carrier } = {}) {
     async init() {
       this.sections = this.sectionOptions();
       document.addEventListener(REVISION_APPLIED_EVENT, (event) => this.recordApplied(event.detail.entry));
+      document.addEventListener(REVISION_WRITE_EVENT, (event) => this.writeRevision(event.detail));
       this.loadRevisionFromUrl();
       await Promise.all([this.loadSources(), this.loadPresets()]);
     },
@@ -595,26 +622,17 @@ export function templateBundle({ carrier } = {}) {
       if (data) data.config = parsed;
     },
 
-    // editorsReady waits until every CodeMirror editor the load would write has a
-    // view: they mount after the page's load event, and a write before then is
-    // lost. It answers false when one failed to mount (its chunk did not load) or
-    // never appeared, so the caller can refuse before changing any field.
-    async editorsReady(fields) {
-      const deadline = Date.now() + 15000;
-      const containerOf = (field) => {
-        const input = document.querySelector(`[name="${field}"]`);
-        if (!input || input.tagName === 'TEXTAREA' || input.type === 'checkbox' || field === 'SectionConfig') return undefined;
-        return input.closest('[x-data]')?.querySelector('[x-ref="editorContainer"]') || null;
-      };
-      for (;;) {
-        const containers = fields.map(containerOf).filter((c) => c !== undefined);
-        if (containers.every((container) => container && container._cmReady)) {
-          const views = await Promise.all(containers.map((container) => container._cmReady));
-          return views.every(Boolean);
-        }
-        if (Date.now() > deadline) return false;
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
+    editorsReady(fields) {
+      return editorsReady(fields);
+    },
+
+    // writeRevision is the synchronous half of applying a revision's slot from
+    // the slot history dialog, which has already waited on editorsReady: it
+    // writes the fields, records where they came from, and says so.
+    writeRevision({ editor, fields, entry, notice }) {
+      for (const field of fields) this.setRevisionField(field, editor[field]);
+      this.recordApplied(entry);
+      this.announceRevision(notice, 'info');
     },
 
     // The notice takes focus: the person followed a link to get here, and this

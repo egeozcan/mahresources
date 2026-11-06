@@ -12,18 +12,37 @@ test.describe('Category template authoring accessibility', () => {
     await checkA11y();
   });
 
-  test('preview pane controls are labelled', async ({ page }) => {
+  test('preview controls are labelled', async ({ page }) => {
     await page.goto('/category/new');
     await page.waitForLoadState('load');
 
-    // Entity picker and slot selector both have associated labels.
     const entityInput = page.locator('#tp-entity-group');
     await expect(entityInput).toBeVisible({ timeout: 10000 });
     await expect(page.locator('label[for="tp-entity-group"]')).toBeVisible();
-    await expect(page.locator('label[for="tp-slot-group"]')).toBeVisible();
 
-    // The preview iframe carries a title for assistive technology.
-    await expect(page.locator('iframe[title="Template slot preview"]')).toBeAttached();
+    // Every slot preview's frame carries a title naming its slot.
+    const frames = page.locator('[data-slot-preview] iframe');
+    expect(await frames.count()).toBeGreaterThan(8);
+    for (const title of await frames.evaluateAll((els) => els.map((el) => el.getAttribute('title')))) {
+      expect(title).toMatch(/^Preview of \S/);
+    }
+  });
+
+  test('the open slot history dialog has no critical a11y violations', async ({ page, apiClient, checkA11y }) => {
+    const name = `A11y History ${Date.now()}`;
+    const cat = await apiClient.createCategory(name, undefined, { CustomHeader: '<p>one</p>' });
+    const resp = await page.request.post('/v1/category', { form: { ID: String(cat.ID), name, CustomHeader: '<p>two</p>' } });
+    expect(resp.ok()).toBeTruthy();
+    await apiClient.createGroup({ name: `A11y History Target ${Date.now()}`, categoryId: cat.ID });
+
+    await page.goto(`/category/edit?id=${cat.ID}`);
+    await page.locator('.cm-editor').first().waitFor({ state: 'visible', timeout: 15000 });
+    await page.getByTestId('slot-history-CustomHeader').click();
+    const dialog = page.getByRole('dialog', { name: 'History of Custom Header' });
+    await expect(dialog).toBeVisible();
+    await dialog.getByTestId('slot-history-rev-1').check();
+    await expect(dialog.getByTestId('slot-history-unified-CustomHeader')).toBeVisible();
+    await checkA11y();
   });
 
   test('note type create form has no critical a11y violations', async ({ page, checkA11y }) => {
