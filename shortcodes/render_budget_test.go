@@ -230,7 +230,7 @@ func TestCompileBoundedRegexp(t *testing.T) {
 	var tc *regexTooComplexError
 	assert.ErrorAs(t, err, &tc)
 	_, err = compileBoundedRegexp(strings.Repeat("a", 2000))
-	assert.Error(t, err)
+	assert.NoError(t, err, "a long literal is cheap; only the compiled size is bounded")
 }
 
 func TestCheckGeneratedSource(t *testing.T) {
@@ -287,4 +287,18 @@ func TestBudgetCacheKeyUnchangedForOrdinaryInputs(t *testing.T) {
 	assert.NotEqual(t, a, b)
 	k := budgetCacheKey("q", QueryOptions{Params: map[string]string{"y": "2", "x": "1"}, Limit: 3})
 	assert.Equal(t, `"q"|""|0|3|0|2|false|"x"="1"|"y"="2"`, k)
+}
+
+// A refused pattern costs the page only that conditional: an unbudgeted render
+// keeps everything around it, and a long but cheap pattern still matches.
+func TestUnbudgetedRegexRefusalIsLocal(t *testing.T) {
+	ctx := MetaShortcodeContext{Meta: json.RawMessage(`{"a":"x"}`)}
+	huge := strings.Repeat("a{1000}", 100)
+	got := Process(context.Background(), `BEFORE[conditional path="a" matches="`+huge+`"]YES[else]NO[/conditional]AFTER`, ctx, nil, nil)
+	assert.Equal(t, "BEFORENOAFTER", got)
+
+	long := strings.Repeat("a", 1025)
+	ctx = MetaShortcodeContext{Meta: json.RawMessage(`{"a":"` + long + `"}`)}
+	got = Process(context.Background(), `[conditional path="a" matches="^`+long+`$"]YES[else]NO[/conditional]`, ctx, nil, nil)
+	assert.Equal(t, "YES", got)
 }

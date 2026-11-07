@@ -157,8 +157,10 @@ func LintMetaSchema(schema string, opts MetaSchemaLintOptions) []LintIssue {
 		return nil
 	}
 	l := &schemaLinter{opts: opts, root: root, refSiblings: refSiblingSemantics(root), w: newSchemaWork(opts.Context)}
-	l.walk(root, "#", true, 0)
-	if l.w.Err() != nil {
+	if l.w.poll() {
+		l.walk(root, "#", true, 0)
+	}
+	if !l.w.poll() {
 		return []LintIssue{{Severity: SeverityError, Message: "The schema is too complex to check: it expands past the lint's work or size allowance, or was cancelled. Simplify the $ref and composition structure."}}
 	}
 	return l.issues
@@ -231,6 +233,16 @@ func (l *schemaLinter) warn(format string, args ...any) {
 	l.issues = append(l.issues, LintIssue{Severity: SeverityWarning, Message: fmt.Sprintf(format, args...)})
 }
 
+// childPath builds path+sep+key after reserving its bytes, so a schema-controlled
+// name cannot make the lint allocate paths past the allowance. ok is false once
+// the work is spent.
+func (l *schemaLinter) childPath(path, sep, key string) (string, bool) {
+	if !l.w.chargeBytes(len(path) + len(sep) + len(key)) {
+		return "", false
+	}
+	return path + sep + key, true
+}
+
 // sortedKeys returns m's keys in order, or nil once the work is spent. The
 // count is charged before the slice is allocated.
 func (l *schemaLinter) sortedKeys(m map[string]any) []string {
@@ -257,8 +269,7 @@ func (l *schemaLinter) walk(node any, path string, local bool, depth int) {
 		l.w.fail()
 		return
 	}
-	// The node, its keys, and the path string built for it.
-	if !l.w.charge(1+len(obj)) || !l.w.chargeBytes(len(path)) {
+	if !l.w.charge(1 + len(obj)) {
 		return
 	}
 	if ref, ok := obj["$ref"].(string); ok && !strings.HasPrefix(ref, "#") {
@@ -273,19 +284,43 @@ func (l *schemaLinter) walk(node any, path string, local bool, depth int) {
 	childLocal := local && !composesOthers(obj) && onlyModelledKeywords(l.w, obj)
 	if props, ok := obj["properties"].(map[string]any); ok {
 		for _, key := range l.sortedKeys(props) {
+			child, ok := l.childPath(path, "/properties/", key)
+			if !ok {
+				return
+			}
 			l.lintPropertyKey(key, path)
-			l.walk(props[key], path+"/properties/"+key, childLocal, depth+1)
+			l.walk(props[key], child, childLocal, depth+1)
+			if !l.w.ok() {
+				return
+			}
 		}
 	}
 	for _, name := range schemaSchemaMaps {
 		if m, ok := obj[name].(map[string]any); ok {
 			for _, key := range l.sortedKeys(m) {
-				l.walk(m[key], path+"/"+name+"/"+key, false, depth+1)
+				child, ok := l.childPath(path, "/"+name+"/", key)
+				if !ok {
+					return
+				}
+				l.walk(m[key], child, false, depth+1)
+				if !l.w.ok() {
+					return
+				}
 			}
 		}
 	}
 	for _, name := range schemaSubschemaKeys {
-		l.walk(obj[name], path+"/"+name, childLocal && !compositionKeys[name], depth+1)
+		if _, present := obj[name]; !present {
+			continue // no child, no path
+		}
+		child, ok := l.childPath(path, "/", name)
+		if !ok {
+			return
+		}
+		l.walk(obj[name], child, childLocal && !compositionKeys[name], depth+1)
+		if !l.w.ok() {
+			return
+		}
 	}
 	for _, name := range schemaSchemaLists {
 		if list, ok := obj[name].([]any); ok {
@@ -293,7 +328,14 @@ func (l *schemaLinter) walk(node any, path string, local bool, depth int) {
 				return
 			}
 			for i, entry := range list {
-				l.walk(entry, path+"/"+name+"/"+strconv.Itoa(i), childLocal && !compositionKeys[name], depth+1)
+				child, ok := l.childPath(path, "/"+name+"/", strconv.Itoa(i))
+				if !ok {
+					return
+				}
+				l.walk(entry, child, childLocal && !compositionKeys[name], depth+1)
+				if !l.w.ok() {
+					return
+				}
 			}
 		}
 	}

@@ -6,6 +6,20 @@ import (
 	"strings"
 )
 
+// charged tracks how much of a builder has been reserved against the output
+// budget, so a layout reserves each row's bytes right after formatting it and
+// stops before formatting the next, holding at most the budget plus one row.
+type charged struct {
+	m *renderMeter
+	n int
+}
+
+func (c *charged) flush(b *strings.Builder) bool {
+	d := b.Len() - c.n
+	c.n = b.Len()
+	return c.m.chargeOut(int64(d))
+}
+
 // renderFlatDefault renders flat result items using the default card layout.
 func renderFlatDefault(m *renderMeter, items []QueryResultItem) string {
 	if len(items) == 0 {
@@ -13,6 +27,7 @@ func renderFlatDefault(m *renderMeter, items []QueryResultItem) string {
 	}
 
 	var b strings.Builder
+	c := charged{m: m}
 	b.WriteString(`<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">`)
 	for _, item := range items {
 		if !m.tick() {
@@ -33,6 +48,9 @@ func renderFlatDefault(m *renderMeter, items []QueryResultItem) string {
 			))
 		}
 		b.WriteString(`</div></a>`)
+		if !c.flush(&b) {
+			return ""
+		}
 	}
 	b.WriteString(`</div>`)
 	return b.String()
@@ -45,6 +63,7 @@ func renderFlatTable(m *renderMeter, items []QueryResultItem) string {
 	}
 
 	var b strings.Builder
+	c := charged{m: m}
 	b.WriteString(`<div class="overflow-x-auto"><table class="min-w-full text-sm border border-stone-200 rounded-md">`)
 	b.WriteString(`<thead class="bg-stone-100"><tr>`)
 	b.WriteString(`<th class="px-3 py-2 text-left text-xs font-semibold text-stone-600 uppercase border-b border-stone-200">Name</th>`)
@@ -66,6 +85,9 @@ func renderFlatTable(m *renderMeter, items []QueryResultItem) string {
 			html.EscapeString(item.EntityType),
 			html.EscapeString(desc),
 		))
+		if !c.flush(&b) {
+			return ""
+		}
 	}
 
 	b.WriteString(`</tbody></table></div>`)
@@ -79,6 +101,7 @@ func renderFlatList(m *renderMeter, items []QueryResultItem) string {
 	}
 
 	var b strings.Builder
+	c := charged{m: m}
 	b.WriteString(`<ul class="divide-y divide-stone-200 border border-stone-200 rounded-md bg-white">`)
 	for _, item := range items {
 		if !m.tick() {
@@ -99,6 +122,9 @@ func renderFlatList(m *renderMeter, items []QueryResultItem) string {
 			))
 		}
 		b.WriteString(`</li>`)
+		if !c.flush(&b) {
+			return ""
+		}
 	}
 	b.WriteString(`</ul>`)
 	return b.String()
@@ -110,17 +136,28 @@ func renderFlatCompact(m *renderMeter, items []QueryResultItem) string {
 		return ""
 	}
 
-	parts := make([]string, len(items))
+	// Streamed into one builder, reserved link by link: no slice of every
+	// formatted link is retained.
+	var b strings.Builder
+	c := charged{m: m}
 	for i, item := range items {
-		name := extractEntityName(item)
-		parts[i] = fmt.Sprintf(
+		if !m.tick() {
+			return ""
+		}
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b,
 			`<a href="/%s?id=%d" class="text-amber-700 hover:text-amber-900 underline">%s</a>`,
 			html.EscapeString(item.EntityType),
 			item.EntityID,
-			html.EscapeString(name),
+			html.EscapeString(extractEntityName(item)),
 		)
+		if !c.flush(&b) {
+			return ""
+		}
 	}
-	return strings.Join(parts, ", ")
+	return b.String()
 }
 
 // renderAggregatedTable renders aggregated GROUP BY rows as an HTML table.
@@ -136,6 +173,7 @@ func renderAggregatedTable(m *renderMeter, rows []map[string]any) string {
 	}
 
 	var b strings.Builder
+	c := charged{m: m}
 	b.WriteString(`<div class="overflow-x-auto"><table class="min-w-full text-sm font-mono border border-stone-200 rounded-md">`)
 	b.WriteString(`<thead class="bg-stone-100"><tr>`)
 	for _, k := range keys {
@@ -160,6 +198,9 @@ func renderAggregatedTable(m *renderMeter, rows []map[string]any) string {
 				`<td class="px-3 py-2 text-stone-800 whitespace-nowrap">%s</td>`,
 				html.EscapeString(fmt.Sprintf("%v", val)),
 			))
+			if !c.flush(&b) {
+				return ""
+			}
 		}
 		b.WriteString(`</tr>`)
 	}

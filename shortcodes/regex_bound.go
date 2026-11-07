@@ -12,10 +12,7 @@ import (
 // by the pattern), the program size it would compile to is computed on the parse
 // tree with saturating arithmetic, and only a pattern under the allowance is
 // compiled.
-const (
-	maxRegexSourceBytes = 1024
-	maxRegexProgramSize = 20_000
-)
+const maxRegexProgramSize = 20_000
 
 type regexTooComplexError struct{ pattern string }
 
@@ -28,9 +25,6 @@ func (e *regexTooComplexError) Error() string {
 // the parse error (callers treat it as never matching, as before); one over the
 // allowance returns *regexTooComplexError.
 func compileBoundedRegexp(pattern string) (*regexp.Regexp, error) {
-	if len(pattern) > maxRegexSourceBytes {
-		return nil, &regexTooComplexError{pattern}
-	}
 	re, err := syntax.Parse(pattern, syntax.Perl)
 	if err != nil {
 		return nil, err
@@ -107,8 +101,15 @@ func (m *renderMeter) regexp(pattern string) (re *regexp.Regexp, ok bool) {
 	re, err := compileBoundedRegexp(pattern)
 	var tooComplex *regexTooComplexError
 	if asTooComplex(err, &tooComplex) {
-		m.fail("a matches= pattern exceeds the regular expression allowance")
-		return nil, false
+		// A budgeted render (a model preview) ends. An ordinary page does not
+		// lose its other content to one conditional: the pattern is refused
+		// locally and never matches, the same answer an invalid pattern gets.
+		if m.limited() {
+			m.fail("a matches= pattern exceeds the regular expression allowance")
+			return nil, false
+		}
+		re = nil
+		err = nil
 	}
 	if err != nil {
 		re = nil

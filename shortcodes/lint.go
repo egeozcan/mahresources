@@ -56,8 +56,14 @@ type MRQLCheckOptions struct {
 // (RenderMRQLShortcode, resolveConditionalValue): suffix is "" for the base
 // source and "2", "3", … for a conditional's numbered sources.
 func mrqlCheckOptions(attrs map[string]string, suffix string) MRQLCheckOptions {
+	return mrqlCheckOptionsWith(attrs, suffix, collectShortcodeParams(attrs))
+}
+
+// mrqlCheckOptionsWith is mrqlCheckOptions over params the caller already
+// collected from attrs, shared read-only across the numbered queries.
+func mrqlCheckOptionsWith(attrs map[string]string, suffix string, params map[string]string) MRQLCheckOptions {
 	return MRQLCheckOptions{
-		Params:  collectShortcodeParams(attrs),
+		Params:  params,
 		Limit:   parseIntAttr(attrs["limit"+suffix], defaultMRQLShortcodeLimit),
 		Buckets: parseIntAttr(attrs["buckets"+suffix], defaultMRQLShortcodeBuckets),
 	}
@@ -139,13 +145,13 @@ var looseBracketPattern = regexp.MustCompile(`\[/?([a-zA-Z][a-zA-Z0-9_:-]*)`)
 func Lint(input string, opts LintOptions) []LintIssue {
 	w := newLintWork(opts.Context)
 	opts.work = w
-	if !w.charge(1 + len(input)/64) {
+	if !w.poll() || !w.charge(1+len(input)/64) {
 		return lintTooComplex()
 	}
 	comments := templatecomment.StripMapped(input)
 	toOriginal := comments.ToOriginal
 	issues := lintText(comments.Text, opts)
-	if w.Err() != nil {
+	if !w.poll() {
 		return lintTooComplex()
 	}
 	for i := range issues {
@@ -207,7 +213,16 @@ func lintText(input string, opts LintOptions) []LintIssue {
 		}
 	}
 
-	tokens := matchTokensM(nil, input)
+	// Tokens are collected under the parser's caps (a meter forced into its
+	// limited mode): the match collection is bounded before it is retained and
+	// the collection loops consult the context. A source past a cap is "too
+	// complex to check", through the lint's own work object.
+	lm := &renderMeter{ctx: opts.Context, budget: RenderBudget{ParsedSourceBytes: 1 << 62}}
+	tokens := matchTokensM(lm, input)
+	if lm.Err() != nil {
+		w.fail()
+		return nil
+	}
 	if !w.charge(1 + len(tokens)) {
 		return nil
 	}
@@ -481,7 +496,7 @@ func lintText(input string, opts LintOptions) []LintIssue {
 						start, end := attrOffsetW(w, tk, attrName)
 						if _, tooBig := err.(*regexTooComplexError); tooBig {
 							add(start, end, SeverityError,
-								"regular expression in "+attrName+" is too complex: it is over "+strconv.Itoa(maxRegexSourceBytes)+" bytes or compiles to more than "+strconv.Itoa(maxRegexProgramSize)+" instructions")
+								"regular expression in "+attrName+" is too complex: it compiles to more than "+strconv.Itoa(maxRegexProgramSize)+" instructions, so it is never evaluated and never matches")
 						} else {
 							add(start, end, SeverityError,
 								"invalid regular expression in "+attrName+": "+err.Error())
@@ -489,7 +504,7 @@ func lintText(input string, opts LintOptions) []LintIssue {
 					}
 				}
 			}
-			if inner, ok := condInner[tk.start]; ok && countTopLevelElse(inner) > 1 {
+			if inner, ok := condInner[tk.start]; ok && w.charge(1+len(inner)/8) && countTopLevelElse(inner) > 1 {
 				add(tk.start, tk.end, SeverityError,
 					"[conditional] has more than one [else] divider")
 			}
@@ -502,11 +517,7 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			// read-only.
 			sharedParams := collectShortcodeParams(tk.attrs)
 			checkOptions := func(attrs map[string]string, suffix string) MRQLCheckOptions {
-				o := mrqlCheckOptions(attrs, suffix)
-				if len(attrs) == len(tk.attrs) && sameAttrs(attrs, tk.attrs) {
-					o.Params = sharedParams
-				}
-				return o
+				return mrqlCheckOptionsWith(attrs, suffix, sharedParams)
 			}
 			check := func(query string, checkOpts MRQLCheckOptions, start, end int, label string) {
 				if strings.TrimSpace(query) == "" {
@@ -544,9 +555,10 @@ func lintText(input string, opts LintOptions) []LintIssue {
 						}
 						span := dividers[i-1]
 						guard := token{start: tk.end + span[0], end: tk.end + span[1], raw: inner[span[0]:span[1]]}
+						guardParams := collectShortcodeParams(branch.Attrs)
 						forEachConditionalQuery(branch.Attrs, func(attr, suffix string) {
 							start, end := attrOffsetW(w, guard, attr)
-							check(branch.Attrs[attr], mrqlCheckOptions(branch.Attrs, suffix), start, end, "[elseif] "+attr)
+							check(branch.Attrs[attr], mrqlCheckOptionsWith(branch.Attrs, suffix, guardParams), start, end, "[elseif] "+attr)
 						})
 					}
 				}
@@ -566,7 +578,12 @@ func lintText(input string, opts LintOptions) []LintIssue {
 	lintStrayCloseTags(w, input, tokens, add)
 
 	// --- Loose bracket scan for shortcode-looking typos (info) ---
-	for _, m := range looseBracketPattern.FindAllStringSubmatchIndex(input, -1) {
+	looseMatches := looseBracketPattern.FindAllStringSubmatchIndex(input, budgetedTokenCap+1)
+	if len(looseMatches) > budgetedTokenCap {
+		w.fail()
+		return nil
+	}
+	for _, m := range looseMatches {
 		if !w.step() {
 			return nil
 		}
@@ -914,20 +931,6 @@ func countTopLevelElse(content string) int {
 		i++
 	}
 	return count
-}
-
-// sameAttrs reports whether two attribute maps hold the same entries; an
-// [elseif] arm has its own, so it must not reuse the opener's collected params.
-func sameAttrs(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if bv, ok := b[k]; !ok || bv != v {
-			return false
-		}
-	}
-	return true
 }
 
 // forEachConditionalQuery visits the mrql sources a condition set runs, in

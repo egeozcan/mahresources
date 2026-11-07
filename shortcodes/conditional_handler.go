@@ -14,14 +14,13 @@ import (
 // its source attributes with the given numbered suffix ("" for the base
 // condition, "2"/"3"/… for additional multi-value conditions). Priority mirrors
 // the single-condition behavior: mrql, then field, then meta path.
-func resolveConditionalValue(reqCtx context.Context, attrs map[string]string, suffix string, ctx MetaShortcodeContext, executor QueryExecutor) (any, error) {
+func resolveConditionalValue(reqCtx context.Context, attrs map[string]string, suffix string, ctx MetaShortcodeContext, executor QueryExecutor, params map[string]string) (any, error) {
 	attr := func(base string) string { return attrs[base+suffix] }
 
 	if query := attr("mrql"); query != "" && executor != nil {
 		scope := resolveScopeKeyword(attr("scope"), ctx)
 		limit := parseIntAttr(attr("limit"), defaultMRQLShortcodeLimit)
 		buckets := parseIntAttr(attr("buckets"), defaultMRQLShortcodeBuckets)
-		params := collectShortcodeParams(attrs)
 		result, err := executor(reqCtx, query, QueryOptions{
 			Params:       params,
 			Limit:        limit,
@@ -104,6 +103,9 @@ func (f *condFold) result() bool { return f.seen && f.val }
 func evaluateConditionSet(reqCtx context.Context, attrs map[string]string, ctx MetaShortcodeContext, executor QueryExecutor) (bool, error) {
 	m := meterFrom(reqCtx)
 	fold := condFold{any: attrs["combine"] == "any"}
+	// The param-* attributes are the same for every numbered source of this
+	// attribute set, so they are collected once.
+	params := collectShortcodeParams(attrs)
 	for i := 1; ; i++ {
 		suffix := ""
 		if i >= 2 {
@@ -115,7 +117,7 @@ func evaluateConditionSet(reqCtx context.Context, attrs map[string]string, ctx M
 		if !m.alive() {
 			return false, m.Err()
 		}
-		value, err := resolveConditionalValue(reqCtx, attrs, suffix, ctx, executor)
+		value, err := resolveConditionalValue(reqCtx, attrs, suffix, ctx, executor, params)
 		if err != nil {
 			return false, err
 		}

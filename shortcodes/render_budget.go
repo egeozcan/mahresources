@@ -103,6 +103,18 @@ func (m *renderMeter) fail(format string, args ...any) {
 	m.mu.Unlock()
 }
 
+// failErr records err (wrapped as a budget error) keeping its own chain, so a
+// cancellation that stopped a schema expansion still satisfies
+// errors.Is(err, context.Canceled).
+func (m *renderMeter) failErr(err error) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.failLocked(fmt.Errorf("%w: %w", ErrRenderBudgetExceeded, err))
+	m.mu.Unlock()
+}
+
 // Err is the sticky error, nil while the render may continue.
 func (m *renderMeter) Err() error {
 	if m == nil {
