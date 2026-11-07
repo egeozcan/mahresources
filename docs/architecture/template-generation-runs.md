@@ -89,9 +89,12 @@ a run. Fourteen Tools, all read-only: `get_entity`, `list_related`,
   an error result. The calls of one Turn run in parallel (`handleReply`) and their
   results are returned together, in call order.
 - A successful Tool result body is fenced and untrusted. A failure is plain text,
-  not fenced: a Tool that fails, times out or panics yields a fixed text
+  not fenced, except submit validation errors (below): a Tool that fails, times out or panics yields a fixed text
   (`runTool`), and a refusal is `ToolErrorResult`, which is capped and has fence
-  markers defanged because it can echo a model-chosen argument. No database error
+  markers defanged because it can echo a model-chosen argument. Argument errors
+  of `submit` are a third form: `submitErrorText` clips model-chosen names, caps the
+  text and fences it, unlike the plain-text execution failures and `ToolErrorResult`
+  refusals of the other Tools. No database error
   string is passed on. A plugin shortcode's error can still reach the model inside
   a `preview` result, because the shortcode processor puts an error marker in the
   rendered HTML (`shortcodes/processor.go`) and the preview returns that HTML.
