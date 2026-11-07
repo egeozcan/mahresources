@@ -738,3 +738,32 @@ func checkToolCarrierPaging(t *testing.T, f *toolFixture) {
 		}
 	}
 }
+
+// lint (through the executor) and submit validate through
+// ValidateTemplateRunField, so one missing partial gives byte-identical issues.
+func TestToolLintAndSubmitShareOneMissingPartialIssue(t *testing.T) {
+	var in application_context.TemplateGenerationInput
+	f := newToolFixture(t, nil, func(c *api_handlers.TemplateRunToolsConfig, f *toolFixture) {
+		in.Known = shortcodes.KnownFromBuiltins()
+		in.PartialExists = func(ctx context.Context, name string) (bool, error) {
+			return name == "badge", nil
+		}
+		c.Input = in
+		c.Validate = application_context.ValidateTemplateRunField
+	})
+	content := `[partial name="badge"][partial name="gone"]`
+	direct := application_context.ValidateTemplateRunField(context.Background(), in, "CustomHeader", content)
+	if len(direct) != 1 || !strings.Contains(direct[0].Message, "gone") {
+		t.Fatalf("the submit-side validator must flag exactly the missing partial: %+v", direct)
+	}
+	got := decode(t, payload(t, f.call(t, "lint", map[string]any{"field": "CustomHeader", "content": content})))
+	issues := got["issues"].([]any)
+	if len(issues) != 1 {
+		t.Fatalf("lint issues = %v", issues)
+	}
+	is := issues[0].(map[string]any)
+	if is["message"] != direct[0].Message || is["severity"] != string(direct[0].Severity) ||
+		int(is["start"].(float64)) != direct[0].Start || int(is["end"].(float64)) != direct[0].End {
+		t.Errorf("lint %v differs from submit %+v", is, direct[0])
+	}
+}

@@ -137,3 +137,34 @@ func TestRuntimeGenerateTemplateDispatchesToTheHarness(t *testing.T) {
 		t.Fatalf("res = %+v err = %v", res, err)
 	}
 }
+
+// Harness mode, the default, reaches the real provider adapters through the
+// runtime settings: each provider yields its own endpoint.
+func TestHarnessGeneratorUsesTheRuntimeProviderSettings(t *testing.T) {
+	cases := []struct {
+		provider, keySetting, modelSetting, endpoint string
+	}{
+		{"openai", "ai_openai_api_key", "ai_template_openai_model", "https://api.openai.com/v1/responses"},
+		{"anthropic", "ai_anthropic_api_key", "ai_template_anthropic_model", "https://api.anthropic.com/v1/messages"},
+	}
+	for _, c := range cases {
+		t.Run(c.provider, func(t *testing.T) {
+			s := newAIHarnessTestSettings(t, TemplateGenerationConfig{})
+			g := newRuntimeAIGeneration(s, TemplateGenerationConfig{}, &http.Client{})
+			if _, err := g.PrepareTemplateGeneration(); !errors.Is(err, ErrTemplateGenerationNotConfigured) {
+				t.Fatalf("keyless: %v", err)
+			}
+			if err := s.Apply(map[string]string{"ai_template_provider": c.provider, c.keySetting: "k", c.modelSetting: "m"}, nil, "", ""); err != nil {
+				t.Fatal(err)
+			}
+			prep, err := g.PrepareTemplateGeneration()
+			if err != nil || prep.GenerationMode != TemplateGenerationModeHarness {
+				t.Fatalf("prep = %+v err = %v", prep, err)
+			}
+			conv := prep.Generator.(*defaultTemplateGenerator).conversation
+			if conv == nil || conv.ProviderName() != c.provider || conv.Endpoint() != c.endpoint {
+				t.Fatalf("conversation = %v", conv)
+			}
+		})
+	}
+}

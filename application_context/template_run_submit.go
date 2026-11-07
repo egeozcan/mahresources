@@ -15,51 +15,17 @@ import (
 // validator, the submit Tool's argument contract, and the resolved value of a
 // submitted field.
 
-// ValidateTemplateRunField is the harness's single validator. lint, submit and
-// the final Draft all call it, so a missing [partial] is reported the same way
-// from each. It is validateTemplateContent's options plus a partial-existence
-// check under ctx. A lookup that fails or is cancelled counts as existing for
-// the linter and adds one warning, so a cancelled check never reports an
-// existing partial as missing.
+// ValidateTemplateRunField is the harness's single validator: a thin wrapper
+// that hands the request's grounding to ValidateTemplateRunContent, so lint,
+// submit and the final Draft share one code path and one verdict.
 func ValidateTemplateRunField(ctx context.Context, in TemplateGenerationInput, field, content string) []shortcodes.LintIssue {
-	if field == "MetaSchema" {
-		return validateMetaSchemaJSON(content, shortcodes.MetaSchemaLintOptions{
-			DisplayTypes:          in.DisplayTypes,
-			DisplayTypesTruncated: in.DisplayTypesTruncated,
-		})
-	}
-	opts := shortcodes.LintOptions{
-		Known:        in.Known,
-		ValidateMRQL: in.ValidateMRQL,
-		CSSMode:      strings.HasSuffix(field, "CSS"),
-	}
-	unchecked := map[string]bool{}
-	if in.PartialExists != nil {
-		opts.PartialExists = func(name string) bool {
-			exists, err := in.PartialExists(ctx, name)
-			if err != nil || ctx.Err() != nil {
-				unchecked[name] = true
-				return true
-			}
-			return exists
-		}
-	}
-	issues := shortcodes.Lint(content, opts)
-	if issues == nil {
-		issues = []shortcodes.LintIssue{}
-	}
-	names := make([]string, 0, len(unchecked))
-	for name := range unchecked {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		issues = append(issues, shortcodes.LintIssue{
-			Severity: shortcodes.SeverityWarning,
-			Message:  fmt.Sprintf("could not check that partial %s exists", name),
-		})
-	}
-	return issues
+	return ValidateTemplateRunContent(ctx, TemplateRunValidation{
+		Known:                 in.Known,
+		ValidateMRQL:          in.ValidateMRQL,
+		DisplayTypes:          in.DisplayTypes,
+		DisplayTypesTruncated: in.DisplayTypesTruncated,
+		PartialExists:         in.PartialExists,
+	}, field, content)
 }
 
 // templateRunFieldsOf returns the fields a harness request asks for, in
@@ -177,23 +143,10 @@ func (s *templateRunSubmissions) validateSubmission(ctx context.Context, field, 
 	return issues
 }
 
-// Source limits of one submitted field (plan section 2, "Preview and lint work
-// is bounded"): bytes and shortcode tokens, checked before any parsing.
-const maxTemplateRunSourceTokens = 2000
-
 // admitTemplateRunSource is the one place a model-written source is admitted
-// before validation. Integration points it at the shared helper of lanes B1
-// and B2 (CheckTemplateToolSource). A shortcode token starts with "[", so
-// counting those over-counts and never under-counts.
-var admitTemplateRunSource = func(content string) error {
-	if len(content) > MaxTemplateGeneratedContentLength {
-		return fmt.Errorf("source is %d bytes; the limit is %d", len(content), MaxTemplateGeneratedContentLength)
-	}
-	if n := strings.Count(content, "["); n > maxTemplateRunSourceTokens {
-		return fmt.Errorf("source has %d shortcode tokens; the limit is %d", n, maxTemplateRunSourceTokens)
-	}
-	return nil
-}
+// before validation; the rule is the shared CheckTemplateToolSource, so submit
+// and the lint and preview Tools refuse the same sources.
+var admitTemplateRunSource = CheckTemplateToolSource
 
 // submitErrorText formats an argument error for the model: model-chosen names
 // are clipped, and the whole text is capped and fenced (which defangs markers).

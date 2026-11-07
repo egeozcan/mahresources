@@ -99,31 +99,6 @@ func (g *defaultTemplateGenerator) generateHarness(ctx context.Context, in Templ
 	return g.runHarness(ctx, request)
 }
 
-// chargeableTokens is the budget cost of one Turn (plan section 1,
-// "Normalization"): completion plus uncached prompt plus a quarter of cached
-// prompt. Missing Prompt falls back to the Turn's prompt estimate and missing
-// Completion to its full max_tokens. With Prompt and CacheHit reported, the
-// uncached part is Prompt minus CacheHit whether or not CacheMiss is reported.
-// With no cache information the whole prompt is uncached.
-//
-// Lane integration: lane A's ChargeableTokens(u, estimate, maxTokens) is the
-// same rule next to the adapters. Swap the call in runHarness for it and delete
-// this function; it is the only place this lane implements the rule.
-func chargeableTokens(u ConversationUsage, estimate, maxTokens int) int {
-	prompt, completion := estimate, maxTokens
-	if u.Prompt != nil {
-		prompt = *u.Prompt
-	}
-	if u.Completion != nil {
-		completion = *u.Completion
-	}
-	cached := 0
-	if u.CacheHit != nil {
-		cached = min(max(*u.CacheHit, 0), max(prompt, 0))
-	}
-	return completion + (prompt - cached) + cached/4
-}
-
 // runMessage is a message of the conversation with what stubbing needs to know.
 type runMessage struct {
 	msg     ConversationMessage
@@ -218,7 +193,7 @@ func (r *harnessRun) loop() (*TemplateGenerationResult, error) {
 		if err != nil {
 			return r.exitOnCallError(err)
 		}
-		r.used += chargeableTokens(resp.Usage, estimate, req.MaxTokens)
+		r.used += ChargeableTokens(resp.Usage, estimate, req.MaxTokens)
 		if r.sink != nil {
 			r.sink.Usage(TemplateUsageEvent{Turn: turn, BudgetUsed: r.used, BudgetMax: r.plan.settings.TokenBudget})
 		}

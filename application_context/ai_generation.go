@@ -283,9 +283,9 @@ func (g *runtimeAIGeneration) GenerateMRQL(ctx context.Context, prompt string) (
 }
 
 // newTemplateConversationProvider builds the tool-calling provider for a
-// harness run. Integration points it at lane A's
-// NewGenerationConversationProvider; until then harness mode is not configured.
-var newTemplateConversationProvider func(provider, apiKey, model string, client *http.Client) TemplateConversationProvider
+// harness run. It is a variable so tests can install a scripted conversation;
+// production always uses NewGenerationConversationProvider.
+var newTemplateConversationProvider = NewGenerationConversationProvider
 
 // templateGenerator binds the generation mode and a generator to one settings
 // snapshot.
@@ -305,7 +305,10 @@ func (g *runtimeAIGeneration) templateGenerator() (TemplateGenerationPrep, error
 		budget, _ := values[settingTemplateRunTokenBudget].(int)
 		cfg := p.template
 		cfg.Harness = &TemplateHarnessSettings{MaxTurns: turns, Deadline: deadline, TokenBudget: budget}
-		conv := newTemplateConversationProvider(p.provider, p.key, p.model, g.client)
+		conv, err := g.templateConversationProvider()
+		if err != nil {
+			return TemplateGenerationPrep{}, err
+		}
 		gen := NewTemplateHarnessGenerator(conv, cfg).(*defaultTemplateGenerator)
 		gen.slots = g.slots
 		return TemplateGenerationPrep{GenerationMode: TemplateGenerationModeHarness, Generator: gen}, nil
@@ -323,7 +326,10 @@ func (g *runtimeAIGeneration) templateConversationProvider() (TemplateConversati
 	if !p.configured() {
 		return nil, ErrTemplateGenerationNotConfigured
 	}
-	return NewGenerationConversationProvider(p.provider, p.key, p.model, g.client), nil
+	if newTemplateConversationProvider == nil {
+		return nil, ErrTemplateGenerationNotConfigured
+	}
+	return newTemplateConversationProvider(p.provider, p.key, p.model, g.client), nil
 }
 
 // PrepareTemplateGeneration binds the generation mode and a generator to one

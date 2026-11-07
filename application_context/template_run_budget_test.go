@@ -23,7 +23,7 @@ func TestChargeableTokensFollowsThePlansRule(t *testing.T) {
 		{"cache hit above the prompt is clamped", ConversationUsage{Prompt: ip(100), CacheHit: ip(900), Completion: ip(0)}, 25},
 	}
 	for _, c := range cases {
-		if got := chargeableTokens(c.u, 600, 4000); got != c.want {
+		if got := ChargeableTokens(c.u, 600, 4000); got != c.want {
 			t.Errorf("%s: got %d want %d", c.name, got, c.want)
 		}
 	}
