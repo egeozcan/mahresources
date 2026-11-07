@@ -165,7 +165,7 @@ test.describe('Custom CSS on every surface', () => {
     await expect(lightbox.locator(`.lbh-${stamp}`)).toHaveCSS('color', color);
   });
 
-  test('the lightbox adds no second copy of CSS the page already has', async ({ apiClient, page }) => {
+  test('the lightbox keeps its own copy when the page copy is replaced away', async ({ apiClient, page }) => {
     const stamp = Date.now();
     const rc = await apiClient.createResourceCategory(`CSS LB Dup RC ${stamp}`, undefined, {
       CustomLightbox: `<span class="lbd-${stamp}">lightbox</span>`,
@@ -186,7 +186,11 @@ test.describe('Custom CSS on every surface', () => {
     await expect(lightbox).toBeVisible();
     await lightbox.locator('button[title="Resource info"]').click();
     await expect(lightbox.locator(`.lbd-${stamp}`)).toHaveCSS('color', color);
-    await expect(page.locator(`style[data-mr-custom-css="resource:${rc.ID}"]`)).toHaveCount(1);
-    await expect(page.locator('style[data-mr-lightbox-css]')).toHaveCount(0);
+    await expect(page.locator('style[data-mr-lightbox-css]')).toHaveCount(1);
+    // A background list refresh replaces the cards and their stylesheet; the panel keeps its own.
+    await page.evaluate((id) => {
+      document.querySelectorAll(`style[data-mr-custom-css="resource:${id}"]`).forEach((el) => el.remove());
+    }, rc.ID);
+    await expect(lightbox.locator(`.lbd-${stamp}`)).toHaveCSS('color', color);
   });
 });

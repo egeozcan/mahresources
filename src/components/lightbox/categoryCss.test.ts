@@ -7,37 +7,25 @@ vi.mock('../../userSettings.js', () => ({ whenLoaded: vi.fn().mockResolvedValue(
 import { editPanelMethods } from './editPanel.js';
 
 const css = '.lb { color: red }';
-const store = () => ({
-  ...editPanelMethods,
-  displayDetails: () => ({ resourceCategory: { ID: 4, CustomCSS: css } }),
-});
-const style = (parentHTML: string) => {
-  document.body.innerHTML = parentHTML;
-};
+const store = (category: unknown) => ({ ...editPanelMethods, displayDetails: () => ({ resourceCategory: category }) });
 
 afterEach(() => { document.body.innerHTML = ''; });
 
 describe('categoryCSSToInject', () => {
-  it('adds nothing when the page itself carries the stylesheet', () => {
-    style('<style data-mr-custom-css="resource:4"></style>');
-    expect(store().categoryCSSToInject()).toBe('');
+  // Whatever the page holds may be replaced away without the panel noticing, so the panel
+  // carries its own copy even when the page has one.
+  it.each([
+    '',
+    '<style data-mr-custom-css="resource:4"></style>',
+    '<div id="hovercard-popover"><style data-mr-custom-css="resource:4"></style></div>',
+    '<div class="list-container"><style data-mr-custom-css="resource:4"></style></div>',
+  ])('carries the category CSS whatever the page holds: %s', (html) => {
+    document.body.innerHTML = html;
+    expect(store({ ID: 4, CustomCSS: css }).categoryCSSToInject()).toBe(css);
   });
 
-  it('injects when the only copy is inside the hover card, which is cleared on close', () => {
-    style('<div id="hovercard-popover"><style data-mr-custom-css="resource:4"></style></div>');
-    expect(store().categoryCSSToInject()).toBe(css);
-  });
-
-  it.each(['autorefresh-shortcode', 'lazy-shortcode', 'details-shortcode', 'div data-shortcode-region="t"', 'div data-text-block-rendered'])(
-    'injects when the only copy is inside <%s>, whose content is replaced',
-    (tag) => {
-      style(`<${tag}><style data-mr-custom-css="resource:4"></style></${tag.split(' ')[0]}>`);
-      expect(store().categoryCSSToInject()).toBe(css);
-    },
-  );
-
-  it('a lasting copy elsewhere still counts beside a temporary one', () => {
-    style('<div id="hovercard-popover"><style data-mr-custom-css="resource:4"></style></div><style data-mr-custom-css="resource:4"></style>');
-    expect(store().categoryCSSToInject()).toBe('');
+  it('carries nothing for a category without CSS or no category', () => {
+    expect(store({ ID: 4, CustomCSS: '' }).categoryCSSToInject()).toBe('');
+    expect(store(undefined).categoryCSSToInject()).toBe('');
   });
 });

@@ -398,7 +398,7 @@ A category's `CustomCSS` is emitted on every page that renders one of its slots:
 - the lightbox details panel, and
 - `CustomListHeader` and `CustomListFooter`, including on timeline views and on a filtered list with no results.
 
-Each distinct category emits its block at most once per page render, so a page with many cards gets one `<style>` block per category rather than one per card.
+Cards emit each distinct category's block at most once per page render, so a page with many cards gets one `<style>` block per category rather than one per card. An `[mrql]` result emits a category's block once within the result, unless a card earlier on the page already did. It does not stop later content from emitting its own, because a result can sit in a region the page replaces later (a `[reload]` region, an `[autorefresh]` body, a note text block). The lightbox details panel always carries its own copy for the same reason. Repeated blocks hold the same rules, so the page looks the same.
 
 ### Raw Injection
 

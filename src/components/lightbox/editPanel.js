@@ -59,19 +59,6 @@ export const editPanelState = {
   _writeSeq: 0,
 };
 
-// Containers whose content the page removes or replaces after load, so a stylesheet inside
-// one cannot stand in for the lightbox's own: the hover card popover (cleared on close), the
-// deferred-shortcode bodies and [reload] slot regions (replaced on refresh or reload), and
-// rendered note text blocks (removed for editing, replaced when the block changes).
-const TRANSIENT_CSS_HOSTS = [
-  '#hovercard-popover',
-  'autorefresh-shortcode',
-  'lazy-shortcode',
-  'details-shortcode',
-  '[data-shortcode-region]',
-  '[data-text-block-rendered]',
-].join(', ');
-
 export const editPanelMethods = {
   // Shown on the image the user was on when it failed and on the image the write was for: a
   // failure that lands after they moved on names that image, and they go back there to retry.
@@ -565,20 +552,13 @@ export const editPanelMethods = {
     return this._currentDetails(this.getCurrentItem()?.id);
   },
 
-  // The current resource's category CSS, when the page did not already emit it. A list page
-  // writes each category's block once (style[data-mr-custom-css]); the lightbox adds its own
-  // only for a category with no card on the page (paged past, a gallery block, an [mrql] result).
-  // Only a block that stays counts: one inside the hover card or a deferred region body is
-  // removed when that card closes or the body is replaced, and that removal is not a reactive
-  // change, so the panel would stay unstyled until something else made it look again.
+  // The current resource's category CSS, which the panel always carries itself. A copy the page
+  // already holds cannot stand in for it: the page replaces or clears the containers its copies
+  // live in (card lists refreshed in the background, the hover card, [reload] regions, deferred
+  // shortcode bodies, note text blocks), and that removal is not a change the panel sees, so it
+  // would stay unstyled. The same rules twice render the same.
   categoryCSSToInject() {
-    const category = this.displayDetails()?.resourceCategory;
-    if (!category?.CustomCSS) return '';
-    const blocks = document.querySelectorAll(`style[data-mr-custom-css="resource:${Number(category.ID)}"]`);
-    for (const block of blocks) {
-      if (!block.closest(TRANSIENT_CSS_HOSTS)) return '';
-    }
-    return category.CustomCSS;
+    return this.displayDetails()?.resourceCategory?.CustomCSS || '';
   },
 
   // True while the panel is waiting on details it may paint — either a first load or a
