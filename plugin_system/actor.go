@@ -63,6 +63,11 @@ type Invocation struct {
 	// VM still counts as being inside the dispatch.
 	JobEventDispatch bool
 
+	// ModelPreview marks a call made by a model-written preview. It rides the
+	// chain so actor resolution can suppress its application-log row, and a
+	// nested hook dispatch stays marked.
+	ModelPreview bool
+
 	// Egress is the network policy of the plugin that made this call, when the
 	// call can reach the network. Nil for every other call, and for host-side
 	// fetches that no plugin triggered — which is what keeps operator-initiated
@@ -219,7 +224,7 @@ func (inv *Invocation) with(L *lua.LState) *Invocation {
 	// that delivery, so work it starts must still not announce.
 	return &Invocation{
 		ActorUserID: inv.ActorUserID, JobID: inv.JobID, JobEventDispatch: inv.JobEventDispatch,
-		tx: inv.tx, states: append(states, L),
+		ModelPreview: inv.ModelPreview, tx: inv.tx, states: append(states, L),
 	}
 }
 
@@ -355,7 +360,13 @@ func (pm *PluginManager) invocationFor(L *lua.LState) *Invocation {
 	if inv == nil {
 		inv = NewInvocation(actorFromContext(ctx))
 	}
-	return inv.with(root)
+	inv = inv.with(root)
+	if IsModelPreview(ctx) && !inv.ModelPreview {
+		marked := *inv
+		marked.ModelPreview = true
+		inv = &marked
+	}
+	return inv
 }
 
 // luaContext returns the context of the VM that owns L. A coroutine has its own

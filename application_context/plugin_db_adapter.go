@@ -56,7 +56,7 @@ func (a *pluginDBAdapter) BindInvocation(inv *plugin_system.Invocation) (plugin_
 func (a *pluginDBAdapter) boundContext(inv *plugin_system.Invocation) *MahresourcesContext {
 	var bound *MahresourcesContext
 	if inv != nil && inv.ActorUserID != 0 {
-		bound = a.ctx.WithPrincipal(a.ctx.principalForPluginActor(inv.ActorUserID))
+		bound = a.ctx.WithPrincipal(a.ctx.resolvePluginActor(inv.ActorUserID, !inv.ModelPreview))
 	} else {
 		clone := *a.ctx
 		bound = &clone
@@ -107,6 +107,13 @@ const actorUnresolvedLogName = "Acting user unresolved"
 // wherever the principal comes from. If it ever matters, the fix is to bind once
 // per VM entry point rather than once per call — not to guess the principal.
 func (ctx *MahresourcesContext) principalForPluginActor(actorID uint) *auth.Principal {
+	return ctx.resolvePluginActor(actorID, true)
+}
+
+// resolvePluginActor is principalForPluginActor with the outage log optional. A
+// model preview passes false: the log row is an application write, and a
+// harness Tool must not write. The lookup still fails closed either way.
+func (ctx *MahresourcesContext) resolvePluginActor(actorID uint, logOutage bool) *auth.Principal {
 	if actorID == 0 {
 		return nil
 	}
@@ -124,7 +131,7 @@ func (ctx *MahresourcesContext) principalForPluginActor(actorID uint) *auth.Prin
 		// handle whose read just failed, with its own error swallowed to
 		// stdout, so in a real outage it is the least likely write to land.
 		// Logging only the outage keeps the noise off the common path.
-		if !errors.Is(err, ErrUserNotFound) {
+		if logOutage && !errors.Is(err, ErrUserNotFound) {
 			ctx.Logger().Warning(models.LogActionSystem, "user", nil, actorUnresolvedLogName,
 				fmt.Sprintf("could not read user %d; denying what that user's work would have done: %v", actorID, err), nil)
 		}
