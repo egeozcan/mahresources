@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -195,6 +197,10 @@ func (a *toolArgs) strList(key string) []string {
 			a.fail("%s must be an array of strings", key)
 			return nil
 		}
+		if len(s) > maxToolNameBytes {
+			a.fail("%s has a name over %d bytes", key, maxToolNameBytes)
+			return nil
+		}
 		out = append(out, s)
 	}
 	return out
@@ -232,8 +238,11 @@ func DecodeToolArguments(tool, raw string) (any, error) {
 		if err := dec.Decode(&m); err != nil {
 			return nil, fmt.Errorf("the arguments are not valid JSON: %v", err)
 		}
-		if dec.More() {
-			return nil, fmt.Errorf("the arguments are not valid JSON: trailing data")
+		// Anything after the object but whitespace is refused; More() would
+		// accept a stray closing bracket.
+		var extra json.RawMessage
+		if err := dec.Decode(&extra); err != io.EOF {
+			return nil, fmt.Errorf("the arguments are not valid JSON: trailing data after the object")
 		}
 		if m == nil {
 			m = map[string]any{}
@@ -251,7 +260,15 @@ func DecodeToolArguments(tool, raw string) (any, error) {
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
-		return nil, fmt.Errorf("unknown argument %s; %s accepts: %s", strings.Join(unknown, ", "), tool, strings.Join(keys, ", "))
+		more := ""
+		if len(unknown) > 3 {
+			more = fmt.Sprintf(" (and %d more)", len(unknown)-3)
+			unknown = unknown[:3]
+		}
+		for i, k := range unknown {
+			unknown[i] = strconv.Quote(clipToolText(k, 40))
+		}
+		return nil, fmt.Errorf("unknown argument %s%s; %s accepts: %s", strings.Join(unknown, ", "), more, tool, strings.Join(keys, ", "))
 	}
 
 	a := &toolArgs{m: m}
@@ -439,9 +456,26 @@ func ShapeToolResult(label, body string, capBytes int) TemplateToolOutput {
 	return TemplateToolOutput{Text: text, Bytes: len(text), FullBytes: full, Truncated: truncated}
 }
 
-// ToolErrorResult is an error result: plain text, not fenced, because it
-// carries only the server's own wording.
+// maxToolErrorBytes bounds an error result's message.
+const maxToolErrorBytes = 2 << 10
+
+// clipToolText cuts s to at most limit bytes on a rune boundary, marking a cut.
+func clipToolText(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
+
+// ToolErrorResult is an error result: plain text, not fenced. A message can
+// echo model-controlled text (an argument name, a field), so it is capped and
+// any fence marker in it is defanged like a fenced body.
 func ToolErrorResult(msg string) TemplateToolOutput {
+	msg = referenceMarkerPattern.ReplaceAllString(clipToolText(msg, maxToolErrorBytes), "<<$1")
 	text := "error: " + msg
 	return TemplateToolOutput{Text: text, IsError: true, Bytes: len(text), FullBytes: len(text)}
 }

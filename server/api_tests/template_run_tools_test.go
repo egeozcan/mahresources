@@ -326,9 +326,16 @@ func TestToolLintCheckMRQLPartialsAndDocs(t *testing.T) {
 	if out := f.call(t, "lint", map[string]any{"field": "Bogus", "content": "x"}); !out.IsError {
 		t.Error("an unknown field was linted")
 	}
-	over := f.call(t, "lint", map[string]any{"field": "CustomHeader", "content": strings.Repeat("a", application_context.MaxTemplateGeneratedContentLength+1)})
-	if !over.IsError && !strings.Contains(over.Text, "bytes") {
-		t.Errorf("oversize content: %q", over.Text)
+	for name, src := range map[string]string{
+		"bytes":  strings.Repeat("a", application_context.MaxTemplateGeneratedContentLength+1),
+		"tokens": strings.Repeat("[x]", application_context.MaxTemplateToolShortcodeTokens+1),
+	} {
+		for _, tool := range []string{"lint", "preview"} {
+			over := f.call(t, tool, map[string]any{"field": "CustomHeader", "content": src})
+			if !over.IsError {
+				t.Errorf("%s over the %s limit was not an error result: %q", tool, name, over.Text)
+			}
+		}
 	}
 
 	ok := decode(t, payload(t, f.call(t, "check_mrql", map[string]any{"query": `type = "note"`})))
@@ -690,5 +697,44 @@ func TestToolLintUsesTheInjectedValidatorAndTheTurnSnapshot(t *testing.T) {
 	// submit is the loop's, never the executor's.
 	if out := f.call(t, "submit", map[string]any{"fields": map[string]string{}}); !out.IsError {
 		t.Error("the executor ran submit")
+	}
+}
+
+func TestToolListCarriersPagesAreCompleteAndDisjoint(t *testing.T) {
+	checkToolCarrierPaging(t, newToolFixture(t, nil, nil))
+}
+
+func checkToolCarrierPaging(t *testing.T, f *toolFixture) {
+	t.Helper()
+	const total = 60
+	for i := 0; i < total; i++ {
+		if err := f.tc.DB.Create(&models.ResourceCategory{Name: fmt.Sprintf("rc-%03d", i)}).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := f.tc.DB.Create(&models.NoteType{Name: fmt.Sprintf("nt-%03d", i)}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, kind := range []string{"resourceCategory", "noteType"} {
+		seen := map[float64]bool{}
+		offset := 0
+		for pages := 0; pages < 5; pages++ {
+			m := decode(t, payload(t, f.call(t, "list_carriers", map[string]any{"carrierType": kind, "offset": offset})))
+			entries := m["entries"].([]any)
+			for _, e := range entries {
+				id := e.(map[string]any)["id"].(float64)
+				if seen[id] {
+					t.Fatalf("%s: id %v on two pages", kind, id)
+				}
+				seen[id] = true
+			}
+			if m["more"] != true {
+				break
+			}
+			offset = int(m["nextOffset"].(float64))
+		}
+		if len(seen) < total {
+			t.Errorf("%s: pages covered %d of at least %d carriers", kind, len(seen), total)
+		}
 	}
 }

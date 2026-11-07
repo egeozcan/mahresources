@@ -3,6 +3,7 @@ package application_context
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -276,4 +277,43 @@ func (ctx *MahresourcesContext) fillRelatedCarriers(entries []TemplateRelatedEnt
 		entries[i].CarrierName = names[entries[i].Type][entries[i].CarrierID]
 	}
 	return nil
+}
+
+// TemplateCarrierEntry is a carrier listed by name.
+type TemplateCarrierEntry struct {
+	ID          uint
+	Name        string
+	Description string
+}
+
+// ListTemplateRunCarriers lists carriers of one type ordered by id, so pages
+// are complete and disjoint, filtered by a case-insensitive name substring.
+// It reads only the list columns, and fetches limit+1 rows for "more". The
+// carrier tables are global and readable by every role.
+func (ctx *MahresourcesContext) ListTemplateRunCarriers(carrierType, nameQuery string, offset, limit int) ([]TemplateCarrierEntry, bool, error) {
+	var model any
+	switch carrierType {
+	case models.TemplateCarrierCategory:
+		model = &models.Category{}
+	case models.TemplateCarrierResourceCategory:
+		model = &models.ResourceCategory{}
+	case models.TemplateCarrierNoteType:
+		model = &models.NoteType{}
+	default:
+		return nil, false, fmt.Errorf("unknown carrier type %q", carrierType)
+	}
+	q := ctx.db.Model(model).Select("id", "name", "description")
+	if nameQuery != "" {
+		escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(strings.ToLower(nameQuery))
+		q = q.Where(`LOWER(name) LIKE ? ESCAPE '\'`, "%"+escaped+"%")
+	}
+	var rows []TemplateCarrierEntry
+	if err := q.Order("id ASC").Limit(limit + 1).Offset(offset).Find(&rows).Error; err != nil {
+		return nil, false, err
+	}
+	more := len(rows) > limit
+	if more {
+		rows = rows[:limit]
+	}
+	return rows, more, nil
 }

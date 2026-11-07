@@ -9,5 +9,6 @@ import "testing"
 func TestToolReadersOnPostgres(t *testing.T) {
 	t.Run("readers", func(t *testing.T) { checkToolReaders(t, newToolFixtureOn(t, SetupPostgresTestEnv(t), nil)) })
 	t.Run("revision paging", func(t *testing.T) { checkToolRevisionPaging(t, newToolFixtureOn(t, SetupPostgresTestEnv(t), nil)) })
+	t.Run("carrier paging", func(t *testing.T) { checkToolCarrierPaging(t, newToolFixtureOn(t, SetupPostgresTestEnv(t), nil)) })
 	t.Run("scope text", func(t *testing.T) { checkToolScopeText(t, newToolFixtureOn(t, SetupPostgresTestEnv(t), nil)) })
 }

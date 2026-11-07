@@ -16,13 +16,12 @@ import (
 	"mahresources/application_context"
 	"mahresources/auth"
 	"mahresources/models"
-	"mahresources/models/query_models"
 	"mahresources/plugin_system"
 	"mahresources/server/template_handlers/template_filters"
 	"mahresources/shortcodes"
 )
 
-// The Tool executor of a harness run (plan section 2): the twelve read Tools,
+// The Tool executor of a harness run (plan section 2): the read Tools,
 // run against the live database as the account the run started as. Argument
 // validation, caps and fencing are application_context's
 // (template_run_tools_exec.go); this file adds the database.
@@ -401,40 +400,13 @@ type toolCarrierEntry struct {
 }
 
 func (e *templateToolExecutor) listCarriers(mc *application_context.MahresourcesContext, a application_context.ListCarriersArgs) (string, error) {
-	limit := application_context.ToolListEntryCap + 1
-	var entries []toolCarrierEntry
-	switch a.CarrierType {
-	case models.TemplateCarrierCategory:
-		rows, err := mc.GetCategories(a.Offset, limit, &query_models.CategoryQuery{Name: a.NameQuery, SortBy: []string{"id asc"}})
-		if err != nil {
-			return "", err
-		}
-		for _, r := range rows {
-			entries = append(entries, toolCarrierEntry{r.ID, r.Name, r.Description})
-		}
-	case models.TemplateCarrierResourceCategory:
-		rows, err := mc.GetResourceCategories(a.Offset, limit, &query_models.ResourceCategoryQuery{Name: a.NameQuery})
-		if err != nil {
-			return "", err
-		}
-		for _, r := range rows {
-			entries = append(entries, toolCarrierEntry{r.ID, r.Name, r.Description})
-		}
-	default:
-		rows, err := mc.GetNoteTypes(&query_models.NoteTypeQuery{Name: a.NameQuery}, a.Offset, limit)
-		if err != nil {
-			return "", err
-		}
-		for _, r := range rows {
-			entries = append(entries, toolCarrierEntry{r.ID, r.Name, r.Description})
-		}
+	rows, more, err := mc.ListTemplateRunCarriers(a.CarrierType, a.NameQuery, a.Offset, application_context.ToolListEntryCap)
+	if err != nil {
+		return "", err
 	}
-	more := len(entries) > application_context.ToolListEntryCap
-	if more {
-		entries = entries[:application_context.ToolListEntryCap]
-	}
-	if entries == nil {
-		entries = []toolCarrierEntry{}
+	entries := make([]toolCarrierEntry, len(rows))
+	for i, r := range rows {
+		entries[i] = toolCarrierEntry{r.ID, r.Name, r.Description}
 	}
 	return pagedJSON("entries", entries, more, a.Offset, len(entries)), nil
 }
@@ -561,6 +533,10 @@ func (e *templateToolExecutor) lint(ctx context.Context, mc *application_context
 	content, err := e.contentFor(a.Field, a.Content, snapshot)
 	if err != nil {
 		return "", err
+	}
+	// Over the limit is an error result, not a lint verdict.
+	if err := application_context.CheckTemplateToolSource(content); err != nil {
+		return "", refusef("%v", err)
 	}
 	var issues []shortcodes.LintIssue
 	if e.cfg.Validate != nil {
