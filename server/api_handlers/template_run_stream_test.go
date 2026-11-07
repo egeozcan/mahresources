@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -325,3 +327,36 @@ func waitUntil(t *testing.T, what string, cond func() bool) {
 }
 
 var _ = errors.New
+
+// A healthy stream that is idle for longer than the write deadline survives:
+// over HTTP/2 a deadline left in the past resets the stream, so each frame's
+// deadline is cleared once the frame is flushed.
+func TestStreamIdleLongerThanTheWriteDeadlineStaysOpenOverHTTP2(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s, _, _ := newTestStream(w, templateRunStreamConfig{Heartbeat: 250 * time.Millisecond, WriteTimeout: 80 * time.Millisecond})
+		defer s.Close()
+		s.TurnStarted(application_context.TemplateTurnEvent{Turn: 1, MaxTurns: 3})
+		time.Sleep(600 * time.Millisecond) // the model is thinking; only heartbeats flow
+		s.Drain()
+		_ = s.Deliver(templateRunFrame("result", map[string]any{"content": "done"}))
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+	resp, err := srv.Client().Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.ProtoMajor != 2 {
+		t.Fatalf("want HTTP/2, got %s", resp.Proto)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("the idle stream was reset: %v (read %q)", err, body)
+	}
+	events, comments := parseStream(t, string(body))
+	if comments == 0 || events[len(events)-1].event != "result" {
+		t.Fatalf("want heartbeats and the result, got %d comments, events %v", comments, events)
+	}
+}

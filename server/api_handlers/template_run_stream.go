@@ -224,6 +224,13 @@ func (s *templateRunStream) write(frame []byte) error {
 		s.fail()
 		return err
 	}
+	// The frame is out: a deadline left standing would expire while the stream
+	// idles between heartbeats, and HTTP/2 resets a stream whose write deadline
+	// has passed. Clearing it leaves the next frame to set its own.
+	if err := s.rc.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		s.fail()
+		return err
+	}
 	return nil
 }
 
