@@ -71,11 +71,15 @@ func withinReloadFace(reqCtx context.Context) bool {
 // depth, including inside a block whose body this render will not expand. It
 // reads the same token stream the parser and the linter do, so "[reload" written
 // as prose is not mistaken for a shortcode.
-func containsReloadShortcode(source string) bool {
+func containsReloadShortcode(source string) bool { return containsReloadShortcodeM(nil, source) }
+
+// containsReloadShortcodeM is containsReloadShortcode under the render's meter,
+// so its token scan is admitted and cancellable like the main parse.
+func containsReloadShortcodeM(m *renderMeter, source string) bool {
 	if !strings.Contains(source, "[reload") {
 		return false
 	}
-	for _, tk := range matchTokens(source) {
+	for _, tk := range matchTokensM(m, source) {
 		if tk.name == "reload" && !tk.closing {
 			return true
 		}
@@ -139,7 +143,7 @@ func RenderReloadShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortco
 		// within it would be invisible now and arrive inside the button later,
 		// when the deferred fetch lands. This mirrors the linter, which reads the
 		// same tokens from the same source.
-		if containsReloadShortcode(sc.InnerContent) {
+		if containsReloadShortcodeM(meterFrom(reqCtx), sc.InnerContent) {
 			return shortcodeErrorMarker("reload", "[reload] cannot contain another [reload]")
 		}
 		inner = strings.TrimSpace(processWithDepth(markReloadFace(reqCtx), sc.InnerContent, ctx, renderer, executor, depth+1))

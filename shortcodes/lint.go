@@ -532,6 +532,11 @@ func lintText(input string, opts LintOptions) []LintIssue {
 				})
 				// [elseif] is a divider, not a token, but its guard runs.
 				if inner, ok := condInner[tk.start]; ok {
+					// SlotTagSpans and SplitBranches re-parse the body for every
+					// conditional, nested ones included: charge each.
+					if !w.charge(1 + 2*len(inner)/8) {
+						return nil
+					}
 					dividers := SlotTagSpans("conditional", inner)
 					for i, branch := range SplitBranches(inner) {
 						if i == 0 || branch.IsElse {
@@ -558,7 +563,7 @@ func lintText(input string, opts LintOptions) []LintIssue {
 		}
 	}
 
-	lintStrayCloseTags(input, tokens, add)
+	lintStrayCloseTags(w, input, tokens, add)
 
 	// --- Loose bracket scan for shortcode-looking typos (info) ---
 	for _, m := range looseBracketPattern.FindAllStringSubmatchIndex(input, -1) {
@@ -948,9 +953,13 @@ func forEachConditionalQuery(attrs map[string]string, visit func(attr, suffix st
 // written [/else] is never consumed. [header] and [footer] are real pairs, but
 // only the first complete top-level pair inside an [mrql] block is read
 // (SlotTagSpans), so any other [/header] or [/footer] is literal too.
-func lintStrayCloseTags(input string, tokens []token, add func(start, end int, severity, msg string)) {
+func lintStrayCloseTags(w *schemaWork, input string, tokens []token, add func(start, end int, severity, msg string)) {
 	consumed := map[int]bool{}
 	for _, span := range namedBlockSpans(tokens, "mrql") {
+		// SlotTagSpans copies and re-parses the body, once per nested [mrql].
+		if !w.charge(1 + (span[1]-span[0])/8) {
+			return
+		}
 		for _, s := range SlotTagSpans("mrql", input[span[0]:span[1]]) {
 			consumed[span[0]+s[0]] = true
 		}
