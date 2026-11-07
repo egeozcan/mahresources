@@ -216,3 +216,13 @@ describe('harness details', () => {
     expect(store.capLines).toEqual([]);
   });
 });
+
+describe('transport options', () => {
+  it('shows the request options as a text line when present and nothing when absent', () => {
+    const store = makeStore();
+    store.disclosure = { destination: { endpoint: 'https://x/y' }, transport: { contentType: 'application/json', authorization: 'a', stream: false, responseFormat: 'tools', options: 'store=false; provider.require_parameters=true' } };
+    expect(store.transport).toContain('Options: store=false; provider.require_parameters=true');
+    store.disclosure = { destination: { endpoint: 'https://x/y' }, transport: { contentType: 'application/json', authorization: 'a', stream: false, responseFormat: 'json_object' } };
+    expect(store.transport.some((l: string) => l.startsWith('Options:'))).toBe(false);
+  });
+});

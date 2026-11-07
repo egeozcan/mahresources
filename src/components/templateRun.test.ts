@@ -160,9 +160,23 @@ describe('transcript records', () => {
     expect(v.replayText).toContain('"big"');
   });
 
+  it('words the stub origin by the first request that carries it, whatever the record Turn', () => {
+    const v = recordView({ turn: 1, kind: 'tool_result', text: '[stub]', sent: true, stubbedFrom: 5 });
+    expect(v.stubbed).toBe('replaced by a one-line stub in requests starting with Turn 5');
+  });
+
+  it('shows the exact raw replayText, not a re-serialization, and counts its UTF-8 bytes', () => {
+    const raw = '{"n":9007199254740993,"s":"caf\\u00e9 \\ud83d\\ude00","pad":  1}';
+    const v = recordView({ turn: 1, kind: 'assistant', text: 't', sent: true, replay: JSON.parse(raw), replayText: raw });
+    expect(v.replayText).toBe(raw);
+    expect(v.replayLabel).toBe(`provider payload (${new TextEncoder().encode(raw).length} bytes)`);
+    const multibyte = '{"s":"\u00e9\u{1F600}"}';
+    expect(recordView({ turn: 1, kind: 'assistant', replayText: multibyte, replay: {} }).replayLabel).toBe(`provider payload (${new TextEncoder().encode(multibyte).length} bytes)`);
+  });
+
   it('shows the tool calls the model made and a stub origin', () => {
     const v = recordView({ turn: 5, kind: 'tool_result', text: '[stub]', sent: true, stubbedFrom: 1, callId: 'c1', isError: true, calls: [{ id: 'c1', name: 'lint', arguments: '{"a":1}' }] });
-    expect(v.stubbed).toBe('replaced by a one-line stub in requests after Turn 1');
+    expect(v.stubbed).toBe('replaced by a one-line stub in requests starting with Turn 1');
     expect(v.calls[0]).toMatchObject({ name: 'lint', arguments: '{"a":1}' });
     expect(v.isError).toBe(true);
   });

@@ -76,6 +76,8 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
       // A new run supersedes the previous one: abort it and any open review first.
       this.stopGeneration();
       const requestId = ++this._generationRequestId;
+      // Created before the dry run: teardown or supersession while preparing aborts it.
+      const requestSignal = this.beginRequest();
       this.generating = false;
       this.run = null;
       const prompt = (this.generationPrompt || '').trim();
@@ -169,7 +171,7 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
         // reader approves it before the real request goes out with its hash.
         this.generating = true;
         this.generationStatus = 'Preparing what will be sent…';
-        const dryResp = await post({ dryRun: true });
+        const dryResp = await post({ dryRun: true }, { signal: requestSignal });
         const disclosure = await dryResp.json().catch(() => null);
         if (requestId !== this._generationRequestId) return;
         if (!dryResp.ok || !disclosure?.groundingHash) {

@@ -28,7 +28,7 @@ const frame = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.s
 
 const transcript = [
   { turn: 1, kind: 'seed', text: 'Seed text', bytes: 9, sent: true },
-  { turn: 1, kind: 'assistant', text: '<img src=x onerror="window.__pwned=1">', bytes: 38, sent: true, calls: [{ id: 'c1', name: 'get_entity', arguments: '{"id":3}' }], replay: { provider: 'payload', pad: 'x'.repeat(50) } },
+  { turn: 1, kind: 'assistant', text: '<img src=x onerror="window.__pwned=1">', bytes: 38, sent: true, calls: [{ id: 'c1', name: 'get_entity', arguments: '{"id":3}' }], replay: { provider: 'payload', n: 9007199254740992 }, replayText: '{"provider":"payload","n":9007199254740993}' },
   { turn: 1, kind: 'tool_result', text: 'ENTITY {"Name":"A"}', bytes: 19, sent: false, callId: 'c1' },
 ];
 const cleanResult = {
@@ -183,7 +183,10 @@ test.describe('Run panel and transcript', () => {
     await expect(page.getByTestId('run-record-text-1-CustomHeader')).toHaveText('<img src=x onerror="window.__pwned=1">');
     expect(await page.evaluate(() => (window as any).__pwned)).toBeUndefined();
     await expect(page.getByTestId('run-panel-CustomHeader').locator('img')).toHaveCount(0);
-    await expect(record).toContainText('provider payload (');
+    await expect(record).toContainText(`provider payload (${Buffer.byteLength('{"provider":"payload","n":9007199254740993}')} bytes)`);
+    await record.getByText('provider payload (').click();
+    // The exact raw text, with the integer a re-serialization would have changed.
+    await expect(record.locator('pre').last()).toHaveText('{"provider":"payload","n":9007199254740993}');
     await expect(page.getByTestId('run-record-2-CustomHeader')).toContainText('not sent to the provider');
 
     // Apply is the unchanged review step: nothing is written before it.
@@ -296,5 +299,9 @@ test.describe('Whole-template run', () => {
     await expect(page.getByTestId('run-end-bundle')).toContainText('Finished (done)');
     await expect(page.getByTestId('template-bundle-review')).toBeVisible();
     await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('');
+    await page.getByTestId('template-bundle-apply').click();
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<h1>x</h1>');
+    await expect(page.locator('input[name="CustomHeaderCSS"]')).toHaveValue('h1{}');
+    await expect(page.getByTestId('template-bundle-review')).toHaveCount(0);
   });
 });

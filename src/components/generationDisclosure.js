@@ -67,6 +67,7 @@ export function registerGenerationDisclosureStore(Alpine) {
         `stream: ${t.stream ? 'true' : 'false'}, ${t.responseFormat === 'prompt_json' ? 'JSON requested in prompt' : `response_format: ${t.responseFormat}`}`,
       ];
       if (t.apiVersion) lines.push(`Anthropic-Version: ${t.apiVersion}`);
+      if (t.options) lines.push(`Options: ${t.options}`);
       const deadline = this.disclosure?.destination?.bundleDeadline;
       if (deadline) lines.push(`Whole-template deadline: ${deadline}`);
       return lines;

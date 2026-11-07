@@ -715,6 +715,8 @@ export function templateBundle({ carrier } = {}) {
       // A new run supersedes the previous one: abort it and any open review first.
       this.stopGeneration();
       const requestId = ++this._generationRequestId;
+      // Created before the dry run: teardown or supersession while preparing aborts it.
+      const requestSignal = this.beginRequest();
       this.generating = true;
       this.run = null;
       this.pendingDraft = null;
@@ -748,7 +750,7 @@ export function templateBundle({ carrier } = {}) {
       try {
         // A dry run assembles exactly what would be sent and sends nothing; the
         // reader approves it before the real request goes out with its hash.
-        const dryResp = await post({ dryRun: true });
+        const dryResp = await post({ dryRun: true }, { signal: requestSignal });
         const disclosure = await dryResp.json().catch(() => null);
         if (requestId !== this._generationRequestId) return;
         if (!dryResp.ok || !disclosure?.groundingHash) {

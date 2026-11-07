@@ -180,9 +180,18 @@ const KIND_LABEL = {
 
 /** A transcript record as the panel shows it: plain strings only. */
 export function recordView(record) {
+  // replayText is the server's exact raw JSON; re-serializing the parsed replay would change
+  // formatting and large integers. The parsed form is only a fallback when it is absent.
   const replay = record.replay;
-  const replayText = replay === undefined || replay === null ? '' : JSON.stringify(replay, null, 2);
-  const replayBytes = replayText ? new TextEncoder().encode(JSON.stringify(replay)).length : 0;
+  let replayText = '';
+  let replayBytes = 0;
+  if (typeof record.replayText === 'string' && record.replayText !== '') {
+    replayText = record.replayText;
+    replayBytes = new TextEncoder().encode(replayText).length;
+  } else if (replay !== undefined && replay !== null) {
+    replayText = JSON.stringify(replay, null, 2);
+    replayBytes = new TextEncoder().encode(JSON.stringify(replay)).length;
+  }
   return {
     turn: record.turn,
     kind: record.kind,
@@ -193,7 +202,7 @@ export function recordView(record) {
     callId: record.callId || '',
     notSent: record.sent === false,
     notSentLabel: 'not sent to the provider',
-    stubbed: record.stubbedFrom ? `replaced by a one-line stub in requests after Turn ${record.stubbedFrom}` : '',
+    stubbed: record.stubbedFrom ? `replaced by a one-line stub in requests starting with Turn ${record.stubbedFrom}` : '',
     calls: Array.isArray(record.calls) ? record.calls.map((c) => ({ id: c.id, name: c.name, arguments: c.arguments })) : [],
     durationMs: record.durationMs || 0,
     replayLabel: replayText ? `provider payload (${replayBytes} bytes)` : '',
@@ -230,6 +239,14 @@ export function runHost() {
       }
       this.generating = false;
       if (this.run && this.run.status === 'running') finishRunState(this.run, 'cancelled');
+    },
+
+    // The request-lifetime controller, created before the first dry run so teardown or
+    // supersession during preparation aborts that request too. Returns its signal.
+    beginRequest() {
+      const controller = new AbortController();
+      this._runController = controller;
+      return controller.signal;
     },
 
     // The Cancel button: aborts the request; the awaiting flow reports it.
@@ -275,14 +292,21 @@ export function runHost() {
      */
     async streamRun(send, finishPath) {
       this._finishPath = finishPath;
-      const controller = new AbortController();
+      const controller = this._runController || new AbortController();
       this._runController = controller;
       const resp = await send(controller.signal);
       const type = resp.headers?.get?.('content-type') || '';
       if (!type.startsWith('text/event-stream') || !resp.body) return { kind: 'json', resp };
       this.run = newRun();
       // Through this.run, so Alpine's proxy sees every change.
-      return consumeRun(resp, (name, data) => applyRunEvent(this.run, name, data), controller.signal);
+      try {
+        return await consumeRun(resp, (name, data) => applyRunEvent(this.run, name, data), controller.signal);
+      } catch (err) {
+        // A read that fails for any reason but our own abort ends the panel, so Finish now and
+        // Cancel do not stay offered for a run nobody is reading.
+        if (err?.name !== 'AbortError') finishRunState(this.run, 'error', { error: err?.message || 'The connection was lost.' });
+        throw err;
+      }
     },
 
     // Record how the streamed run ended, once the host knows.

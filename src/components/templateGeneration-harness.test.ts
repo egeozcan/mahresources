@@ -196,6 +196,67 @@ describe('progress, Finish now and Cancel', () => {
   });
 });
 
+describe('a lost connection', () => {
+  it('ends the panel as failed, announces it, and shows the error', async () => {
+    const { host, store } = setup();
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({ start(c) { controller = c; } });
+    const response = { ok: true, status: 200, headers: { get: () => 'text/event-stream' }, body } as unknown as Response;
+    const calls = serve(() => harnessDisclosure('h0'), async () => response);
+    const run = host.generateFromPrompt();
+    await vi.waitFor(() => expect(store.isOpen).toBe(true));
+    store.send();
+    await vi.waitFor(() => expect(real(calls)).toHaveLength(1));
+    controller.enqueue(enc.encode(frame('turn', { turn: 1, maxTurns: 10 })));
+    await vi.waitFor(() => expect(host.run?.turn).toBe(1));
+    controller.error(new TypeError('network lost'));
+    await run;
+    expect(host.run.status).toBe('error');
+    expect(host.run.announcement).toBe('Run failed');
+    expect(host.generationError).toBe('network lost');
+    expect(host.generating).toBe(false);
+  });
+
+  it('the bundle host does the same', async () => {
+    const { host, store } = setup('bundle');
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({ start(c) { controller = c; } });
+    const response = { ok: true, status: 200, headers: { get: () => 'text/event-stream' }, body } as unknown as Response;
+    const calls = serve(() => harnessDisclosure('h0'), async () => response);
+    const run = host.generateBundle();
+    await vi.waitFor(() => expect(store.isOpen).toBe(true));
+    store.send();
+    await vi.waitFor(() => expect(real(calls)).toHaveLength(1));
+    controller.enqueue(enc.encode(frame('turn', { turn: 1, maxTurns: 10 })));
+    await vi.waitFor(() => expect(host.run?.turn).toBe(1));
+    controller.error(new TypeError('network lost'));
+    await run;
+    expect(host.run.status).toBe('error');
+    expect(host.message).toBe('network lost');
+  });
+});
+
+describe('teardown during preparation', () => {
+  it.each(['cluster', 'bundle'] as const)('%s: aborts the initial dry run and opens no disclosure afterwards', async (kind) => {
+    const { host, store } = setup(kind);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: any) => {
+      signal = init.signal;
+      await gate;
+      return { ok: true, status: 200, json: async () => harnessDisclosure('h0') };
+    }));
+    const run = host.generateFromPrompt ? host.generateFromPrompt() : host.generateBundle();
+    await vi.waitFor(() => expect(signal).toBeDefined());
+    host.destroy();
+    expect(signal!.aborted).toBe(true);
+    release();
+    await run;
+    expect(store.isOpen).toBe(false);
+  });
+});
+
 describe('teardown and supersession', () => {
   it('stopGeneration aborts the run, cancels its own open review and invalidates late callbacks', async () => {
     const { host, store } = setup();
