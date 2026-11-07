@@ -57,13 +57,15 @@ type mrqlSlots struct {
 // per-item template. Occurrences nested inside another block shortcode are
 // skipped so a [header] inside a nested [each]/[conditional]/[mrql] is left
 // untouched.
-func parseMRQLSlots(inner string) mrqlSlots {
-	var s mrqlSlots
-	s.Header, inner, s.HasHeader = extractFirstSlot(inner, mrqlHeaderTag)
-	s.Footer, inner, s.HasFooter = extractFirstSlot(inner, mrqlFooterTag)
+func parseMRQLSlots(inner string) mrqlSlots { return parseMRQLSlotsM(nil, inner) }
 
-	if countTopLevelElse(inner) > 0 {
-		s.Item, s.Else = SplitElse(inner)
+func parseMRQLSlotsM(m *renderMeter, inner string) mrqlSlots {
+	var s mrqlSlots
+	s.Header, inner, s.HasHeader = extractFirstSlotM(m, inner, mrqlHeaderTag)
+	s.Footer, inner, s.HasFooter = extractFirstSlotM(m, inner, mrqlFooterTag)
+
+	if countTopLevelElseM(m, inner) > 0 {
+		s.Item, s.Else = splitElseM(m, inner)
 		s.HasElse = true
 	} else {
 		s.Item = inner
@@ -94,7 +96,11 @@ func MRQLParentBoundSlots(inner string) []string {
 // whether a pair was found. Occurrences nested inside another block shortcode
 // are skipped, mirroring SplitElse's nested-block handling.
 func extractFirstSlot(content, tag string) (slot string, rest string, found bool) {
-	openIdx, innerStart, closeIdx, closeEnd := firstSlotSpan(content, tag)
+	return extractFirstSlotM(nil, content, tag)
+}
+
+func extractFirstSlotM(m *renderMeter, content, tag string) (slot string, rest string, found bool) {
+	openIdx, innerStart, closeIdx, closeEnd := firstSlotSpanM(m, content, tag)
 	if openIdx < 0 {
 		return "", content, false
 	}
@@ -105,9 +111,13 @@ func extractFirstSlot(content, tag string) (slot string, rest string, found bool
 // opening tag, the start of its content, its closing tag, and the end of that.
 // All are -1 when there is no complete top-level pair.
 func firstSlotSpan(content, tag string) (openIdx, innerStart, closeIdx, closeEnd int) {
+	return firstSlotSpanM(nil, content, tag)
+}
+
+func firstSlotSpanM(m *renderMeter, content, tag string) (openIdx, innerStart, closeIdx, closeEnd int) {
 	openTag := "[" + tag + "]"
 	closeTag := "[/" + tag + "]"
-	spans := blockInnerSpans(content)
+	spans := blockInnerSpansM(m, content)
 
 	openIdx = -1
 	for i := 0; i+len(openTag) <= len(content); i++ {
@@ -139,22 +149,24 @@ func firstSlotSpan(content, tag string) (openIdx, innerStart, closeIdx, closeEnd
 // [header] and [footer] pair and the top-level [else]; for [conditional] every
 // top-level [else] and [elseif …] divider; for [each] and [using] the first
 // top-level [else]. Any other occurrence of the same tag stays literal text at runtime.
-func SlotTagSpans(parent, inner string) [][2]int {
+func SlotTagSpans(parent, inner string) [][2]int { return slotTagSpansM(nil, parent, inner) }
+
+func slotTagSpansM(m *renderMeter, parent, inner string) [][2]int {
 	switch parent {
 	case "mrql":
-		return mrqlSlotTagSpans(inner)
+		return mrqlSlotTagSpansM(m, inner)
 	case "conditional":
-		return branchDividerSpans(inner)
+		return branchDividerSpansM(m, inner)
 	case "each", "using":
-		if i := firstElseIndex(inner); i >= 0 {
+		if i := firstElseIndexM(m, inner); i >= 0 {
 			return [][2]int{{i, i + len(elseTag)}}
 		}
 	}
 	return nil
 }
 
-func firstElseIndex(content string) int {
-	spans := blockInnerSpans(content)
+func firstElseIndexM(m *renderMeter, content string) int {
+	spans := blockInnerSpansM(m, content)
 	for i := 0; i < len(content); i++ {
 		if content[i] == '[' && strings.HasPrefix(content[i:], elseTag) && !insideSortedSpans(i, spans) {
 			return i
@@ -166,7 +178,7 @@ func firstElseIndex(content string) int {
 // mrqlSlotTagSpans repeats parseMRQLSlots' extraction order (header, then
 // footer from what is left, then [else] from what is left), keeping a map from
 // each remainder back to offsets in inner.
-func mrqlSlotTagSpans(inner string) [][2]int {
+func mrqlSlotTagSpansM(m *renderMeter, inner string) [][2]int {
 	var out [][2]int
 	// origin[i] is the offset in inner of byte i of the current remainder.
 	origin := make([]int, len(inner)+1)
@@ -175,7 +187,7 @@ func mrqlSlotTagSpans(inner string) [][2]int {
 	}
 	rest := inner
 	for _, tag := range []string{mrqlHeaderTag, mrqlFooterTag} {
-		o, is, ci, ce := firstSlotSpan(rest, tag)
+		o, is, ci, ce := firstSlotSpanM(m, rest, tag)
 		if o < 0 {
 			continue
 		}
@@ -183,8 +195,8 @@ func mrqlSlotTagSpans(inner string) [][2]int {
 		rest = rest[:o] + rest[ce:]
 		origin = append(append([]int(nil), origin[:o]...), origin[ce:]...)
 	}
-	if countTopLevelElse(rest) > 0 {
-		if i := firstElseIndex(rest); i >= 0 {
+	if countTopLevelElseM(m, rest) > 0 {
+		if i := firstElseIndexM(m, rest); i >= 0 {
 			out = append(out, [2]int{origin[i], origin[i] + len(elseTag)})
 		}
 	}

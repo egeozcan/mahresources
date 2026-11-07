@@ -203,7 +203,9 @@ func budgetCacheKeyMetered(m *renderMeter, query string, opts QueryOptions) (str
 	if m != nil {
 		// %q writes up to four bytes per byte (\x00), so reserve the quoted
 		// worst case, not the raw length.
-		size := 4*int64(len(query)+len(opts.SavedName)) + 64
+		// The fixed part is five numbers of at most 20 digits, six separators,
+		// the booleans and four pairs of quotes: well under 160.
+		size := 4*int64(len(query)+len(opts.SavedName)) + 160
 		for k, v := range opts.Params {
 			size += 4*int64(len(k)+len(v)) + 16
 		}

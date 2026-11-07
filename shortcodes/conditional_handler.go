@@ -254,7 +254,10 @@ func RenderConditionalShortcode(reqCtx context.Context, sc Shortcode, ctx MetaSh
 	}
 
 	m := meterFrom(reqCtx)
-	branches := SplitBranches(sc.InnerContent)
+	branches := splitBranchesM(m, sc.InnerContent)
+	if m.Err() != nil {
+		return ""
+	}
 	for i, br := range branches {
 		if !m.alive() {
 			return ""

@@ -278,3 +278,115 @@ func TestLayoutHelpersStopAtTheFirstOverBudgetRow(t *testing.T) {
 		assert.Less(t, grown, int64(40<<20), "%s formatted past the first over-budget row", name)
 	}
 }
+
+// Round 3: numbers are measured. -0.0000010000000000000002 is 25 bytes.
+func TestValueBytesMeasuresNumbers(t *testing.T) {
+	for _, f := range []float64{-0.0000010000000000000002, -1.2345678901234567e-308, 1e21, 0, 12, 1.5, -123456789.123456789, 1e-7, 5e-324} {
+		real, _ := json.Marshal(f)
+		w := newSchemaWork(nil)
+		require.True(t, w.valueBytes(f))
+		assert.GreaterOrEqual(t, w.bytes, len(real), "%v", f)
+	}
+}
+
+// Repeated numeric data reaches the byte allowance without first exhausting the
+// node-work allowance: 100 properties reference one definition holding 450
+// numbers of 25 bytes (~1.1 MB once expanded).
+func TestExtractSchemaSliceByteAdmissionOnNumbers(t *testing.T) {
+	nums := make([]any, 450)
+	for i := range nums {
+		nums[i] = -0.0000010000000000000002
+	}
+	props := map[string]any{}
+	for i := 0; i < 100; i++ {
+		props[fmt.Sprintf("p%d", i)] = map[string]any{"$ref": "#/$defs/n"}
+	}
+	b, _ := json.Marshal(map[string]any{
+		"type":       "object",
+		"$defs":      map[string]any{"n": map[string]any{"type": "array", "default": nums}},
+		"properties": map[string]any{"root": map[string]any{"type": "object", "properties": props}},
+	})
+	w := newSchemaWork(nil)
+	assert.Empty(t, extractSchemaSliceW(w, string(b), "root", nil))
+	assert.ErrorIs(t, w.Err(), errSchemaTooComplex)
+	assert.Less(t, w.units, schemaWorkUnits, "must stop on bytes, not on node work")
+}
+
+// The fixed part of a cache key is measured at the numeric extrema.
+func TestCacheKeyReservationCoversNumericExtrema(t *testing.T) {
+	m := newRenderMeter(WithRenderBudget(context.Background(), RenderBudget{OutputBytes: 1 << 20, ParsedSourceBytes: 1 << 20}))
+	opts := QueryOptions{ScopeGroupID: ^uint(0), Limit: int(^uint(0) >> 1), Buckets: int(^uint(0) >> 1)}
+	key, ok := budgetCacheKeyMetered(m, "q", opts)
+	require.True(t, ok)
+	assert.GreaterOrEqual(t, m.keyWork, int64(len(key)))
+}
+
+// Round 3: bucket headers are reserved as they are written; fifty buckets with
+// a 2 MiB key value used to retain ~100 MiB of header HTML before any charge.
+func TestBucketedRenderingStopsAtTheFirstOverBudgetHeader(t *testing.T) {
+	big := strings.Repeat("k", 2<<20)
+	groups := make([]QueryResultGroup, 50)
+	for i := range groups {
+		groups[i] = QueryResultGroup{Key: map[string]any{"cat": big}, Items: []QueryResultItem{{EntityType: "group", EntityID: 1}}}
+	}
+	rctx := context.WithValue(budgeted(), renderMeterKey{}, newRenderMeter(budgeted()))
+	var out string
+	grown := allocDuring(func() { out = renderBucketed(rctx, groups, "", MetaShortcodeContext{}, nil, nil, 0) })
+	assert.Empty(t, out)
+	assert.ErrorIs(t, meterFrom(rctx).Err(), ErrRenderBudgetExceeded)
+	assert.Less(t, grown, int64(24<<20))
+
+	// Small buckets render exactly as before.
+	small := []QueryResultGroup{{Key: map[string]any{"cat": "a<b"}, Items: []QueryResultItem{{EntityType: "group", EntityID: 2}}}}
+	got := renderBucketed(context.Background(), small, "", MetaShortcodeContext{}, nil, nil, 0)
+	assert.Contains(t, got, `<span class="font-semibold text-stone-700">a&lt;b</span>`)
+	assert.Contains(t, got, "1 items")
+}
+
+func elseifBomb(dividers, attrs int) string {
+	var sb strings.Builder
+	sb.WriteString(`[conditional path="a" eq="1" mrql="type = group"]Y`)
+	for i := 0; i < dividers; i++ {
+		sb.WriteString("[elseif path=\"a\" eq=\"2\"")
+		for j := 0; j < attrs; j++ {
+			fmt.Fprintf(&sb, " b%d=1", j)
+		}
+		sb.WriteString("]Z")
+	}
+	sb.WriteString(`[/conditional]`)
+	return sb.String()
+}
+
+// Round 3: [elseif] is a divider, not a token, so its attribute maps were
+// outside the aggregate reservation. 1,500 dividers x 1,000 attributes retained
+// 1.5 million entries.
+func TestElseifAttributeMapsAreAdmittedInLintAndRender(t *testing.T) {
+	in := elseifBomb(1500, 1000)
+
+	var issues []LintIssue
+	opts := LintOptions{Known: KnownFromBuiltins(), ValidateMRQL: func(string, MRQLCheckOptions) error { return nil }}
+	grown := allocDuring(func() { issues = Lint(in, opts) })
+	require.Len(t, issues, 1)
+	assert.Contains(t, issues[0].Message, "too complex")
+	assert.Less(t, grown, int64(150<<20))
+
+	grown = allocDuring(func() {
+		_, err := ProcessChecked(WithRenderBudget(context.Background(), RenderBudget{OutputBytes: 1 << 20, ParsedSourceBytes: 16 << 20}), in, MetaShortcodeContext{Meta: []byte(`{"a":"1"}`)}, nil, nil)
+		assert.ErrorIs(t, err, ErrRenderBudgetExceeded)
+	})
+	assert.Less(t, grown, int64(150<<20))
+
+	// An ordinary [elseif] chain is unchanged.
+	got := Process(context.Background(), `[conditional path="a" eq="0"]A[elseif path="a" eq="1"]B[else]C[/conditional]`, MetaShortcodeContext{Meta: []byte(`{"a":"1"}`)}, nil, nil)
+	assert.Equal(t, "B", got)
+}
+
+// Cancellation is seen while the dividers are collected.
+func TestElseifSplitStopsOnCancellation(t *testing.T) {
+	cc := &errCountingCtx{Context: context.Background(), after: 3}
+	m := newRenderMeter(WithRenderBudget(cc, RenderBudget{OutputBytes: 1 << 20, ParsedSourceBytes: 16 << 20}))
+	inner := strings.Repeat(`x[elseif path="a" eq="1"]`, 20000)
+	splitBranchesM(m, inner)
+	assert.ErrorIs(t, m.Err(), context.Canceled)
+	assert.Less(t, cc.calls, 200)
+}

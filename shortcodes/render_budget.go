@@ -65,8 +65,8 @@ type renderMeter struct {
 	err    error
 
 	regexAllowance *RegexAllowance // matches= patterns, compiled once per render
-	keyWork int64                     // bytes of MRQL cache-key construction
-	attrs   int                       // attribute map entries retained by token collection
+	keyWork        int64           // bytes of MRQL cache-key construction
+	attrs          int             // attribute map entries retained by token collection
 }
 
 // budgetedAttrTotal is the attribute entries one limited parse may retain in

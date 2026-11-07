@@ -2,6 +2,7 @@ package shortcodes
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"unicode/utf8"
 )
@@ -189,10 +190,20 @@ func (w *schemaWork) valueBytes(v any) bool {
 				return false
 			}
 		}
+	case nil:
+		return w.chargeBytes(4) && w.step()
+	case bool:
+		return w.chargeBytes(5) && w.step()
 	default:
-		// A float64 encodes in up to 24 bytes (-1.2345678901234567e-308);
-		// true, false and null in at most 5.
-		return w.chargeBytes(24) && w.step()
+		// A number is measured, not bounded: encoding/json switches between
+		// fixed-point and exponent forms, so no short constant is safe (the
+		// 25-byte -0.0000010000000000000002 broke a 24-byte one). Digits, signs
+		// and the exponent mark need no HTML escaping.
+		encoded, err := json.Marshal(x)
+		if err != nil {
+			encoded = make([]byte, 32)
+		}
+		return w.chargeBytes(len(encoded)) && w.step()
 	}
 	return true
 }

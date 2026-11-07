@@ -183,6 +183,9 @@ func renderAggregatedTable(m *renderMeter, rows []map[string]any) string {
 		))
 	}
 	b.WriteString(`</tr></thead><tbody class="divide-y divide-stone-100">`)
+	if !c.flush(&b) {
+		return ""
+	}
 
 	for _, row := range rows {
 		if !m.tick() {
@@ -209,24 +212,42 @@ func renderAggregatedTable(m *renderMeter, rows []map[string]any) string {
 	return b.String()
 }
 
-// renderBucketHeader renders the header bar for a bucketed group.
-func renderBucketHeader(m *renderMeter, key map[string]any, itemCount int) string {
-	var parts []string
+// writeBucketHeader writes the header bar for a bucketed group straight into
+// the caller's builder, reserving each key and value before it is formatted
+// (a key value can be large) and the rest of the bar before it is written. It
+// reports false when the meter stopped the render.
+func writeBucketHeader(m *renderMeter, b *strings.Builder, c *charged, key map[string]any, itemCount int) bool {
+	const open = `<div class="bg-stone-100 px-3 py-2 flex items-center gap-2 text-xs font-mono">`
+	b.WriteString(open)
+	first := true
 	for k, v := range key {
 		if !m.tick() {
-			return ""
+			return false
 		}
-		parts = append(parts, fmt.Sprintf(
-			`<span class="text-stone-500">%s:</span> <span class="font-semibold text-stone-700">%v</span>`,
+		text, isString := v.(string)
+		if !isString {
+			text = fmt.Sprint(v)
+		}
+		// Reserve the raw sizes before escaping copies them.
+		if !m.chargeOut(int64(len(k) + len(text))) {
+			return false
+		}
+		c.n += len(k) + len(text) // already paid; flush below pays the markup and escaping growth
+		if !first {
+			b.WriteString(" ")
+		}
+		first = false
+		fmt.Fprintf(b,
+			`<span class="text-stone-500">%s:</span> <span class="font-semibold text-stone-700">%s</span>`,
 			html.EscapeString(k),
-			html.EscapeString(fmt.Sprintf("%v", v)),
-		))
+			html.EscapeString(text),
+		)
+		if !c.flush(b) {
+			return false
+		}
 	}
-	return fmt.Sprintf(
-		`<div class="bg-stone-100 px-3 py-2 flex items-center gap-2 text-xs font-mono">%s<span class="ml-auto text-stone-400">%d items</span></div>`,
-		strings.Join(parts, " "),
-		itemCount,
-	)
+	fmt.Fprintf(b, `<span class="ml-auto text-stone-400">%d items</span></div>`, itemCount)
+	return c.flush(b)
 }
 
 // extractEntityName gets the Name field from the entity via reflection, falling back to the entity type + ID.

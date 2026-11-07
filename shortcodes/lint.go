@@ -513,7 +513,7 @@ func lintText(input string, opts LintOptions) []LintIssue {
 					}
 				}
 			}
-			if inner, ok := condInner[tk.start]; ok && w.charge(1+len(inner)/8) && countTopLevelElse(inner) > 1 {
+			if inner, ok := condInner[tk.start]; ok && w.charge(1+len(inner)/8) && countTopLevelElseM(lm, inner) > 1 {
 				add(tk.start, tk.end, SeverityError,
 					"[conditional] has more than one [else] divider")
 			}
@@ -557,8 +557,8 @@ func lintText(input string, opts LintOptions) []LintIssue {
 					if !w.charge(1 + 2*len(inner)/8) {
 						return nil
 					}
-					dividers := SlotTagSpans("conditional", inner)
-					for i, branch := range SplitBranches(inner) {
+					dividers := slotTagSpansM(lm, "conditional", inner)
+					for i, branch := range splitBranchesM(lm, inner) {
 						if i == 0 || branch.IsElse {
 							continue
 						}
@@ -584,7 +584,11 @@ func lintText(input string, opts LintOptions) []LintIssue {
 		}
 	}
 
-	lintStrayCloseTags(w, input, tokens, add)
+	lintStrayCloseTags(w, lm, input, tokens, add)
+	if lm.Err() != nil {
+		w.fail()
+		return nil
+	}
 
 	// --- Loose bracket scan for shortcode-looking typos (info) ---
 	looseMatches := looseBracketPattern.FindAllStringSubmatchIndex(input, budgetedTokenCap+1)
@@ -928,8 +932,10 @@ func namedBlockSpans(tokens []token, name string) [][2]int {
 
 // countTopLevelElse counts [else] dividers in content that are not nested
 // inside a block shortcode, mirroring SplitElse's skip logic.
-func countTopLevelElse(content string) int {
-	spans := blockInnerSpans(content)
+func countTopLevelElse(content string) int { return countTopLevelElseM(nil, content) }
+
+func countTopLevelElseM(m *renderMeter, content string) int {
+	spans := blockInnerSpansM(m, content)
 	count := 0
 	for i := 0; i < len(content); {
 		if content[i] == '[' && strings.HasPrefix(content[i:], elseTag) && !insideSortedSpans(i, spans) {
@@ -965,14 +971,14 @@ func forEachConditionalQuery(attrs map[string]string, visit func(attr, suffix st
 // written [/else] is never consumed. [header] and [footer] are real pairs, but
 // only the first complete top-level pair inside an [mrql] block is read
 // (SlotTagSpans), so any other [/header] or [/footer] is literal too.
-func lintStrayCloseTags(w *schemaWork, input string, tokens []token, add func(start, end int, severity, msg string)) {
+func lintStrayCloseTags(w *schemaWork, lm *renderMeter, input string, tokens []token, add func(start, end int, severity, msg string)) {
 	consumed := map[int]bool{}
 	for _, span := range namedBlockSpans(tokens, "mrql") {
 		// SlotTagSpans copies and re-parses the body, once per nested [mrql].
 		if !w.charge(1 + (span[1]-span[0])/8) {
 			return
 		}
-		for _, s := range SlotTagSpans("mrql", input[span[0]:span[1]]) {
+		for _, s := range slotTagSpansM(lm, "mrql", input[span[0]:span[1]]) {
 			consumed[span[0]+s[0]] = true
 		}
 	}
