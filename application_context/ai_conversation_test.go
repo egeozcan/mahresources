@@ -225,7 +225,10 @@ func TestHarnessDisclosureReportsEffectiveReasoning(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(fmt.Sprintf("%s/thinking=%t", c.provider, c.thinking), func(t *testing.T) {
-			conv := NewGenerationConversationProvider(c.provider, "k", "m", nil)
+			// OpenRouter's harness preparation reads the model catalogue; the
+			// fixture answers it, so the test makes no external request.
+			rec := catalogueFixture(t, []string{"m"}, []string{"m"})
+			conv := NewGenerationConversationProvider(c.provider, "k", "m", rec.client())
 			gen := harnessGen(conv, func(cfg *TemplateGenerationConfig) {
 				cfg.Overrides = map[string]TemplateCallOverride{}
 				for _, kind := range templateKinds {
