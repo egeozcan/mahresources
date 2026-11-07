@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -33,7 +35,11 @@ type toolFixture struct {
 
 func newToolFixture(t *testing.T, mutateCfg func(*application_context.MahresourcesConfig), tweak func(*api_handlers.TemplateRunToolsConfig, *toolFixture)) *toolFixture {
 	t.Helper()
-	tc := setupTestEnvWithConfig(t, mutateCfg)
+	return newToolFixtureOn(t, setupTestEnvWithConfig(t, mutateCfg), tweak)
+}
+
+func newToolFixtureOn(t *testing.T, tc *TestContext, tweak func(*api_handlers.TemplateRunToolsConfig, *toolFixture)) *toolFixture {
+	t.Helper()
 	f := &toolFixture{tc: tc, longMeta: strings.Repeat("long-meta-value-", 40)}
 	create := func(v any) {
 		t.Helper()
@@ -56,6 +62,7 @@ func newToolFixture(t *testing.T, mutateCfg func(*application_context.Mahresourc
 
 	f.cfg = api_handlers.TemplateRunToolsConfig{
 		Start:           tc.AppCtx,
+		Principal:       auth.SystemPrincipal(),
 		EntityType:      "group",
 		CarrierID:       f.cat.ID,
 		PreviewEntityID: f.child.ID,
@@ -150,7 +157,11 @@ func TestToolResultsAreCappedAndSayWhenCut(t *testing.T) {
 }
 
 func TestToolMissingAndOutOfScopeEntitiesShareOneText(t *testing.T) {
-	f := newToolFixture(t, nil, nil)
+	checkToolScopeText(t, newToolFixture(t, nil, nil))
+}
+
+func checkToolScopeText(t *testing.T, f *toolFixture) {
+	t.Helper()
 	principal := &auth.Principal{UserID: 1, Username: "confined", Role: models.RoleEditor, ScopeGroupID: &f.child.ID}
 	scoped := newToolFixtureExec(f, func(c *api_handlers.TemplateRunToolsConfig) {
 		c.Start = f.tc.AppCtx.WithPrincipal(principal)
@@ -193,7 +204,11 @@ func newToolFixtureExec(f *toolFixture, mutate func(*api_handlers.TemplateRunToo
 }
 
 func TestToolListRelatedMembersCarriersAndTemplate(t *testing.T) {
-	f := newToolFixture(t, nil, nil)
+	checkToolReaders(t, newToolFixture(t, nil, nil))
+}
+
+func checkToolReaders(t *testing.T, f *toolFixture) {
+	t.Helper()
 	down := decode(t, payload(t, f.call(t, "list_related", map[string]any{"type": "group", "id": f.root.ID, "direction": "down"})))
 	entries := down["entries"].([]any)
 	if len(entries) != 1 || entries[0].(map[string]any)["name"] != "Child" || down["more"] != false {
@@ -217,7 +232,11 @@ func TestToolListRelatedMembersCarriersAndTemplate(t *testing.T) {
 }
 
 func TestToolListRevisionsIsBoundedOnTheSQLAndPages(t *testing.T) {
-	f := newToolFixture(t, nil, nil)
+	checkToolRevisionPaging(t, newToolFixture(t, nil, nil))
+}
+
+func checkToolRevisionPaging(t *testing.T, f *toolFixture) {
+	t.Helper()
 	for i := 0; i < 59; i++ {
 		_, err := f.tc.AppCtx.UpdateCategory(&query_models.CategoryEditor{ID: f.cat.ID, CategoryCreator: query_models.CategoryCreator{
 			Name: f.cat.Name, CustomHeader: fmt.Sprintf("h%d", i),
@@ -539,5 +558,83 @@ func TestToolParallelPreviewsStayWithinTwo(t *testing.T) {
 	}
 	if peak.Load() == 0 {
 		t.Skip("the preview path read no category, so the probe saw nothing")
+	}
+}
+
+// With the plugin opt-in on, a model-written preview runs the installed plugin
+// read-only: its writes fail, its reads render, and the opt-in off reaches no
+// plugin at all. A human preview of the same shortcode is unchanged.
+func TestToolPreviewRunsPluginsReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "wp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lua := `
+plugin = { name = "wp", version = "1.0", api_version = 1, capabilities = { "render", "db:read", "db:write", "media" } }
+function init()
+  mah.shortcode({name = "del", label = "d", render = function(ctx) mah.db.delete_note(tonumber(ctx.attrs.id)); return "DELETED" end})
+  mah.shortcode({name = "trim", label = "t", render = function(ctx) mah.media.trim(1, 0, 1); return "TRIMMED" end})
+  mah.shortcode({name = "get", label = "g", render = function(ctx) local g, err = mah.db.get_group(tonumber(ctx.attrs.id)); if not g then return "ERR:" .. tostring(err) .. " id=" .. tostring(ctx.attrs.id) end; return "GROUP:" .. g.name end})
+  mah.shortcode({name = "late", label = "l", render = function(ctx) mah.shortcode({name = "x", label = "x", render = function() return "" end}); return "REGISTERED" end})
+end
+`
+	if err := os.WriteFile(filepath.Join(dir, "wp", "plugin.lua"), []byte(lua), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := newToolFixture(t, func(c *application_context.MahresourcesConfig) { c.PluginPath = dir }, nil)
+	pm := f.tc.AppCtx.PluginManager()
+	if pm == nil {
+		t.Skip("no plugin manager in this environment")
+	}
+	if err := pm.EnablePlugin("wp"); err != nil {
+		t.Fatal(err)
+	}
+	on := newToolFixtureExec(f, func(c *api_handlers.TemplateRunToolsConfig) { c.OptIns.PreviewPlugins = true })
+	html := func(content string) string {
+		return decode(t, payload(t, on(t, "preview", map[string]any{"field": "CustomHeader", "content": content})))["html"].(string)
+	}
+	noteID := f.note.ID
+
+	if got := html(fmt.Sprintf(`[plugin:wp:get id="%d"]`, f.child.ID)); !strings.Contains(got, "GROUP:Child") {
+		t.Fatalf("a read did not render: %q", got)
+	}
+	for name, content := range map[string]string{
+		"delete":   fmt.Sprintf(`[plugin:wp:del id="%d"]`, noteID),
+		"trim":     `[plugin:wp:trim]`,
+		"register": `[plugin:wp:late]`,
+	} {
+		got := html(content)
+		for _, ran := range []string{"DELETED", "TRIMMED", "REGISTERED"} {
+			if strings.Contains(got, ran) {
+				t.Errorf("%s: the plugin ran past the guard: %q", name, got)
+			}
+		}
+	}
+	var n int64
+	f.tc.DB.Model(&models.Note{}).Where("id = ?", noteID).Count(&n)
+	if n != 1 {
+		t.Fatal("a model preview deleted the note")
+	}
+	if pm.GetPluginShortcode("plugin:wp:x") != nil {
+		t.Error("a model preview registered a shortcode")
+	}
+
+	// Opt-in off: the plugin is not reached at all.
+	off := decode(t, payload(t, f.call(t, "preview", map[string]any{"field": "CustomHeader", "content": fmt.Sprintf(`[plugin:wp:get id="%d"]`, f.child.ID)})))["html"].(string)
+	if strings.Contains(off, "GROUP:") {
+		t.Errorf("opt-in off reached the plugin: %q", off)
+	}
+
+	// A human preview of the same shortcode behaves as today: the write runs.
+	if err := f.tc.DB.Create(&models.Note{Name: "doomed"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var doomed models.Note
+	f.tc.DB.Where("name = ?", "doomed").First(&doomed)
+	rr := f.tc.MakeRequest("POST", "/v1/category/previewTemplate", map[string]any{
+		"entityId": f.child.ID, "content": fmt.Sprintf(`[plugin:wp:del id="%d"]`, doomed.ID),
+	})
+	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "DELETED") {
+		t.Fatalf("human preview: %d %s", rr.Code, rr.Body.String())
 	}
 }
