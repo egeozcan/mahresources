@@ -48,6 +48,10 @@ type TemplateTransport struct {
 	ContentType    string `json:"contentType"`
 	Authorization  string `json:"authorization"`
 	APIVersion     string `json:"apiVersion,omitempty"`
+	// Options names request options a user would want to know about and that
+	// the hash must cover (routing, caching, retention), separated by "; ". A
+	// string, not a slice, so TemplateTransport stays comparable. Harness mode only.
+	Options string `json:"options,omitempty"`
 }
 
 // templateTransport is the legacy DeepSeek transport metadata.

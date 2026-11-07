@@ -71,7 +71,7 @@ func (p *generationMRQLDraftProvider) GenerateDraft(ctx context.Context, prompt 
 		return providerMRQLDraft{}, err
 	}
 	if resp.FinishReason != "stop" {
-		return providerMRQLDraft{}, errors.New("provider did not finish cleanly")
+		return providerMRQLDraft{}, newGenerationFailure("provider did not finish cleanly", GenerationErrorClassDecode, 0)
 	}
 	// Drafts are one object with the documented keys, not markdown, extra
 	// objects or a provider's free-form explanation of an error.
@@ -79,10 +79,10 @@ func (p *generationMRQLDraftProvider) GenerateDraft(ctx context.Context, prompt 
 	decoder := json.NewDecoder(strings.NewReader(resp.Content))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&draft); err != nil || draft == nil {
-		return providerMRQLDraft{}, errors.New("provider returned invalid draft JSON")
+		return providerMRQLDraft{}, newGenerationFailure("provider returned invalid draft JSON", GenerationErrorClassDecode, 0)
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
-		return providerMRQLDraft{}, errors.New("provider returned invalid draft JSON")
+		return providerMRQLDraft{}, newGenerationFailure("provider returned invalid draft JSON", GenerationErrorClassDecode, 0)
 	}
 	return *draft, nil
 }
@@ -177,18 +177,18 @@ func (p *generationProviderClient) generate(ctx context.Context, req TemplateDra
 			} `json:"completion_tokens_details"`
 		} `json:"usage"`
 	}
-	if err := p.post(ctx, body, &decoded); err != nil {
+	if err := p.post(ctx, p.endpoint, body, &decoded); err != nil {
 		return TemplateDraftResponse{}, err
 	}
 	if len(decoded.Error) > 0 && string(decoded.Error) != "null" {
-		return TemplateDraftResponse{}, errors.New("provider returned an error")
+		return TemplateDraftResponse{}, newGenerationFailure("provider returned an error", GenerationErrorClassDecode, 0)
 	}
 	if len(decoded.Choices) == 0 {
-		return TemplateDraftResponse{}, errors.New("provider returned no choices")
+		return TemplateDraftResponse{}, newGenerationFailure("provider returned no choices", GenerationErrorClassDecode, 0)
 	}
 	choice := decoded.Choices[0]
 	if choice.Message.Refusal != "" {
-		return TemplateDraftResponse{}, errors.New("provider refused the request")
+		return TemplateDraftResponse{}, newGenerationFailure("provider refused the request", GenerationErrorClassRefusal, 0)
 	}
 	content, err := generationChatContent(choice.Message.Content)
 	if err != nil {
@@ -220,12 +220,12 @@ func generationChatContent(raw json.RawMessage) (string, error) {
 		Text string `json:"text"`
 	}
 	if err := json.Unmarshal(raw, &parts); err != nil {
-		return "", errors.New("provider returned invalid message content")
+		return "", newGenerationFailure("provider returned invalid message content", GenerationErrorClassDecode, 0)
 	}
 	var out strings.Builder
 	for _, part := range parts {
 		if part.Type != "text" {
-			return "", errors.New("provider returned non-text content")
+			return "", newGenerationFailure("provider returned non-text content", GenerationErrorClassDecode, 0)
 		}
 		out.WriteString(part.Text)
 	}
@@ -256,11 +256,11 @@ func (p *generationProviderClient) generateAnthropic(ctx context.Context, req Te
 			} `json:"output_tokens_details"`
 		} `json:"usage"`
 	}
-	if err := p.post(ctx, body, &decoded); err != nil {
+	if err := p.post(ctx, p.endpoint, body, &decoded); err != nil {
 		return TemplateDraftResponse{}, err
 	}
 	if decoded.StopReason == "refusal" || decoded.StopDetails.Type == "refusal" {
-		return TemplateDraftResponse{}, errors.New("provider refused the request")
+		return TemplateDraftResponse{}, newGenerationFailure("provider refused the request", GenerationErrorClassRefusal, 0)
 	}
 	finish := ""
 	switch decoded.StopReason {
@@ -269,7 +269,7 @@ func (p *generationProviderClient) generateAnthropic(ctx context.Context, req Te
 	case "max_tokens", "model_context_window_exceeded":
 		finish = "length"
 	default:
-		return TemplateDraftResponse{}, errors.New("provider did not finish cleanly")
+		return TemplateDraftResponse{}, newGenerationFailure("provider did not finish cleanly", GenerationErrorClassDecode, 0)
 	}
 	var content strings.Builder
 	for _, block := range decoded.Content {
@@ -279,7 +279,7 @@ func (p *generationProviderClient) generateAnthropic(ctx context.Context, req Te
 		case "thinking", "redacted_thinking":
 			// Internal reasoning is not part of the JSON draft.
 		default:
-			return TemplateDraftResponse{}, errors.New("provider returned non-text content")
+			return TemplateDraftResponse{}, newGenerationFailure("provider returned non-text content", GenerationErrorClassDecode, 0)
 		}
 	}
 	u := decoded.Usage
@@ -295,65 +295,115 @@ func generationDraftResponse(content, finish string, usage TemplateTokenUsage) (
 		finish = "stop"
 	case "length":
 	default:
-		return TemplateDraftResponse{}, errors.New("provider did not finish cleanly")
+		return TemplateDraftResponse{}, newGenerationFailure("provider did not finish cleanly", GenerationErrorClassDecode, 0)
 	}
 	content = strings.TrimSpace(content)
 	if content == "" && finish != "length" {
-		return TemplateDraftResponse{}, errors.New("provider returned empty content")
+		return TemplateDraftResponse{}, newGenerationFailure("provider returned empty content", GenerationErrorClassDecode, 0)
 	}
 	return TemplateDraftResponse{Content: content, FinishReason: finish, Usage: usage}, nil
 }
 
-func (p *generationProviderClient) post(ctx context.Context, body any, out any) error {
+// generationFailure is a provider failure whose message is the sanitized text
+// callers already see, and whose typed form (GenerationProviderError) the eval
+// recorder reads with errors.As. A context cause, when there is one, stays
+// reachable with errors.Is.
+type generationFailure struct {
+	message string
+	typed   *GenerationProviderError
+	cause   error
+}
+
+func (e *generationFailure) Error() string { return e.message }
+
+func (e *generationFailure) Unwrap() []error {
+	if e.cause != nil {
+		return []error{e.cause, e.typed}
+	}
+	return []error{e.typed}
+}
+
+func newGenerationFailure(message, class string, status int) error {
+	return &generationFailure{message: message, typed: &GenerationProviderError{Status: status, Class: class}}
+}
+
+// post sends one JSON request to endpoint. The endpoint is per call so one
+// client can serve a provider's two APIs (OpenAI's Chat Completions for classic
+// mode and Responses for harness mode).
+func (p *generationProviderClient) post(ctx context.Context, endpoint string, body any, out any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return errors.New("provider request encoding failed")
+		return newGenerationFailure("provider request encoding failed", GenerationErrorClassDecode, 0)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, bytes.NewReader(payload))
+	return p.postPayload(ctx, endpoint, payload, out)
+}
+
+// postPayload sends an already-encoded body (see rawSplicer).
+func (p *generationProviderClient) postPayload(ctx context.Context, endpoint string, payload []byte, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return errors.New("provider request is invalid")
+		return newGenerationFailure("provider request is invalid", GenerationErrorClassTransport, 0)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+p.apiKey)
 	if p.provider == "anthropic" {
 		req.Header.Set("Anthropic-Version", AnthropicGenerationAPIVersion)
 	}
+	return p.finish(ctx, req, out)
+}
+
+// Neither arbitrary transport error strings nor JSON parse errors are safe to
+// expose: they may contain request headers, provider content or redirect URLs.
+func generationTransportError(ctx context.Context, err error) error {
+	typed := func(cause error) error {
+		return &generationFailure{message: cause.Error(), typed: &GenerationProviderError{Class: GenerationErrorClassTransport}, cause: cause}
+	}
+	if cause := ctx.Err(); cause != nil {
+		return typed(cause)
+	}
+	if errors.Is(err, context.Canceled) {
+		return typed(context.Canceled)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return typed(context.DeadlineExceeded)
+	}
+	var timeout net.Error
+	if errors.As(err, &timeout) && timeout.Timeout() {
+		return typed(context.DeadlineExceeded)
+	}
+	return newGenerationFailure("provider request failed", GenerationErrorClassTransport, 0)
+}
+
+// get fetches a public JSON document with the same redirect protection, size
+// cap and sanitized errors as post, and without credentials.
+func (p *generationProviderClient) get(ctx context.Context, url string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return newGenerationFailure("provider request is invalid", GenerationErrorClassTransport, 0)
+	}
+	return p.finish(ctx, req, out)
+}
+
+// finish sends req and decodes the reply under the shared limits: redirects are
+// refused, the body is capped, and every failure is typed and sanitized.
+func (p *generationProviderClient) finish(ctx context.Context, req *http.Request, out any) error {
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return generationTransportError(ctx, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("provider returned HTTP %d", resp.StatusCode)
+		return newGenerationFailure(fmt.Sprintf("provider returned HTTP %d", resp.StatusCode), GenerationErrorClassHTTP, resp.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxGenerationProviderResponseBytes+1))
 	if err != nil {
 		return generationTransportError(ctx, err)
 	}
 	if len(data) > maxGenerationProviderResponseBytes {
-		return errors.New("provider response exceeded the size limit")
+		return newGenerationFailure("provider response exceeded the size limit", GenerationErrorClassSize, 0)
 	}
 	if err := json.Unmarshal(data, out); err != nil {
-		return errors.New("provider returned invalid response JSON")
+		return newGenerationFailure("provider returned invalid response JSON", GenerationErrorClassDecode, 0)
 	}
 	return nil
-}
-
-// Neither arbitrary transport error strings nor JSON parse errors are safe to
-// expose: they may contain request headers, provider content or redirect URLs.
-func generationTransportError(ctx context.Context, err error) error {
-	if cause := ctx.Err(); cause != nil {
-		return cause
-	}
-	if errors.Is(err, context.Canceled) {
-		return context.Canceled
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return context.DeadlineExceeded
-	}
-	var timeout net.Error
-	if errors.As(err, &timeout) && timeout.Timeout() {
-		return context.DeadlineExceeded
-	}
-	return errors.New("provider request failed")
 }
