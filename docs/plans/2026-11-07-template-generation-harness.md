@@ -95,17 +95,28 @@ type TemplateConversationProvider interface {
     // says so. An error means "unknown" and does not refuse the run.
     SupportsTools(ctx context.Context, model string) (bool, error)
     // HistoryRewritable reports whether earlier messages may be edited
-    // (stubbed) between Turns. False for Anthropic, whose thinking signatures
-    // are bound to every preceding message, and for OpenAI Responses, whose
-    // encrypted reasoning items are not documented either way.
-    HistoryRewritable() bool
+    // (stubbed) between Turns for this model. True only for DeepSeek, and for
+    // OpenRouter models under the "deepseek/" prefix. False for Anthropic,
+    // whose thinking signatures are bound to every preceding message, for
+    // OpenAI Responses, whose encrypted reasoning items are not documented
+    // either way, and for every other OpenRouter model, which may be a Claude
+    // model replaying signed reasoning through reasoning_details.
+    HistoryRewritable(model string) bool
+}
+// ConversationUsage is the provider's accounting for one Turn. Each field is
+// nil when the provider did not report it, so a missing value is never read
+// as zero. Classic mode keeps TemplateTokenUsage.
+type ConversationUsage struct {
+    Prompt, Completion, Reasoning, CacheHit, CacheMiss *int
 }
 ```
+
+`ConversationResponse.Usage` is a `ConversationUsage`. Missing `Prompt` falls back to the Turn's prompt estimate; missing `Completion` to the Turn's full `max_tokens`; missing cache fields count the whole prompt as uncached.
 
 Three wire adapters on the existing `generationProviderClient` (redirect blocking, the 4 MiB response cap and sanitized errors are kept; `post` takes the endpoint per call so one client serves both OpenAI endpoints):
 
 - **Chat Completions with tools** (DeepSeek, OpenRouter): `tools[].function`, `tool_choice: "auto"`, assistant `tool_calls`, one `role: tool` message per result with `tool_call_id`. No `response_format`. `Replay` is the whole assistant message object, which carries DeepSeek's `reasoning_content` and OpenRouter's `reasoning_details`. DeepSeek's `thinking` field keeps its current meaning. OpenRouter requests add `provider: {"require_parameters": true}` so they route only to endpoints that accept `tools`.
-- **OpenAI Responses**: `instructions`, `input` items, `tools[]` with `type: "function"`, `store: false`, `include: ["reasoning.encrypted_content"]`, `max_output_tokens`. `Replay` is the response's `output` array, resent as input items; results are `function_call_output` items. `status: "incomplete"` with reason `max_output_tokens` maps to `length`.
+- **OpenAI Responses**: `instructions`, `input` items, `tools[]` with `type: "function"` and an explicit `strict: false` (Responses otherwise normalizes schemas to strict mode, which would make every optional argument required and break the omitted-`content` rule and the `submit.fields` map), `store: false`, `include: ["reasoning.encrypted_content"]`, `max_output_tokens`. `Replay` is the response's `output` array, resent as input items; results are `function_call_output` items. `status: "incomplete"` with reason `max_output_tokens` maps to `length`.
 - **Anthropic Messages**: `tools[].input_schema`, `tool_choice: {"type": "auto"}`, `tool_use` blocks, one user message holding every `tool_result` block, a top-level `cache_control: {"type": "ephemeral"}` (automatic caching). `Replay` is the raw `content` array, including thinking blocks and their signatures. `stop_reason: tool_use` maps to `tool_calls`. Headers stay as they are (Bearer and `2026-10-21` are current; Appendix A).
 
 A provider error, a refusal, an unknown finish value, or a structurally invalid reply (a tool call with no ID or name) is an error, as today. A call whose arguments are not a JSON object is returned with `Malformed`. On `length`, a call whose arguments did not arrive whole is returned with `Incomplete`. Neither is an adapter error. Missing usage fields are reported as missing (pointer fields), not as zero, so the loop can fall back to its own estimate (section 3).
@@ -140,8 +151,8 @@ The credential check needs `resolvePrincipal` and `sameAccess`, which are privat
 
 `server/api_handlers/template_run_tools.go` implements the executor:
 
-- **Live access.** `CheckAccess` re-resolves the credential when auth is enabled, compares `sameAccess`, and rebinds the principal (and so the subtree allow-list). A changed identity is not adopted; the run ends. The loop calls it before each Turn's provider call, again after the provider returns and before any Tool runs, and again before a Draft or transcript is released on any exit path (section 3).
-- **Cancellation reaches the DB.** A new method `WithParentContext(ctx) *MahresourcesContext` returns a copy whose `db` handle is rebased onto `ctx`, keeping the scope filter and acting user, as `WithRequest`'s rebase branch does (`application_context/context.go:1368-1390`). Credential resolution and the principal rebinding in `CheckAccess` run on such a copy under the run context, and the rebinding uses the context-aware `withPrincipalWithin` path (`application_context/scoping.go:120-131`), not `WithPrincipal`'s `context.Background()`. Each Tool call runs on a copy rebased onto its own context. Cancel, the run deadline and the per-Tool timeout therefore cancel every query.
+- **Live access.** `CheckAccess` re-resolves the credential when auth is enabled, compares `sameAccess`, and rebinds the principal (and so the subtree allow-list). It also compares a fingerprint (sha256 of the sorted allowed group IDs) with the one taken when the run started, because `sameAccess` compares only user, role, superuser and scope root (`server/request_scope.go:112-127`) and so misses a group moved out of the subtree. Any change to either, a shrink or a growth, ends the run: earlier results already in the conversation may hold data the account can no longer read. A changed identity is never adopted. The loop calls it before each Turn's provider call, again after the provider returns and before any Tool runs, and again before a Draft or transcript is released on any exit path (section 3).
+- **Cancellation reaches the DB.** A new method `WithParentContext(ctx) *MahresourcesContext` returns a copy whose `db` handle is rebased onto `ctx`, keeping the scope filter and acting user, as `WithRequest`'s rebase branch does (`application_context/context.go:1368-1390`). Credential resolution and the principal rebinding in `CheckAccess` run on such a copy under the context they are given. The rebinding uses a new exported `WithPrincipalContext(ctx, p) (*MahresourcesContext, error)`, implemented through the private `withPrincipalWithin` (`application_context/scoping.go:120-131`), not `WithPrincipal`'s `context.Background()`. The check before releasing a result runs under the request context with a 5 s timeout, not the run context, which may already have reached its deadline; client cancellation still cancels it. Each Tool call runs on a copy rebased onto its own context. Cancel, the run deadline and the per-Tool timeout therefore cancel every query.
 - **Panics are contained.** Each Tool call runs under a `recover` that turns a panic into a sanitized error result ("the Tool failed") and logs the stack. A panic never reaches the run or the process.
 - **Scope.** Entity reads use the same `Find`/`Pluck`/`Count` readers as the HTTP routes, never `Scan`. Carriers and partials are global tables readable by every role, as their GET routes are. Revisions on a carrier other than the one being edited check edit rights with `requireTemplateCarrierEdit` (`application_context/template_revision_context.go`).
 - **Refusals are results, not failures.** A missing or out-of-scope entity is one error text for both cases, so scope cannot be probed. "Not allowed" for a revision read. Neither ends the run.
@@ -169,13 +180,14 @@ The credential check needs `resolvePrincipal` and `sameAccess`, which are privat
 
 `list_members` (added during planning) exists because `list_carriers` finds carriers but not their members, and the samples are only five of them.
 
-**One validation contract.** `lint`, `submit` and the final Draft all use one harness validator: `validateTemplateContent`'s options plus `PartialExists`, which the handler supplies through a new `TemplateGenerationInput.PartialExists` seam. Classic mode keeps its current validator unchanged.
+**One validation contract.** `lint`, `submit` and the final Draft all use one harness validator: `validateTemplateContent`'s options plus a partial-existence check. The handler supplies it through a new `TemplateGenerationInput.PartialExists func(ctx context.Context, name string) bool` seam, built on `WithParentContext(ctx)` per call, so a blocked partial lookup is cancelled by the Tool timeout or the run deadline. Each validation wraps it in the `func(string) bool` the linter takes, closing over that validation's context. Classic mode keeps its current validator unchanged.
 
 **Preview and lint work is bounded.**
 - `preview` builds the meta context with `BuildMetaContextForEntity` like the preview route, and previews `ListHeader`/`ListFooter` fields against the carrier.
 - Source limits: the `content` and `css` of `lint`, `preview` and `submit` are each at most `MaxTemplateGeneratedContentLength` bytes and 2,000 shortcode tokens; over either is an error result before parsing.
 - Rendering runs with a new render budget on the request context (`shortcodes.WithRenderBudget(ctx, 256 KiB output, 512 KiB parsed source)`). Parsed source counts every partial and plugin output parsed during the render. `processWithDepth`, `[each]` and every other loop that appends output check the budget before appending, and check `ctx.Err()` on every iteration. The parser's token loop checks `ctx.Err()` too. Exhausting any of these ends the render with `shortcodes.ErrRenderBudgetExceeded`, which the Tool reports as an error result.
 - Pages and the preview route set no budget, so they behave as today apart from the cancellation checks.
+- Schema expansion is bounded. `[meta]` resolves the MetaSchema through `inlineRefsDeep` (`shortcodes/meta_handler.go:345-396`), which follows `$ref` with no cycle detection: a schema whose `$defs.node.child` refers to `node` passes `ValidateMetaSchema` and then overflows the stack, a fatal error no `recover` can catch (reproduced in review round 3). The fix tracks the refs on the current expansion path, stops at a repeated ref, caps expansion at 32 levels and 10,000 nodes, and checks `ctx.Err()`. This is an existing crash on every page that renders `[meta]`, fixed at the root.
 - `[property]` refuses unexported struct fields (`shortcodes/property_handler.go:83-87` reaches them through `FieldByName`, and `formatFieldValue` then panics in `Interface()`; reproduced with `[property path="CreatedAt.wall"]`). This is an existing bug in the preview route and pages, fixed at the root.
 - With the MRQL opt-in off, the executor returns a new `shortcodes.ErrQueryUnavailable`. `RenderMRQLShortcode` renders that as an inert comment carrying the static check verdict. This also applies to `[mrql]` reached through partials, conditionals, `[using]`, result templates and CSS, since all of them go through the one executor.
 - With the plugin opt-in off, the plugin renderer is nil, which renders the existing "plugin unavailable" comment. With it on, it is `previewPluginRenderer`, including its scoped-principal check.
@@ -231,7 +243,7 @@ Within harness mode, the system prompt, the Tool list and the Seed stay byte-sta
    - **Plain text, no tool call:** "call submit to return your draft" is appended once. A second time, or on a final Turn, ends the run (`no_tool_call`).
 7. The run ends after a Turn in which a `done: true` submit committed (`done`), and after every final Turn whatever it returned (`turn_cap`, `finish_now`, `deadline` or `budget`).
 
-**Stubbing.** When the provider's `HistoryRewritable()` is true (DeepSeek, OpenRouter), Tool results from Turns older than the last 3 are replaced, before each request, by their stub ("preview of CustomHeader against Group #12, 14 KiB, superseded"). A stub is fixed once written, so the history changes once per result and the cache misses only from the oldest newly stubbed message. For Anthropic and OpenAI Responses, history is never rewritten: Anthropic binds each thinking signature to every preceding message, and an edited prefix fails with HTTP 400. Their runs are bounded by the budget alone. The transcript records the full text and, where it applies, the Turn from which it was stubbed.
+**Stubbing.** When `HistoryRewritable(model)` is true (DeepSeek, and OpenRouter `deepseek/` models), Tool results from Turns older than the last 3 are replaced, before each request, by their stub ("preview of CustomHeader against Group #12, 14 KiB, superseded"). A stub is fixed once written, so the history changes once per result and the cache misses only from the oldest newly stubbed message. For every other provider and model, history is never rewritten: Anthropic binds each thinking signature to every preceding message, and an edited prefix fails with HTTP 400. Their runs are bounded by the budget alone. The transcript records the full text and, where it applies, the Turn from which it was stubbed.
 
 **Result.** It is built from the last committed submission of each field, re-linted with `validateTemplateContent`, with the oversize, half-pair and `CustomCSS` merge rules. If nothing was submitted, the run is an error (`ErrTemplateGenerationProvider`, "the model returned no draft"). A provider error or timeout after a submission returns the Draft with a warning issue and reason `provider_error` or `deadline`. With none, it is an error, as today.
 
@@ -242,7 +254,7 @@ Within harness mode, the system prompt, the Tool list and the Seed stay byte-sta
   - `text` is the exact transmitted form (after cap and fence) of each message sent and each provider reply.
   - Provider `Replay` payloads are not shown. They are model output (reasoning and signatures) and carry no server data.
 
-Classic mode leaves both empty. Cancellation and access changes return an error, not a result.
+Classic mode leaves both empty. A run that fails after starting returns a `*TemplateRunError{Err, StopReason, Transcript}`, which wraps the usual sentinel error so the handler's status mapping is unchanged and carries the transcript so far. An access change returns a `TemplateRunError` with no transcript, and cancellation returns a plain context error.
 
 **Events.** The loop takes an optional `TemplateRunSink` with `TurnStarted`, `ToolFinished`, `Submitted` and `Usage`. Calls from parallel Tools are concurrent, so the sink must be safe for concurrent use; the SSE sink only enqueues (section 5).
 
@@ -277,8 +289,8 @@ Classic mode leaves both empty. Cancellation and access changes return an error,
   - `usage`: budget used
   - `result`: the full `TemplateGenerationResult`
   - `error`: message, plus the transcript so far unless the access changed
-- **One writer.** A single goroutine owns every write and flush, reading a bounded channel (64 events) and a 15 s heartbeat ticker, as `job_event_handlers.go:180-296` does. Progress events are droppable: the sink's enqueue gives up when the run context ends or the channel is full. A write error cancels the run.
-- **Terminal delivery is separate.** The run's result or error is not sent through the progress channel. When the generator returns, the handler stops accepting progress events, drains what is queued, and writes exactly one `result` or `error` event under the request's own lifetime with a 10 s write deadline. A Draft recovered after the run deadline is therefore delivered while the client is still connected.
+- **One writer.** A single goroutine owns every write and flush, reading a bounded channel (64 events) and a 15 s heartbeat ticker, as `job_event_handlers.go:180-296` does. Progress events are droppable: the sink's enqueue gives up when the run context ends or the channel is full. Before every frame and every flush (heartbeats and draining included), the writer sets a 10 s write deadline through `http.ResponseController`, because the server's `WriteTimeout` is 45 minutes (`server/server.go:97-102`). A write or flush error, a timeout included, cancels the run and stops the writer.
+- **Terminal delivery is separate.** The run's result or error is not sent through the progress channel. When the generator returns, the handler stops accepting progress events, drains what is queued, and writes exactly one `result` or `error` event under the request's own lifetime, with the same per-frame write deadline. The `error` event takes its transcript from `TemplateRunError`, never from progress events. A Draft recovered after the run deadline is therefore delivered while the client is still connected.
 - **Cancel.** A client abort cancels the request context, which is the parent of the run context, so the in-flight provider call and every Tool's DB read are cancelled (section 2).
 - OpenAPI entries for the event stream and the finish route; `go run ./cmd/openapi-gen` regenerated.
 
@@ -318,7 +330,7 @@ New runtime entries in the "ai" group, each with a control in the AI settings pa
 
 ### 8. Eval (`internal/templateeval`, `server/api_tests/template_generation_eval_test.go`)
 
-- **Recorder.** It records normalized `ConversationRequest`/`ConversationResponse` pairs (Turns, Tool calls, usage, stop reason) at the conversation seam, not provider wire bytes, so it is provider-independent. Classic recording stays as it is. Normal-suite fixtures check token and cache accounting for each of the four adapters.
+- **Recorder.** It records at the provider-neutral seams, not the wire: `ConversationRequest`/`ConversationResponse` pairs (Turns, Tool calls, usage, stop reason) in harness mode, and `TemplateDraftRequest`/`TemplateDraftResponse` pairs in classic mode, keeping the classic report fields. Today's recorder decodes DeepSeek-shaped wire bytes (`internal/templateeval/recorder.go:91-166`) and loses evidence for OpenAI, OpenRouter and Anthropic in either mode. Normal-suite fixtures check captured content, finish reasons, and token and cache totals for every adapter in both modes.
 - **Scorer.** `ScorerVersion` is bumped and the scorer becomes mode-aware:
   - Draft quality checks score the final Draft.
   - A `length` reply on an intermediate Turn followed by a complete submission is "recovered", not truncated.
@@ -333,8 +345,9 @@ New runtime entries in the "ai" group, each with a control in the AI settings pa
 ## Phases and lanes
 
 Phase 0 (one commit, before any lane) settles every shared interface, with stubs that compile:
-- the section 1 types and `TemplateConversationProvider`
-- `TemplateRunEnv`, `TemplateToolExecutor`, `TemplateToolInvocation`/`Output`, `TemplateRunSink`, the transcript record, stop reasons, `ErrTemplateRunAccessChanged`
+- the section 1 types, `ConversationUsage` and `TemplateConversationProvider`
+- `TemplateRunEnv`, `TemplateToolExecutor`, `TemplateToolInvocation`/`Output`, `TemplateRunSink`, the transcript record, stop reasons, `ErrTemplateRunAccessChanged`, `TemplateRunError`
+- `MahresourcesContext.WithParentContext` and `WithPrincipalContext`, implemented, with the real server-built access factory compiled against them
 - the Tool catalogue's specs (names, descriptions, parameter schemas), which lanes B and C both read
 - the new `TemplateGenerationInput` fields (`Run`, `PartialExists`, starting points) and result fields
 - the `DiscloseTemplate(ctx, …)` signature change with every caller and fake updated
@@ -369,7 +382,13 @@ A, B and C run in parallel in this worktree with disjoint files, each staging ex
 - **Starting points:** a run with automatically chosen samples and no IDs in the request text can `get_entity` each sample by the IDs in the Seed.
 - **One validator:** a missing `[partial]` gives the same issue from `lint`, from `submit` and in the final Draft.
 - **Adapters to loop:** a `length` reply with only an incomplete call, and one with a complete call followed by an incomplete one; a missing usage block charges the estimate.
-- **Anthropic history:** a run long enough to pass 3 Turns sends every earlier message byte-identical (no stubbing).
+- **Anthropic history:** a run long enough to pass 3 Turns sends every earlier message byte-identical (no stubbing), natively and through OpenRouter with a non-DeepSeek model and `reasoning_details`.
+- **Schema expansion:** a `[meta]` preview over a self-referencing `$ref` schema, and over a large acyclic one, returns within the bounds with both opt-ins off; the same schema on a group page no longer crashes the process.
+- **Access lifetimes:** a run with auth enabled that recovers a Draft after its deadline passes the final access check under the request context; with the account revoked just before that check, nothing is released.
+- **Slow client:** a client that stops reading makes the writer time out within the write deadline, which cancels the run and frees the registry entry.
+- **Failure transcript:** a provider failure after Tool Turns but before any submission delivers the transcript in the `error` event with progress events deliberately dropped.
+- **Partial lookups:** a blocked partial lookup during `lint`, `submit` and final validation is cancelled by the Tool timeout and the run deadline.
+- **Responses schemas:** wire fixtures with omitted `content`, omitted revision carrier arguments and a partial `submit.fields` map carry `strict: false`.
 - **Terminal delivery:** over a real stream, a submission followed by run-deadline expiry delivers the recovered Draft as the `result` event.
 - **Dry-run lookup:** a stalled OpenRouter metadata lookup times out to "unknown", a cancelled dry run cancels it, and a second dry run uses the cache.
 - **Loop:**
