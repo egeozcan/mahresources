@@ -224,6 +224,45 @@ describe('the JSON fallback of a harness run', () => {
     expect(host.run.records).toHaveLength(1);
   });
 
+  it('slot host: a transcript-bearing failure (504) ends the panel as an error and keeps the record', async () => {
+    const { host, store } = setup();
+    serve(() => harnessDisclosure('h0'), async () => json({ error: 'deadline passed', stopReason: 'deadline', transcript: body.transcript }, 504));
+    const run = host.generateFromPrompt();
+    await vi.waitFor(() => expect(store.isOpen).toBe(true));
+    store.send();
+    await run;
+    expect(host.run.status).toBe('error');
+    expect(host.run.error).toBe('deadline passed');
+    expect(host.run.stopReason).toBe('deadline');
+    expect(host.run.records).toHaveLength(1);
+    expect(host.generationError).toBe('deadline passed');
+  });
+
+  it('bundle host: a transcript-bearing failure (502) does the same', async () => {
+    const { host, store } = setup('bundle');
+    const notify = vi.fn();
+    host.notify = notify;
+    serve(() => harnessDisclosure('h0'), async () => json({ error: 'bad gateway', stopReason: 'provider_error', transcript: body.transcript }, 502));
+    const run = host.generateBundle();
+    await vi.waitFor(() => expect(store.isOpen).toBe(true));
+    store.send();
+    await run;
+    expect(host.run.status).toBe('error');
+    expect(host.run.error).toBe('bad gateway');
+    expect(host.run.records).toHaveLength(1);
+    expect(notify).toHaveBeenCalledWith('bad gateway', 'warn');
+  });
+
+  it('a 409 keeps the panel absent even with a stop reason', async () => {
+    const { host, store } = setup();
+    serve(() => harnessDisclosure('h0'), async () => json({ error: 'changed', stopReason: 'x' }, 409));
+    const run = host.generateFromPrompt();
+    await vi.waitFor(() => expect(store.isOpen).toBe(true));
+    store.send();
+    await run;
+    expect(host.run).toBeNull();
+  });
+
   it('a pre-stream refusal or 409 leaves no panel', async () => {
     const { host, store } = setup();
     serve(() => harnessDisclosure('h0'), async () => json({ error: 'busy' }, 429));
