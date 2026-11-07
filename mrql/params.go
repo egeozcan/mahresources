@@ -85,6 +85,9 @@ func BindParams(q *Query, params map[string]any) error {
 const (
 	MaxParamCount = 1000
 	MaxParamBytes = 4 << 20
+	// MaxParamNameBytes bounds a supplied name, so a diagnostic that lists
+	// names stays small. Names in a query are bounded by the query itself.
+	MaxParamNameBytes = 128
 	maxParamNames = 10 // names listed in a missing/unknown diagnostic
 )
 
@@ -100,7 +103,11 @@ func BindParamsContext(ctx context.Context, q *Query, params map[string]any) err
 		return fmt.Errorf("too many parameters: %d supplied, at most %d are allowed", len(params), MaxParamCount)
 	}
 	total := 0
-	for _, v := range params {
+	for k, v := range params {
+		if len(k) > MaxParamNameBytes {
+			return fmt.Errorf("parameter name %q... is longer than %d bytes", k[:32], MaxParamNameBytes)
+		}
+		total += len(k)
 		switch x := v.(type) {
 		case string:
 			total += len(x)
@@ -219,6 +226,9 @@ func dollarize(names []string) []string {
 	}
 	out := make([]string, len(names), len(names)+1)
 	for i, n := range names {
+		if len(n) > MaxParamNameBytes {
+			n = n[:MaxParamNameBytes] + "..."
+		}
 		out[i] = "$" + n
 	}
 	if more > 0 {
