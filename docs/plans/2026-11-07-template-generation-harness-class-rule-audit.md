@@ -91,7 +91,7 @@ Items 45 to 53 and 55 to 58 remain **open as library-internal work**: queue and 
 ## Not covered, with reasons
 
 - Plugin shortcode output is trusted code outside the bound (plan section 2); only its returned source is charged to the parsed-source budget.
-- The unbudgeted `Lint` entry (classic generation, the lint endpoint) keeps its source-size behavior and gains the work allowance and optional context.
+- Lint contract: every `Lint` and `LintMetaSchema` caller (classic generation, the lint endpoint, the harness) gets the 1 MiB `MaxLintSourceBytes` cap, checked before any other pass, plus the work allowance and the optional `Context`. Render budgets (`WithRenderBudget`) stay opt-in; an unbudgeted render still checks the context and the schema, regex and parser caps that do not depend on a budget.
 
 ## Sweep of regular expression and parser call sites (round 3)
 

@@ -66,3 +66,11 @@ func TestCountTopLevelElseNested(t *testing.T) {
 	assert.Equal(t, 1, countTopLevelElse(big))
 	_ = fmt.Sprint
 }
+
+// Round 5: the size cap is checked before TrimSpace reads the text.
+func TestLintMetaSchemaChecksTheCapBeforeTrimming(t *testing.T) {
+	issues := LintMetaSchema(strings.Repeat(" ", MaxLintSourceBytes+1), MetaSchemaLintOptions{})
+	require.Len(t, issues, 1)
+	assert.Contains(t, issues[0].Message, "too large")
+	assert.Nil(t, LintMetaSchema("   ", MetaSchemaLintOptions{}))
+}

@@ -149,11 +149,13 @@ var (
 // already compile; text that is not a JSON document gives no issues, because
 // the compile step reports that.
 func LintMetaSchema(schema string, opts MetaSchemaLintOptions) []LintIssue {
-	if strings.TrimSpace(schema) == "" {
-		return nil
-	}
+	// The cap comes first: TrimSpace on an oversized whitespace-only text would
+	// otherwise be the one linear pass over it.
 	if len(schema) > MaxLintSourceBytes {
 		return lintTooLarge("schema")
+	}
+	if strings.TrimSpace(schema) == "" {
+		return nil
 	}
 	var root any
 	if err := json.Unmarshal([]byte(schema), &root); err != nil {

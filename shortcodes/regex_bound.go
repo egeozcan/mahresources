@@ -5,6 +5,7 @@ import (
 	"errors"
 	"regexp"
 	"regexp/syntax"
+	"strings"
 )
 
 // A regular expression written by an author or a model can cost far more to
@@ -108,8 +109,13 @@ func preParseRunes(p string) int64 {
 				if i+1 < len(p) && p[i+1] == '^' {
 					classStart = i + 1
 				}
-			} else if i+1 < len(p) && p[i+1] == ':' {
+			} else if n := posixClassLen(p[i:]); n > 0 {
+				// A complete [:name:] token: charge it and skip the whole of
+				// it, so its "]" does not close the enclosing class. Any other
+				// "[:" in a class is a literal member.
 				est += unicodeClassRunes
+				i += n
+				continue
 			}
 		case ']':
 			// A "]" first in a class is a literal member.
@@ -120,6 +126,30 @@ func preParseRunes(p string) int64 {
 		i++
 	}
 	return est
+}
+
+// posixNames are the POSIX class names Go's regexp/syntax accepts.
+var posixNames = map[string]bool{
+	"alnum": true, "alpha": true, "ascii": true, "blank": true, "cntrl": true, "digit": true, "graph": true,
+	"lower": true, "print": true, "punct": true, "space": true, "upper": true, "word": true, "xdigit": true,
+}
+
+// posixClassLen is the length of the complete POSIX class token ([:name:] or
+// [:^name:]) at the start of s, or 0 when s does not start with one. The
+// lookahead is bounded by the longest name.
+func posixClassLen(s string) int {
+	if !strings.HasPrefix(s, "[:") {
+		return 0
+	}
+	end := strings.Index(s[:min(len(s), 12)], ":]")
+	if end < 0 {
+		return 0
+	}
+	name := strings.TrimPrefix(s[2:end], "^")
+	if !posixNames[name] {
+		return 0
+	}
+	return end + 2
 }
 
 func (a *RegexAllowance) remember(pattern string, re *regexp.Regexp, err error) (*regexp.Regexp, error) {

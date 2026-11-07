@@ -178,3 +178,25 @@ func TestManyConditionalPatternsAreBoundedAtRuntimeAndInLint(t *testing.T) {
 	assert.Greater(t, tooComplex, 200)
 	assert.Less(t, grown, int64(256<<20))
 }
+
+// Round 5: a literal "[:" inside a class is not POSIX; only complete tokens are.
+func TestRegexPreflightOnlyCountsCompletePOSIXTokens(t *testing.T) {
+	lit := `[a` + strings.Repeat(`[:`, 77) + `b]`
+	re, err := NewRegexAllowance(nil).Compile(lit)
+	require.NoError(t, err, "valid and cheap")
+	assert.True(t, re.MatchString("a"))
+	assert.Equal(t, int64(0), preParseRunes(lit))
+
+	// Complete tokens count, including the negated form, and their "]" does not
+	// close the class.
+	assert.Equal(t, int64(3*unicodeClassRunes), preParseRunes(`[[:alpha:][:^digit:][:word:]x]`))
+	// A token-shaped unknown name is a literal run.
+	assert.Equal(t, int64(0), preParseRunes(`[[:nope:]]`))
+	// After the first token the class is still open: a following \p counts.
+	assert.Equal(t, int64(2*unicodeClassRunes), preParseRunes(`[[:alpha:]\pL]`))
+
+	real := `^[[:alpha:][:^digit:][:punct:]]+[[:xdigit:]]$`
+	re, err = NewRegexAllowance(nil).Compile(real)
+	require.NoError(t, err)
+	assert.True(t, re.MatchString("ab-f"))
+}
