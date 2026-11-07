@@ -53,6 +53,7 @@ func RescoreReport(report RunReport, env Env) (RunReport, error) {
 
 		checks, details := Score(cases[r.Case], *r.Draft, r.Calls, r.Previews, r.Probes, env)
 		r.Checks, r.Details, r.Pass = checks, &details, checks.Pass()
+		r.FillRunMetrics()
 	}
 	report.Summary = Summarize(report.Results)
 	report.ScorerVersion = ScorerVersion

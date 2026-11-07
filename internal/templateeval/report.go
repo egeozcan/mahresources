@@ -11,16 +11,18 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+
+	"mahresources/application_context"
 )
 
 // ReportSchemaVersion is the shape of RunReport. Bump it on any change a
 // reader of an older report would misread.
-const ReportSchemaVersion = 3
+const ReportSchemaVersion = 4
 
 // ScorerVersion is the version of the scoring rules that produced a report's
 // checks. Bump it whenever Score can judge the same draft differently. A report
 // without the field predates it and was scored by version 1.
-const ScorerVersion = 3
+const ScorerVersion = 4
 
 // RescoredScore identifies checks recomputed from a full saved report.
 const RescoredScore = "score"
@@ -40,6 +42,14 @@ type RunReport struct {
 	Model           string `json:"model,omitempty"`
 	Timeout         string `json:"timeout,omitempty"`
 	Repeats         int    `json:"repeats"`
+	// Mode is the generation mode every run in the report used (ModeClassic or
+	// ModeHarness). A report from before schema version 4 has none and is
+	// classic. Settings holds the run limits a harness run was given.
+	Mode     string       `json:"mode,omitempty"`
+	Settings *RunSettings `json:"settings,omitempty"`
+	// Cost is always CostNotComputed: the repository has no pricing source, so
+	// the report carries token counts and leaves money to the reader.
+	Cost string `json:"cost,omitempty"`
 	// ScoringEnvironment identifies the shortcode catalogue and MRQL dialect,
 	// FTS availability and validator enabled state used by the scorer.
 	ScoringEnvironment string `json:"scoringEnvironment,omitempty"`
@@ -52,6 +62,19 @@ type RunReport struct {
 	Summary       Summary      `json:"summary"`
 }
 
+// CostNotComputed is the report's cost field.
+const CostNotComputed = "not computed"
+
+// RunSettings records the provider and the harness limits a run was given:
+// ai_template_max_turns, ai_template_run_deadline and
+// ai_template_run_token_budget. Zero values mean "not applicable" (classic).
+type RunSettings struct {
+	Provider    string `json:"provider,omitempty"`
+	MaxTurns    int    `json:"maxTurns,omitempty"`
+	RunDeadline string `json:"runDeadline,omitempty"`
+	TokenBudget int    `json:"tokenBudget,omitempty"`
+}
+
 // CaseResult is one run of one case.
 type CaseResult struct {
 	Case       string `json:"case"`
@@ -61,14 +84,20 @@ type CaseResult struct {
 	DurationMS int64  `json:"durationMs"`
 	// DisclosureBytes is the size of the disclosure the dry run returned: the
 	// text of every message section the request would send.
-	DisclosureBytes int                `json:"disclosureBytes,omitempty"`
-	Pass            bool               `json:"pass"`
-	Checks          Checks             `json:"checks"`
-	Calls           []Call             `json:"calls,omitempty"`
-	Details         *Details           `json:"details,omitempty"`
-	Draft           *Draft             `json:"draft,omitempty"`
-	Previews        map[string]Preview `json:"previews,omitempty"`
-	Probes          []QueryProbe       `json:"probes,omitempty"`
+	DisclosureBytes int `json:"disclosureBytes,omitempty"`
+	// Turns, StopReason and Tokens are the run's own accounting, filled by
+	// FillRunMetrics: harness Turns used, why the run ended (a fixed
+	// vocabulary), and prompt/completion/cache tokens over all its calls.
+	Turns      int                `json:"turns,omitempty"`
+	StopReason string             `json:"stopReason,omitempty"`
+	Tokens     Usage              `json:"tokens"`
+	Pass       bool               `json:"pass"`
+	Checks     Checks             `json:"checks"`
+	Calls      []Call             `json:"calls,omitempty"`
+	Details    *Details           `json:"details,omitempty"`
+	Draft      *Draft             `json:"draft,omitempty"`
+	Previews   map[string]Preview `json:"previews,omitempty"`
+	Probes     []QueryProbe       `json:"probes,omitempty"`
 }
 
 // Summary holds one GroupSummary for the whole run ("all"), per kind ("pair")
@@ -115,12 +144,91 @@ type GroupSummary struct {
 	// draft was sent for repair and whose repaired draft replaced it.
 	RepairAttemptedRate float64 `json:"repairAttemptedRate,omitempty"`
 	RepairedRate        float64 `json:"repairedRate,omitempty"`
+	// Harness runs: Turns used over the group, per run on average, the count of
+	// runs by stop reason, and the share of runs that recovered from a cut Turn.
+	TurnsUsed           int            `json:"turnsUsed,omitempty"`
+	MeanTurns           float64        `json:"meanTurns,omitempty"`
+	StopReasons         map[string]int `json:"stopReasons,omitempty"`
+	LengthRecoveredRate float64        `json:"lengthRecoveredRate,omitempty"`
+}
+
+// knownStopReasons is the vocabulary of CaseResult.StopReason: the run loop's
+// stop reasons, and "other" for anything else, so the field never carries
+// upstream text.
+var knownStopReasons = map[string]bool{
+	"": true, "other": true,
+	application_context.TemplateStopDone: true, application_context.TemplateStopTurnCap: true,
+	application_context.TemplateStopFinishNow: true, application_context.TemplateStopDeadline: true,
+	application_context.TemplateStopBudget: true, application_context.TemplateStopLengthRepeated: true,
+	application_context.TemplateStopNoToolCall: true, application_context.TemplateStopProviderError: true,
+}
+
+// RunMetrics reads a run's Turns used (harness calls recorded), stop reason
+// (from the Draft, normalized) and token totals over all its calls. Classic
+// runs have no Turns and no stop reason.
+func RunMetrics(d Draft, calls []Call) (turns int, stopReason string, tokens Usage) {
+	for _, call := range calls {
+		tokens = tokens.add(call.Usage)
+		if call.Mode == ModeHarness {
+			turns++
+		}
+	}
+	stopReason = d.StopReason
+	if !knownStopReasons[stopReason] {
+		stopReason = "other"
+	}
+	return turns, stopReason, tokens
+}
+
+// FillRunMetrics sets Turns, StopReason and Tokens from the result's own Draft
+// and calls. The live runner calls it on every result it builds, and
+// RescoreReport on every result it rescores, so the two stay in step.
+func (r *CaseResult) FillRunMetrics() {
+	var d Draft
+	if r.Draft != nil {
+		d = *r.Draft
+	}
+	r.Turns, r.StopReason, r.Tokens = RunMetrics(d, r.Calls)
+}
+
+// FormatReportHeader is the one-line description of a report that precedes its
+// summary table: mode, model, run settings and the cost label.
+func FormatReportHeader(r RunReport) string {
+	mode := r.Mode
+	if mode == "" {
+		mode = ModeClassic
+	}
+	parts := []string{"mode " + mode}
+	if r.Model != "" {
+		parts = append(parts, "model "+r.Model)
+	}
+	if s := r.Settings; s != nil {
+		if s.Provider != "" {
+			parts = append(parts, "provider "+s.Provider)
+		}
+		if s.MaxTurns > 0 {
+			parts = append(parts, "max turns "+strconv.Itoa(s.MaxTurns))
+		}
+		if s.RunDeadline != "" {
+			parts = append(parts, "deadline "+s.RunDeadline)
+		}
+		if s.TokenBudget > 0 {
+			parts = append(parts, "token budget "+strconv.Itoa(s.TokenBudget))
+		}
+	}
+	cost := r.Cost
+	if cost == "" {
+		cost = CostNotComputed
+	}
+	parts = append(parts, "cost "+cost)
+	return strings.Join(parts, ", ")
 }
 
 // Summarize groups results by kind and by kind and carrier.
 func Summarize(results []CaseResult) Summary {
 	type acc struct {
 		g                                                                                                            GroupSummary
+		recovered                                                                                                    int
 		provider, trunc, malformed, shape, lint, unknown, mrql, pairs, empty, preview, markup, repairTried, repaired int
 		latency                                                                                                      int64
 	}
@@ -152,6 +260,14 @@ func Summarize(results []CaseResult) Summary {
 		count(&a.markup, len(c.ExecutableMarkup) > 0 || len(c.RenderedExecutableMarkup) > 0)
 		count(&a.repairTried, c.RepairAttempted)
 		count(&a.repaired, c.Repaired)
+		count(&a.recovered, c.LengthRecovered)
+		a.g.TurnsUsed += r.Turns
+		if r.StopReason != "" {
+			if a.g.StopReasons == nil {
+				a.g.StopReasons = map[string]int{}
+			}
+			a.g.StopReasons[r.StopReason]++
+		}
 		for _, call := range r.Calls {
 			a.g.Calls++
 			a.g.Usage = a.g.Usage.add(call.Usage)
@@ -186,6 +302,8 @@ func Summarize(results []CaseResult) Summary {
 		a.g.UnknownShortcodeRate, a.g.MRQLErrorRate, a.g.IncompletePairRate = rate(a.unknown), rate(a.mrql), rate(a.pairs)
 		a.g.RenderEmptyRate, a.g.PreviewErrorRate, a.g.ExecutableMarkupRate = rate(a.empty), rate(a.preview), rate(a.markup)
 		a.g.RepairAttemptedRate, a.g.RepairedRate = rate(a.repairTried), rate(a.repaired)
+		a.g.LengthRecoveredRate = rate(a.recovered)
+		a.g.MeanTurns = float64(a.g.TurnsUsed) / float64(a.g.Runs)
 		if cached := a.g.Usage.CacheHit + a.g.Usage.CacheMiss; cached > 0 {
 			a.g.CacheHitRatio = float64(a.g.Usage.CacheHit) / float64(cached)
 		}
@@ -201,12 +319,12 @@ func Summarize(results []CaseResult) Summary {
 func FormatSummary(s Summary) string {
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "group\truns\tpass\tprovider err\ttruncated\tmalformed\twrong shape\tlint err\tunknown sc\tmrql err\trender empty\tpreview err\texec markup\trepaired\tcalls\tprompt tok\tcache hit\tmean ms")
+	fmt.Fprintln(w, "group\truns\tpass\tprovider err\ttruncated\tmalformed\twrong shape\tlint err\tunknown sc\tmrql err\trender empty\tpreview err\texec markup\trepaired\tmean turns\tcalls\tprompt tok\tcache hit\tmean ms")
 	for _, g := range s.Groups {
-		fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%d\n",
+		fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%.1f\t%d\t%d\t%s\t%d\n",
 			g.Key, g.Runs, pct(g.PassRate), pct(g.ProviderErrorRate), pct(g.TruncationRate), pct(g.MalformedRate), pct(g.WrongShapeRate), pct(g.LintErrorRate),
 			pct(g.UnknownShortcodeRate), pct(g.MRQLErrorRate), pct(g.RenderEmptyRate), pct(g.PreviewErrorRate),
-			pct(g.ExecutableMarkupRate), pct(g.RepairedRate), g.Calls, g.Usage.Prompt, pct(g.CacheHitRatio), g.MeanLatencyMS)
+			pct(g.ExecutableMarkupRate), pct(g.RepairedRate), g.MeanTurns, g.Calls, g.Usage.Prompt, pct(g.CacheHitRatio), g.MeanLatencyMS)
 	}
 	_ = w.Flush()
 	return b.String()
@@ -379,7 +497,14 @@ func AggregateOnly(report RunReport) RunReport {
 		r.Details, r.Draft, r.Previews, r.Probes = nil, nil, nil, nil
 		r.Calls = append([]Call(nil), r.Calls...)
 		for j := range r.Calls {
-			r.Calls[j].Content = ""
+			call := &r.Calls[j]
+			call.Content, call.Replay = "", nil
+			// Tool names are already reduced to the request's own Tools; the
+			// argument text is model output.
+			call.ToolCalls = append([]ToolCall(nil), call.ToolCalls...)
+			for k := range call.ToolCalls {
+				call.ToolCalls[k].Arguments = ""
+			}
 		}
 	}
 	return report
