@@ -82,8 +82,9 @@ type Call struct {
 	// messages in its request, plus one.
 	Turn      int `json:"turn,omitempty"`
 	ToolCount int `json:"toolCount,omitempty"`
-	// Status is the HTTP status of a failed call (0 on success and for a
-	// failure with no status), ErrorClass its class.
+	// Status is 200 for a call that returned a reply, the HTTP status of an HTTP
+	// failure, and 0 for a failure with no status; ErrorClass is the class of a
+	// failure.
 	Status       int    `json:"status"`
 	ErrorClass   string `json:"errorClass,omitempty"`
 	FinishReason string `json:"finishReason,omitempty"`

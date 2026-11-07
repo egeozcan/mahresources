@@ -181,8 +181,9 @@ func RunMetrics(d Draft, calls []Call) (turns int, stopReason string, tokens Usa
 }
 
 // FillRunMetrics sets Turns, StopReason and Tokens from the result's own Draft
-// and calls. The live runner calls it on every result it builds, and
-// RescoreReport on every result it rescores, so the two stay in step.
+// and calls. A runner must call it on every CaseResult it builds (the live
+// runner is runTemplateEvalBothModes in server/api_tests), and RescoreReport
+// calls it on every result it rescores, so the two stay in step.
 func (r *CaseResult) FillRunMetrics() {
 	var d Draft
 	if r.Draft != nil {
