@@ -11,15 +11,15 @@ DEEPSEEK_API_KEY=... go test --tags 'json1 fts5 templateeval' ./server/api_tests
   -run 'TestTemplateGenerationEval$' -count=1 -timeout 60m -v
 ```
 
-Without `DEEPSEEK_API_KEY` the test fails at once. It reads the same `DEEPSEEK_MODEL` and `DEEPSEEK_TIMEOUT` variables as the server, with the same defaults.
+Without `DEEPSEEK_API_KEY` the test is skipped with a message, not failed. One run executes every case in both generation modes, classic first and then harness, through the app's own runtime generator (the mode is the `ai_template_generation_mode` setting, flipped between the two passes) and the real `generateTemplate` handler, then compares the two reports. It reads the same `DEEPSEEK_MODEL` and `DEEPSEEK_TIMEOUT` variables as the server, with the same defaults.
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `TEMPLATE_EVAL_REPEATS` | `3` | Runs per case. |
 | `TEMPLATE_EVAL_CASES` | every case | Comma-separated case IDs from `internal/templateeval/corpus.go`. An unknown ID fails the test. |
-| `TEMPLATE_EVAL_OUT` | `benchmarks/template-generation/results/eval-<UTC time>.json` | The full report; a relative path is taken from the repository root. An aggregate copy is written beside it as `<name>.aggregate.json`. |
+| `TEMPLATE_EVAL_OUT` | `benchmarks/template-generation/results/eval-<UTC time>.json` | A name stem; a relative path is taken from the repository root. With `X.json` the run writes `X.classic.json`, `X.classic.aggregate.json`, `X.harness.json`, `X.harness.aggregate.json`, `X.comparison.txt` and `X.comparison.json`. |
 
-The full report holds every draft, every rendered preview, every raw model reply and the text behind each check. It is gitignored. The aggregate copy keeps no free text at all: only numbers, booleans, case IDs, fixed enums (kinds, carriers, slot names, flag names, error classes, finish reasons) and the run's own configuration. Only aggregate reports are committed, under `baselines/`.
+Each report records its mode, model, run settings, `cost` (always `not computed`, as the repository has no pricing source) and, per run, the Turns used, stop reason and token totals. The full report holds every draft, every rendered preview, every raw model reply and the text behind each check. It is gitignored. The aggregate copy keeps no free text at all: only numbers, booleans, case IDs, fixed enums (kinds, carriers, slot names, flag names, error classes, finish reasons) and the run's own configuration. Only aggregate reports are committed, under `baselines/`.
 
 The recorder that captures token usage never stores request headers or upstream error text, since an upstream can echo the Authorization header back in an error body or a broken status line. A failed call keeps its class (`timeout`, `http_status`, `transport` or `decode`) and, for an HTTP error, the status code. The model's reply is kept in the full report with the API key and any `Bearer ...` token removed, and the run applies the same removal to every string in the full report before writing it.
 
