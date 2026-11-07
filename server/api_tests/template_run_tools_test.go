@@ -20,6 +20,7 @@ import (
 	"mahresources/models/query_models"
 	"mahresources/models/types"
 	"mahresources/server/api_handlers"
+	"mahresources/shortcodes"
 )
 
 // toolFixture is a small library plus an executor over it.
@@ -665,5 +666,29 @@ func TestToolLintPartialLookupIsCancelledWithTheTool(t *testing.T) {
 	// The deadline passed during the lookup, so no result is released.
 	if !errors.Is(err, context.DeadlineExceeded) || out.Text != "" {
 		t.Errorf("out=%q err=%v, want the context error and no result", out.Text, err)
+	}
+}
+
+func TestToolLintUsesTheInjectedValidatorAndTheTurnSnapshot(t *testing.T) {
+	var gotField, gotContent string
+	f := newToolFixture(t, nil, func(c *api_handlers.TemplateRunToolsConfig, _ *toolFixture) {
+		c.Validate = func(_ context.Context, _ application_context.TemplateGenerationInput, field, content string) []shortcodes.LintIssue {
+			gotField, gotContent = field, content
+			return []shortcodes.LintIssue{{Severity: shortcodes.SeverityError, Message: "from the fake"}}
+		}
+	})
+	raw, _ := json.Marshal(map[string]any{"field": "CustomHeader"})
+	out, err := f.exec.Execute(context.Background(), application_context.TemplateToolInvocation{
+		Name: "lint", Arguments: string(raw), Snapshot: map[string]string{"CustomHeader": "from snapshot"},
+	})
+	if err != nil || !strings.Contains(out.Text, "from the fake") {
+		t.Fatalf("out=%q err=%v", out.Text, err)
+	}
+	if gotField != "CustomHeader" || gotContent != "from snapshot" {
+		t.Errorf("validator saw %q %q; the snapshot value must win over the editor value", gotField, gotContent)
+	}
+	// submit is the loop's, never the executor's.
+	if out := f.call(t, "submit", map[string]any{"fields": map[string]string{}}); !out.IsError {
+		t.Error("the executor ran submit")
 	}
 }

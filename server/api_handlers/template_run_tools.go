@@ -60,6 +60,12 @@ type TemplateRunToolsConfig struct {
 	// committed submission, else the editor value. Used when lint or preview
 	// omit content.
 	FieldValue func(field string) (string, bool)
+	// Input is the run's generation input; Validate is the single harness
+	// validator (application_context.ValidateTemplateRunField) so lint, submit
+	// and the final Draft agree. Nil Validate falls back to
+	// ValidateTemplateRunContent.
+	Input    application_context.TemplateGenerationInput
+	Validate func(ctx context.Context, in application_context.TemplateGenerationInput, field, content string) []shortcodes.LintIssue
 	// Known, DisplayTypes and DisplayTypesTruncated are the request's plugin
 	// snapshot; zero values are read from Start.
 	Known                 shortcodes.KnownShortcodes
@@ -167,11 +173,11 @@ func (e *templateToolExecutor) Execute(ctx context.Context, call application_con
 			body, err = e.diffRevisions(ctx, mc, a)
 		}
 	case application_context.LintArgs:
-		body, err = e.lint(ctx, mc, a)
+		body, err = e.lint(ctx, mc, a, call.Snapshot)
 	case application_context.CheckMRQLArgs:
 		body, err = e.checkMRQL(mc, a)
 	case application_context.PreviewArgs:
-		body, err = e.preview(ctx, mc, a)
+		body, err = e.preview(ctx, mc, a, call.Snapshot)
 	case application_context.NameArgs:
 		if call.Name == application_context.ToolGetPartial {
 			body, err = e.getPartial(mc, a)
@@ -509,9 +515,12 @@ func (e *templateToolExecutor) knownField(field string) error {
 
 // contentFor is the content a call means: its own, else the field's value in
 // the Turn-start snapshot.
-func (e *templateToolExecutor) contentFor(field string, given *string) (string, error) {
+func (e *templateToolExecutor) contentFor(field string, given *string, snapshot map[string]string) (string, error) {
 	if given != nil {
 		return *given, nil
+	}
+	if v, ok := snapshot[field]; ok {
+		return v, nil
 	}
 	if e.cfg.FieldValue != nil {
 		if v, ok := e.cfg.FieldValue(field); ok {
@@ -545,15 +554,20 @@ func (e *templateToolExecutor) validation(mc *application_context.MahresourcesCo
 	}
 }
 
-func (e *templateToolExecutor) lint(ctx context.Context, mc *application_context.MahresourcesContext, a application_context.LintArgs) (string, error) {
+func (e *templateToolExecutor) lint(ctx context.Context, mc *application_context.MahresourcesContext, a application_context.LintArgs, snapshot map[string]string) (string, error) {
 	if err := e.knownField(a.Field); err != nil {
 		return "", err
 	}
-	content, err := e.contentFor(a.Field, a.Content)
+	content, err := e.contentFor(a.Field, a.Content, snapshot)
 	if err != nil {
 		return "", err
 	}
-	issues := application_context.ValidateTemplateRunContent(ctx, e.validation(mc), a.Field, content)
+	var issues []shortcodes.LintIssue
+	if e.cfg.Validate != nil {
+		issues = e.cfg.Validate(ctx, e.cfg.Input, a.Field, content)
+	} else {
+		issues = application_context.ValidateTemplateRunContent(ctx, e.validation(mc), a.Field, content)
+	}
 	out := make([]toolLintIssue, len(issues))
 	errs, warns := 0, 0
 	for i, is := range issues {
@@ -609,7 +623,7 @@ func (e *templateToolExecutor) getShortcodeDocs(mc *application_context.Mahresou
 	return "", refusef("no built-in or plugin shortcode named %q", name)
 }
 
-func (e *templateToolExecutor) preview(ctx context.Context, mc *application_context.MahresourcesContext, a application_context.PreviewArgs) (string, error) {
+func (e *templateToolExecutor) preview(ctx context.Context, mc *application_context.MahresourcesContext, a application_context.PreviewArgs, snapshot map[string]string) (string, error) {
 	// Held across the entity load and the render: six parallel calls are two
 	// previews of work at a time, not six.
 	if err := acquire(ctx, e.previews); err != nil {
@@ -619,15 +633,19 @@ func (e *templateToolExecutor) preview(ctx context.Context, mc *application_cont
 	if err := e.knownField(a.Field); err != nil {
 		return "", err
 	}
-	content, err := e.contentFor(a.Field, a.Content)
+	content, err := e.contentFor(a.Field, a.Content, snapshot)
 	if err != nil {
 		return "", err
 	}
 	css := ""
 	if a.CSS != nil {
 		css = *a.CSS
-	} else if !strings.HasSuffix(a.Field, "CSS") && e.cfg.FieldValue != nil {
-		css, _ = e.cfg.FieldValue(a.Field + "CSS")
+	} else if !strings.HasSuffix(a.Field, "CSS") {
+		if v, ok := snapshot[a.Field+"CSS"]; ok {
+			css = v
+		} else if e.cfg.FieldValue != nil {
+			css, _ = e.cfg.FieldValue(a.Field + "CSS")
+		}
 	}
 	for _, src := range []string{content, css} {
 		if err := application_context.CheckTemplateToolSource(src); err != nil {

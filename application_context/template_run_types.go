@@ -77,6 +77,8 @@ type TemplateToolInvocation struct {
 	Name      string
 	Arguments string // exact argument text; the executor decodes and validates it
 	Turn      int
+	// Snapshot is the resolved value of every field committed as of Turn start (read-only).
+	Snapshot map[string]string
 }
 
 // TemplateToolOutput is a Tool result as sent to the model: already capped and
