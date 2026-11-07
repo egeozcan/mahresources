@@ -719,7 +719,12 @@ func scoreHarnessSubmissions(c Case, calls []Call, checks *Checks) {
 		requested["MetaSchema"] = true
 	}
 	for _, call := range harnessCalls(calls) {
-		for _, tc := range call.ToolCalls {
+		for i, tc := range call.ToolCalls {
+			// The harness runs only the first calls of a Turn, by position in
+			// the whole list, so a later submit never ran.
+			if i >= application_context.TemplateRunMaxCallsPerTurn {
+				break
+			}
 			if tc.Name != application_context.ToolSubmit || tc.Incomplete {
 				continue
 			}
@@ -779,6 +784,11 @@ func parseRecordedSubmit(arguments string, requested map[string]bool) (map[strin
 	for name, value := range decoded.Fields {
 		var text *string
 		if len(requested) > 0 && !requested[name] || json.Unmarshal(value, &text) != nil || text == nil {
+			return nil, submitWrongShape
+		}
+		// Source admission, as submit applies it: one refused field rejects
+		// the whole call.
+		if application_context.CheckTemplateToolSource(*text) != nil {
 			return nil, submitWrongShape
 		}
 		out[name] = *text

@@ -261,3 +261,35 @@ func TestScoreHarnessRejectedSubmissionsDoNotCountAsAccepted(t *testing.T) {
 		})
 	}
 }
+
+func TestScoreHarnessSourceAdmissionAndCallCapDoNotCountRejectedFields(t *testing.T) {
+	failed := Draft{Status: 502, StopReason: application_context.TemplateStopProviderError}
+	oversized := `{"fields":{"CustomHeaderCSS":".a{}","CustomHeader":"` + strings.Repeat("x", 20001) + `"}}`
+	manyTokens := `{"fields":{"CustomHeaderCSS":".a{}","CustomHeader":"` + strings.Repeat("[", 2001) + `"}}`
+	completeCSS := `{"fields":{"CustomHeaderCSS":".a{}"}}`
+	var lints []ToolCall
+	for i := 0; i < application_context.TemplateRunMaxCallsPerTurn; i++ {
+		lints = append(lints, ToolCall{Name: "lint", Arguments: `{}`})
+	}
+	tests := []struct {
+		name  string
+		calls []Call
+		wrong bool
+		gaps  int
+	}{
+		// The rejected call carries the CSS half too; none of it counts.
+		{"oversized field", []Call{harnessCall(1, "tool_calls", submitTool(oneHalfSubmit)), harnessCall(2, "tool_calls", submitTool(oversized))}, true, 1},
+		{"too many shortcode tokens", []Call{harnessCall(1, "tool_calls", submitTool(oneHalfSubmit)), harnessCall(2, "tool_calls", submitTool(manyTokens))}, true, 1},
+		// A submit in seventh position is never run, so its field is not counted.
+		{"seventh call is a submit", []Call{harnessCall(1, "tool_calls", submitTool(oneHalfSubmit)), harnessCall(2, "tool_calls", append(append([]ToolCall{}, lints...), submitTool(completeCSS))...)}, false, 1},
+		{"sixth call is a submit", []Call{harnessCall(1, "tool_calls", submitTool(oneHalfSubmit)), harnessCall(2, "tool_calls", append(append([]ToolCall{}, lints[:5]...), submitTool(completeCSS))...)}, false, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checks, _ := Score(pairCase(), failed, tt.calls, nil, nil, testEnv())
+			if checks.WrongShape != tt.wrong || checks.IncompletePairs != tt.gaps {
+				t.Fatalf("wrong=%v gaps=%d, want %v %d", checks.WrongShape, checks.IncompletePairs, tt.wrong, tt.gaps)
+			}
+		})
+	}
+}
