@@ -77,6 +77,14 @@ type TemplateToolInvocation struct {
 	Name      string
 	Arguments string // exact argument text; the executor decodes and validates it
 	Turn      int
+	// Snapshot holds the resolved value of every field the model has committed
+	// a submission for, as of the start of this Turn (plan section 3, "Turn-start
+	// snapshot"). lint and preview with no content read their field here; a
+	// field absent from it has no submission, so the executor uses the editor
+	// value from the Seed. For a whole-template CustomCSS the resolved value is
+	// the Seed's stylesheet plus the latest additions, the value Apply receives.
+	// Read-only: the loop shares one map across the Turn's parallel calls.
+	Snapshot map[string]string
 }
 
 // TemplateToolOutput is a Tool result as sent to the model: already capped and

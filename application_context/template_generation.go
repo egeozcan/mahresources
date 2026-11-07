@@ -67,6 +67,9 @@ type TemplateGenerationConfig struct {
 	// pair call together (DefaultTemplateBundleDeadline when 0). Each call keeps
 	// its own profile timeout inside it.
 	BundleDeadline time.Duration
+	// Harness holds the run limits of harness mode; NewTemplateHarnessGenerator
+	// fills the shipped defaults for what it leaves zero. Classic ignores it.
+	Harness *TemplateHarnessSettings
 }
 
 // TemplateGenerationInput is the pure, DB-free grounding assembled by the
@@ -254,6 +257,42 @@ type defaultTemplateGenerator struct {
 	// is created with the generator, which the context copies share.
 	slots chan struct{}
 	now   func() time.Time
+
+	// Harness mode (plan section 3): conversation replaces provider, harness is
+	// true for a generator built by NewTemplateHarnessGenerator. The timeouts
+	// are fields so tests can shorten them.
+	conversation   TemplateConversationProvider
+	harness        bool
+	toolTimeout    time.Duration
+	previewTimeout time.Duration
+}
+
+// NewTemplateHarnessGenerator returns a generator that runs every request as a
+// multi-Turn Generation run over conv. Its settings come from cfg.Harness.
+func NewTemplateHarnessGenerator(conv TemplateConversationProvider, cfg TemplateGenerationConfig) TemplateGenerator {
+	g := NewTemplateGenerator(nil, cfg).(*defaultTemplateGenerator)
+	settings := TemplateHarnessSettings{}
+	if cfg.Harness != nil {
+		settings = *cfg.Harness
+	}
+	settings = settings.withDefaults()
+	g.config.Harness = &settings
+	g.conversation, g.harness = conv, true
+	return g
+}
+
+func (g *defaultTemplateGenerator) toolTimeoutOrDefault() time.Duration {
+	if g.toolTimeout > 0 {
+		return g.toolTimeout
+	}
+	return defaultTemplateRunToolTimeout
+}
+
+func (g *defaultTemplateGenerator) previewTimeoutOrDefault() time.Duration {
+	if g.previewTimeout > 0 {
+		return g.previewTimeout
+	}
+	return defaultTemplateRunPreviewTimout
 }
 
 func NewTemplateGenerator(provider TemplateDraftProvider, cfg TemplateGenerationConfig) TemplateGenerator {
@@ -273,6 +312,13 @@ func NewTemplateGenerator(provider TemplateDraftProvider, cfg TemplateGeneration
 }
 
 func (g *defaultTemplateGenerator) DiscloseTemplate(ctx context.Context, in TemplateGenerationInput, prompt string) (*TemplateDisclosure, error) {
+	if g.harness {
+		request, err := g.discloseHarness(ctx, in, prompt)
+		if err != nil {
+			return nil, err
+		}
+		return request.disclosure, nil
+	}
 	request, err := g.disclose(in, prompt)
 	if err != nil {
 		return nil, err
@@ -287,6 +333,31 @@ type templateRequest struct {
 	disclosure *TemplateDisclosure
 	// fan is set when the request is a planner fan-out.
 	fan *templateFanOut
+	// run is set in harness mode.
+	run *harnessPlan
+}
+
+// normalizeSlotMode settles "is this slot CSS?" once, so the prompt and the
+// linter cannot answer it differently. The handler validates Slot and does not
+// validate Mode, so a request can arrive contradicting itself; left alone,
+// slot=CustomCSS with mode=html asked the model for HTML and then judged the
+// answer as CSS. in is a value copy, so this rewrite is local to the call.
+//
+// A slot draft is one of exactly two things, so the mode is rewritten to
+// whichever singleSlotIsCSS says rather than passed through. That also
+// canonicalises a mixed-case "CSS", which that predicate accepts and
+// modeRuleLine's exact-match switch does not, and refuses "json", which
+// belongs to the metaschema target and would otherwise have asked for JSON
+// and linted the reply as markup. Other targets keep their own mode.
+func normalizeSlotMode(in TemplateGenerationInput) TemplateGenerationInput {
+	if in.Target == TemplateTargetSlot {
+		if singleSlotIsCSS(in) {
+			in.Mode = "css"
+		} else {
+			in.Mode = "html"
+		}
+	}
+	return in
 }
 
 // disclose validates and normalizes the request, then assembles every call it
@@ -306,25 +377,7 @@ func (g *defaultTemplateGenerator) disclose(in TemplateGenerationInput, prompt s
 	}
 	in.Postgres = g.config.Postgres
 
-	// Settle "is this slot CSS?" once, here, so the prompt and the linter cannot
-	// answer it differently. The handler validates Slot and does not validate
-	// Mode, so a request can arrive contradicting itself; left alone,
-	// slot=CustomCSS with mode=html asked the model for HTML and then judged the
-	// answer as CSS. in is a value copy, so this rewrite is local to the call.
-	//
-	// A slot draft is one of exactly two things, so the mode is rewritten to
-	// whichever singleSlotIsCSS says rather than passed through. That also
-	// canonicalises a mixed-case "CSS", which that predicate accepts and
-	// modeRuleLine's exact-match switch does not, and refuses "json", which
-	// belongs to the metaschema target and would otherwise have asked for JSON
-	// and linted the reply as markup. Other targets keep their own mode.
-	if in.Target == TemplateTargetSlot {
-		if singleSlotIsCSS(in) {
-			in.Mode = "css"
-		} else {
-			in.Mode = "html"
-		}
-	}
+	in = normalizeSlotMode(in)
 
 	if fan, err := templateFanOutFor(in); err != nil {
 		return templateRequest{}, err
@@ -352,6 +405,9 @@ func (g *defaultTemplateGenerator) disclose(in TemplateGenerationInput, prompt s
 }
 
 func (g *defaultTemplateGenerator) GenerateTemplate(ctx context.Context, in TemplateGenerationInput, prompt, groundingHash string) (*TemplateGenerationResult, error) {
+	if g.harness {
+		return g.generateHarness(ctx, in, prompt, groundingHash)
+	}
 	request, err := g.disclose(in, prompt)
 	if err != nil {
 		return nil, err

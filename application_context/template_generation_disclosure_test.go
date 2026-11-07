@@ -13,7 +13,11 @@ import (
 // it never reaches a prompt. A new field fails
 // TestTemplateGenerationInputFieldsAreClassified until it is listed here, so
 // nothing reaches the provider without appearing in the disclosure.
-var templateInputDisclosure = map[string]struct{ section, reason string }{
+var templateInputDisclosure = map[string]struct {
+	section, reason string
+	// harness marks a field only the harness Seed carries.
+	harness bool
+}{
 	"Target":                {reason: "chooses which builder runs; its value is not sent"},
 	"Mode":                  {reason: "chooses the mode rule line; its value is not sent"},
 	"Slot":                  {section: "task"},
@@ -37,11 +41,11 @@ var templateInputDisclosure = map[string]struct{ section, reason string }{
 	"Postgres":              {reason: "chooses the dialect lines of the constant MRQL reference; the generator sets it from its configuration"},
 	"Known":                 {reason: "validates the reply only"},
 	"ValidateMRQL":          {reason: "validates the reply only"},
-	// Harness fields (Phase 0 declarations; lane C reclassifies StartingPoints
-	// under the harness Seed's "starting-points" section when it builds it).
+	// Harness fields. StartingPoints reaches the harness Seed's
+	// "starting-points" section; the others never reach a prompt.
 	"Run":            {reason: "harness run environment: executor, sink and opt-ins; the Disclosure lists its Tools, caps and opt-ins itself"},
 	"PartialExists":  {reason: "validates the reply only"},
-	"StartingPoints": {reason: "harness Seed only; classic prompts never read it"},
+	"StartingPoints": {section: "starting-points", harness: true},
 	"GenerationMode": {reason: "chooses the harness or classic path; hashed as the Disclosure's Mode"},
 }
 
@@ -103,6 +107,7 @@ func TestTemplateGenerationInputFieldsAreClassified(t *testing.T) {
 		"BundleSlots":         {bundle, "CustomPreview, CustomPreviewCSS"},
 		"SlotsSelected":       {selected, "set fill to true for every one of them"},
 		"DisplayTypes":        {metaschema, "plugin:sentinel:grid"},
+		"StartingPoints":      {harnessStartingInput(bundle), "SENTINEL-carrier-name"},
 	}
 	for name, c := range templateInputDisclosure {
 		if c.section == "" {
@@ -117,6 +122,10 @@ func TestTemplateGenerationInputFieldsAreClassified(t *testing.T) {
 			continue
 		}
 		sections := buildTemplatePromptSections(v.in, "a request")
+		if c.harness {
+			fields, required, css := templateRunFieldsOf(v.in)
+			sections = buildTemplateRunSections(v.in, "a request", fields, required, css, TemplateHarnessSettings{}.withDefaults())
+		}
 		if !strings.Contains(sectionText(sections, c.section), v.value) {
 			t.Errorf("%s's value %q is not in the %q section", name, v.value, c.section)
 		}
@@ -293,4 +302,12 @@ func TestGenerateRefusesAMissingOrStaleGroundingHash(t *testing.T) {
 	if _, err := gen.GenerateTemplate(context.Background(), in, "make it", disclosure.GroundingHash); err != nil || provider.calls != 1 {
 		t.Fatalf("matching hash: err %v, calls %d", err, provider.calls)
 	}
+}
+
+func harnessStartingInput(in TemplateGenerationInput) TemplateGenerationInput {
+	in.StartingPoints = TemplateStartingPoints{
+		Carrier: TemplateRef{Type: "category", ID: 4, Name: "SENTINEL-carrier-name"},
+		Samples: []TemplateRef{{Type: "resource", ID: 9, Name: "SENTINEL-sample-name"}},
+	}
+	return in
 }
