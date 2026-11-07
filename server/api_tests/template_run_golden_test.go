@@ -106,8 +106,8 @@ func TestHarnessRunGoldenStream(t *testing.T) {
 	}
 }
 
-// normaliseGolden replaces the values that differ between runs (run IDs,
-// durations, the grounding hash) and cuts long text, so the fixture is stable,
+// normaliseGolden replaces or drops the values that differ between runs (run
+// IDs, durations, the grounding hash) and cuts long text, so the fixture is stable,
 // and re-encodes the JSON with sorted keys.
 func normaliseGolden(t *testing.T, data string) string {
 	t.Helper()
@@ -121,12 +121,21 @@ func normaliseGolden(t *testing.T, data string) string {
 	walk = func(v any) any {
 		switch x := v.(type) {
 		case map[string]any:
+			// A record whose text is cut takes the cut text's size, so a docs
+			// edit that changes the prompt's length does not churn the fixture.
+			if str, ok := x["text"].(string); ok && len(str) > 120 {
+				if _, has := x["bytes"]; has {
+					x["bytes"] = len(str[:120] + " [cut for the fixture]")
+				}
+			}
 			for k, val := range x {
 				switch k {
 				case "runId":
 					x[k] = "run-golden"
 				case "durationMs":
-					x[k] = 0
+					// omitempty drops it from a record that took under 1 ms,
+					// so whether it is present at all depends on timing.
+					delete(x, k)
 				case "groundingHash":
 					x[k] = "hash-golden"
 				case "text":

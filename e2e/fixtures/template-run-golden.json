@@ -99,7 +99,7 @@
     },
     "sections": [
       {
-        "bytes": 1134,
+        "bytes": 142,
         "call": 0,
         "constant": true,
         "key": "system",
@@ -108,7 +108,7 @@
         "text": "You author Mahresources category templates: HTML sections with shortcodes, and their CSS. You work in Turns. In each Tur [cut for the fixture]"
       },
       {
-        "bytes": 2495,
+        "bytes": 142,
         "call": 0,
         "constant": true,
         "key": "rules",
@@ -117,7 +117,7 @@
         "text": "Reference: everything from here to the \"End of reference\" line is the same for every template request. The shortcode doc [cut for the fixture]"
       },
       {
-        "bytes": 23670,
+        "bytes": 142,
         "call": 0,
         "constant": true,
         "key": "shortcodes",
@@ -126,7 +126,7 @@
         "text": "Shortcode reference:\n\u003c\u003c\u003cBEGIN shortcode reference\u003e\u003e\u003e\n- [meta path=\"...\"] (block form: no)\n  Description: Renders a value [cut for the fixture]"
       },
       {
-        "bytes": 6781,
+        "bytes": 142,
         "call": 0,
         "constant": true,
         "key": "mrql",
@@ -153,7 +153,7 @@
         "text": "End of reference. The request-specific part follows."
       },
       {
-        "bytes": 744,
+        "bytes": 142,
         "call": 0,
         "constant": true,
         "key": "harness",
@@ -162,7 +162,7 @@
         "text": "How this run works: you have up to 5 Turns, a deadline of 1m0s and a budget of 400000 tokens. Each Turn you may call up  [cut for the fixture]"
       },
       {
-        "bytes": 529,
+        "bytes": 142,
         "call": 0,
         "constant": true,
         "key": "carrier",
@@ -171,7 +171,7 @@
         "text": "This request is for a group template.\nAlpine.js directives and the outer `entity` variable work in these slots: CustomHe [cut for the fixture]"
       },
       {
-        "bytes": 541,
+        "bytes": 142,
         "call": 0,
         "constant": false,
         "key": "layout",
@@ -189,7 +189,7 @@
         "text": "No metadata JSON Schema is defined for this category; avoid [meta] paths unless the user names them."
       },
       {
-        "bytes": 163,
+        "bytes": 142,
         "call": 0,
         "constant": false,
         "key": "starting-points",
@@ -207,7 +207,7 @@
         "text": "User request: a header"
       },
       {
-        "bytes": 704,
+        "bytes": 142,
         "call": 0,
         "constant": true,
         "key": "task",
@@ -615,5 +615,5 @@
       "stream": false
     }
   },
-  "stream": "event: run\ndata: {\"deadline\":\"1m0s\",\"maxTurns\":5,\"runId\":\"run-golden\",\"tokenBudget\":400000}\n\nevent: turn\ndata: {\"finalReason\":\"\",\"maxTurns\":5,\"turn\":1}\n\nevent: usage\ndata: {\"budgetMax\":400000,\"budgetUsed\":1050,\"turn\":1}\n\nevent: tool\ndata: {\"args\":{},\"bytes\":3087,\"durationMs\":0,\"isError\":false,\"name\":\"get_shortcode_docs\",\"turn\":1}\n\nevent: tool\ndata: {\"args\":{\"field\":\"CustomHeader\"},\"bytes\":102,\"durationMs\":0,\"isError\":false,\"name\":\"lint\",\"turn\":1}\n\nevent: turn\ndata: {\"finalReason\":\"\",\"maxTurns\":5,\"turn\":2}\n\nevent: usage\ndata: {\"budgetMax\":400000,\"budgetUsed\":3100,\"turn\":2}\n\nevent: submission\ndata: {\"errors\":0,\"field\":\"CustomHeader\",\"turn\":2,\"warnings\":0}\n\nevent: submission\ndata: {\"errors\":0,\"field\":\"CustomHeaderCSS\",\"turn\":2,\"warnings\":0}\n\nevent: tool\ndata: {\"args\":{},\"bytes\":267,\"durationMs\":0,\"isError\":false,\"name\":\"submit\",\"turn\":2}\n\nevent: result\ndata: {\"explanation\":\"\",\"slots\":{\"CustomHeader\":\"\u003ch1 class=\\\"gold\\\"\u003e[property path=\\\"Name\\\"]\u003c/h1\u003e\",\"CustomHeaderCSS\":\".gold{color:goldenrod}\"},\"stopReason\":\"done\",\"submitted\":[\"CustomHeader\",\"CustomHeaderCSS\"],\"target\":\"bundle\",\"transcript\":[{\"bytes\":1134,\"kind\":\"seed\",\"sent\":true,\"text\":\"You author Mahresources category templates: HTML sections with shortcodes, and their CSS. You work in Turns. In each Tur [cut for the fixture]\",\"turn\":1},{\"bytes\":35952,\"kind\":\"seed\",\"sent\":true,\"text\":\"Reference: everything from here to the \\\"End of reference\\\" line is the same for every template request. The shortcode doc [cut for the fixture]\",\"turn\":1},{\"calls\":[{\"arguments\":\"{\\\"name\\\":\\\"meta\\\"}\",\"id\":\"c1\",\"name\":\"get_shortcode_docs\"},{\"arguments\":\"{\\\"content\\\":\\\"\\\\u003ch1 class=\\\\\\\"gold\\\\\\\"\\\\u003e[property path=\\\\\\\"Name\\\\\\\"]\\\\u003c/h1\\\\u003e\\\",\\\"field\\\":\\\"CustomHeader\\\"}\",\"id\":\"c2\",\"name\":\"lint\"}],\"kind\":\"assistant\",\"replay\":{\"role\":\"assistant\"},\"replayText\":\"{\\\"role\\\":\\\"assistant\\\"}\",\"sent\":true,\"turn\":1,\"usage\":{\"cacheHit\":0,\"cacheMiss\":1000,\"completion\":50,\"prompt\":1000}},{\"bytes\":3087,\"callId\":\"c1\",\"kind\":\"tool_result\",\"sent\":true,\"text\":\"\u003c\u003c\u003cBEGIN tool get_shortcode_docs\u003e\u003e\u003e\\n- [meta path=\\\"...\\\"] (block form: no)\\n  Description: Renders a value from the entity' [cut for the fixture]\",\"turn\":1},{\"bytes\":102,\"callId\":\"c2\",\"kind\":\"tool_result\",\"sent\":true,\"text\":\"\u003c\u003c\u003cBEGIN tool lint\u003e\u003e\u003e\\n{\\\"errors\\\":0,\\\"field\\\":\\\"CustomHeader\\\",\\\"issues\\\":[],\\\"warnings\\\":0}\\n\u003c\u003c\u003cEND tool lint\u003e\u003e\u003e\",\"turn\":1},{\"calls\":[{\"arguments\":\"{\\\"done\\\":true,\\\"fields\\\":{\\\"CustomHeader\\\":\\\"\\\\u003ch1 class=\\\\\\\"gold\\\\\\\"\\\\u003e[property path=\\\\\\\"Name\\\\\\\"]\\\\u003c/h1\\\\u003e\\\",\\\"CustomHeaderCSS\\\":\\\".gold{color:goldenrod}\\\"}}\",\"id\":\"s1\",\"name\":\"submit\"}],\"kind\":\"assistant\",\"replay\":{\"role\":\"assistant\"},\"replayText\":\"{\\\"role\\\":\\\"assistant\\\"}\",\"sent\":true,\"turn\":2,\"usage\":{\"cacheHit\":0,\"cacheMiss\":2000,\"completion\":50,\"prompt\":2000}},{\"bytes\":267,\"callId\":\"s1\",\"kind\":\"tool_result\",\"sent\":false,\"text\":\"\u003c\u003c\u003cBEGIN submit result\u003e\u003e\u003e\\n{\\\"submitted\\\":[\\\"CustomHeader\\\",\\\"CustomHeaderCSS\\\"],\\\"fields\\\":{\\\"CustomHeader\\\":{\\\"errors\\\":0,\\\"warnings [cut for the fixture]\",\"turn\":2}],\"valid\":true}\n\n"
+  "stream": "event: run\ndata: {\"deadline\":\"1m0s\",\"maxTurns\":5,\"runId\":\"run-golden\",\"tokenBudget\":400000}\n\nevent: turn\ndata: {\"finalReason\":\"\",\"maxTurns\":5,\"turn\":1}\n\nevent: usage\ndata: {\"budgetMax\":400000,\"budgetUsed\":1050,\"turn\":1}\n\nevent: tool\ndata: {\"args\":{},\"bytes\":3087,\"isError\":false,\"name\":\"get_shortcode_docs\",\"turn\":1}\n\nevent: tool\ndata: {\"args\":{\"field\":\"CustomHeader\"},\"bytes\":102,\"isError\":false,\"name\":\"lint\",\"turn\":1}\n\nevent: turn\ndata: {\"finalReason\":\"\",\"maxTurns\":5,\"turn\":2}\n\nevent: usage\ndata: {\"budgetMax\":400000,\"budgetUsed\":3100,\"turn\":2}\n\nevent: submission\ndata: {\"errors\":0,\"field\":\"CustomHeader\",\"turn\":2,\"warnings\":0}\n\nevent: submission\ndata: {\"errors\":0,\"field\":\"CustomHeaderCSS\",\"turn\":2,\"warnings\":0}\n\nevent: tool\ndata: {\"args\":{},\"bytes\":267,\"isError\":false,\"name\":\"submit\",\"turn\":2}\n\nevent: result\ndata: {\"explanation\":\"\",\"slots\":{\"CustomHeader\":\"\u003ch1 class=\\\"gold\\\"\u003e[property path=\\\"Name\\\"]\u003c/h1\u003e\",\"CustomHeaderCSS\":\".gold{color:goldenrod}\"},\"stopReason\":\"done\",\"submitted\":[\"CustomHeader\",\"CustomHeaderCSS\"],\"target\":\"bundle\",\"transcript\":[{\"bytes\":142,\"kind\":\"seed\",\"sent\":true,\"text\":\"You author Mahresources category templates: HTML sections with shortcodes, and their CSS. You work in Turns. In each Tur [cut for the fixture]\",\"turn\":1},{\"bytes\":142,\"kind\":\"seed\",\"sent\":true,\"text\":\"Reference: everything from here to the \\\"End of reference\\\" line is the same for every template request. The shortcode doc [cut for the fixture]\",\"turn\":1},{\"calls\":[{\"arguments\":\"{\\\"name\\\":\\\"meta\\\"}\",\"id\":\"c1\",\"name\":\"get_shortcode_docs\"},{\"arguments\":\"{\\\"content\\\":\\\"\\\\u003ch1 class=\\\\\\\"gold\\\\\\\"\\\\u003e[property path=\\\\\\\"Name\\\\\\\"]\\\\u003c/h1\\\\u003e\\\",\\\"field\\\":\\\"CustomHeader\\\"}\",\"id\":\"c2\",\"name\":\"lint\"}],\"kind\":\"assistant\",\"replay\":{\"role\":\"assistant\"},\"replayText\":\"{\\\"role\\\":\\\"assistant\\\"}\",\"sent\":true,\"turn\":1,\"usage\":{\"cacheHit\":0,\"cacheMiss\":1000,\"completion\":50,\"prompt\":1000}},{\"bytes\":142,\"callId\":\"c1\",\"kind\":\"tool_result\",\"sent\":true,\"text\":\"\u003c\u003c\u003cBEGIN tool get_shortcode_docs\u003e\u003e\u003e\\n- [meta path=\\\"...\\\"] (block form: no)\\n  Description: Renders a value from the entity' [cut for the fixture]\",\"turn\":1},{\"bytes\":102,\"callId\":\"c2\",\"kind\":\"tool_result\",\"sent\":true,\"text\":\"\u003c\u003c\u003cBEGIN tool lint\u003e\u003e\u003e\\n{\\\"errors\\\":0,\\\"field\\\":\\\"CustomHeader\\\",\\\"issues\\\":[],\\\"warnings\\\":0}\\n\u003c\u003c\u003cEND tool lint\u003e\u003e\u003e\",\"turn\":1},{\"calls\":[{\"arguments\":\"{\\\"done\\\":true,\\\"fields\\\":{\\\"CustomHeader\\\":\\\"\\\\u003ch1 class=\\\\\\\"gold\\\\\\\"\\\\u003e[property path=\\\\\\\"Name\\\\\\\"]\\\\u003c/h1\\\\u003e\\\",\\\"CustomHeaderCSS\\\":\\\".gold{color:goldenrod}\\\"}}\",\"id\":\"s1\",\"name\":\"submit\"}],\"kind\":\"assistant\",\"replay\":{\"role\":\"assistant\"},\"replayText\":\"{\\\"role\\\":\\\"assistant\\\"}\",\"sent\":true,\"turn\":2,\"usage\":{\"cacheHit\":0,\"cacheMiss\":2000,\"completion\":50,\"prompt\":2000}},{\"bytes\":142,\"callId\":\"s1\",\"kind\":\"tool_result\",\"sent\":false,\"text\":\"\u003c\u003c\u003cBEGIN submit result\u003e\u003e\u003e\\n{\\\"submitted\\\":[\\\"CustomHeader\\\",\\\"CustomHeaderCSS\\\"],\\\"fields\\\":{\\\"CustomHeader\\\":{\\\"errors\\\":0,\\\"warnings [cut for the fixture]\",\"turn\":2}],\"valid\":true}\n\n"
 }

@@ -796,8 +796,9 @@ func validateMetaSchemaJSON(content string, opts shortcodes.MetaSchemaLintOption
 }
 
 // validateMetaSchemaJSONContext is validateMetaSchemaJSON for a caller with a
-// context, a Generation run: admission and compilation stop when it ends, and
-// a cancelled check is an error, never a clean verdict.
+// context, a Generation run: the context is checked between the compile's
+// phases and before each regexp compile (the library's own compile cannot be
+// interrupted), and a cancelled check is an error, never a clean verdict.
 func validateMetaSchemaJSONContext(ctx context.Context, content string, opts shortcodes.MetaSchemaLintOptions) []shortcodes.LintIssue {
 	var probe any
 	if err := json.Unmarshal([]byte(content), &probe); err != nil {

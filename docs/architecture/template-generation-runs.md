@@ -102,7 +102,27 @@ a run. Fourteen Tools, all read-only: `get_entity`, `list_related`,
   `defaultTemplateRunPreviewTimout` (20 s). Previews and diffs are limited to 2 and
   1 at a time inside a run (`templateRunPreviewConcurrency`,
   `templateRunDiffConcurrency`) and render under an output budget of 256 KiB and a
-  parsed-source budget of 512 KiB.
+  parsed-source budget of 512 KiB (`templateRunRenderOutputBytes`,
+  `templateRunRenderParsedBytes`, set with `shortcodes.WithRenderBudget`). The
+  preview renders with `shortcodes.ProcessChecked`, so a render past either budget,
+  or a `matches` pattern past the regular expression allowance, is an error result
+  rather than a cut-off render. No other render sets a budget: ordinary pages and
+  the editor's live preview keep rendering, and there a pattern past the allowance
+  only makes its conditional false (`renderMeter.regexp`).
+- Lint, inside and outside a run, reads at most `shortcodes.MaxLintSourceBytes`
+  (1 MiB); a larger source gets one "too large to check" error. Lint, rendering
+  and MetaSchema compilation share `shortcodes.RegexAllowance`: per pattern
+  `MaxRegexpSource` (32 KiB), `MaxRegexpProgramSize` (20,000 instructions) and
+  `MaxRegexpRunes` (100,000), and per operation 200,000 instructions, 2,000,000
+  runes and 4 MiB of pattern text. A MetaSchema past it does not compile, so it is
+  refused on save and in a generated draft (`meterRegexpEngine`).
+- `diff_revisions` uses `DiffTemplateRevisionsContext`, which diffs under
+  `models.MaxBoundedDiffCells` (1,000,000 cells per field; a larger field takes
+  the coarse delete-then-insert form) and stops with the run's context.
+- `ValidateTemplateRunContent` passes the run's context to lint
+  (`LintOptions.Context`), MetaSchema lint and `ValidateMetaSchemaContext`, so a
+  cancelled run gets an error issue, never a clean verdict on content it did not
+  finish checking.
 - `lint`, `preview` and `submit` refuse a source over
   `MaxTemplateGeneratedContentLength` (20000 bytes) or with more than
   `MaxTemplateToolShortcodeTokens` (2000) `[` tokens before parsing
