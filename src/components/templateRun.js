@@ -268,13 +268,20 @@ export function runHost() {
         });
         if (!resp.ok) {
           const body = await resp.json().catch(() => null);
+          // A 404 after the run ended is expected; only the run still in progress shows it.
+          if (!this._finishStillApplies(run)) return;
           run.finishRequested = false;
           run.finishError = (body && (body.error || body.Error)) || `Could not finish the run (${resp.status}).`;
         }
       } catch (err) {
+        if (!this._finishStillApplies(run)) return;
         run.finishRequested = false;
         run.finishError = err.message || 'Could not finish the run.';
       }
+    },
+
+    _finishStillApplies(run) {
+      return this.run === run && run.status === 'running';
     },
 
     recordView,
@@ -310,11 +317,23 @@ export function runHost() {
     },
 
     // A harness result that arrived as plain JSON (no stream) still ends a run: show its
-    // transcript. Only a successful result; refusals and 409s have no run to show.
+    // transcript. A success ends it done; a started run that failed carries its transcript
+    // in the error body and ends as an error. Refusals and 409s have no run to show.
     adoptJsonResult(resp, data) {
-      if (!resp?.ok || !data || (!Array.isArray(data.transcript) && !data.stopReason)) return;
+      if (!data || resp?.status === 409) return;
+      if (resp?.ok) {
+        if (!Array.isArray(data.transcript) && !data.stopReason) return;
+        this.run = newRun();
+        finishRunState(this.run, 'done', { transcript: data.transcript, stopReason: data.stopReason });
+        return;
+      }
+      if (!resp || !Array.isArray(data.transcript)) return;
       this.run = newRun();
-      finishRunState(this.run, 'done', { transcript: data.transcript, stopReason: data.stopReason });
+      finishRunState(this.run, 'error', {
+        transcript: data.transcript,
+        stopReason: data.stopReason,
+        error: data.error || data.Error || `Generation failed (${resp.status}).`,
+      });
     },
 
     // Record how the streamed run ended, once the host knows.

@@ -334,3 +334,36 @@ func TestRecorderSourceAdmissionSurvivesSanitizing(t *testing.T) {
 		})
 	}
 }
+
+// A cut Turn counts as recovered only when a later submit was actually
+// admitted: inside the per-Turn call cap, with fields, and past source admission.
+func TestScoreHarnessLengthRecoveryNeedsAnAdmittedSubmission(t *testing.T) {
+	cut := harnessCall(1, "length", ToolCall{Name: "submit", Arguments: "[unparsed arguments: 40 bytes]", Incomplete: true})
+	filler := func(n int) []ToolCall {
+		out := make([]ToolCall, n)
+		for i := range out {
+			out[i] = ToolCall{Name: "get_entity", Arguments: `{"type":"group","id":1}`}
+		}
+		return out
+	}
+	cases := map[string]Call{
+		"seventh position": harnessCall(2, "tool_calls", append(filler(application_context.TemplateRunMaxCallsPerTurn), submitTool(completeHeaderSubmit))...),
+		"empty fields":     harnessCall(2, "tool_calls", submitTool(`{"fields":{}}`)),
+		"source rejected":  harnessCall(2, "tool_calls", ToolCall{Name: "submit", Arguments: completeHeaderSubmit, SourceCheck: SourceRejected}),
+		"unrequested name": harnessCall(2, "tool_calls", submitTool(`{"fields":{"CustomFooter":"<p>x</p>"}}`)),
+	}
+	for name, later := range cases {
+		t.Run(name, func(t *testing.T) {
+			checks, _ := Score(pairCase(), pairDraft(`<p>x</p>`, `.a{}`), []Call{cut, later}, okPreview(`<p>x</p>`), nil, testEnv())
+			if checks.LengthRecovered {
+				t.Fatal("a refused submit counted as recovery")
+			}
+		})
+	}
+	// The sixth position is still inside the cap.
+	sixth := harnessCall(2, "tool_calls", append(filler(application_context.TemplateRunMaxCallsPerTurn-1), submitTool(completeHeaderSubmit))...)
+	checks, _ := Score(pairCase(), pairDraft(`<p>x</p>`, `.a{}`), []Call{cut, sixth}, okPreview(`<p>x</p>`), nil, testEnv())
+	if !checks.LengthRecovered {
+		t.Fatal("a submit at the last admitted position did not count")
+	}
+}

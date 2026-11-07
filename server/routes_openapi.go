@@ -2675,17 +2675,25 @@ Request body fields:
     both part of the disclosure and so of its groundingHash: previews run [mrql]
     queries; previews run plugin shortcodes read-only. Classic mode ignores them.
 
-Generation takes two requests. A dry run returns the disclosure: {"sections":
+Generation takes two requests. A dry run returns the disclosure: {"mode", "sections":
 [{"call", "role", "key", "label", "bytes", "text", "constant", "shared"}], "destination":
 {"endpoint", "host", "profiles": [{"kind", "model", "thinking", "maxTokens", "maxCalls"}]},
 "transport": {"stream", "responseFormat", "contentType", "authorization"},
-"continuationRule": {"version", "text"}, "groundingHash"}. "sections" are every
-provider call's system and user messages, split into labelled parts; the
-provider request is built only from them. A section with "shared" true belongs to
+"continuationRule": {"version", "text"}, "groundingHash"}, plus, in harness mode
+only, "tools", "caps", "optIns" and "envelope" (described below). "mode" is
+"classic" or "harness". "sections" are the system and user messages of the
+provider calls, split into labelled parts. In classic mode the provider request
+is built only from them. In harness mode they are the Seed and instructions
+only: later requests also carry the Tool results the run produces, which cannot
+be disclosed beforehand and are bounded by the disclosed "caps". A section with "shared" true belongs to
 every call of a whole-template request and is listed once. "endpoint" is the URL the provider
 posts to, with each query value shown as "…". "groundingHash" is the sha256 of
 the exact URL (escaped path and query included), the destination, the
-transport, the continuation rule and every section. The real request repeats
+transport, the continuation rule, every section and the mode. In harness mode it
+also covers the tools, the caps, the opt-ins, the envelope and the account
+identity (user ID, role, scope Group and superuser flag, which the disclosure
+never shows), so a change to any of them between approval and the real request
+is a changed hash. The real request repeats
 the same fields with "groundingHash"; the server rebuilds the disclosure and
 answers 409 "the data to be sent changed; review it again" when the hash no
 longer matches (for example a new member entity became the sample), and 400
@@ -2693,6 +2701,14 @@ when it is missing. Neither calls the provider.
 
 Harness mode (ai_template_generation_mode, the default) runs the request as a
 multi-Turn Generation run: the model reads through Tools, then submits a Draft.
+Its disclosure adds {"tools": [{"name", "description", "parameters"}], "caps":
+{"maxTurns", "deadline", "tokenBudget", "callsPerTurn", "toolTimeout",
+"previewTimeout", "budgetNote", "resultCaps": [{"tool", "bytes", "entries"}]},
+"optIns": {"previewMRQL", "previewPlugins"}, "envelope"}; "envelope" is the
+sentence the user approves, saying what the Tools can reach and what each opt-in
+adds. Its one profile's "maxCalls" is the Turn cap. The repair, planning and
+per-section calls described below do not exist in harness mode: a whole
+template is one run that submits all of its fields.
 A group-limited account (confined to a Group's subtree, or a role that requires
 one) is refused with 403 "Generation runs are not available to group-limited
 accounts", a dry run included. An account has at most 2 live runs; a third is a
@@ -2729,19 +2745,19 @@ is sent every 15 seconds. A write that blocks for 10 seconds ends the run.
 Leaving the stream cancels the run.
 POST .../generateTemplate/finish asks a live run to make its next Turn the final one.
 
-Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair", "failedSlots"}.
+Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair", "failedSlots"}; "repair" and "failedSlots" occur in classic mode only.
 "content" is set for slot/metaschema; "slots" (a field→markup map) for bundle.
 "valid" is false with "issues" when the draft fails lint / JSON-Schema validation,
 was cut off at the output limit, or exceeds 20,000 bytes; the draft is still
 returned for review (HTTP 200). "slotIssues" groups a bundle's issues by slot.
-When the first draft has error-severity issues (or half an HTML/CSS pair) the
+In classic mode, when the first draft has error-severity issues (or half an HTML/CSS pair) the
 server makes one more call, the disclosed repair call, and keeps its answer only
 if it scores better and still holds the draft's content; "repair" then reports
 {"attempted", "applied", "reason"}, with reason one of "budget", "disabled",
 "provider_error", "timeout" or "not_better". A repair takes no rate-limit slot, and neither does a call of a whole-template request. A 502 for a pair that stayed broken after a repair attempt carries the same "repair" object beside "error".
 A truncated draft is never repaired, and the field is absent when the first
 draft needed none.
-A whole template (target=bundle) is generated in several calls. When it names
+In classic mode a whole template (target=bundle) is generated in several calls. When it names
 more than one section, or CustomCSS, a planning call first settles one shared
 design (class prefix, palette, layout, which sections to fill and, if CustomCSS
 was requested, new shared CSS rules); then one call per section fills an HTML

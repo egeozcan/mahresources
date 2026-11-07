@@ -244,7 +244,7 @@ func Score(c Case, d Draft, calls []Call, previews map[string]Preview, probes []
 		// a run that produced none fails on what its last Turn was. The
 		// classic reading of every call's finish reason would count a cut
 		// Turn that the model recovered from.
-		checks.LengthRecovered = lengthRecovered(calls)
+		checks.LengthRecovered = lengthRecovered(c, calls)
 		if d.Status != 200 {
 			checks.Truncated = d.StopReason == application_context.TemplateStopLengthRepeated || lastHarnessFinish(calls) == "length"
 		}
@@ -678,20 +678,38 @@ func lastHarnessFinish(calls []Call) string {
 	return ""
 }
 
-// completeSubmit reports whether a recorded tool call is a submit that arrived
-// whole: neither cut off nor malformed.
-func completeSubmit(tc ToolCall) bool {
-	return tc.Name == application_context.ToolSubmit && !tc.Incomplete && !tc.Malformed
+// requestedFieldsOf is the set of field names a submit may name for a case.
+func requestedFieldsOf(c Case) map[string]bool {
+	requested := map[string]bool{}
+	for _, slot := range c.RequestedSlots() {
+		requested[slot] = true
+	}
+	if c.Kind == KindMetaSchema {
+		requested["MetaSchema"] = true
+	}
+	return requested
+}
+
+// admittedSubmit reports whether the run loop would have accepted the call at
+// position i of its Turn: inside the per-Turn call cap, arrived whole, and
+// passing submit's argument and source admission for the requested fields.
+func admittedSubmit(i int, tc ToolCall, requested map[string]bool) bool {
+	if i >= application_context.TemplateRunMaxCallsPerTurn || tc.Name != application_context.ToolSubmit || tc.Incomplete || tc.Malformed {
+		return false
+	}
+	_, shape := parseRecordedSubmit(tc.Arguments, requested, tc.SourceCheck)
+	return shape == submitOK
 }
 
 // lengthRecovered reports a Turn that ended at the output limit and was
-// followed, on a later Turn, by a complete submission.
-func lengthRecovered(calls []Call) bool {
+// followed, on a later Turn, by a submission the run loop admitted.
+func lengthRecovered(c Case, calls []Call) bool {
+	requested := requestedFieldsOf(c)
 	cut := false
 	for _, call := range harnessCalls(calls) {
 		if cut {
-			for _, tc := range call.ToolCalls {
-				if completeSubmit(tc) {
+			for i, tc := range call.ToolCalls {
+				if admittedSubmit(i, tc, requested) {
 					return true
 				}
 			}
@@ -711,13 +729,7 @@ func lengthRecovered(calls []Call) bool {
 func scoreHarnessSubmissions(c Case, calls []Call, checks *Checks) {
 	fields := map[string]string{}
 	submitted := false
-	requested := map[string]bool{}
-	for _, slot := range c.RequestedSlots() {
-		requested[slot] = true
-	}
-	if c.Kind == KindMetaSchema {
-		requested["MetaSchema"] = true
-	}
+	requested := requestedFieldsOf(c)
 	for _, call := range harnessCalls(calls) {
 		for i, tc := range call.ToolCalls {
 			// The harness runs only the first calls of a Turn, by position in

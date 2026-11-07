@@ -299,7 +299,10 @@ func (g *defaultTemplateGenerator) newHarnessDisclosure(in TemplateGenerationInp
 	d.Destination.Provider = conv.ProviderName()
 	if p, ok := conv.(interface{ ReasoningMode() string }); ok {
 		d.Destination.Profiles[0].ReasoningMode = p.ReasoningMode()
-		if d.Destination.Profiles[0].ReasoningMode == "disabled" && profile.Thinking {
+		mode := d.Destination.Profiles[0].ReasoningMode
+		// DeepSeek's toggle and OpenRouter's reasoning.enabled are the two
+		// request fields the chat adapter sets from the profile.
+		if profile.Thinking && (mode == "disabled" || (mode == "provider_default" && conv.ProviderName() == "openrouter")) {
 			d.Destination.Profiles[0].ReasoningMode = "enabled"
 		}
 	}

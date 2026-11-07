@@ -213,3 +213,22 @@ func TestAdapterFixturesRecordDecodeAndRefusalClasses(t *testing.T) {
 		})
 	}
 }
+
+// The recorder wraps the harness provider without hiding its reasoning
+// metadata, so a recorded run discloses the same profile as an unrecorded one.
+func TestRecorderForwardsTheAdaptersReasoningMode(t *testing.T) {
+	type reasoning interface{ ReasoningMode() string }
+	for provider, want := range map[string]string{"deepseek": "disabled", "anthropic": "provider_default", "openai": "provider_default", "openrouter": "provider_default"} {
+		t.Run(provider, func(t *testing.T) {
+			real := application_context.NewGenerationConversationProvider(provider, "k", "m", nil)
+			direct, ok := real.(reasoning)
+			if !ok || direct.ReasoningMode() != want {
+				t.Fatalf("adapter reasoning = %v", real)
+			}
+			wrapped, ok := NewRecorder("k").WrapConversationProvider(real).(reasoning)
+			if !ok || wrapped.ReasoningMode() != want {
+				t.Fatalf("the wrapper lost the reasoning mode: ok=%v", ok)
+			}
+		})
+	}
+}

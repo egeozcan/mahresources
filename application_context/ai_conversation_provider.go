@@ -38,6 +38,19 @@ func (p *generationConversationProvider) Endpoint() string {
 	return p.transport.endpoint
 }
 
+// ReasoningMode is the reasoning behaviour the adapter sends when the profile
+// does not turn thinking on. DeepSeek is the only provider whose adapter always
+// sends an explicit toggle ("disabled" unless the profile enables it); every
+// other adapter sends no reasoning field, or only an enabling one, so the
+// provider's own default applies. The Disclosure upgrades either answer to
+// "enabled" when the profile asks for thinking and the adapter honours it.
+func (p *generationConversationProvider) ReasoningMode() string {
+	if p.transport.provider == "deepseek" {
+		return "disabled"
+	}
+	return "provider_default"
+}
+
 func (p *generationConversationProvider) Transport() TemplateTransport {
 	t := TemplateTransport{Stream: false, ResponseFormat: "tools", ContentType: "application/json", Authorization: "Bearer (your API key, not shown)"}
 	switch p.transport.provider {

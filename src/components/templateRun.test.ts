@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { consumeRun, newRun, applyRunEvent, recordView, finishRunState } from './templateRun.js';
+import { consumeRun, newRun, applyRunEvent, recordView, finishRunState, runHost } from './templateRun.js';
 
 const enc = new TextEncoder();
 const frame = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -179,5 +179,55 @@ describe('transcript records', () => {
     expect(v.stubbed).toBe('replaced by a one-line stub in requests starting with Turn 1');
     expect(v.calls[0]).toMatchObject({ name: 'lint', arguments: '{"a":1}' });
     expect(v.isError).toBe(true);
+  });
+});
+
+describe('finish now', () => {
+  const host = (status = 'running') => {
+    const h: any = Object.assign(runHost(), { _finishPath: '/finish' });
+    h.run = newRun();
+    h.run.runId = 'r1';
+    h.run.status = status;
+    return h;
+  };
+  const deferred = () => {
+    let resolve!: (v: unknown) => void;
+    const promise = new Promise((r) => { resolve = r; });
+    return { promise, resolve };
+  };
+
+  it('ignores a 404 that arrives after the run completed', async () => {
+    const h = host();
+    const d = deferred();
+    vi.stubGlobal('fetch', vi.fn(() => d.promise));
+    const pending = h.finishRunNow();
+    finishRunState(h.run, 'done');
+    d.resolve({ ok: false, status: 404, json: async () => ({ error: 'no such run' }) });
+    await pending;
+    expect(h.run.finishError).toBe('');
+    vi.unstubAllGlobals();
+  });
+
+  it('ignores a failure that arrives after the run was replaced', async () => {
+    const h = host();
+    const old = h.run;
+    const d = deferred();
+    vi.stubGlobal('fetch', vi.fn(() => d.promise));
+    const pending = h.finishRunNow();
+    h.run = newRun();
+    d.resolve({ ok: false, status: 404, json: async () => ({ error: 'gone' }) });
+    await pending;
+    expect(old.finishError).toBe('');
+    expect(h.run.finishError).toBe('');
+    vi.unstubAllGlobals();
+  });
+
+  it('still reports a failure while the run is running', async () => {
+    const h = host();
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({ error: 'boom' }) })));
+    await h.finishRunNow();
+    expect(h.run.finishError).toBe('boom');
+    expect(h.run.finishRequested).toBe(false);
+    vi.unstubAllGlobals();
   });
 });
