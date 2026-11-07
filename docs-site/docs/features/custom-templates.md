@@ -796,14 +796,16 @@ Every save that changes a template slot, its CSS, the Meta JSON Schema or the se
 
 The Category, Resource Category, and Note Type edit forms provide a feedback loop for authoring the `Custom*` template slots (including `CustomCSS`, which supports shortcodes). These tools apply only to the template slots -- the Meta JSON Schema editor is unaffected.
 
+Each template slot and its CSS companion sit in one collapsible section, titled after the slot and closed when the form loads. Click the title to open the section. A section opens by itself when a preset, a copy, an imported bundle or a loaded revision changes a field in it, so a change you did not type is never hidden. The **Custom CSS** editor sits below the sections and is always shown.
+
 ### Live preview
 
-Every template slot's fieldset ends with its own preview, which renders that slot against a real entity without saving:
+Every template slot's section ends with its own preview, which renders that slot against a real entity without saving:
 
 - Pick the entity to render against once, in **Preview against** at the top of the template fields. Every slot preview uses it. When editing an existing category or note type, the search and the default pick are restricted to entities of that category (the choice is remembered per category in the browser). On the create form, where no entity can belong to the new category yet, the pick falls back to all entities and defaults to the most recent one. When the category has no members yet, the previews borrow an entity from elsewhere and say so.
 - The List Header and List Footer previews render against the category itself, so they work only once the category has been saved.
 - Each preview renders its slot with the full CSS cascade from the form: `CustomCSS` first, then every slot's CSS companion (the Entity Picker Result preview uses only `CustomCSS` and its own companion, as the picker does). `CustomCSS` has no preview of its own, since the shared stylesheet adds no markup; editing it re-renders the slot previews.
-- A preview renders the first time it scrolls into view. Editing its slot, or any CSS field, re-renders it after a short pause if it is in view; a preview out of view renders when it is next seen. **Refresh** re-renders one preview and **Refresh all previews** re-renders every visible one.
+- A preview renders the first time it scrolls into view, so a preview in a closed section waits until the section is opened. Editing its slot, or any CSS field, re-renders it after a short pause if it is in view; a preview out of view renders when it is next seen. **Refresh** re-renders one preview and **Refresh all previews** re-renders every visible one.
 - The result renders in a sandboxed `<iframe>` that includes the app's CSS and JS bundle, so `[meta]` web components and Alpine widgets hydrate. The sandbox is origin-isolated, so widgets that need API calls are non-functional in preview; the note under **Preview against** states this.
 - The rendered slot is wrapped in the same `x-data="{ entity: ... }"` Alpine scope the display pages provide, so expressions like `x-text="entity.Name"` behave as they will on the real page.
 - A failed shortcode shows only its name in the frame, so each preview lists its render errors in full below the frame, along with lint issues.

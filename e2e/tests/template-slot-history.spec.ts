@@ -6,6 +6,10 @@
  */
 import { test, expect } from '../fixtures/base.fixture';
 import type { Page } from '@playwright/test';
+import { openSlotClustersOnLoad } from '../helpers/template-clusters';
+
+// These tests work inside the slot clusters, which load collapsed.
+test.beforeEach(async ({ page }) => { await openSlotClustersOnLoad(page); });
 
 async function postForm(page: Page, path: string, form: Record<string, string>) {
   const resp = await page.request.post(path, { form });

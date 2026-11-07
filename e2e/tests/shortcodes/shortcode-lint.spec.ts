@@ -4,6 +4,10 @@
  * diagnostics (lint gutter markers), and a valid template should not.
  */
 import { test, expect } from '../../fixtures/base.fixture';
+import { openSlotClustersOnLoad } from '../../helpers/template-clusters';
+
+// These tests work inside the slot clusters, which load collapsed.
+test.beforeEach(async ({ page }) => { await openSlotClustersOnLoad(page); });
 
 test.describe('Shortcode lint in category template editors', () => {
   test('typing a broken [conditional] surfaces a lint diagnostic', async ({ page }) => {

@@ -7,6 +7,10 @@
 import { test, expect } from '../fixtures/base.fixture';
 import { previewEntityChip } from '../helpers/template-preview-entity';
 import type { Page, Request } from '@playwright/test';
+import { openSlotClustersOnLoad } from '../helpers/template-clusters';
+
+// These tests work inside the slot clusters, which load collapsed.
+test.beforeEach(async ({ page }) => { await openSlotClustersOnLoad(page); });
 
 // Scrolls a cluster's preview into view (previews render lazily, the first
 // time they are seen) and returns its frame.

@@ -1254,6 +1254,71 @@ html {
     border-top: 1px solid #f5f5f4;
 }
 
+/* Template slot clusters on the category, resource category and note type
+   editors: one disclosure per slot, closed on load. The children are direct
+   children of the details (a test reads the preview as the cluster's last
+   child), so the spacing lives here rather than on a body wrapper. */
+.template-cluster {
+    border: 1px solid #e7e5e4;
+    border-radius: var(--radius-md);
+}
+
+.template-cluster[open] {
+    padding-bottom: 1rem;
+}
+
+.template-cluster > summary {
+    display: flex;
+    align-items: center;
+    padding: 0.625rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #292524;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    border-radius: var(--radius-md);
+    transition: background-color var(--transition-fast);
+}
+
+.template-cluster > summary::-webkit-details-marker {
+    display: none;
+}
+
+.template-cluster > summary::before {
+    content: '';
+    display: inline-block;
+    width: 0.375rem;
+    height: 0.375rem;
+    margin-right: 0.625rem;
+    border-right: 2px solid #a8a29e;
+    border-bottom: 2px solid #a8a29e;
+    transform: rotate(-45deg);
+    transition: transform var(--transition-normal);
+    flex-shrink: 0;
+}
+
+.template-cluster[open] > summary::before {
+    transform: rotate(45deg);
+}
+
+.template-cluster > summary:hover {
+    background-color: #fafaf9;
+}
+
+.template-cluster > summary:focus-visible {
+    outline: 2px solid #d97706;
+    outline-offset: 2px;
+}
+
+.template-cluster > :not(summary) {
+    margin: 1rem 1rem 0;
+}
+
+.template-cluster > summary + * {
+    margin-top: 0.25rem;
+}
+
 /* Nested panels inside collapsibles */
 .detail-collapsible .detail-panel {
     border: none;

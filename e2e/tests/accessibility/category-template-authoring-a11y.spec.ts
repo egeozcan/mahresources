@@ -3,6 +3,10 @@
  * which grew a live-preview pane and shortcode-aware editors in Phase 1.
  */
 import { test, expect } from '../../fixtures/a11y.fixture';
+import { openSlotClustersOnLoad } from '../../helpers/template-clusters';
+
+// These tests work inside the slot clusters, which load collapsed.
+test.beforeEach(async ({ page }) => { await openSlotClustersOnLoad(page); });
 
 test.describe('Category template authoring accessibility', () => {
   test('category create form has no critical a11y violations', async ({ page, checkA11y }) => {

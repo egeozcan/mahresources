@@ -325,8 +325,8 @@
         </div>
 
         {% include "/partials/form/templatePreviewContext.tpl" %}
-        <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomHeader">
-        <legend class="text-sm font-medium px-2">Custom Header</legend>
+        <details class="template-cluster" data-template-cluster="CustomHeader" @template-slot-changed="$el.open = true" @input="$el.open = true">
+        <summary>Custom Header</summary>
         <p class="text-xs text-stone-500">Generate updates this template and its CSS together. Review both before saving.</p>
         <div x-data="templateGeneration({ fieldName: 'CustomHeader', mode: 'html' })">
         {% include "/partials/form/templateGenerationControls.tpl" with title="Custom Header and CSS" name="CustomHeader" field_id="CustomHeader" %}
@@ -334,9 +334,9 @@
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header" name="CustomHeader" value=category.CustomHeader mode="html" description="Top of the group detail page, above the description." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header CSS" name="CustomHeaderCSS" value=category.CustomHeaderCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
         {% include "/partials/form/slotPreview.tpl" with slot="CustomHeader" label="Custom Header" %}
-        </fieldset>
-        <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomDetailFooter">
-        <legend class="text-sm font-medium px-2">Custom Detail Footer</legend>
+        </details>
+        <details class="template-cluster" data-template-cluster="CustomDetailFooter" @template-slot-changed="$el.open = true" @input="$el.open = true">
+        <summary>Custom Detail Footer</summary>
         <p class="text-xs text-stone-500">Generate updates this template and its CSS together. Review both before saving.</p>
         <div x-data="templateGeneration({ fieldName: 'CustomDetailFooter', mode: 'html' })">
         {% include "/partials/form/templateGenerationControls.tpl" with title="Custom Detail Footer and CSS" name="CustomDetailFooter" field_id="CustomDetailFooter" %}
@@ -344,9 +344,9 @@
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Detail Footer" name="CustomDetailFooter" value=category.CustomDetailFooter mode="html" description="Bottom of the group detail page, below every built-in section." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Detail Footer CSS" name="CustomDetailFooterCSS" value=category.CustomDetailFooterCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
         {% include "/partials/form/slotPreview.tpl" with slot="CustomDetailFooter" label="Custom Detail Footer" %}
-        </fieldset>
-        <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomSidebar">
-        <legend class="text-sm font-medium px-2">Custom Sidebar</legend>
+        </details>
+        <details class="template-cluster" data-template-cluster="CustomSidebar" @template-slot-changed="$el.open = true" @input="$el.open = true">
+        <summary>Custom Sidebar</summary>
         <p class="text-xs text-stone-500">Generate updates this template and its CSS together. Review both before saving.</p>
         <div x-data="templateGeneration({ fieldName: 'CustomSidebar', mode: 'html' })">
         {% include "/partials/form/templateGenerationControls.tpl" with title="Custom Sidebar and CSS" name="CustomSidebar" field_id="CustomSidebar" %}
@@ -354,9 +354,9 @@
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=category.CustomSidebar mode="html" description="The group detail page sidebar." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar CSS" name="CustomSidebarCSS" value=category.CustomSidebarCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
         {% include "/partials/form/slotPreview.tpl" with slot="CustomSidebar" label="Custom Sidebar" %}
-        </fieldset>
-        <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomSummary">
-        <legend class="text-sm font-medium px-2">Custom Summary</legend>
+        </details>
+        <details class="template-cluster" data-template-cluster="CustomSummary" @template-slot-changed="$el.open = true" @input="$el.open = true">
+        <summary>Custom Summary</summary>
         <p class="text-xs text-stone-500">Generate updates this template and its CSS together. Review both before saving.</p>
         <div x-data="templateGeneration({ fieldName: 'CustomSummary', mode: 'html' })">
         {% include "/partials/form/templateGenerationControls.tpl" with title="Custom Summary and CSS" name="CustomSummary" field_id="CustomSummary" %}
@@ -364,9 +364,9 @@
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=category.CustomSummary mode="html" description="On group cards in list views, below the title." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary CSS" name="CustomSummaryCSS" value=category.CustomSummaryCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
         {% include "/partials/form/slotPreview.tpl" with slot="CustomSummary" label="Custom Summary" %}
-        </fieldset>
-        <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomAvatar">
-        <legend class="text-sm font-medium px-2">Custom Avatar</legend>
+        </details>
+        <details class="template-cluster" data-template-cluster="CustomAvatar" @template-slot-changed="$el.open = true" @input="$el.open = true">
+        <summary>Custom Avatar</summary>
         <p class="text-xs text-stone-500">Generate updates this template and its CSS together. Review both before saving.</p>
         <div x-data="templateGeneration({ fieldName: 'CustomAvatar', mode: 'html' })">
         {% include "/partials/form/templateGenerationControls.tpl" with title="Custom Avatar and CSS" name="CustomAvatar" field_id="CustomAvatar" %}
@@ -374,9 +374,9 @@
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=category.CustomAvatar mode="html" description="Replaces the default initials avatar on group cards." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar CSS" name="CustomAvatarCSS" value=category.CustomAvatarCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
         {% include "/partials/form/slotPreview.tpl" with slot="CustomAvatar" label="Custom Avatar" %}
-        </fieldset>
-        <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomHoverCard">
-        <legend class="text-sm font-medium px-2">Custom Hover Card</legend>
+        </details>
+        <details class="template-cluster" data-template-cluster="CustomHoverCard" @template-slot-changed="$el.open = true" @input="$el.open = true">
+        <summary>Custom Hover Card</summary>
         <p class="text-xs text-stone-500">Generate updates this template and its CSS together. Review both before saving.</p>
         <div x-data="templateGeneration({ fieldName: 'CustomHoverCard', mode: 'html' })">
         {% include "/partials/form/templateGenerationControls.tpl" with title="Custom Hover Card and CSS" name="CustomHoverCard" field_id="CustomHoverCard" %}
@@ -384,9 +384,9 @@
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Hover Card" name="CustomHoverCard" value=category.CustomHoverCard mode="html" description="The hover card shown when a group link is hovered. Falls back to Custom Summary when empty, so set it only when hover should differ from the card." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Hover Card CSS" name="CustomHoverCardCSS" value=category.CustomHoverCardCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
         {% include "/partials/form/slotPreview.tpl" with slot="CustomHoverCard" label="Custom Hover Card" %}
-        </fieldset>
-        <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomOwnEntities">
-        <legend class="text-sm font-medium px-2">Custom Own Entities</legend>
+        </details>
+        <details class="template-cluster" data-template-cluster="CustomOwnEntities" @template-slot-changed="$el.open = true" @input="$el.open = true">
+        <summary>Custom Own Entities</summary>
         <p class="text-xs text-stone-500">Generate updates this template and its CSS together. Review both before saving.</p>
         <div x-data="templateGeneration({ fieldName: 'CustomOwnEntities', mode: 'html' })">
         {% include "/partials/form/templateGenerationControls.tpl" with title="Custom Own Entities and CSS" name="CustomOwnEntities" field_id="CustomOwnEntities" %}
@@ -394,9 +394,9 @@
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Own Entities" name="CustomOwnEntities" value=category.CustomOwnEntities mode="html" description="Replaces the body of the group detail page's Own Entities section, which otherwise lists owned notes, sub-groups and resources as card grids." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Own Entities CSS" name="CustomOwnEntitiesCSS" value=category.CustomOwnEntitiesCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
         {% include "/partials/form/slotPreview.tpl" with slot="CustomOwnEntities" label="Custom Own Entities" %}
-        </fieldset>
-        <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomListHeader">
-        <legend class="text-sm font-medium px-2">Custom List Header</legend>
+        </details>
+        <details class="template-cluster" data-template-cluster="CustomListHeader" @template-slot-changed="$el.open = true" @input="$el.open = true">
+        <summary>Custom List Header</summary>
         <p class="text-xs text-stone-500">Generate updates this template and its CSS together. Review both before saving.</p>
         <div x-data="templateGeneration({ fieldName: 'CustomListHeader', mode: 'html' })">
         {% include "/partials/form/templateGenerationControls.tpl" with title="Custom List Header and CSS" name="CustomListHeader" field_id="CustomListHeader" %}
@@ -404,9 +404,9 @@
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Header" name="CustomListHeader" value=category.CustomListHeader mode="html" description="Top of group list pages filtered to exactly this category. Rendered against the category itself, not a group: [property path=&quot;Name&quot;] is the category name, [meta] is empty, and [mrql] runs at global scope." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Header CSS" name="CustomListHeaderCSS" value=category.CustomListHeaderCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
         {% include "/partials/form/slotPreview.tpl" with slot="CustomListHeader" label="Custom List Header" %}
-        </fieldset>
-        <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomListFooter">
-        <legend class="text-sm font-medium px-2">Custom List Footer</legend>
+        </details>
+        <details class="template-cluster" data-template-cluster="CustomListFooter" @template-slot-changed="$el.open = true" @input="$el.open = true">
+        <summary>Custom List Footer</summary>
         <p class="text-xs text-stone-500">Generate updates this template and its CSS together. Review both before saving.</p>
         <div x-data="templateGeneration({ fieldName: 'CustomListFooter', mode: 'html' })">
         {% include "/partials/form/templateGenerationControls.tpl" with title="Custom List Footer and CSS" name="CustomListFooter" field_id="CustomListFooter" %}
@@ -414,9 +414,9 @@
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Footer" name="CustomListFooter" value=category.CustomListFooter mode="html" description="Bottom of group list pages filtered to exactly this category, below the results. Rendered against the category itself, not a group: [property path=&quot;Name&quot;] is the category name, [meta] is empty, and [mrql] runs at global scope." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Footer CSS" name="CustomListFooterCSS" value=category.CustomListFooterCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
         {% include "/partials/form/slotPreview.tpl" with slot="CustomListFooter" label="Custom List Footer" %}
-        </fieldset>
-        <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomMRQLResult">
-        <legend class="text-sm font-medium px-2">Custom MRQL Result</legend>
+        </details>
+        <details class="template-cluster" data-template-cluster="CustomMRQLResult" @template-slot-changed="$el.open = true" @input="$el.open = true">
+        <summary>Custom MRQL Result</summary>
         <p class="text-xs text-stone-500">Generate updates this template and its CSS together. Review both before saving.</p>
         <div x-data="templateGeneration({ fieldName: 'CustomMRQLResult', mode: 'html' })">
         {% include "/partials/form/templateGenerationControls.tpl" with title="Custom MRQL Result and CSS" name="CustomMRQLResult" field_id="CustomMRQLResult" %}
@@ -424,16 +424,16 @@
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result" name="CustomMRQLResult" value=category.CustomMRQLResult mode="html" description="Server-rendered in [mrql] results. Shortcodes work; Alpine directives do not." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result CSS" name="CustomMRQLResultCSS" value=category.CustomMRQLResultCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
         {% include "/partials/form/slotPreview.tpl" with slot="CustomMRQLResult" label="Custom MRQL Result" %}
-        </fieldset>
-        <fieldset class="rounded-md border border-stone-200 p-4 space-y-4" data-template-cluster="CustomEntityPickerResult">
-        <legend class="px-2 text-sm font-semibold text-stone-700">Entity Picker Result</legend>
+        </details>
+        <details class="template-cluster" data-template-cluster="CustomEntityPickerResult" @template-slot-changed="$el.open = true" @input="$el.open = true">
+        <summary>Entity Picker Result</summary>
         <div x-data="templateGeneration({ fieldName: 'CustomEntityPickerResult', mode: 'html' })">
         {% include "/partials/form/templateGenerationControls.tpl" with title="Entity Picker Result and CSS" name="CustomEntityPickerResult" field_id="CustomEntityPickerResult" %}
         </div>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Entity Picker Result" name="CustomEntityPickerResult" value=category.CustomEntityPickerResult mode="html" description="Content of one group result in the entity picker. Leave empty for the default card. The host owns selection controls; use shortcodes, not Alpine directives." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Entity Picker Result CSS" name="CustomEntityPickerResultCSS" value=category.CustomEntityPickerResultCSS mode="css" description="Global styles loaded with shared CustomCSS in the picker. Target .entity-picker-result to avoid affecting other page content." shortcodes=true generate=false %}
         {% include "/partials/form/slotPreview.tpl" with slot="CustomEntityPickerResult" label="Entity Picker Result" %}
-        </fieldset>
+        </details>
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=category.CustomCSS mode="css" description="Injected as a &lt;style&gt; block on the group detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template. Styles every slot above." shortcodes=true generate=true %}
         <div class="flex flex-wrap justify-end gap-2">{% include "/partials/form/slotHistoryButton.tpl" with slot="CustomCSS" label="Custom CSS" %}</div>
     </fieldset>

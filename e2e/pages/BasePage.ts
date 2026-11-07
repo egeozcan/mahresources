@@ -29,6 +29,12 @@ export class BasePage {
     const hiddenInput = this.page.locator(`input[type="hidden"][name="${fieldName}"]`);
     await hiddenInput.waitFor({ state: 'attached' });
     const container = hiddenInput.locator('..');
+    // Template slot editors sit in clusters that load collapsed; open the
+    // enclosing one the way an author would, by its summary.
+    const cluster = this.page.locator('details[data-template-cluster]', { has: hiddenInput });
+    if ((await cluster.count()) > 0 && !(await cluster.evaluate((d: HTMLDetailsElement) => d.open))) {
+      await cluster.locator('> summary').click();
+    }
     await container.locator('.cm-editor').first().waitFor({ state: 'visible' });
 
     await this.page.evaluate(({ name, value }) => {

@@ -9,6 +9,7 @@ test.describe('Shortcode autocomplete', () => {
     await page.goto('/category/new');
     await page.waitForLoadState('load');
 
+    await page.locator('[data-template-cluster="CustomHeader"] > summary').click();
     const header = page.locator('.cm-content[aria-label="Custom Header"]');
     await expect(header).toBeVisible({ timeout: 10000 });
     await header.click();
@@ -25,6 +26,7 @@ test.describe('Shortcode autocomplete', () => {
     await page.goto('/category/new');
     await page.waitForLoadState('load');
 
+    await page.locator('[data-template-cluster="CustomHeader"] > summary').click();
     const header = page.locator('.cm-content[aria-label="Custom Header"]');
     await expect(header).toBeVisible({ timeout: 10000 });
     await header.click();

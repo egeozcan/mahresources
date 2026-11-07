@@ -8,6 +8,10 @@
 import type { Locator, Page, Route } from '@playwright/test';
 import { test, expect } from '../fixtures/base.fixture';
 import { previewEntityChip } from '../helpers/template-preview-entity';
+import { openSlotClustersOnLoad } from '../helpers/template-clusters';
+
+// These tests work inside the slot clusters, which load collapsed.
+test.beforeEach(async ({ page }) => { await openSlotClustersOnLoad(page); });
 
 // The disclosure the server returns for a dry run (decision 11): the generate
 // stubs answer it automatically, and only the real request reaches the handler.
