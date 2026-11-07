@@ -225,3 +225,49 @@ func TestHarnessFinishRouteChecksTheAccount(t *testing.T) {
 	}
 	close(release)
 }
+
+// With auth off the middleware gives every request the root admin principal,
+// which carries a real user ID. Ownership must still be by client address, not
+// by that shared ID: one client's two runs do not use up another's allowance,
+// and one client cannot finish another's run.
+func TestHarnessAuthOffRunsAreOwnedByClientAddress(t *testing.T) {
+	tc := SetupTestEnv(t)
+	if _, err := tc.AppCtx.EnsureAdminUser("root", "rootpw12"); err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	entered := make(chan struct{}, 8)
+	conv := &fakeConversation{step: func(ctx context.Context, n int, req application_context.ConversationRequest) (application_context.ConversationResponse, error) {
+		entered <- struct{}{}
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return application_context.ConversationResponse{}, ctx.Err()
+		}
+		return submitOnce(".a{}")(ctx, n, req)
+	}}
+	installHarness(tc, conv, 5)
+	srv := newHarnessServer(t, tc)
+	hash := disclose(t, tc, categoryGenerate, harnessSlotBody())
+	a := http.Header{"X-Forwarded-For": {"203.0.113.21"}}
+	b := http.Header{"X-Forwarded-For": {"203.0.113.22"}}
+
+	var firstRun string
+	for i := 0; i < application_context.MaxLiveTemplateRunsPerAccount; i++ {
+		resp, _ := postStream(t, srv.URL, categoryGenerate, withHash(harnessSlotBody(), hash), a)
+		id := runIDOf(t, newSSEReader(resp.Body).nextWithin(t, 5*time.Second))
+		if i == 0 {
+			firstRun = id
+		}
+		<-entered
+	}
+	resp, _ := postStream(t, srv.URL, categoryGenerate, withHash(harnessSlotBody(), hash), b)
+	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("another client must not share the allowance: %d", resp.StatusCode)
+	}
+	runIDOf(t, newSSEReader(resp.Body).nextWithin(t, 5*time.Second))
+	if rr := postFinish(tc, "/v1/category/generateTemplate/finish", firstRun, b); rr.Code != http.StatusNotFound {
+		t.Fatalf("another client finished a run it does not own: %d", rr.Code)
+	}
+	close(release)
+}

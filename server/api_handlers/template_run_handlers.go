@@ -161,10 +161,13 @@ func acceptsEventStream(r *http.Request) bool {
 	return strings.Contains(r.Header.Get("Accept"), "text/event-stream")
 }
 
-// templateRunAccountKey is the key a run is limited and finished by.
+// templateRunAccountKey is the key a run is limited and finished by: the user
+// ID of a signed-in account, else the client address. With auth off every
+// request carries the root admin principal, a real user ID flagged SuperUser
+// (a signed-in account never is), and those clients are told apart by address.
 func templateRunAccountKey(r *http.Request) string {
 	var userID uint
-	if p := auth.PrincipalFromContext(r.Context()); p != nil {
+	if p := auth.PrincipalFromContext(r.Context()); p != nil && !p.SuperUser {
 		userID = p.UserID
 	}
 	return application_context.TemplateRunAccountKey(userID, application_context.ClientIP(r))
