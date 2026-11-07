@@ -5,6 +5,8 @@
  * that must stay open through a fetch stub installed before the page loads
  * (page.route cannot hold a response body open).
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Page, Route } from '@playwright/test';
 import { test, expect } from '../fixtures/base.fixture';
 import { openTemplateSectionsOnLoad } from '../helpers/template-sections';
@@ -323,5 +325,38 @@ test.describe('Whole-template run', () => {
     await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<h1>x</h1>');
     await expect(page.locator('input[name="CustomHeaderCSS"]')).toHaveValue('h1{}');
     await expect(page.getByTestId('template-bundle-review')).toHaveCount(0);
+  });
+});
+
+// A run recorded from the real generate handler (server/api_tests
+// TestHarnessRunGoldenStream keeps it current), so the panel is driven by the
+// server's actual wire, not only hand-written frames.
+test.describe('Recorded harness run', () => {
+  const golden = JSON.parse(readFileSync(join(__dirname, '..', 'fixtures', 'template-run-golden.json'), 'utf8'));
+
+  test('the dialog and panel read what the real handler sends, and Apply writes the Draft', async ({ page }) => {
+    await page.route('**/v1/category/generateTemplate', async (route) => {
+      const body = route.request().postDataJSON();
+      if (body?.dryRun) {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(golden.disclosure) });
+        return;
+      }
+      expect(body.groundingHash).toBe('hash-golden');
+      await route.fulfill({ status: 200, contentType: 'text/event-stream', body: golden.stream });
+    });
+    await startRun(page);
+    await expect(page.getByTestId('generation-optin-mrql')).not.toBeChecked();
+    await send(page);
+
+    await expect(page.getByTestId('run-end-CustomHeader')).toContainText('Finished (done)');
+    await expect(page.getByTestId('run-turn-label-CustomHeader')).toHaveText('Turn 2 of 5');
+    await page.getByTestId('run-turns-CustomHeader').locator('summary').click();
+    await expect(page.getByTestId('run-turn-1-CustomHeader')).toContainText('get_shortcode_docs');
+    await expect(page.getByTestId('run-turn-2-CustomHeader')).toContainText('submitted CustomHeader: 0 error(s), 0 warning(s)');
+
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('');
+    await page.getByTestId('generate-apply-CustomHeader').click();
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<h1 class="gold">[property path="Name"]</h1>');
+    await expect(page.locator('[data-template-cluster="CustomHeader"] input[name="CustomHeaderCSS"]')).toHaveValue('.gold{color:goldenrod}');
   });
 });
