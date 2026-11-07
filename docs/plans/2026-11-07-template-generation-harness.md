@@ -244,7 +244,7 @@ It uses its own system prompts. They keep the untrusted-data boundary text and r
 It leaves out classic orchestration:
 - the output-format line, the planner instructions ("a separate call fills each section…", `template_generation_fanout.go:260`), the pair templates and their placeholders, and the repair sections.
 
-It replaces the partial catalogue's closing instruction ("use [partial] only with a name listed here", `template_generation_partials.go:259-265`) with harness wording: a partial must be listed in the Seed or verified with `get_partial`. Classic wording is unchanged.
+It replaces every exclusive statement of the partial catalogue, opening and closing, for complete and truncated catalogues ("use [partial] only with a name listed here", "Only these template partials exist", `template_generation_partials.go:259-265`), with harness wording: a partial must be listed in the Seed or verified with `get_partial`. Classic wording is unchanged. A test covers both catalogue shapes.
 
 It adds a harness-only **starting points** section: the edited carrier as `{carrierType, id, name}` (none on the create form), and each sample as `{type, id, name}`. The handler keeps the IDs it loaded the samples by. Classic projections stay unchanged.
 
@@ -614,3 +614,66 @@ These are all reached through `application_context/meta_schema.go:37-48`. The cu
 | **56 [P2]** | **Metaschema scope/location helpers multiply depth work and copies.** Location construction/cloning, recursive/dynamic-anchor resolution and cycle detection traverse parent scopes (`J/validator.go:733-736,770-787,816-817,884-893`). | Check/charge scope/path steps, reserve cloned locations, and enforce depth admission before entering the validation phase. |
 | **57 [P2]** | **Metaschema uniqueness checks reach recursive equality and hashing.** `uniqueItems` reaches array/object comparisons and object-key collection/sorting (`J/validator.go:343-350`; `J/util.go:292-313,350-385,393-412`). The small-array pairwise threshold does not bound the nested values compared. | Charge/check recursive member visits and reserve hash/key collections. Bound comparison/hash work, not just outer array length. |
 | **58 [P2]** | **Compiler error formatting expands the full error tree before Tool truncation.** Application error wrapping formats compiler errors (`application_context/meta_schema.go:45-48`); `ValidationError.display` recursively traverses causes, indentation and pointer construction (`J/output.go:47-91,110-117`). | Bound diagnostic traversal and bytes before writing/formatting. Avoid eagerly formatting an unrestricted underlying error tree; return one bounded validation/complexity diagnostic on exhaustion. |
+
+## Appendix C: plan review round 13 (clean round), P2 items
+
+Items 1 to 4 extend lane B's class-rule checklist. Item 5 is lane B's (the model-preview mark is carried into actor resolution so a failed actor lookup writes no log row). Item 6 is folded into section 3 (Seed).
+
+### 1. [P2] §2 Tools / Class rule : Static MRQL checking needs admission for downstream parameter work
+
+The parameter-collection item in Appendix B stops before several additional consumers:
+
+- `CheckTemplateMRQL` copies the supplied parameter map without context or allocation accounting (`application_context/mrql_template_check.go:47-54`).
+- `BindParams` coerces a parameter separately for every placeholder occurrence (`mrql/params.go:112-124`). Quoted string parameters are decoded through a fresh lexer each time (`mrql/params.go:220-229`; `mrql/lexer.go:182-220`).
+- LIKE translation can create another escaped string per occurrence (`mrql/translator.go:416-424,2099-2111`).
+- Unknown-parameter diagnostics collect and sort names, construct another slice of prefixed names, and join them into an error (`mrql/params.go:100-108,135-147`).
+
+The query’s 32 KiB/2,048-token limits do not bound separately supplied parameter values. For example, 500 repetitions of `$p` fit the IN-list and token limits (`mrql/limits.go:4-11`; `mrql/parser.go:624-634`); repeatedly decoding a quoted 1 MiB parameter retains approximately 500 MiB before producing the capped verdict.
+
+These functions are reachable through lint’s MRQL callback (`shortcodes/lint.go:453-459`), so the Class rule can cover them. The direct `check_mrql` Tool must use that same bounded path rather than calling an unbudgeted variant.
+
+**Concrete fix:** Add these consumers to Lane B’s checklist. Carry context/work accounting through checking, binding, translation and diagnostics; admit aggregate parameter bytes and expanded allocations before allocating. Decode each distinct parameter once and share its immutable value. Test repeated large parameters, excess-parameter diagnostics and cancellation through both lint and direct `check_mrql`.
+
+### 2. [P2] §2 Class rule : MRQL cache-key construction performs work before query admission
+
+`budgetCacheKey` collects and sorts parameter names, then formats the query, saved name and every parameter into a builder without cancellation or byte accounting (`shortcodes/query_budget.go:177-193`).
+
+`BudgetedExecutor` calls `Lookup` **before** checking query allowance (`:140-148`), and `Lookup` constructs the key before consulting the cache (`:106-109`). Thus cache hits and already-exhausted query budgets still perform this serialization. Appendix B’s parameter-collection item does not inventory this subsequent quoting and key construction.
+
+**Concrete fix:** Thread context/admission into key construction. Reserve key-slice capacity and quoted output bytes before allocation, check parameter iterations, and account for sorting. Ensure cancellation or admission failure propagates as a render-budget error rather than becoming a cache miss. Test large parameter sets on both cache-hit and exhausted-budget paths.
+
+### 3. [P2] §2 Class rule : Attribute-context source substitution precedes the inventoried classifier passes
+
+Before the lexical and DOM passes covered by Appendix B #24, `attributeContextsFor`:
+
+- allocates result maps;
+- sorts the supplied spans;
+- allocates the sentinel-position slice;
+- constructs the complete substituted document.
+
+These operations have no context or allocation accounting (`shortcodes/lint_attr_context.go:336-370`). Budgeting the later tokenizer, DOM traversal and breakout probes does not admit this earlier construction.
+
+**Concrete fix:** Add the substitution phase to Lane B’s inventory. Admit map/slice capacities, sorting work and substituted-document bytes before allocation; check each span iteration and reserve literal and sentinel writes before appending. Test cancellation and budget exhaustion before classification begins.
+
+### 4. [P2] §2 Class rule : Conditional regex compilation has its own expansion boundary
+
+Runtime conditionals compile model-controlled patterns in `evaluateOperator` (`shortcodes/conditional_handler.go:152-157`); lint independently compiles every `matches*` attribute (`shortcodes/lint.go:438-444`).
+
+Checking context before each operator or attribute does not account for work **inside** compilation. Go’s compiler calls `Simplify` and then compiles the expanded expression (`$GOROOT/src/regexp/regexp.go:167-178`); counted repetitions introduce additional loops and retained structures (`$GOROOT/src/regexp/syntax/simplify.go:64-99`). A short admitted source pattern can therefore produce a much larger compiled program before control returns.
+
+Appendix B inventories conditional operand/reduction loops and schema-compiler patterns, but not this separate runtime/lint regex compilation boundary.
+
+**Concrete fix:** Inventory both call sites and use a bounded compilation boundary that admits expanded pattern/program work before compilation. Cache admitted compiled patterns within one render/lint operation, and preserve ordinary matching semantics. Add a counted-repetition fixture that fits the source limit but exceeds the compilation allowance.
+
+### 5. [P2] §2 Plugin read-only enforcement : An allowed reader can indirectly write an application-log row
+
+The proposed allow-list permits `mah.db` readers built on `querierFor`, while suppressing `mah.log` to prevent application-log writes. There is another logging path:
+
+1. `querierFor` invokes `BindInvocation` (`plugin_system/db_api.go:248-268`).
+2. Binding resolves the acting user (`application_context/plugin_db_adapter.go:47-59`).
+3. A user-lookup failure other than not-found calls `ctx.Logger().Warning` (`:127-130`).
+4. That logger attempts an insert into the application log (`application_context/log_context.go:55-85`).
+
+Blocking the Lua `mah.log` function does not intercept this host-side insert. A transient actor-read failure can therefore write a log row through an allow-listed reader. This is distinct from the settled plugin allocation and DB-cancellation exceptions.
+
+**Concrete fix:** Carry the model-preview marker into actor resolution before binding, and suppress persistent logging on that invocation path without weakening fail-closed authorization. Preserve ordinary logging elsewhere. Test a failed actor lookup while log insertion remains operational, asserting that model-preview reads insert no application-log row.
