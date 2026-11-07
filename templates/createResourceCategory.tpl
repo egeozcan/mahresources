@@ -21,7 +21,6 @@
     {% with tpEntityType="resource" tpPreviewPath="/v1/resourceCategory/previewTemplate" tpGeneratePath="/v1/resourceCategory/generateTemplate" tpApiPrefix="/v1/resourceCategory" tpCarrierId=resourceCategory.ID %}
     <fieldset class="rounded-lg border border-stone-200 bg-stone-50/50 p-4 sm:p-6 space-y-2" x-data="{ showTemplateDocs: false }">
         <legend class="text-base font-semibold font-mono text-stone-800 px-2">Custom Templates</legend>
-        <p class="text-xs text-stone-500">Generate updates this template and its CSS together. Review both before saving.</p>
 
         <div class="text-sm text-stone-600">
             <p>HTML templates rendered in specific slots of detail and list views for resources in this category.</p>
