@@ -226,3 +226,38 @@ func TestCompareAcceptsAClassicBaselineAgainstAHarnessCandidate(t *testing.T) {
 		t.Fatal("a report with no mode must read as classic")
 	}
 }
+
+func TestScoreHarnessRejectedSubmissionsDoNotCountAsAccepted(t *testing.T) {
+	failed := Draft{Status: 502, StopReason: application_context.TemplateStopProviderError}
+	tests := []struct {
+		name      string
+		calls     []Call
+		wrong     bool
+		malformed bool
+		gaps      int
+	}{
+		{"done of the wrong type", []Call{harnessCall(1, "tool_calls", submitTool(`{"fields":{"CustomHeader":"<p>x</p>","CustomHeaderCSS":".a{}"},"done":"yes"}`))}, true, false, 0},
+		{"explanation of the wrong type", []Call{harnessCall(1, "tool_calls", submitTool(`{"fields":{"CustomHeader":"<p>x</p>"},"explanation":123}`))}, true, false, 0},
+		{"field that was not requested", []Call{harnessCall(1, "tool_calls", submitTool(`{"fields":{"CustomSidebar":"<p>x</p>"}}`))}, true, false, 0},
+		{"null field", []Call{harnessCall(1, "tool_calls", submitTool(`{"fields":{"CustomHeader":null}}`))}, true, false, 0},
+		{"fields not an object", []Call{harnessCall(1, "tool_calls", submitTool(`{"fields":["a"]}`))}, true, false, 0},
+		{"not JSON", []Call{harnessCall(1, "tool_calls", submitTool(`nope`))}, false, true, 0},
+		{
+			// The second call is rejected whole, so its valid CSS must not
+			// complete the half pair the first call left.
+			"mixed valid and non-string fields leave the earlier half pair open",
+			[]Call{
+				harnessCall(1, "tool_calls", submitTool(oneHalfSubmit)),
+				harnessCall(2, "tool_calls", submitTool(`{"fields":{"CustomHeaderCSS":".a{}","CustomHeader":7}}`)),
+			}, true, false, 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checks, _ := Score(pairCase(), failed, tt.calls, nil, nil, testEnv())
+			if checks.WrongShape != tt.wrong || checks.Malformed != tt.malformed || checks.IncompletePairs != tt.gaps {
+				t.Fatalf("wrong=%v malformed=%v gaps=%d, want %v %v %d", checks.WrongShape, checks.Malformed, checks.IncompletePairs, tt.wrong, tt.malformed, tt.gaps)
+			}
+		})
+	}
+}

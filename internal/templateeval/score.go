@@ -711,6 +711,13 @@ func lengthRecovered(calls []Call) bool {
 func scoreHarnessSubmissions(c Case, calls []Call, checks *Checks) {
 	fields := map[string]string{}
 	submitted := false
+	requested := map[string]bool{}
+	for _, slot := range c.RequestedSlots() {
+		requested[slot] = true
+	}
+	if c.Kind == KindMetaSchema {
+		requested["MetaSchema"] = true
+	}
 	for _, call := range harnessCalls(calls) {
 		for _, tc := range call.ToolCalls {
 			if tc.Name != application_context.ToolSubmit || tc.Incomplete {
@@ -720,30 +727,21 @@ func scoreHarnessSubmissions(c Case, calls []Call, checks *Checks) {
 				checks.Malformed = true
 				continue
 			}
-			var args struct {
-				Fields map[string]any `json:"fields"`
-			}
-			if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
+			accepted, shape := parseRecordedSubmit(tc.Arguments, requested)
+			switch shape {
+			case submitMalformed:
 				// The recorder replaces text it could not decode; an adapter
 				// that did not flag it left a call nobody could run.
 				checks.Malformed = true
 				continue
-			}
-			if len(args.Fields) == 0 {
+			case submitWrongShape:
 				checks.WrongShape = true
 				continue
 			}
-			valid := true
-			for name, value := range args.Fields {
-				if text, ok := value.(string); ok {
-					fields[name] = text
-				} else {
-					valid = false
-				}
-			}
-			if !valid {
-				checks.WrongShape = true
-				continue
+			// The harness rejects a whole call, so only a call that passed
+			// adds its fields.
+			for name, value := range accepted {
+				fields[name] = value
 			}
 			submitted = true
 		}
@@ -751,6 +749,41 @@ func scoreHarnessSubmissions(c Case, calls []Call, checks *Checks) {
 	if submitted && (c.Kind == KindPair || c.Kind == KindBundle) {
 		checks.IncompletePairs += pairGaps(c.RequestedSlots(), fields)
 	}
+}
+
+type submitShape int
+
+const (
+	submitOK submitShape = iota
+	submitMalformed
+	submitWrongShape
+)
+
+// parseRecordedSubmit applies application_context's parseSubmitArgs contract
+// to a recorded submit call: a non-empty fields map of requested names to
+// strings, with done a boolean and explanation a string when present. It
+// returns the accepted fields only for a call that passes in full.
+func parseRecordedSubmit(arguments string, requested map[string]bool) (map[string]string, submitShape) {
+	if !json.Valid([]byte(arguments)) {
+		return nil, submitMalformed
+	}
+	var decoded struct {
+		Fields      map[string]json.RawMessage `json:"fields"`
+		Explanation *string                    `json:"explanation"`
+		Done        *bool                      `json:"done"`
+	}
+	if json.Unmarshal([]byte(arguments), &decoded) != nil || len(decoded.Fields) == 0 {
+		return nil, submitWrongShape
+	}
+	out := make(map[string]string, len(decoded.Fields))
+	for name, value := range decoded.Fields {
+		var text *string
+		if len(requested) > 0 && !requested[name] || json.Unmarshal(value, &text) != nil || text == nil {
+			return nil, submitWrongShape
+		}
+		out[name] = *text
+	}
+	return out, submitOK
 }
 
 // Older recordings did not label calls. Only the initial reply of a multi-call
