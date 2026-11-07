@@ -535,7 +535,8 @@ func ValidateTemplateRunContent(ctx context.Context, v TemplateRunValidation, fi
 		return []shortcodes.LintIssue{{Severity: shortcodes.SeverityError, Message: err.Error()}}
 	}
 	if field == "MetaSchema" {
-		return validateMetaSchemaJSON(content, shortcodes.MetaSchemaLintOptions{
+		return validateMetaSchemaJSONContext(ctx, content, shortcodes.MetaSchemaLintOptions{
+			Context:               ctx,
 			DisplayTypes:          v.DisplayTypes,
 			DisplayTypesTruncated: v.DisplayTypesTruncated,
 		})
@@ -546,6 +547,7 @@ func ValidateTemplateRunContent(ctx context.Context, v TemplateRunValidation, fi
 		Known:        v.Known,
 		ValidateMRQL: v.ValidateMRQL,
 		CSSMode:      strings.HasSuffix(field, "CSS"),
+		Context:      ctx,
 	}
 	if v.PartialExists != nil {
 		opts.PartialExists = func(name string) bool {

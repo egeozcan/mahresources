@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -234,6 +235,24 @@ func (ctx *MahresourcesContext) GetTemplateRevision(carrierType string, carrierI
 // carrier's current state when to is nil. The server computes the diff and the
 // UI renders it.
 func (ctx *MahresourcesContext) DiffTemplateRevisions(carrierType string, carrierID uint, from uint, to *uint) (*contracts.TemplateRevisionDiff, error) {
+	return ctx.diffTemplateRevisions(carrierType, carrierID, from, to, func(fromSnap, toSnap models.TemplateSnapshot) ([]models.SlotDiff, error) {
+		return models.DiffTemplateSnapshots(carrierType, fromSnap, toSnap), nil
+	})
+}
+
+// DiffTemplateRevisionsContext is DiffTemplateRevisions for a Generation run:
+// the table is bounded (a field past it takes the coarse form) and the diff
+// stops when reqCtx ends.
+func (ctx *MahresourcesContext) DiffTemplateRevisionsContext(reqCtx context.Context, carrierType string, carrierID uint, from uint, to *uint) (*contracts.TemplateRevisionDiff, error) {
+	if err := reqCtx.Err(); err != nil {
+		return nil, err
+	}
+	return ctx.diffTemplateRevisions(carrierType, carrierID, from, to, func(fromSnap, toSnap models.TemplateSnapshot) ([]models.SlotDiff, error) {
+		return models.DiffTemplateSnapshotsBounded(reqCtx, carrierType, fromSnap, toSnap)
+	})
+}
+
+func (ctx *MahresourcesContext) diffTemplateRevisions(carrierType string, carrierID uint, from uint, to *uint, diff func(fromSnap, toSnap models.TemplateSnapshot) ([]models.SlotDiff, error)) (*contracts.TemplateRevisionDiff, error) {
 	if err := ctx.requireTemplateCarrierEdit(carrierType, "diffing template revisions"); err != nil {
 		return nil, err
 	}
@@ -259,12 +278,16 @@ func (ctx *MahresourcesContext) DiffTemplateRevisions(carrierType string, carrie
 			return nil, err
 		}
 	}
+	slots, err := diff(fromSnap, toSnap)
+	if err != nil {
+		return nil, err
+	}
 	return &contracts.TemplateRevisionDiff{
 		CarrierType: carrierType,
 		CarrierID:   carrierID,
 		FromNumber:  from,
 		ToNumber:    to,
-		Slots:       models.DiffTemplateSnapshots(carrierType, fromSnap, toSnap),
+		Slots:       slots,
 	}, nil
 }
 

@@ -142,11 +142,13 @@ func TestValidateTemplateRunContent_PartialLookups(t *testing.T) {
 	if !strings.Contains(got, "could not check that partial boom exists") || strings.Contains(got, "error:") {
 		t.Errorf("failed lookup: %s", got)
 	}
-	// A cancelled lookup is the same, never "missing".
+	// A cancelled validation never reports a real partial as missing: the
+	// lint stops with an error before any lookup, rather than reading the
+	// cancelled lookup as "does not exist".
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 	got = messages(ValidateTemplateRunContent(cancelled, v, "CustomHeader", `[partial name="known"]`))
-	if !strings.Contains(got, "could not check that partial known exists") {
+	if !strings.Contains(got, "error:") || strings.Contains(got, "known") {
 		t.Errorf("cancelled lookup: %s", got)
 	}
 }

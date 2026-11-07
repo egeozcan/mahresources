@@ -767,3 +767,20 @@ func TestToolLintAndSubmitShareOneMissingPartialIssue(t *testing.T) {
 		t.Errorf("lint %v differs from submit %+v", is, direct[0])
 	}
 }
+
+// A preview past the run's render budget is a Tool error saying so, never a
+// cut-off render the model would read as what its Draft produces.
+func TestToolPreviewOverTheRenderBudgetIsAnError(t *testing.T) {
+	f := newToolFixture(t, nil, nil)
+	// About 640 bytes of output per shortcode: 500 of them pass 256 KiB from
+	// a source well inside the 20,000 byte and token limits.
+	content := strings.Repeat(`[meta path="long"]`, 500)
+	out := f.call(t, "preview", map[string]any{"field": "CustomHeader", "content": content})
+	if !out.IsError || !strings.Contains(out.Text, "budget") {
+		t.Fatalf("over-budget preview = error %v, %.200q", out.IsError, out.Text)
+	}
+	small := f.call(t, "preview", map[string]any{"field": "CustomHeader", "content": strings.Repeat(`[meta path="long"]`, 5)})
+	if small.IsError {
+		t.Fatalf("an in-budget preview failed: %s", small.Text)
+	}
+}

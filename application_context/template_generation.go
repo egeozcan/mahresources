@@ -792,24 +792,29 @@ func validateTemplateContent(target string, in TemplateGenerationInput, content 
 // as the only issue, and otherwise the app-specific lint of a schema that
 // compiles.
 func validateMetaSchemaJSON(content string, opts shortcodes.MetaSchemaLintOptions) []shortcodes.LintIssue {
+	return validateMetaSchemaJSONContext(context.Background(), content, opts)
+}
+
+// validateMetaSchemaJSONContext is validateMetaSchemaJSON for a caller with a
+// context, a Generation run: admission and compilation stop when it ends, and
+// a cancelled check is an error, never a clean verdict.
+func validateMetaSchemaJSONContext(ctx context.Context, content string, opts shortcodes.MetaSchemaLintOptions) []shortcodes.LintIssue {
 	var probe any
 	if err := json.Unmarshal([]byte(content), &probe); err != nil {
 		return []shortcodes.LintIssue{{Severity: shortcodes.SeverityError, Message: "Generated MetaSchema is not valid JSON: " + err.Error()}}
 	}
-	if err := compileGeneratedSchema(content); err != nil {
+	if err := ctx.Err(); err != nil {
+		return []shortcodes.LintIssue{{Severity: shortcodes.SeverityError, Message: "MetaSchema check stopped: " + err.Error()}}
+	}
+	// The write paths' rule (findings 17/93), so a generated schema and an
+	// authored one are held to the same compile.
+	if err := ValidateMetaSchemaContext(ctx, content); err != nil {
 		return []shortcodes.LintIssue{{Severity: shortcodes.SeverityError, Message: "Generated MetaSchema is not a valid JSON Schema: " + err.Error()}}
 	}
 	if issues := shortcodes.LintMetaSchema(content, opts); issues != nil {
 		return issues
 	}
 	return []shortcodes.LintIssue{}
-}
-
-// compileGeneratedSchema verifies the generated MetaSchema compiles as a JSON
-// Schema. It shares ValidateMetaSchema with the write paths (findings 17/93) so
-// a generated schema and an authored one are held to one rule.
-func compileGeneratedSchema(schemaJSON string) error {
-	return ValidateMetaSchema(schemaJSON)
 }
 
 func hasErrorIssue(issues []shortcodes.LintIssue) bool {
