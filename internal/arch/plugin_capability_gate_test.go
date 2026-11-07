@@ -32,6 +32,9 @@ var alwaysInstalledModules = map[string]bool{
 	// registerDbModule takes the grant set and splits db:read from db:write
 	// inside itself, so it is called unconditionally by design.
 	"registerDbModule": true,
+	// guardMahTable installs nothing: it wraps functions already in the table
+	// so a model preview can refuse them (plugin_system/model_preview.go).
+	"guardMahTable": true,
 }
 
 // moduleCapabilities pins which capability gates which sub-module. A guard is

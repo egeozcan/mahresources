@@ -1253,7 +1253,8 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 	})
 
 	setIf("", "log", func(L *lua.LState) int {
-		if pm.isDocsPreview(L) {
+		// A model preview must not write an application log row either.
+		if pm.isDocsPreview(L) || pm.isModelPreview(L) {
 			return 0
 		}
 		// The level is one of the documented three; anything else is info, so
@@ -1979,6 +1980,9 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 	pm.registerJsonModule(L, mahMod)
 	pm.registerUtilModule(L, mahMod)
 
+	// Last, so it sees every function above. See model_preview.go.
+	pm.guardMahTable(L, mahMod, "")
+
 	L.SetGlobal("mah", mahMod)
 }
 
@@ -2346,7 +2350,7 @@ func (pm *PluginManager) stateIsLive(L *lua.LState) bool {
 // page by writing the same path. The vmLocks entry is the same liveness token
 // dispatch uses, so registration and dispatch agree on when a VM is gone.
 func (pm *PluginManager) stateMayRegisterLocked(L *lua.LState) bool {
-	if pm.isDocsPreview(L) {
+	if pm.isDocsPreview(L) || pm.isModelPreview(L) {
 		return false
 	}
 	if pm.closed.Load() {

@@ -385,3 +385,32 @@ func (ctx *MahresourcesContext) RestoreTemplateRevision(carrierType string, carr
 	summary := summarizeTemplateRevision(recorded)
 	return &summary, nil
 }
+
+// ListTemplateRevisionsPage is ListTemplateRevisions bounded for a Tool: at most
+// limit summaries starting at offset, newest first, fetched with LIMIT limit+1
+// so more reports whether another page exists without counting the table. It
+// keeps the capability gate and the carrier-existence check.
+func (ctx *MahresourcesContext) ListTemplateRevisionsPage(carrierType string, carrierID uint, limit, offset int) ([]contracts.TemplateRevisionSummary, bool, error) {
+	if err := ctx.requireTemplateCarrierEdit(carrierType, "listing template revisions"); err != nil {
+		return nil, false, err
+	}
+	if err := ctx.requireCarrierExists(carrierType, carrierID); err != nil {
+		return nil, false, err
+	}
+	var revs []models.TemplateRevision
+	err := ctx.db.Omit("snapshot").
+		Where("carrier_type = ? AND carrier_id = ?", carrierType, carrierID).
+		Order("number DESC").Limit(limit + 1).Offset(offset).Find(&revs).Error
+	if err != nil {
+		return nil, false, err
+	}
+	more := len(revs) > limit
+	if more {
+		revs = revs[:limit]
+	}
+	out := make([]contracts.TemplateRevisionSummary, len(revs))
+	for i := range revs {
+		out[i] = summarizeTemplateRevision(&revs[i])
+	}
+	return out, more, nil
+}

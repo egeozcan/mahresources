@@ -29,6 +29,26 @@ func BuildQueryExecutor(appCtx QueryExecutorContext) shortcodes.QueryExecutor {
 	})
 }
 
+// BuildModelPreviewQueryExecutor is BuildQueryExecutor for a preview a model
+// asked for: the same limits, cache, budget and cancellation, but no
+// exhaustion callback, because that callback writes an application log row and
+// a harness Tool must not write. Human previews and pages keep the callback.
+func BuildModelPreviewQueryExecutor(appCtx QueryExecutorContext) shortcodes.QueryExecutor {
+	base := func(reqCtx context.Context, query string, opts shortcodes.QueryOptions) (*shortcodes.QueryResult, error) {
+		return executeMRQLForShortcode(reqCtx, appCtx, query, opts)
+	}
+	return shortcodes.BudgetedExecutor(base, nil)
+}
+
+// UnavailableQueryExecutor is the executor of a model preview whose MRQL
+// opt-in is off: it runs nothing and answers every query with
+// shortcodes.ErrQueryUnavailable, which handlers render as an inert comment.
+func UnavailableQueryExecutor() shortcodes.QueryExecutor {
+	return func(context.Context, string, shortcodes.QueryOptions) (*shortcodes.QueryResult, error) {
+		return nil, shortcodes.ErrQueryUnavailable
+	}
+}
+
 // pageQueryBudget returns the configured per-page inline-MRQL query budget,
 // or 0 (disabled) when no application context is available.
 func pageQueryBudget(appCtx PageRenderContext) int {
