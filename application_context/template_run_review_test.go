@@ -7,15 +7,20 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
-// P1-1: submit goes through source admission before any validation.
+// P1-1: submit goes through source admission before any validation. The token
+// case is under the byte limit, so only the token check can reject it.
 func TestRunSubmitRejectsOversizeOrTokenHeavySourceBeforeValidating(t *testing.T) {
 	var lookups atomic.Int32
 	in := harnessPairInput(&fakeRunExecutor{})
 	in.PartialExists = func(context.Context, string) (bool, error) { lookups.Add(1); return true, nil }
 	big := strings.Repeat("a", MaxTemplateGeneratedContentLength+1)
-	manyTokens := strings.Repeat("[partial name=\"p\"]", 2001)
+	manyTokens := strings.Repeat("[b]", 2001)
+	if len(manyTokens) >= MaxTemplateGeneratedContentLength || strings.Count(manyTokens, "[") <= 2000 {
+		t.Fatalf("fixture must be under the byte limit and over the token limit: %d bytes", len(manyTokens))
+	}
 	conv := &scriptedConversation{replies: []convReply{
 		replyCalls(
 			submitCall("big", map[string]string{"CustomHeader": big, "CustomHeaderCSS": ".a{}"}, true),
@@ -27,13 +32,14 @@ func TestRunSubmitRejectsOversizeOrTokenHeavySourceBeforeValidating(t *testing.T
 		t.Fatal(err)
 	}
 	results := conv.seen()[1].Messages[2].Results
-	for _, r := range results {
-		if !r.IsError {
-			t.Fatalf("over-limit source must be an error result: %+v", r)
-		}
+	if !results[0].IsError || !strings.Contains(results[0].Text, "bytes") {
+		t.Fatalf("byte case: %+v", results[0])
 	}
-	if lookups.Load() != 0 {
-		t.Fatal("validation ran on rejected input")
+	if !results[1].IsError || !strings.Contains(results[1].Text, "shortcode tokens") {
+		t.Fatalf("token case must be rejected by the token check: %+v", results[1])
+	}
+	if lookups.Load() != 0 { // the accepted submit has no [partial]; rejected input must not validate
+		t.Fatalf("validation ran on rejected input: %d lookups", lookups.Load())
 	}
 	if len(conv.seen()) != 2 || res.Slots["CustomHeader"] != "<p>ok</p>" {
 		t.Fatalf("rejected submits must commit nothing and ignore done: calls=%d slots=%v", len(conv.seen()), res.Slots)
@@ -193,5 +199,41 @@ func TestRunToolsOverlapInFlight(t *testing.T) {
 	once.Do(func() { close(release) })
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A Turn that never reached the provider leaves no Seed or instruction in the
+// transcript.
+func TestRunHeldSlotTimeoutLeavesNoSentRecords(t *testing.T) {
+	conv := &scriptedConversation{}
+	gen := harnessGen(conv, func(c *TemplateGenerationConfig) {
+		c.ProviderSlots = 1
+		c.Timeout = 100 * time.Millisecond
+	})
+	gen.slots <- struct{}{} // another run holds the only slot
+	_, err := disclosedGenerate(gen, harnessCSSInput(&fakeRunExecutor{}), "go")
+	re := mustRunError(t, err)
+	if len(conv.seen()) != 0 || len(re.Transcript) != 0 {
+		t.Fatalf("requests=%d transcript=%+v", len(conv.seen()), re.Transcript)
+	}
+}
+
+// Building a tentative request must not mutate the transcript: a Turn that
+// budget admission refuses reports no stubbedFrom.
+func TestRunBudgetRefusedTurnReportsNoStubbing(t *testing.T) {
+	conv := &scriptedConversation{rewritable: true, replies: []convReply{
+		replyCalls(getEntityCall("t1")), replyCalls(getEntityCall("t2")), replyCalls(getEntityCall("t3")),
+		replyCalls(getEntityCall("t4")).withUsage(99600, 100), // leaves too little for Turn 5
+	}}
+	gen := harnessGen(conv, func(c *TemplateGenerationConfig) { c.Harness.TokenBudget = budgetBase })
+	_, err := disclosedGenerate(gen, harnessCSSInput(&fakeRunExecutor{}), "go")
+	re := mustRunError(t, err)
+	if re.StopReason != TemplateStopBudget || len(conv.seen()) != 4 {
+		t.Fatalf("stop=%s calls=%d", re.StopReason, len(conv.seen()))
+	}
+	for _, r := range re.Transcript {
+		if r.StubbedFrom != 0 {
+			t.Fatalf("a refused Turn must not report stubbing: %+v", r)
+		}
 	}
 }

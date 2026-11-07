@@ -180,8 +180,10 @@ func (g *defaultTemplateGenerator) runHarness(ctx context.Context, request templ
 }
 
 func (r *harnessRun) loop() (*TemplateGenerationResult, error) {
-	r.record(TemplateTranscriptRecord{Turn: 1, Kind: TemplateTranscriptSeed, Text: r.plan.system, Bytes: len(r.plan.system)})
-	r.record(TemplateTranscriptRecord{Turn: 1, Kind: TemplateTranscriptSeed, Text: r.plan.seed, Bytes: len(r.plan.seed)})
+	// The Seed is recorded with the first request actually sent (commitPending).
+	r.pendingRecords = append(r.pendingRecords,
+		TemplateTranscriptRecord{Turn: 1, Kind: TemplateTranscriptSeed, Text: r.plan.system, Bytes: len(r.plan.system)},
+		TemplateTranscriptRecord{Turn: 1, Kind: TemplateTranscriptSeed, Text: r.plan.seed, Bytes: len(r.plan.seed)})
 	r.msgs = append(r.msgs, runMessage{msg: ConversationMessage{Role: "user", Text: r.plan.seed}, turn: 1})
 
 	for turn := 1; ; turn++ {
@@ -200,18 +202,17 @@ func (r *harnessRun) loop() (*TemplateGenerationResult, error) {
 		if reason != "" {
 			r.appendInstruction(turn, templateRunFinalInstruction)
 		}
-		req, estimate, ok := r.admit(turn, &reason)
+		req, estimate, stubs, ok := r.admit(turn, &reason)
 		if !ok {
 			return r.conclude(TemplateStopBudget, nil)
 		}
-		r.flushPending()
 		if r.sink != nil {
 			r.sink.TurnStarted(TemplateTurnEvent{Turn: turn, MaxTurns: r.plan.settings.MaxTurns, FinalReason: reason})
 		}
 		final := reason != ""
 
 		turnStart := time.Now()
-		resp, err := r.callProvider(req)
+		resp, err := r.callProvider(req, func() { r.commitPending(turn, stubs) })
 		if err != nil {
 			return r.exitOnCallError(err)
 		}
@@ -261,11 +262,14 @@ func (r *harnessRun) finalReason(turn int) string {
 // admit estimates the outgoing request and clamps max_tokens to what remains of
 // the budget (plan section 3, step 3). A Turn that cannot keep a final reserve
 // becomes final with what is left; under the minimum, nothing is called.
-func (r *harnessRun) admit(turn int, reason *string) (ConversationRequest, int, bool) {
+func (r *harnessRun) admit(turn int, reason *string) (ConversationRequest, int, []stubCommit, bool) {
 	remaining := r.plan.settings.TokenBudget - r.used
+	var stubs []stubCommit
 	build := func() ConversationRequest {
+		var msgs []ConversationMessage
+		msgs, stubs = r.outgoing(turn)
 		return ConversationRequest{
-			System: r.plan.system, Messages: r.outgoing(turn), Tools: r.plan.tools,
+			System: r.plan.system, Messages: msgs, Tools: r.plan.tools,
 			Model: r.plan.profile.Model, Thinking: r.plan.profile.Thinking,
 		}
 	}
@@ -280,28 +284,21 @@ func (r *harnessRun) admit(turn int, reason *string) (ConversationRequest, int, 
 		maxTokens = min(r.plan.profile.MaxTokens, remaining-estimate)
 	}
 	if maxTokens < templateRunMinTurnTokens {
-		return req, estimate, false
+		return req, estimate, nil, false
 	}
 	req.MaxTokens = maxTokens
-	return req, estimate, true
+	return req, estimate, stubs, true
 }
 
 // appendInstruction adds an append-only user message. It never edits the Seed
 // or a Replay.
 //
 // Its transcript record waits in pendingRecords until a provider call is
-// attempted (flushPending), so a Turn that budget admission refuses leaves no
+// attempted (commitPending), so a Turn that budget admission refuses leaves no
 // instruction in a transcript that claims to list what was sent.
 func (r *harnessRun) appendInstruction(turn int, text string) {
 	r.msgs = append(r.msgs, runMessage{msg: ConversationMessage{Role: "user", Text: text}, turn: turn})
 	r.pendingRecords = append(r.pendingRecords, TemplateTranscriptRecord{Turn: turn, Kind: TemplateTranscriptInstruction, Text: text, Bytes: len(text)})
-}
-
-func (r *harnessRun) flushPending() {
-	for _, rec := range r.pendingRecords {
-		r.record(rec)
-	}
-	r.pendingRecords = nil
 }
 
 func (r *harnessRun) record(rec TemplateTranscriptRecord) int {
@@ -309,33 +306,59 @@ func (r *harnessRun) record(rec TemplateTranscriptRecord) int {
 	return len(r.transcript) - 1
 }
 
+// stubCommit is a stub computed for a tentative request, written only once the
+// request is sent.
+type stubCommit struct {
+	msg, result int
+	text        string
+}
+
+// commitPending writes what the request being sent introduced: the Seed and
+// instruction records, and the stubs with the Turn they started in. Building a
+// tentative request touches none of it.
+func (r *harnessRun) commitPending(turn int, stubs []stubCommit) {
+	for _, rec := range r.pendingRecords {
+		r.record(rec)
+	}
+	r.pendingRecords = nil
+	for _, s := range stubs {
+		meta := &r.msgs[s.msg].results[s.result]
+		if meta.stub == "" {
+			meta.stub = s.text
+			r.transcript[meta.transcriptIdx].StubbedFrom = turn
+		}
+	}
+}
+
 // outgoing returns the messages of this Turn's request. When the provider lets
 // history be rewritten, Tool results older than the last templateRunStubRetention
 // Turns are replaced by a stub that is fixed once written, so the history
 // changes once per result. Every other provider is never rewritten: Anthropic
 // binds each thinking signature to every preceding message.
-func (r *harnessRun) outgoing(turn int) []ConversationMessage {
+func (r *harnessRun) outgoing(turn int) ([]ConversationMessage, []stubCommit) {
 	rewritable := r.g.conversation.HistoryRewritable(r.plan.profile.Model)
 	out := make([]ConversationMessage, len(r.msgs))
+	var stubs []stubCommit
 	for i := range r.msgs {
 		m := r.msgs[i]
 		if rewritable && len(m.results) > 0 {
 			results := append([]ToolResult(nil), m.msg.Results...)
 			for j := range results {
-				meta := &r.msgs[i].results[j]
-				if meta.stub == "" && meta.turn < turn-templateRunStubRetention {
-					meta.stub = fmt.Sprintf("%s result, %d bytes, superseded", meta.label, len(results[j].Text))
-					r.transcript[meta.transcriptIdx].StubbedFrom = turn
+				meta := r.msgs[i].results[j]
+				text := meta.stub
+				if text == "" && meta.turn < turn-templateRunStubRetention {
+					text = fmt.Sprintf("%s result, %d bytes, superseded", meta.label, len(results[j].Text))
+					stubs = append(stubs, stubCommit{msg: i, result: j, text: text})
 				}
-				if meta.stub != "" {
-					results[j].Text = meta.stub
+				if text != "" {
+					results[j].Text = text
 				}
 			}
 			m.msg.Results = results
 		}
 		out[i] = m.msg
 	}
-	return out
+	return out, stubs
 }
 
 // checkAccess runs the executor's access check and sorts the outcome: nil,
@@ -372,7 +395,7 @@ func (r *harnessRun) exitOnCheck(err error) (*TemplateGenerationResult, error) {
 // access check runs after the slot is acquired and immediately before Converse,
 // so a Turn that queued behind other runs and was revoked meanwhile sends
 // nothing.
-func (r *harnessRun) callProvider(req ConversationRequest) (ConversationResponse, error) {
+func (r *harnessRun) callProvider(req ConversationRequest, commit func()) (ConversationResponse, error) {
 	timeout := min(r.plan.profile.Timeout, time.Until(r.deadlineAt))
 	callCtx, cancel := context.WithTimeout(r.runCtx, timeout)
 	defer cancel()
@@ -391,6 +414,8 @@ func (r *harnessRun) callProvider(req ConversationRequest) (ConversationResponse
 		}
 		return ConversationResponse{}, callError{callCtx, err}
 	}
+	// Past the slot and the last access check: this request is really sent.
+	commit()
 	start := time.Now()
 	resp, err := r.g.conversation.Converse(callCtx, req)
 	r.g.config.Logf("template generation: phase=run turn=%d model=%s finish=%s dur=%dms err=%t",
