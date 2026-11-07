@@ -110,3 +110,39 @@ func TestDiffTemplateSnapshotsBoundedStopsOnCancel(t *testing.T) {
 		t.Errorf("bounded %d slots, unbounded %d", len(got), len(want))
 	}
 }
+
+// A pure deletion used to allocate one row per deleted line: the admission
+// product was zero while the table was (n+1) x 1.
+func TestDiffLinesBoundedDeletionOnlyAllocatesNoTable(t *testing.T) {
+	a := numberedLines(2_000_000, "d")
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	hunks, err := DiffLinesBounded(context.Background(), a, "")
+	runtime.ReadMemStats(&after)
+	if err != nil || len(hunks) != 1 || hunks[0].Op != DiffOpDelete || len(hunks[0].Lines) != 2_000_000 {
+		t.Fatalf("hunks = %v, err = %v", summarize(hunks), err)
+	}
+	// The split lines themselves are the only large allocation (~2M string headers).
+	if grown := after.TotalAlloc - before.TotalAlloc; grown > 400<<20 {
+		t.Errorf("allocated %d bytes", grown)
+	}
+}
+
+func TestDiffLinesBoundedAdmitsRowOverhead(t *testing.T) {
+	// 900 x 1,110 middle lines: the product is 999,000, but the table is
+	// 901 x 1,111 cells plus row headers, over the 1,000,000 allowance. A shared
+	// line in the middle shows whether an LCS ran: the coarse form has no equal hunk.
+	mk := func(n int, tag string) string {
+		return numberedLines(n/2, tag) + "\nCOMMON\n" + numberedLines(n/2-1, tag+"x")
+	}
+	hunks, err := DiffLinesBounded(context.Background(), mk(900, "a"), mk(1110, "b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range hunks {
+		if h.Op == DiffOpEqual {
+			t.Fatalf("an LCS table was built: %v", summarize(hunks))
+		}
+	}
+}
