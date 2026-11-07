@@ -141,15 +141,18 @@ func posixClassLen(s string) int {
 	if !strings.HasPrefix(s, "[:") {
 		return 0
 	}
-	end := strings.Index(s[:min(len(s), 12)], ":]")
+	// The closing ":]" is searched for after the opening "[:", as Go's parser
+	// does: in "[:]]" the opening colon is not a closer.
+	rest := s[2:min(len(s), 12)]
+	end := strings.Index(rest, ":]")
 	if end < 0 {
 		return 0
 	}
-	name := strings.TrimPrefix(s[2:end], "^")
+	name := strings.TrimPrefix(rest[:end], "^")
 	if !posixNames[name] {
 		return 0
 	}
-	return end + 2
+	return 2 + end + 2
 }
 
 func (a *RegexAllowance) remember(pattern string, re *regexp.Regexp, err error) (*regexp.Regexp, error) {

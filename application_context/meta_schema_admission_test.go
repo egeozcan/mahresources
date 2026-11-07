@@ -240,3 +240,10 @@ func TestValidateMetaSchemaUnicodeClassPayloadIsBounded(t *testing.T) {
 		t.Errorf("allocated %d bytes", grown)
 	}
 }
+
+// A valid pattern that only looks like a POSIX class saves.
+func TestValidateMetaSchemaPOSIXLookalikePattern(t *testing.T) {
+	if err := ValidateMetaSchema(`{"type":"object","properties":{"s":{"type":"string","pattern":"[[:]]"}}}`); err != nil {
+		t.Fatalf("valid schema refused: %v", err)
+	}
+}
