@@ -154,6 +154,7 @@ type harnessRun struct {
 	transcript  []TemplateTranscriptRecord
 	subs        *templateRunSubmissions
 	explanation string
+	turn        int
 	used        int
 	plainTexts  int
 	lengthTurns int
@@ -182,6 +183,7 @@ func (r *harnessRun) loop() (*TemplateGenerationResult, error) {
 	r.msgs = append(r.msgs, runMessage{msg: ConversationMessage{Role: "user", Text: r.plan.seed}, turn: 1})
 
 	for turn := 1; ; turn++ {
+		r.turn = turn
 		if err := r.reqCtx.Err(); err != nil {
 			return nil, err
 		}
@@ -378,7 +380,7 @@ func (r *harnessRun) callProvider(req ConversationRequest) (ConversationResponse
 	start := time.Now()
 	resp, err := r.g.conversation.Converse(callCtx, req)
 	r.g.config.Logf("template generation: phase=run turn=%d model=%s finish=%s dur=%dms err=%t",
-		len(r.transcript), r.plan.profile.Model, resp.Finish, time.Since(start).Milliseconds(), err != nil)
+		r.turn, r.plan.profile.Model, resp.Finish, time.Since(start).Milliseconds(), err != nil)
 	if err != nil {
 		return ConversationResponse{}, callError{callCtx, err}
 	}

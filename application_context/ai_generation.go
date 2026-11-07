@@ -25,6 +25,7 @@ func aiProfileKey(feature, provider, kind, field string) string {
 }
 
 func addAISettingSpecs(specs map[string]SettingSpec) {
+	addAIHarnessSettingSpecs(specs)
 	for _, provider := range aiProviders {
 		key := "ai_" + provider + "_api_key"
 		specs[key] = SettingSpec{Key: key, Label: provider + " API key", Description: "Write-only provider credential. Clear disables the environment fallback; reset restores it.", Group: GroupAI, Type: SettingTypeString, Secret: true, StringValidator: validateAIKey}
@@ -62,6 +63,29 @@ func addAISettingSpecs(specs map[string]SettingSpec) {
 	}
 }
 
+// Runtime settings of template generation runs (plan section 7), in the "ai"
+// group beside the per-kind profiles.
+const (
+	settingTemplateGenerationMode = "ai_template_generation_mode"
+	settingTemplateMaxTurns       = "ai_template_max_turns"
+	settingTemplateRunDeadline    = "ai_template_run_deadline"
+	settingTemplateRunTokenBudget = "ai_template_run_token_budget"
+)
+
+func addAIHarnessSettingSpecs(specs map[string]SettingSpec) {
+	specs[settingTemplateGenerationMode] = SettingSpec{Key: settingTemplateGenerationMode, Label: "template generation mode", Description: "harness runs a tool-calling Generation run; classic keeps the single-call draft with repair and fan-out.", Group: GroupAI, Type: SettingTypeString, StringValidator: validateTemplateGenerationMode}
+	specs[settingTemplateMaxTurns] = SettingSpec{Key: settingTemplateMaxTurns, Label: "template run max turns", Description: "Turns a Generation run may take, 1 to 20.", Group: GroupAI, Type: SettingTypeInt, MinNumeric: 1, MaxNumeric: 20}
+	specs[settingTemplateRunDeadline] = SettingSpec{Key: settingTemplateRunDeadline, Label: "template run deadline", Description: "Wall-clock limit of a Generation run, 30s to 15m.", Group: GroupAI, Type: SettingTypeDuration, MinNumeric: int64(30 * time.Second), MaxNumeric: int64(15 * time.Minute)}
+	specs[settingTemplateRunTokenBudget] = SettingSpec{Key: settingTemplateRunTokenBudget, Label: "template run token budget", Description: "Token budget of a Generation run, 100000 to 2000000; cached prompt tokens count a quarter.", Group: GroupAI, Type: SettingTypeInt, MinNumeric: 100000, MaxNumeric: 2000000}
+}
+
+func validateTemplateGenerationMode(value string) error {
+	if value == TemplateGenerationModeHarness || value == TemplateGenerationModeClassic {
+		return nil
+	}
+	return fmt.Errorf("mode must be harness or classic")
+}
+
 func validateAIProvider(value string) error {
 	for _, provider := range aiProviders {
 		if value == provider {
@@ -91,6 +115,10 @@ func AddAIGenerationDefaults(values map[string]any, boot TemplateGenerationConfi
 	if boot.Model == "" {
 		boot.Model = DefaultDeepSeekMRQLGenerationModel
 	}
+	values[settingTemplateGenerationMode] = TemplateGenerationModeHarness
+	values[settingTemplateMaxTurns] = DefaultTemplateMaxTurns
+	values[settingTemplateRunDeadline] = DefaultTemplateRunDeadline
+	values[settingTemplateRunTokenBudget] = DefaultTemplateRunTokenBudget
 	for _, provider := range aiProviders {
 		values["ai_"+provider+"_api_key"] = keys[provider]
 		if provider == "deepseek" {
@@ -254,42 +282,61 @@ func (g *runtimeAIGeneration) GenerateMRQL(ctx context.Context, prompt string) (
 	return NewMRQLGenerator(provider, MRQLGenerationConfig{APIKey: p.key, Model: p.model, Timeout: p.timeout, Postgres: g.boot.Postgres}).GenerateMRQL(ctx, prompt)
 }
 
-func (g *runtimeAIGeneration) templateGenerator() (*defaultTemplateGenerator, error) {
-	p := g.resolve(g.snapshot(), "template")
+// newTemplateConversationProvider builds the tool-calling provider for a
+// harness run. Integration points it at lane A's
+// NewGenerationConversationProvider; until then harness mode is not configured.
+var newTemplateConversationProvider func(provider, apiKey, model string, client *http.Client) TemplateConversationProvider
+
+// templateGenerator binds the generation mode and a generator to one settings
+// snapshot.
+func (g *runtimeAIGeneration) templateGenerator() (TemplateGenerationPrep, error) {
+	values := g.snapshot()
+	p := g.resolve(values, "template")
 	if !p.configured() {
-		return nil, ErrTemplateGenerationNotConfigured
+		return TemplateGenerationPrep{}, ErrTemplateGenerationNotConfigured
+	}
+	mode, _ := values[settingTemplateGenerationMode].(string)
+	if mode != TemplateGenerationModeClassic {
+		if newTemplateConversationProvider == nil {
+			return TemplateGenerationPrep{}, ErrTemplateGenerationNotConfigured
+		}
+		turns, _ := values[settingTemplateMaxTurns].(int)
+		deadline, _ := values[settingTemplateRunDeadline].(time.Duration)
+		budget, _ := values[settingTemplateRunTokenBudget].(int)
+		cfg := p.template
+		cfg.Harness = &TemplateHarnessSettings{MaxTurns: turns, Deadline: deadline, TokenBudget: budget}
+		conv := newTemplateConversationProvider(p.provider, p.key, p.model, g.client)
+		gen := NewTemplateHarnessGenerator(conv, cfg).(*defaultTemplateGenerator)
+		gen.slots = g.slots
+		return TemplateGenerationPrep{GenerationMode: TemplateGenerationModeHarness, Generator: gen}, nil
 	}
 	provider := NewGenerationTemplateDraftProvider(p.provider, p.key, p.model, g.client)
 	gen := NewTemplateGenerator(provider, p.template).(*defaultTemplateGenerator)
 	gen.slots = g.slots
-	return gen, nil
+	return TemplateGenerationPrep{GenerationMode: TemplateGenerationModeClassic, Generator: gen}, nil
 }
 
 // PrepareTemplateGeneration binds the generation mode and a generator to one
 // settings snapshot, so a handler's refusal, grounding, Disclosure and run all
-// agree. The mode setting is not read yet; every request is classic.
+// agree.
 func (g *runtimeAIGeneration) PrepareTemplateGeneration() (TemplateGenerationPrep, error) {
-	gen, err := g.templateGenerator()
-	if err != nil {
-		return TemplateGenerationPrep{}, err
-	}
-	return TemplateGenerationPrep{GenerationMode: TemplateGenerationModeClassic, Generator: gen}, nil
+	return g.templateGenerator()
 }
 
 func (g *runtimeAIGeneration) DiscloseTemplate(ctx context.Context, in TemplateGenerationInput, prompt string) (*TemplateDisclosure, error) {
-	gen, err := g.templateGenerator()
+	prep, err := g.templateGenerator()
 	if err != nil {
 		return nil, err
 	}
-	return gen.DiscloseTemplate(ctx, in, prompt)
+	return prep.Generator.DiscloseTemplate(ctx, in, prompt)
 }
 
 func (g *runtimeAIGeneration) GenerateTemplate(ctx context.Context, in TemplateGenerationInput, prompt, hash string) (*TemplateGenerationResult, error) {
-	gen, err := g.templateGenerator()
+	prep, err := g.templateGenerator()
 	if err != nil {
 		return nil, err
 	}
-	return gen.GenerateTemplate(ctx, in, prompt, hash)
+	return prep.Generator.GenerateTemplate(ctx, in, prompt, hash)
 }
 
 func (g *runtimeAIGeneration) profiles() contracts.AIGenerationProfiles {
