@@ -27,6 +27,12 @@ func templateRunAccessFactory(appCtx *application_context.MahresourcesContext) a
 			principal := original
 			if appCtx.AuthEnabled() {
 				principal, _, _ = resolvePrincipal(rebased, r)
+				// resolvePrincipal reports a failed lookup as no principal. A
+				// lookup that failed because ctx ended is cancellation, not
+				// revocation: the two end a run differently.
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				if principal == nil {
 					return nil, fmt.Errorf("%w: the credential is no longer valid", application_context.ErrTemplateRunAccessChanged)
 				}

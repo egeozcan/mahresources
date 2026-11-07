@@ -91,7 +91,15 @@ func TestWithPrincipalContextBindsScopeAndReportsCancellation(t *testing.T) {
 		t.Fatal("a scoped principal bound under a cancelled context returned no error")
 	}
 	// Fails closed: the copy still denies, it does not fall back to unscoped.
-	if n, _ := countGroups(denied); n != 0 {
+	// The count runs on a live context, so a query error cannot pass for zero.
+	if all, err := countGroups(ctx); err != nil || all == 0 {
+		t.Fatalf("fixture: unscoped count %d, %v; want groups to exist", all, err)
+	}
+	n, err := countGroups(denied.WithParentContext(context.Background()))
+	if err != nil {
+		t.Fatalf("count through the denied copy: %v", err)
+	}
+	if n != 0 {
 		t.Errorf("a copy whose subtree could not be read sees %d groups, want 0", n)
 	}
 }

@@ -11,9 +11,17 @@ import (
 	"mahresources/application_context"
 	"mahresources/auth"
 	"mahresources/models"
+
+	"gorm.io/gorm"
 )
 
 func newRunAccessContext(t *testing.T, authEnabled bool) *application_context.MahresourcesContext {
+	t.Helper()
+	ctx, _ := newRunAccessContextWithDB(t, authEnabled)
+	return ctx
+}
+
+func newRunAccessContextWithDB(t *testing.T, authEnabled bool) (*application_context.MahresourcesContext, *gorm.DB) {
 	t.Helper()
 	ctx, db, _ := application_context.CreateContextWithConfig(&application_context.MahresourcesInputConfig{
 		MemoryDB: true, MemoryFS: true, FileSavePath: t.TempDir(),
@@ -23,7 +31,7 @@ func newRunAccessContext(t *testing.T, authEnabled bool) *application_context.Ma
 		t.Fatal(err)
 	}
 	ctx.Config.AuthEnabled = authEnabled
-	return ctx
+	return ctx, db
 }
 
 func TestTemplateRunAccessFactory(t *testing.T) {
@@ -71,4 +79,46 @@ func TestTemplateRunAccessFactory(t *testing.T) {
 			t.Errorf("changed role: %v, want ErrTemplateRunAccessChanged", err)
 		}
 	})
+}
+
+// A lookup that is cancelled while it runs is cancellation, not revocation.
+// The interleave is injected with a query callback rather than raced.
+func TestTemplateRunAccessFactoryCancelledDuringLookup(t *testing.T) {
+	appCtx, db := newRunAccessContextWithDB(t, true)
+	editor, err := appCtx.CreateUser(&application_context.UserInput{Username: "ed", Password: "password1", Role: models.RoleEditor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := appCtx.CreateApiToken(editor.ID, "t", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req = req.WithContext(auth.WithPrincipal(req.Context(), auth.FromUser(editor)))
+	check := templateRunAccessFactory(appCtx)(req)
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	armed := true
+	if err := db.Callback().Query().Before("gorm:query").Register("test:cancel_mid_lookup", func(tx *gorm.DB) {
+		if armed {
+			armed = false
+			cancel()
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Callback().Query().Remove("test:cancel_mid_lookup") })
+
+	_, err = check(runCtx)
+	if armed {
+		t.Fatal("the credential lookup ran no query, so the interleave was not exercised")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("cancelled during lookup: %v, want context.Canceled", err)
+	}
+	if errors.Is(err, application_context.ErrTemplateRunAccessChanged) {
+		t.Errorf("cancellation was reported as an access change: %v", err)
+	}
 }
