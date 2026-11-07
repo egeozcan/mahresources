@@ -22,6 +22,10 @@ function emptyProfile(provider = 'deepseek') {
   };
 }
 
+function emptyRun() {
+  return { mode: 'harness', maxTurns: '10', deadline: '300s', tokenBudget: '400000', reason: '', error: '', flash: '' };
+}
+
 function editValue(view) {
   if (!view || view.current == null) return '';
   if (view.type === 'duration') return `${Number(view.current) / 1e9}s`;
@@ -52,6 +56,9 @@ export function aiSettings() {
       value: '', configured: false, bootConfigured: false, overridden: false, error: '', flash: '',
     }])),
     effective: {},
+    // The Generation run settings of template generation (ai_template_generation_mode,
+    // _max_turns, _run_deadline, _run_token_budget), edited as strings.
+    run: emptyRun(),
     loading: true,
     loaded: false,
     busy: false,
@@ -71,6 +78,7 @@ export function aiSettings() {
         this._adoptViews(views);
         this._loadProfile('mrql');
         this._loadProfile('template');
+        this._loadRun();
         this.loaded = true;
         await this._refreshEffective();
       } catch (error) {
@@ -115,6 +123,51 @@ export function aiSettings() {
         }
       }
       this.profiles[feature] = profile;
+    },
+
+    _loadRun() {
+      const run = emptyRun();
+      run.reason = this.run.reason;
+      run.mode = this.settings.ai_template_generation_mode?.current || run.mode;
+      run.maxTurns = editValue(this.settings.ai_template_max_turns) || run.maxTurns;
+      run.deadline = editValue(this.settings.ai_template_run_deadline) || run.deadline;
+      run.tokenBudget = editValue(this.settings.ai_template_run_token_budget) || run.tokenBudget;
+      this.run = run;
+    },
+
+    async saveRun() {
+      const run = this.run;
+      run.error = '';
+      run.flash = '';
+      const turns = String(run.maxTurns).trim();
+      const budget = String(run.tokenBudget).trim();
+      const deadline = String(run.deadline).trim();
+      if (run.mode !== 'harness' && run.mode !== 'classic') {
+        run.error = 'The mode must be harness or classic.';
+        return;
+      }
+      if (!/^\d+$/.test(turns) || Number(turns) < 1 || Number(turns) > 20) {
+        run.error = 'Turns must be a whole number from 1 to 20.';
+        return;
+      }
+      if (!/^\d+$/.test(budget) || Number(budget) < 100000 || Number(budget) > 2000000) {
+        run.error = 'The token budget must be a whole number from 100000 to 2000000.';
+        return;
+      }
+      if (!deadline) {
+        run.error = 'Enter the run deadline as a duration such as 5m.';
+        return;
+      }
+      const values = {
+        ai_template_generation_mode: run.mode,
+        ai_template_max_turns: turns,
+        ai_template_run_deadline: deadline,
+        ai_template_run_token_budget: budget,
+      };
+      if (await this._apply(values, [], run.reason, run)) {
+        this._loadRun();
+        this.run.flash = 'Saved. New generation runs use these settings.';
+      }
     },
 
     selectProvider(feature) {
@@ -222,6 +275,7 @@ export function aiSettings() {
       const keys = Object.keys(this.settings).filter(key => key.startsWith(`ai_${feature}_`));
       if (await this._apply({}, keys, profile.reason, profile)) {
         this._loadProfile(feature);
+        if (feature === 'template') this._loadRun();
         this.profiles[feature].flash = 'Reset this feature to boot defaults.';
       }
     },

@@ -36,6 +36,7 @@
             <p data-testid="generate-error-{{ name }}" role="alert" class="text-xs text-red-700 font-mono" x-text="generationError"></p>
         </template>
     </div>
+    {% include "/partials/form/templateRunProgress.tpl" with name=name field_id=field_id %}
     {# A pending draft is shown as text only (x-text, never x-html) and reaches no editor before Apply. #}
     <template x-if="hasDraft()">
         <section class="mt-2 rounded-md border border-stone-300 bg-white p-2 space-y-2" data-testid="generate-review-{{ name }}" aria-labelledby="{{ field_id }}-genreview">

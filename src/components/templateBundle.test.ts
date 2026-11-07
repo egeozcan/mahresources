@@ -63,7 +63,7 @@ describe('whole-template generation pairs', () => {
     Object.assign(tb, { $refs: {}, $nextTick: () => Promise.resolve() });
     const ask = vi.fn(async (_message: string, _options?: unknown) => true);
     (tb as Record<string, unknown>).ask = ask;
-    const stores: Record<string, unknown> = { generationDisclosure: { open: vi.fn(async () => true) }, templatePreview: {}, confirmDialog: { ask } };
+    const stores: Record<string, unknown> = { generationDisclosure: { open: vi.fn(async () => ({ groundingHash: 'h', previewMRQL: false, previewPlugins: false })) }, templatePreview: {}, confirmDialog: { ask } };
     vi.stubGlobal('window', { Alpine: { store: (name: string) => stores[name] } });
     vi.stubGlobal('Alpine', { store: (name: string) => stores[name] });
     vi.stubGlobal('fetch', vi.fn(async (_url: string, init: { body: string }) => (JSON.parse(init.body).dryRun
