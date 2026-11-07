@@ -283,6 +283,12 @@ func writeHarnessJSONError(w http.ResponseWriter, r *http.Request, err error) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": shown.Error(), "stopReason": stop, "transcript": transcript})
 }
 
+// TemplateRunFinishRequest is the body of the finish route.
+type TemplateRunFinishRequest struct {
+	// RunID is the ID from the stream's run event.
+	RunID string `json:"runId" schema:"runId"`
+}
+
 // GetFinishTemplateRunHandler handles
 // POST /v1/{category|resourceCategory|noteType}/generateTemplate/finish: it asks
 // a live run to make its next Turn the final one. Only the account that started
@@ -292,9 +298,7 @@ func writeHarnessJSONError(w http.ResponseWriter, r *http.Request, err error) {
 // role gate.
 func GetFinishTemplateRunHandler() func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			RunID string `json:"runId" schema:"runId"`
-		}
+		var req TemplateRunFinishRequest
 		if err := tryFillStructValuesFromRequest(&req, r); err != nil {
 			http_utils.HandleError(err, w, r, http.StatusBadRequest)
 			return

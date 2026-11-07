@@ -29,3 +29,13 @@ func TestTemplateGenerationRoutesRunScoped(t *testing.T) {
 		}
 	}
 }
+
+// The finish route must sit under each carrier's prefix, so it inherits the
+// generate route's role gate (admin for category and resourceCategory, editor
+// for noteType) instead of falling through to the default branch of the policy.
+func TestTemplateRunFinishRoutesAreMountedUnderTheCarrierPrefix(t *testing.T) {
+	routes := readRepoFile(t, "server/routes.go")
+	if !regexp.MustCompile(`for _, carrier := range \[\]string\{"category", "resourceCategory", "noteType"\} \{\s*router\.Methods\(http\.MethodPost\)\.Path\("/v1/" \+ carrier \+ "/generateTemplate/finish"\)\.HandlerFunc\(api_handlers\.GetFinishTemplateRunHandler\(\)\)`).MatchString(routes) {
+		t.Error("the finish route is not mounted under /v1/{category,resourceCategory,noteType}/generateTemplate/finish")
+	}
+}

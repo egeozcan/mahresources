@@ -263,6 +263,32 @@ func (s *sseReader) readUntil(t *testing.T, event string, d time.Duration) []sse
 	}
 }
 
+// readUntilEnd collects frames until the terminal result or error event.
+func (s *sseReader) readUntilEnd(t *testing.T, d time.Duration) []sseFrame {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	var frames []sseFrame
+	for {
+		f := s.nextWithin(t, time.Until(deadline))
+		frames = append(frames, f)
+		if f.Event == "result" || f.Event == "error" {
+			return frames
+		}
+	}
+}
+
+// disclose2 reads the groundingHash out of a dry-run body.
+func disclose2(t *testing.T, body string) string {
+	t.Helper()
+	var d struct {
+		GroundingHash string `json:"groundingHash"`
+	}
+	if err := json.Unmarshal([]byte(body), &d); err != nil || d.GroundingHash == "" {
+		t.Fatalf("no groundingHash in %s", body)
+	}
+	return d.GroundingHash
+}
+
 func eventNames(frames []sseFrame) []string {
 	var out []string
 	for _, f := range frames {
