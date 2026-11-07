@@ -265,6 +265,16 @@ func (g *runtimeAIGeneration) templateGenerator() (*defaultTemplateGenerator, er
 	return gen, nil
 }
 
+// templateConversationProvider builds the harness-mode (tool-calling) provider
+// for the template feature's resolved provider, key and model.
+func (g *runtimeAIGeneration) templateConversationProvider() (TemplateConversationProvider, error) {
+	p := g.resolve(g.snapshot(), "template")
+	if !p.configured() {
+		return nil, ErrTemplateGenerationNotConfigured
+	}
+	return NewGenerationConversationProvider(p.provider, p.key, p.model, g.client), nil
+}
+
 // PrepareTemplateGeneration binds the generation mode and a generator to one
 // settings snapshot, so a handler's refusal, grounding, Disclosure and run all
 // agree. The mode setting is not read yet; every request is classic.
