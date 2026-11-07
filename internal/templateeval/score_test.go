@@ -987,7 +987,7 @@ func TestQueryProbesRoundTripThroughTheParser(t *testing.T) {
 // disclosedGenerate runs a generation the way the handler does: a dry run for
 // the disclosure, then the request carrying its groundingHash.
 func disclosedGenerate(gen application_context.TemplateGenerator, in application_context.TemplateGenerationInput, prompt string) (*application_context.TemplateGenerationResult, error) {
-	disclosure, err := gen.DiscloseTemplate(in, prompt)
+	disclosure, err := gen.DiscloseTemplate(context.Background(), in, prompt)
 	if err != nil {
 		return nil, err
 	}

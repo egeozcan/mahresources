@@ -265,12 +265,23 @@ func (g *runtimeAIGeneration) templateGenerator() (*defaultTemplateGenerator, er
 	return gen, nil
 }
 
-func (g *runtimeAIGeneration) DiscloseTemplate(in TemplateGenerationInput, prompt string) (*TemplateDisclosure, error) {
+// PrepareTemplateGeneration binds the generation mode and a generator to one
+// settings snapshot, so a handler's refusal, grounding, Disclosure and run all
+// agree. The mode setting is not read yet; every request is classic.
+func (g *runtimeAIGeneration) PrepareTemplateGeneration() (TemplateGenerationPrep, error) {
+	gen, err := g.templateGenerator()
+	if err != nil {
+		return TemplateGenerationPrep{}, err
+	}
+	return TemplateGenerationPrep{GenerationMode: TemplateGenerationModeClassic, Generator: gen}, nil
+}
+
+func (g *runtimeAIGeneration) DiscloseTemplate(ctx context.Context, in TemplateGenerationInput, prompt string) (*TemplateDisclosure, error) {
 	gen, err := g.templateGenerator()
 	if err != nil {
 		return nil, err
 	}
-	return gen.DiscloseTemplate(in, prompt)
+	return gen.DiscloseTemplate(ctx, in, prompt)
 }
 
 func (g *runtimeAIGeneration) GenerateTemplate(ctx context.Context, in TemplateGenerationInput, prompt, hash string) (*TemplateGenerationResult, error) {

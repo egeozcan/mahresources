@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -247,7 +248,7 @@ func TestTemplatePrefixCarriesTheMRQLReference(t *testing.T) {
 func TestTemplateGeneratorTeachesItsOwnDialect(t *testing.T) {
 	in := disclosureKinds()["pair"]
 	in.Postgres = true
-	sqlite, err := NewTemplateGenerator(&fakeTemplateDraftProvider{}, templateGenConfig()).DiscloseTemplate(in, "make it")
+	sqlite, err := NewTemplateGenerator(&fakeTemplateDraftProvider{}, templateGenConfig()).DiscloseTemplate(context.Background(), in, "make it")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +258,7 @@ func TestTemplateGeneratorTeachesItsOwnDialect(t *testing.T) {
 	cfg := templateGenConfig()
 	cfg.Postgres = true
 	in.Postgres = false
-	pg, err := NewTemplateGenerator(&fakeTemplateDraftProvider{}, cfg).DiscloseTemplate(in, "make it")
+	pg, err := NewTemplateGenerator(&fakeTemplateDraftProvider{}, cfg).DiscloseTemplate(context.Background(), in, "make it")
 	if err != nil {
 		t.Fatal(err)
 	}

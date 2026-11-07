@@ -920,14 +920,15 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	// path-prefix authorization applies (category/resourceCategory → admin,
 	// noteType → editor), matching the preview routes above. Request-scoped for
 	// the same reason: the prompt carries sample entity values.
+	runAccess := templateRunAccessFactory(appContext)
 	router.Methods(http.MethodPost).Path("/v1/category/generateTemplate").HandlerFunc(scopedAPI(appContext, func(ctx api_handlers.TemplateGenerationContext) func(http.ResponseWriter, *http.Request) {
-		return api_handlers.GetGenerateTemplateHandler(ctx, "group")
+		return api_handlers.GetGenerateTemplateHandler(ctx, "group", runAccess)
 	}))
 	router.Methods(http.MethodPost).Path("/v1/resourceCategory/generateTemplate").HandlerFunc(scopedAPI(appContext, func(ctx api_handlers.TemplateGenerationContext) func(http.ResponseWriter, *http.Request) {
-		return api_handlers.GetGenerateTemplateHandler(ctx, "resource")
+		return api_handlers.GetGenerateTemplateHandler(ctx, "resource", runAccess)
 	}))
 	router.Methods(http.MethodPost).Path("/v1/noteType/generateTemplate").HandlerFunc(scopedAPI(appContext, func(ctx api_handlers.TemplateGenerationContext) func(http.ResponseWriter, *http.Request) {
-		return api_handlers.GetGenerateTemplateHandler(ctx, "note")
+		return api_handlers.GetGenerateTemplateHandler(ctx, "note", runAccess)
 	}))
 
 	// Global Search

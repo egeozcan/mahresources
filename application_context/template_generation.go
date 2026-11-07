@@ -122,6 +122,32 @@ type TemplateGenerationInput struct {
 	// Validation seams (keep the generator plugin-agnostic and DB-free).
 	Known        shortcodes.KnownShortcodes
 	ValidateMRQL func(query string, opts shortcodes.MRQLCheckOptions) error
+
+	// Harness-mode fields; classic generation ignores them.
+	//
+	// Run is the harness run environment (nil for classic). PartialExists
+	// answers whether a partial exists, under the caller's context, for the one
+	// harness validator. StartingPoints names the carrier and samples the
+	// model can open first with get_entity. GenerationMode is harness or
+	// classic, kept apart from Mode above.
+	Run            *TemplateRunEnv
+	PartialExists  func(ctx context.Context, name string) (bool, error)
+	StartingPoints TemplateStartingPoints
+	GenerationMode string
+}
+
+// TemplateRef names an entity by type, ID and name.
+type TemplateRef struct {
+	Type string `json:"type"`
+	ID   uint   `json:"id"`
+	Name string `json:"name"`
+}
+
+// TemplateStartingPoints are the harness Seed's starting references: the edited
+// carrier (zero value on the create form) and the loaded samples.
+type TemplateStartingPoints struct {
+	Carrier TemplateRef
+	Samples []TemplateRef
 }
 
 type TemplateGenerationResult struct {
@@ -141,6 +167,12 @@ type TemplateGenerationResult struct {
 	// FailedSlots names the HTML sections of a fan-out whose pair could not be
 	// generated; they are absent from Slots and each has a warning in Issues.
 	FailedSlots []string `json:"failedSlots,omitempty"`
+	// Harness runs only. StopReason is why the run ended, Transcript every
+	// message sent and received, Submitted the fields the model explicitly
+	// submitted (an empty submitted value is still a submission).
+	StopReason string                     `json:"stopReason,omitempty"`
+	Transcript []TemplateTranscriptRecord `json:"transcript,omitempty"`
+	Submitted  []string                   `json:"submitted,omitempty"`
 }
 
 // templateTruncationMessage is the issue for a reply cut off at max_tokens.
@@ -168,8 +200,21 @@ func templateOversizeIssue(field string, size int) shortcodes.LintIssue {
 // GenerateTemplate rebuilds it, refuses unless its groundingHash matches the
 // one the user approved, and sends exactly those messages.
 type TemplateGenerator interface {
-	DiscloseTemplate(in TemplateGenerationInput, prompt string) (*TemplateDisclosure, error)
+	DiscloseTemplate(ctx context.Context, in TemplateGenerationInput, prompt string) (*TemplateDisclosure, error)
 	GenerateTemplate(ctx context.Context, in TemplateGenerationInput, prompt, groundingHash string) (*TemplateGenerationResult, error)
+}
+
+// TemplateGenerationPrep is a generation mode and a generator bound to one
+// settings snapshot (plan section 3, "Mode").
+type TemplateGenerationPrep struct {
+	GenerationMode string // TemplateGenerationModeHarness | TemplateGenerationModeClassic
+	Generator      TemplateGenerator
+}
+
+// templateGenerationPreparer is implemented by generators that read settings
+// per request; a fixed generator is classic by construction.
+type templateGenerationPreparer interface {
+	PrepareTemplateGeneration() (TemplateGenerationPrep, error)
 }
 
 // TemplateDraftRequest is one provider call.
@@ -227,7 +272,7 @@ func NewTemplateGenerator(provider TemplateDraftProvider, cfg TemplateGeneration
 	return &defaultTemplateGenerator{provider: provider, config: cfg, slots: make(chan struct{}, cfg.ProviderSlots), now: time.Now}
 }
 
-func (g *defaultTemplateGenerator) DiscloseTemplate(in TemplateGenerationInput, prompt string) (*TemplateDisclosure, error) {
+func (g *defaultTemplateGenerator) DiscloseTemplate(ctx context.Context, in TemplateGenerationInput, prompt string) (*TemplateDisclosure, error) {
 	request, err := g.disclose(in, prompt)
 	if err != nil {
 		return nil, err

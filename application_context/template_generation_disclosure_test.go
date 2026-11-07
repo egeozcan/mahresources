@@ -37,6 +37,12 @@ var templateInputDisclosure = map[string]struct{ section, reason string }{
 	"Postgres":              {reason: "chooses the dialect lines of the constant MRQL reference; the generator sets it from its configuration"},
 	"Known":                 {reason: "validates the reply only"},
 	"ValidateMRQL":          {reason: "validates the reply only"},
+	// Harness fields (Phase 0 declarations; lane C reclassifies StartingPoints
+	// under the harness Seed's "starting-points" section when it builds it).
+	"Run":            {reason: "harness run environment: executor, sink and opt-ins; the Disclosure lists its Tools, caps and opt-ins itself"},
+	"PartialExists":  {reason: "validates the reply only"},
+	"StartingPoints": {reason: "harness Seed only; classic prompts never read it"},
+	"GenerationMode": {reason: "chooses the harness or classic path; hashed as the Disclosure's Mode"},
 }
 
 func sectionText(sections []PromptSection, key string) string {
@@ -147,7 +153,7 @@ func TestDisclosedSectionsAreTheProviderRequest(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			provider := &fakeTemplateDraftProvider{response: `{"content":"{}","explanation":"x"}`}
 			gen := NewTemplateGenerator(provider, templateGenConfig())
-			disclosure, err := gen.DiscloseTemplate(in, "make it")
+			disclosure, err := gen.DiscloseTemplate(context.Background(), in, "make it")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -194,7 +200,7 @@ func TestDisclosedSectionsAreTheProviderRequest(t *testing.T) {
 func TestGroundingHashCoversDestinationAndIsStable(t *testing.T) {
 	in := disclosureKinds()["pair"]
 	disclose := func(cfg TemplateGenerationConfig, endpoint string) *TemplateDisclosure {
-		d, err := NewTemplateGenerator(&fakeTemplateDraftProvider{endpoint: endpoint}, cfg).DiscloseTemplate(in, "make it")
+		d, err := NewTemplateGenerator(&fakeTemplateDraftProvider{endpoint: endpoint}, cfg).DiscloseTemplate(context.Background(), in, "make it")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -250,7 +256,7 @@ func TestGroundingHashCoversDestinationAndIsStable(t *testing.T) {
 	}
 	changed := in
 	changed.Samples = []TemplateSample{{"Name": "a", "Meta": map[string]any{"rating": 5}}}
-	c, _ := NewTemplateGenerator(&fakeTemplateDraftProvider{endpoint: deepseek}, base).DiscloseTemplate(changed, "make it")
+	c, _ := NewTemplateGenerator(&fakeTemplateDraftProvider{endpoint: deepseek}, base).DiscloseTemplate(context.Background(), changed, "make it")
 	if c.GroundingHash == hash(base, deepseek) {
 		t.Error("changing a sample did not change the hash")
 	}
@@ -269,7 +275,7 @@ func TestGenerateRefusesAMissingOrStaleGroundingHash(t *testing.T) {
 	in := disclosureKinds()["pair"]
 	provider := &countingTemplateProvider{}
 	gen := NewTemplateGenerator(provider, templateGenConfig())
-	disclosure, err := gen.DiscloseTemplate(in, "make it")
+	disclosure, err := gen.DiscloseTemplate(context.Background(), in, "make it")
 	if err != nil || provider.calls != 0 {
 		t.Fatalf("a dry run must call no provider: err %v, calls %d", err, provider.calls)
 	}

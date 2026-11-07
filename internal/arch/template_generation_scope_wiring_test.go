@@ -18,7 +18,7 @@ func TestTemplateGenerationRoutesRunScoped(t *testing.T) {
 			{"generateTemplate", "GetGenerateTemplateHandler"},
 			{"previewTemplate", "GetPreviewTemplateHandler"},
 		} {
-			want := regexp.MustCompile(`Path\("/v1/` + carrier + `/` + route.path + `"\)\.HandlerFunc\(scopedAPI\(appContext, func\([^)]*\) func\(http\.ResponseWriter, \*http\.Request\) \{\s*return api_handlers\.` + route.handler + `\([a-zA-Z]+, "` + entityType + `"\)`)
+			want := regexp.MustCompile(`Path\("/v1/` + carrier + `/` + route.path + `"\)\.HandlerFunc\(scopedAPI\(appContext, func\([^)]*\) func\(http\.ResponseWriter, \*http\.Request\) \{\s*return api_handlers\.` + route.handler + `\([a-zA-Z]+, "` + entityType + `"[,)]`)
 			if !want.MatchString(routes) {
 				t.Errorf("/v1/%s/%s is not mounted through scopedAPI with the %q carrier", carrier, route.path, entityType)
 			}

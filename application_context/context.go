@@ -1323,6 +1323,19 @@ func (ctx *MahresourcesContext) TemplateGenerator() TemplateGenerator {
 	return ctx.templateGenerator
 }
 
+// PrepareTemplateGeneration returns the generation mode and a generator bound
+// to one settings snapshot. A generator that does not read settings per request
+// is classic. ErrTemplateGenerationNotConfigured when no generator is installed.
+func (ctx *MahresourcesContext) PrepareTemplateGeneration() (TemplateGenerationPrep, error) {
+	if ctx.templateGenerator == nil {
+		return TemplateGenerationPrep{}, ErrTemplateGenerationNotConfigured
+	}
+	if p, ok := ctx.templateGenerator.(templateGenerationPreparer); ok {
+		return p.PrepareTemplateGeneration()
+	}
+	return TemplateGenerationPrep{GenerationMode: TemplateGenerationModeClassic, Generator: ctx.templateGenerator}, nil
+}
+
 // SetTemplateGenerator installs the natural-language template generator.
 func (ctx *MahresourcesContext) SetTemplateGenerator(generator TemplateGenerator) {
 	ctx.templateGenerator = generator
@@ -1393,6 +1406,23 @@ func (ctx *MahresourcesContext) WithRequest(r *http.Request) any {
 	ctxCopy.principal = p
 	_ = applyPrincipalScope(&ctxCopy, ctx, p, r.Context())
 	return &ctxCopy
+}
+
+// WithParentContext returns a shallow copy whose db handle is rebased onto
+// parent, so cancelling parent cancels every query made through the copy. The
+// scope filter and acting user already on the handle are carried over, as
+// WithRequest's rebase branch does; a context without them stays unrestricted.
+func (ctx *MahresourcesContext) WithParentContext(parent context.Context) *MahresourcesContext {
+	cp := *ctx
+	base := ctx.db.Statement.Context
+	if filter := scopeFromContext(base); filter != nil {
+		parent = context.WithValue(parent, scopeCtxKey{}, filter)
+	}
+	if id, ok := actingUserFromContext(base); ok {
+		parent = context.WithValue(parent, actingUserCtxKey{}, id)
+	}
+	cp.db = ctx.db.WithContext(parent)
+	return &cp
 }
 
 // WithActorUserID returns a ResourceCreator bound to a background download's

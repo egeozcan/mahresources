@@ -2,6 +2,7 @@ package api_handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -167,6 +168,14 @@ type templateGenerateRequest struct {
 	Slots []string `json:"slots" schema:"slots"`
 }
 
+// TemplateRunAccessFactory returns, for one request, a function that re-checks
+// the request's credential under the context it is given and returns an
+// application context bound to the same principal. It returns
+// application_context.ErrTemplateRunAccessChanged (possibly wrapped) when the
+// credential is no longer valid or its role or scope changed. It lives in
+// server because credential resolution is private to that package.
+type TemplateRunAccessFactory func(r *http.Request) func(ctx context.Context) (*application_context.MahresourcesContext, error)
+
 // GetGenerateTemplateHandler handles POST /v1/{category|resourceCategory|noteType}/generateTemplate.
 // entityType selects the carrier ("group", "resource", or "note"). It assembles
 // grounding (MetaSchema, a sample entity's Meta, the shortcode docs, partial
@@ -174,7 +183,11 @@ type templateGenerateRequest struct {
 // template. Mounted under the taxonomy/editor path prefixes, so it inherits the
 // same capability gate as saving the corresponding template (admin for
 // category/resourceCategory, editor for noteType).
-func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string) func(http.ResponseWriter, *http.Request) {
+//
+// access rebuilds the request's access under a run's own context (see
+// TemplateRunAccessFactory). The handler does not call it yet; the harness
+// executor does. Nil is allowed for callers that never start a harness run.
+func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string, access TemplateRunAccessFactory) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var req templateGenerateRequest
 		if err := tryFillStructValuesFromRequest(&req, request); err != nil {
@@ -331,7 +344,7 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 
 		var result any
 		if req.DryRun {
-			result, err = generator.DiscloseTemplate(input, req.Prompt)
+			result, err = generator.DiscloseTemplate(request.Context(), input, req.Prompt)
 		} else {
 			result, err = generator.GenerateTemplate(request.Context(), input, req.Prompt, strings.TrimSpace(req.GroundingHash))
 		}

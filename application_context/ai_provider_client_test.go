@@ -357,7 +357,7 @@ func TestGenerationProvidersGenerateLocallyValidatedDrafts(t *testing.T) {
 				APIKey: "key", Model: "model", Timeout: time.Second, RepairDisabled: true, Logf: func(string, ...any) {},
 			})
 			input := TemplateGenerationInput{Target: TemplateTargetSlot, EntityType: "group", Slot: "CustomCSS", Mode: "css"}
-			disclosure, err := generator.DiscloseTemplate(input, "use blue text")
+			disclosure, err := generator.DiscloseTemplate(context.Background(), input, "use blue text")
 			if err != nil || calls != 1 {
 				t.Fatalf("disclosure called provider or failed: calls=%d, err=%v", calls, err)
 			}

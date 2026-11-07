@@ -131,6 +131,14 @@ func (ctx *MahresourcesContext) withPrincipalWithin(parent context.Context, p *a
 	return &cp, err
 }
 
+// WithPrincipalContext is WithPrincipal for a caller that has to bound the
+// binding by parent (cancellation, a deadline). The error reports a subtree
+// that could not be read; the returned copy then denies everything, so it is
+// safe to use but not an answer.
+func (ctx *MahresourcesContext) WithPrincipalContext(parent context.Context, p *auth.Principal) (*MahresourcesContext, error) {
+	return ctx.withPrincipalWithin(parent, p)
+}
+
 // WithMRQLPrincipal binds request cancellation and actor identity without
 // flattening a scoped principal's entire group subtree into a Go allow-list.
 // MRQL enforces the same principal scope directly in SQL through its recursive

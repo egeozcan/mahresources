@@ -540,7 +540,7 @@ func TestFanOutConcurrencyIsBoundedPerRequest(t *testing.T) {
 	cfg.ProviderSlots = 20
 	gen := NewTemplateGenerator(provider, cfg)
 	in := fanInput(true, nil, pairSlotNames(bases...)...)
-	disclosure, err := gen.DiscloseTemplate(in, "x")
+	disclosure, err := gen.DiscloseTemplate(context.Background(), in, "x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -630,7 +630,7 @@ func TestFanOutClientCancellationPropagates(t *testing.T) {
 	}}
 	gen := NewTemplateGenerator(provider, fanOutConfig())
 	in := fanInput(true, nil, pairSlotNames("CustomHeader", "CustomSidebar")...)
-	disclosure, err := gen.DiscloseTemplate(in, "x")
+	disclosure, err := gen.DiscloseTemplate(context.Background(), in, "x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -686,7 +686,7 @@ func TestFanOutDisclosureListsThePlanAndEveryPair(t *testing.T) {
 	provider := &fanOutProvider{handler: fanOutHandler("", []string{"CustomHeader", "CustomSidebar"}, nil)}
 	gen := NewTemplateGenerator(provider, fanOutConfig())
 	in := fanInput(true, map[string]string{"CustomHeader": "<h1>old</h1>"}, append(pairSlotNames("CustomHeader", "CustomSidebar"), "CustomCSS")...)
-	d, err := gen.DiscloseTemplate(in, "x")
+	d, err := gen.DiscloseTemplate(context.Background(), in, "x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -716,7 +716,7 @@ func TestFanOutDisclosureListsThePlanAndEveryPair(t *testing.T) {
 	}
 	// The hash covers the pair messages: a different selection of sections
 	// changes it.
-	other, err := gen.DiscloseTemplate(fanInput(true, map[string]string{"CustomHeader": "<h1>old</h1>"}, append(pairSlotNames("CustomHeader", "CustomSidebar", "CustomSummary"), "CustomCSS")...), "x")
+	other, err := gen.DiscloseTemplate(context.Background(), fanInput(true, map[string]string{"CustomHeader": "<h1>old</h1>"}, append(pairSlotNames("CustomHeader", "CustomSidebar", "CustomSummary"), "CustomCSS")...), "x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -745,7 +745,7 @@ func TestFanOutDisclosedSectionsAreTheProviderRequests(t *testing.T) {
 	}}
 	gen := NewTemplateGenerator(provider, fanOutConfig())
 	in := fanInput(true, map[string]string{"CustomHeader": "<h1>{{model output: design plan}} sentinel</h1>"}, pairSlotNames("CustomHeader", "CustomSidebar")...)
-	d, err := gen.DiscloseTemplate(in, "x")
+	d, err := gen.DiscloseTemplate(context.Background(), in, "x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -877,7 +877,7 @@ func TestFanOutSendsEachKindsProfile(t *testing.T) {
 			t.Errorf("pair request: model %q thinking %t tokens %d", p.Model, p.Thinking, p.MaxTokens)
 		}
 	}
-	d, err := NewTemplateGenerator(provider, cfg).DiscloseTemplate(fanInput(true, nil, pairSlotNames("CustomHeader", "CustomSidebar")...), "x")
+	d, err := NewTemplateGenerator(provider, cfg).DiscloseTemplate(context.Background(), fanInput(true, nil, pairSlotNames("CustomHeader", "CustomSidebar")...), "x")
 	if err != nil {
 		t.Fatal(err)
 	}

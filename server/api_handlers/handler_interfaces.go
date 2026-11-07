@@ -231,6 +231,7 @@ type SettingsContext interface {
 type TemplateGenerationContext interface {
 	TemplatePreviewContext
 	TemplateGenerator() application_context.TemplateGenerator
+	PrepareTemplateGeneration() (application_context.TemplateGenerationPrep, error)
 	TemplateGenerationRateLimiter() *application_context.MRQLGenerationRateLimiter
 	TemplateDisclosureRateLimiter() *application_context.MRQLGenerationRateLimiter
 	GetGroups(offset, maxResults int, query *query_models.GroupQuery) ([]models.Group, error)

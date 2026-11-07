@@ -409,11 +409,11 @@ func TestDisclosureListsTheRepairCall(t *testing.T) {
 	offCfg.RepairDisabled = true
 	disabled := NewTemplateGenerator(scripted(reply(goodHeader)), offCfg)
 
-	with, err := enabled.DiscloseTemplate(in, "x")
+	with, err := enabled.DiscloseTemplate(context.Background(), in, "x")
 	if err != nil {
 		t.Fatal(err)
 	}
-	without, err := disabled.DiscloseTemplate(in, "x")
+	without, err := disabled.DiscloseTemplate(context.Background(), in, "x")
 	if err != nil {
 		t.Fatal(err)
 	}
