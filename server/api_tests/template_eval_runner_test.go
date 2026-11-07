@@ -2,7 +2,6 @@ package api_tests
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -182,12 +181,15 @@ func evalGenerate(tc *TestContext, c templateeval.Case, categoryID, entityID uin
 func evalFailedDraft(rr *httptest.ResponseRecorder) templateeval.Draft {
 	draft := templateeval.Draft{Status: rr.Code}
 	var failure struct {
-		Error  string               `json:"error"`
-		Repair *templateeval.Repair `json:"repair"`
+		Error      string               `json:"error"`
+		Repair     *templateeval.Repair `json:"repair"`
+		StopReason string               `json:"stopReason"`
 	}
 	if json.Unmarshal(rr.Body.Bytes(), &failure) == nil && failure.Error != "" {
 		draft.Error = failure.Error
 		draft.Repair = failure.Repair
+		// A failed harness run says why it stopped; the report counts that.
+		draft.StopReason = failure.StopReason
 	} else {
 		draft.Error = strings.TrimSpace(rr.Body.String())
 	}
@@ -283,10 +285,13 @@ type evalRunConfig struct {
 	// it at a fake server.
 	Client *http.Client
 	// Lookup reads the TEMPLATE_GENERATION_* style overrides (os.Getenv live).
-	Lookup  func(string) string
-	Cases   []templateeval.Case
-	Repeats int
-	Commit  string
+	Lookup func(string) string
+	// Overrides are runtime settings applied before the first request (for
+	// example a per-kind model), as an operator would set them.
+	Overrides map[string]string
+	Cases     []templateeval.Case
+	Repeats   int
+	Commit    string
 }
 
 // evalTwoModeResult holds both modes' reports and their comparison, classic as
@@ -294,18 +299,6 @@ type evalRunConfig struct {
 type evalTwoModeResult struct {
 	Classic, Harness templateeval.RunReport
 	Comparison       templateeval.Comparison
-}
-
-// evalModeGenerator is the template generator the runner installs. It decides
-// the mode from the runtime setting ai_template_generation_mode on every
-// request, the way the app's runtime generator does, and builds the harness
-// generator's limits from the runtime settings too. Only the provider seams
-// differ from production: both are wrapped by the recorder.
-type evalModeGenerator struct {
-	settings *application_context.RuntimeSettings
-	draft    application_context.TemplateDraftProvider
-	conv     application_context.TemplateConversationProvider
-	config   application_context.TemplateGenerationConfig
 }
 
 const evalModeSetting = "ai_template_generation_mode"
@@ -325,38 +318,6 @@ func evalHarnessSettings(rs *application_context.RuntimeSettings) application_co
 	deadline, _ := evalSetting(rs, "ai_template_run_deadline").(time.Duration)
 	budget, _ := evalSetting(rs, "ai_template_run_token_budget").(int)
 	return application_context.TemplateHarnessSettings{MaxTurns: turns, Deadline: deadline, TokenBudget: budget}
-}
-
-func (g *evalModeGenerator) PrepareTemplateGeneration() (application_context.TemplateGenerationPrep, error) {
-	if mode, _ := evalSetting(g.settings, evalModeSetting).(string); mode == application_context.TemplateGenerationModeClassic {
-		return application_context.TemplateGenerationPrep{
-			GenerationMode: application_context.TemplateGenerationModeClassic,
-			Generator:      application_context.NewTemplateGenerator(g.draft, g.config),
-		}, nil
-	}
-	cfg := g.config
-	harness := evalHarnessSettings(g.settings)
-	cfg.Harness = &harness
-	return application_context.TemplateGenerationPrep{
-		GenerationMode: application_context.TemplateGenerationModeHarness,
-		Generator:      application_context.NewTemplateHarnessGenerator(g.conv, cfg),
-	}, nil
-}
-
-func (g *evalModeGenerator) DiscloseTemplate(ctx context.Context, in application_context.TemplateGenerationInput, prompt string) (*application_context.TemplateDisclosure, error) {
-	prep, err := g.PrepareTemplateGeneration()
-	if err != nil {
-		return nil, err
-	}
-	return prep.Generator.DiscloseTemplate(ctx, in, prompt)
-}
-
-func (g *evalModeGenerator) GenerateTemplate(ctx context.Context, in application_context.TemplateGenerationInput, prompt, hash string) (*application_context.TemplateGenerationResult, error) {
-	prep, err := g.PrepareTemplateGeneration()
-	if err != nil {
-		return nil, err
-	}
-	return prep.Generator.GenerateTemplate(ctx, in, prompt, hash)
 }
 
 // runTemplateEvalBothModes seeds the fixtures once, then runs every case in
@@ -386,14 +347,16 @@ func runTemplateEvalBothModes(t *testing.T, cfg evalRunConfig) evalTwoModeResult
 		t.Fatal(err)
 	}
 	tc.AppCtx.SetSettings(settings)
+	for key, value := range cfg.Overrides {
+		if err := settings.Set(key, value, "template eval", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	recorder := templateeval.NewRecorder(cfg.APIKey)
-	tc.AppCtx.SetTemplateGenerator(&evalModeGenerator{
-		settings: settings,
-		draft:    recorder.WrapDraftProvider(application_context.NewGenerationTemplateDraftProvider(cfg.Provider, cfg.APIKey, cfg.Model, cfg.Client)),
-		conv:     recorder.WrapConversationProvider(application_context.NewGenerationConversationProvider(cfg.Provider, cfg.APIKey, cfg.Model, cfg.Client)),
-		config:   generationConfig,
-	})
+	// The app's own runtime generator decides mode and resolves the profile from
+	// the settings; the recorder only decorates the providers it builds.
+	tc.AppCtx.InstallAIGenerationWrapped(generationConfig, cfg.Client, recorder.WrapDraftProvider, recorder.WrapConversationProvider)
 	env := evalScoringEnv(tc)
 
 	run := func(mode string) templateeval.RunReport {

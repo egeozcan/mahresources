@@ -26,17 +26,31 @@ type fakeEvalProvider struct {
 	classic, harness    int
 	authorizations      []string
 	harnessToolsOffered int
+	// harnessBehavior is "" (submit and finish), "fail" (HTTP 500) or "text"
+	// (a reply with no tool call).
+	harnessBehavior string
+	models          map[string][]string
 }
 
 func (f *fakeEvalProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	raw, _ := io.ReadAll(r.Body)
 	var body struct {
 		Tools []json.RawMessage `json:"tools"`
+		Model string            `json:"model"`
 	}
 	_ = json.Unmarshal(raw, &body)
 	f.mu.Lock()
 	f.authorizations = append(f.authorizations, r.Header.Get("Authorization"))
 	harness := len(body.Tools) > 0
+	if f.models == nil {
+		f.models = map[string][]string{}
+	}
+	mode := "classic"
+	if harness {
+		mode = "harness"
+	}
+	f.models[mode] = append(f.models[mode], body.Model)
+	behavior := f.harnessBehavior
 	if harness {
 		f.harness++
 		f.harnessToolsOffered = len(body.Tools)
@@ -46,6 +60,14 @@ func (f *fakeEvalProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Unlock()
 	usage := `"usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_cache_hit_tokens":60,"prompt_cache_miss_tokens":40}`
 	w.Header().Set("Content-Type", "application/json")
+	if harness && behavior == "fail" {
+		http.Error(w, `{"error":"boom"}`, http.StatusInternalServerError)
+		return
+	}
+	if harness && behavior == "text" {
+		fmt.Fprintf(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"I am done."}}],%s}`, usage)
+		return
+	}
 	if harness {
 		args, _ := json.Marshal(map[string]any{"done": true, "fields": map[string]string{
 			"CustomHeader": `<h1>[property path="Name"]</h1>`, "CustomHeaderCSS": ".t{color:red}",
@@ -85,8 +107,18 @@ func TestTemplateEvalRunnerBothModesThroughHandler(t *testing.T) {
 		Provider: "deepseek", APIKey: "sk-fake-eval-key", Model: "fake-model", Timeout: 30 * time.Second,
 		Client: &http.Client{Transport: redirectTransport{target}},
 		Lookup: func(string) string { return "" },
-		Cases:  cases, Repeats: 2, Commit: "test",
+		// A runtime profile override, as an operator sets it: the pair profile
+		// uses another model than the base one.
+		Overrides: map[string]string{"ai_template_deepseek_pair_model": "override-model"},
+		Cases:     cases, Repeats: 2, Commit: "test",
 	})
+	for mode, models := range fake.models {
+		for _, m := range models {
+			if m != "override-model" {
+				t.Fatalf("%s request used model %q, want the runtime profile override", mode, m)
+			}
+		}
+	}
 
 	// The mode setting, not the runner, chose the generator: each mode reached
 	// the provider with its own request shape.
@@ -137,6 +169,27 @@ func TestTemplateEvalRunnerBothModesThroughHandler(t *testing.T) {
 			t.Fatalf("harness draft = %+v", r.Draft)
 		}
 	}
+	// Both modes must score and preview successfully: an absent preview map or a
+	// consistently failing one would otherwise leave the comparison green.
+	for _, r := range append(append([]templateeval.CaseResult{}, classic.Results...), harness.Results...) {
+		if !r.Pass {
+			t.Fatalf("%s #%d did not pass: %+v", r.Case, r.Repeat, r.Checks)
+		}
+		preview, ok := r.Previews["CustomHeader"]
+		if !ok || preview.Status != http.StatusOK || !strings.Contains(preview.HTML, "<h1>") || strings.Contains(preview.HTML, "[property") {
+			t.Fatalf("%s #%d CustomHeader preview = %+v", r.Case, r.Repeat, preview)
+		}
+		fixture, _ := templateeval.FixtureForCase(cases[0])
+		if !strings.Contains(preview.HTML, fixture.Members[0].Name) {
+			t.Fatalf("%s #%d preview lacks the seeded entity name %q: %s", r.Case, r.Repeat, fixture.Members[0].Name, preview.HTML)
+		}
+	}
+	if g := classic.Summary.Group("all"); g == nil || g.Passed != 2 {
+		t.Fatalf("classic summary = %+v", g)
+	}
+	if g := harness.Summary.Group("all"); g == nil || g.Passed != 2 || g.StopReasons[application_context.TemplateStopDone] != 2 {
+		t.Fatalf("harness summary = %+v", g)
+	}
 	if !result.Comparison.Compatible || result.Comparison.BaseMode != templateeval.ModeClassic || result.Comparison.CandidateMode != templateeval.ModeHarness {
 		t.Fatalf("comparison = %+v", result.Comparison)
 	}
@@ -167,5 +220,40 @@ func TestTemplateEvalRunnerBothModesThroughHandler(t *testing.T) {
 	}
 	if !templateeval.Compare(base, candidate).Compatible || candidate.Mode != templateeval.ModeHarness {
 		t.Fatal("written reports do not round-trip into a comparison")
+	}
+}
+
+// A harness run that fails reports why it stopped, in the case result and the
+// summary, so unsuccessful runs are counted rather than dropped.
+func TestTemplateEvalRunnerKeepsStopReasonOfFailedRuns(t *testing.T) {
+	for behavior, want := range map[string]string{
+		"fail": application_context.TemplateStopProviderError,
+		"text": application_context.TemplateStopNoToolCall,
+	} {
+		t.Run(behavior, func(t *testing.T) {
+			fake := &fakeEvalProvider{harnessBehavior: behavior}
+			server := httptest.NewServer(fake)
+			defer server.Close()
+			target, _ := url.Parse(server.URL)
+			cases, err := templateeval.FilterCases(templateeval.Corpus(), []string{"group-header"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := runTemplateEvalBothModes(t, evalRunConfig{
+				Provider: "deepseek", APIKey: "sk-fake-eval-key", Model: "fake-model", Timeout: 30 * time.Second,
+				Client: &http.Client{Transport: redirectTransport{target}},
+				Lookup: func(string) string { return "" }, Cases: cases, Repeats: 1, Commit: "test",
+			})
+			r := result.Harness.Results[0]
+			if r.Pass || r.Draft == nil || r.Draft.Status == http.StatusOK {
+				t.Fatalf("expected a failed run, got %+v", r.Draft)
+			}
+			if r.StopReason != want {
+				t.Fatalf("case stop reason = %q, want %q (draft %+v)", r.StopReason, want, r.Draft)
+			}
+			if g := result.Harness.Summary.Group("all"); g == nil || g.StopReasons[want] != 1 {
+				t.Fatalf("summary stop reasons = %+v", g)
+			}
+		})
 	}
 }
