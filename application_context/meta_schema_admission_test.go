@@ -1,6 +1,8 @@
 package application_context
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -121,5 +123,56 @@ func TestValidateMetaSchemaStructureBounds(t *testing.T) {
 	ok := `{"type":"object","properties":{"n":{"type":"number","minimum":0,"maximum":1e9},"s":{"type":"string","pattern":"^[a-z]+$"}}}`
 	if err := ValidateMetaSchema(ok); err != nil {
 		t.Errorf("ordinary schema refused: %v", err)
+	}
+}
+
+// Review r1: a member named "pattern" inside const/enum/default/examples is
+// data, not a regular expression.
+func TestValidateMetaSchemaPatternDataIsNotAPattern(t *testing.T) {
+	long := strings.Repeat("a", 3000)
+	for _, s := range []string{
+		`{"const":{"pattern":"` + long + `{1000}{1000}"}}`,
+		`{"enum":[{"pattern":"` + strings.Repeat("a{1000}", 100) + `"}]}`,
+		`{"type":"object","default":{"pattern":"` + strings.Repeat("a{1000}", 100) + `"}}`,
+		`{"examples":[{"pattern":"` + strings.Repeat("a{1000}", 100) + `"}]}`,
+	} {
+		if err := ValidateMetaSchema(s); err != nil {
+			t.Errorf("data refused: %v\n%.80s", err, s)
+		}
+	}
+	// The same text at a schema position is refused, including through $defs
+	// and a local $ref target.
+	bad := strings.Repeat("a{1000}", 100)
+	for _, s := range []string{
+		`{"properties":{"a":{"pattern":"` + bad + `"}}}`,
+		`{"$defs":{"x":{"pattern":"` + bad + `"}}}`,
+		`{"patternProperties":{"` + bad + `":{}}}`,
+		`{"allOf":[{"items":{"pattern":"` + bad + `"}}]}`,
+	} {
+		if err := ValidateMetaSchema(s); err == nil {
+			t.Errorf("accepted: %.80s", s)
+		}
+	}
+}
+
+// Many individually admitted patterns add up.
+func TestValidateMetaSchemaAggregateRegexWork(t *testing.T) {
+	p := strings.Repeat("a{1000}", 19) // ~19,000 instructions each: under the single-pattern allowance
+	var props []string
+	for i := 0; i < 20; i++ {
+		props = append(props, fmt.Sprintf(`"p%d":{"type":"string","pattern":"%s"}`, i, p))
+	}
+	s := `{"type":"object","properties":{` + strings.Join(props, ",") + `}}`
+	err := ValidateMetaSchema(s)
+	if err == nil || !strings.Contains(err.Error(), "add up") {
+		t.Errorf("aggregate not refused: %v", err)
+	}
+}
+
+func TestValidateMetaSchemaContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := ValidateMetaSchemaContext(ctx, `{"type":"object"}`); !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v", err)
 	}
 }

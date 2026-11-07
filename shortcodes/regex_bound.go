@@ -135,16 +135,17 @@ func asTooComplex(err error, target **regexTooComplexError) bool {
 	return false
 }
 
-// AdmitRegexp reports whether pattern is within the allowance for compiling a
-// regular expression, for callers (a MetaSchema's pattern and patternProperties)
-// whose own compiler would otherwise expand it unchecked. A pattern that does
-// not parse is admitted: the caller's compiler reports that in its own words.
-func AdmitRegexp(pattern string) error {
-	if _, err := compileBoundedRegexp(pattern); err != nil {
-		var tc *regexTooComplexError
-		if asTooComplex(err, &tc) {
-			return err
-		}
+// RegexpProgramSize is the estimated instruction count pattern compiles to, for
+// callers (a MetaSchema's pattern and patternProperties) that add up the work of
+// many patterns. A pattern that does not parse is 0: the caller's own compiler
+// reports it.
+func RegexpProgramSize(pattern string) int64 {
+	re, err := syntax.Parse(pattern, syntax.Perl)
+	if err != nil {
+		return 0
 	}
-	return nil
+	return regexProgramSize(re)
 }
+
+// MaxRegexpProgramSize is the allowance for one pattern.
+const MaxRegexpProgramSize = maxRegexProgramSize
