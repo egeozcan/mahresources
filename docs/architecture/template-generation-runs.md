@@ -11,8 +11,6 @@ Envelope, Seed, Related entity, Draft) are defined in `GLOSSARY.md`; the
 decision to approve an Envelope instead of every message is
 `docs/adr/0009-generation-runs-approve-an-envelope.md`.
 
-Each claim below names the function that makes it true.
-
 ## Where the code is
 
 | Concern | Code |
@@ -69,9 +67,11 @@ lines (`referenceBlock`). The Seed is a start, not a limit: any Tool may read
 outside it, inside the Envelope.
 
 The system prompt, the Tool list and the Seed are byte-stable across the Turns of
-a run, so providers cache them. Later Turns only append messages: a user
-instruction, an assistant reply, a tool message holding every result of the Turn
-in call order.
+a run, so the prefix is cache-eligible (a provider may or may not cache it).
+History is append-only: a user instruction, an assistant reply, and a tool
+message holding every result of the Turn in call order. The one exception is
+stubbing of old Tool results for providers that allow it (see "Replay and
+stubs").
 
 ## Tools
 
@@ -88,9 +88,13 @@ a run. Fourteen Tools, all read-only: `get_entity`, `list_related`,
 - A Turn runs at most `TemplateRunMaxCallsPerTurn` (6) calls. Calls beyond that get
   an error result. The calls of one Turn run in parallel (`handleReply`) and their
   results are returned together, in call order.
-- Every Tool result is fenced and untrusted. A Tool that fails, times out or
-  panics yields a fixed error text (`runTool`); no error string from the database
-  or a plugin reaches the model.
+- A successful Tool result body is fenced and untrusted. A failure is plain text,
+  not fenced: a Tool that fails, times out or panics yields a fixed text
+  (`runTool`), and a refusal is `ToolErrorResult`, which is capped and has fence
+  markers defanged because it can echo a model-chosen argument. No database error
+  string is passed on. A plugin shortcode's error can still reach the model inside
+  a `preview` result, because the shortcode processor puts an error marker in the
+  rendered HTML (`shortcodes/processor.go`) and the preview returns that HTML.
 - A Tool has `defaultTemplateRunToolTimeout` (10 s); `preview` has
   `defaultTemplateRunPreviewTimout` (20 s). Previews and diffs are limited to 2 and
   1 at a time inside a run (`templateRunPreviewConcurrency`,
@@ -202,8 +206,12 @@ A reply's `Replay` (the provider's own assistant payload, including signed
 reasoning) is stored and resent byte for byte on later Turns. Only for providers
 that allow rewriting history (`HistoryRewritable`: DeepSeek, and OpenRouter models
 under `deepseek/`) are Tool results older than three Turns replaced by a stub
-that is fixed once written (`outgoing`, `templateRunStubRetention`). Anthropic and
-OpenAI payloads bind reasoning to every preceding message and are never rewritten.
+that is fixed once written (`outgoing`, `templateRunStubRetention`). Other
+providers are never rewritten. Anthropic requires thinking signatures to stay with
+the messages they were issued for; whether OpenAI's encrypted reasoning items
+tolerate edits to earlier messages is undocumented, and an OpenRouter model
+outside `deepseek/` may be a Claude model, so history is preserved conservatively
+for all of them (`HistoryRewritable`).
 
 ## Submissions and the Draft
 
@@ -282,7 +290,10 @@ under the carrier's prefix and inherits the generate route's role gate.
 progress, drains what is queued, re-checks access under a fresh request-parent
 context (`stillHasAccess`, 5 s), and only then writes the terminal frame or
 JSON. If the client left, nothing is written. If access changed, the Draft and the
-transcript are dropped and the response is a 403 (`terminalFrame`).
+transcript are dropped. Before streaming starts, or in JSON delivery, the response
+is HTTP 403. After the event stream has started the HTTP status is already 200, so
+the terminal frame is an `error` event whose payload carries `"status": 403`
+(`terminalFrame`).
 
 ## Access
 

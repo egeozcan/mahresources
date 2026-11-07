@@ -168,3 +168,37 @@ func TestHarnessGeneratorUsesTheRuntimeProviderSettings(t *testing.T) {
 		})
 	}
 }
+
+// A settings change between the generator's snapshot and the construction of
+// its provider must not mix the two: the provider, key and model come from the
+// same snapshot as the limits and profiles.
+func TestHarnessProviderIsBuiltFromTheSameSnapshotAsTheGenerator(t *testing.T) {
+	g, s := harnessRuntime(t)
+	var gotModel string
+	saved := newTemplateConversationProvider
+	newTemplateConversationProvider = func(provider, apiKey, model string, client *http.Client) TemplateConversationProvider {
+		gotModel = model
+		return saved(provider, apiKey, model, client)
+	}
+	changed := false
+	afterTemplateSnapshot = func() {
+		if changed {
+			return
+		}
+		changed = true
+		if err := s.Set("ai_template_deepseek_model", "model-from-a-later-snapshot", "", ""); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { newTemplateConversationProvider = saved; afterTemplateSnapshot = nil })
+
+	if _, err := g.templateGenerator(); err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("the hook did not run")
+	}
+	if gotModel != "deepseek-flash" {
+		t.Fatalf("the provider was built with model %q, not the snapshot's", gotModel)
+	}
+}

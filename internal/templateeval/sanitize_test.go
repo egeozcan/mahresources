@@ -83,3 +83,22 @@ func TestSanitizeReplayOfInvalidJSONIsAPlaceholderString(t *testing.T) {
 		t.Fatalf("got %s", got)
 	}
 }
+
+func TestSanitizeReplayRedactsAnyTypeOfAnthropicInput(t *testing.T) {
+	nested, _ := json.Marshal(map[string]any{"deep": "k " + echoedSecret})
+	escapedDoc := `{"a":"\u0073k-echoed-secret-0123456789"}`
+	for name, input := range map[string]string{
+		"array":         `[` + mustString(string(nested)) + `, ` + mustString(escapedDoc) + `]`,
+		"string":        mustString(escapedDoc),
+		"string cut":    mustString(`{"a":"\u0073k-echoed-secret-0123456789`),
+		"array nesting": `[[` + mustString(escapedDoc) + `]]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			replay := `[{"type":"tool_use","name":"submit","input":` + input + `}]`
+			got := SanitizeReplay(json.RawMessage(replay), echoedSecret)
+			if found := decodedStringsContaining(t, json.RawMessage(got), "echoed-secret"); len(found) > 0 {
+				t.Fatalf("recoverable secret kept: %q in %s", found, got)
+			}
+		})
+	}
+}
