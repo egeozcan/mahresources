@@ -2706,7 +2706,7 @@ found earlier keeps its ordinary status code. Without that header the answer is
 one JSON result at the end, and a failed run's JSON error body adds "stopReason"
 and "transcript" when the run kept one. Events (the data line of each is one JSON
 object):
-  - run: {"runId", "maxTurns", "deadlineSeconds", "tokenBudget"}, first. The
+  - run: {"runId", "maxTurns", "deadline" (a duration such as "5m0s"), "tokenBudget"}, first. The
     caps are omitted when the generator does not report them.
   - turn: {"turn", "maxTurns", "finalReason"}; finalReason is empty or the stop
     reason that made this the final Turn (turn_cap, finish_now, deadline, budget).
@@ -2719,7 +2719,7 @@ object):
   - result: the full response described below, plus "stopReason" (done, turn_cap,
     finish_now, deadline, budget, length_repeated, no_tool_call or provider_error),
     "submitted" (the fields the model submitted) and "transcript". Last.
-  - error: {"message", "status", "stopReason", "transcript"}. "status" is the code
+  - error: {"error", "status", "stopReason", "transcript"}. "status" is the code
     the same failure has without a stream. "transcript" is every message sent and
     received so far; it is absent when access changed. Last.
 Progress events (turn, tool, submission, usage) carry no free text: only Tool

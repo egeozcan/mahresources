@@ -51,10 +51,10 @@ func (c templateRunStreamConfig) withDefaults() templateRunStreamConfig {
 // templateRunRunEvent is the first frame: the run ID the client finishes the
 // run by, and the run's caps when the generator reports them.
 type templateRunRunEvent struct {
-	RunID           string `json:"runId"`
-	MaxTurns        int    `json:"maxTurns,omitempty"`
-	DeadlineSeconds int    `json:"deadlineSeconds,omitempty"`
-	TokenBudget     int    `json:"tokenBudget,omitempty"`
+	RunID       string `json:"runId"`
+	MaxTurns    int    `json:"maxTurns,omitempty"`
+	Deadline    string `json:"deadline,omitempty"` // Go duration text, as the Disclosure's caps
+	TokenBudget int    `json:"tokenBudget,omitempty"`
 }
 
 type templateRunTerminal struct {

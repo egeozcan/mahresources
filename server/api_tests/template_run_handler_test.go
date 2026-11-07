@@ -269,7 +269,6 @@ func TestHarnessFailureDeliversTheTranscript(t *testing.T) {
 			}
 			rr := callGenerate(tc, nil, auth.SystemPrincipal(), withHash(harnessSlotBody(), hash), header)
 			var payload struct {
-				Message    string `json:"message"`
 				Error      string `json:"error"`
 				Status     int    `json:"status"`
 				StopReason string `json:"stopReason"`
@@ -281,7 +280,6 @@ func TestHarnessFailureDeliversTheTranscript(t *testing.T) {
 					t.Fatalf("want an error event, got %q %s", last.Event, last.Data)
 				}
 				_ = json.Unmarshal([]byte(last.Data), &payload)
-				payload.Error = payload.Message
 			} else {
 				if rr.Code != http.StatusBadGateway {
 					t.Fatalf("want 502, got %d", rr.Code)

@@ -234,7 +234,7 @@ func runEventFor(id string, generator application_context.TemplateGenerator) tem
 		RunCaps() application_context.TemplateRunCaps
 	}); ok {
 		caps := c.RunCaps()
-		ev.MaxTurns, ev.DeadlineSeconds, ev.TokenBudget = caps.MaxTurns, int(caps.Deadline/time.Second), caps.TokenBudget
+		ev.MaxTurns, ev.Deadline, ev.TokenBudget = caps.MaxTurns, caps.Deadline.String(), caps.TokenBudget
 	}
 	return ev
 }
@@ -246,7 +246,7 @@ func terminalFrame(result *application_context.TemplateGenerationResult, genErr 
 		return templateRunFrame("result", result)
 	}
 	status, shown := classifyTemplateGenerationError(genErr)
-	payload := map[string]any{"message": shown.Error(), "status": status}
+	payload := map[string]any{"error": shown.Error(), "status": status}
 	if transcript, stop := failureTranscript(genErr); status != http.StatusForbidden {
 		if stop != "" {
 			payload["stopReason"] = stop
