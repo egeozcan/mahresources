@@ -71,6 +71,35 @@ test.describe('Custom CSS on every surface', () => {
     await expect(page.locator(`.c-${stamp}`).first()).toHaveCSS('color', color);
   });
 
+  test('a stylesheet a refreshed list carried stays for the rest of the page', async ({ apiClient, page }) => {
+    const stamp = Date.now();
+    // The owned-group card writes this category's block first; the footer's [mrql] result
+    // after it relies on that block instead of writing its own.
+    const styled = await apiClient.createCategory(`CSS Stay Cat ${stamp}`, undefined, {
+      CustomSummary: `<span class="sc-${stamp}">card</span>`,
+      CustomMRQLResult: `<span class="sm-${stamp}">[property path="Name"]</span>`,
+      CustomCSS: `.sc-${stamp}, .sm-${stamp} { color: ${color}; }`,
+    });
+    const ownerCat = await apiClient.createCategory(`CSS Stay Owner Cat ${stamp}`, undefined, {
+      CustomDetailFooter: `[mrql query='type = "group" AND name = "CSS Stay Other ${stamp}"' scope="global"]`,
+    });
+    const owner = await apiClient.createGroup({ name: `CSS Stay Owner ${stamp}`, categoryId: ownerCat.ID });
+    await apiClient.createGroup({ name: `CSS Stay Child ${stamp}`, categoryId: styled.ID, ownerId: owner.ID });
+    await apiClient.createGroup({ name: `CSS Stay Other ${stamp}`, categoryId: styled.ID });
+
+    await page.goto(`/group?id=${owner.ID}`);
+    const footerResult = page.locator(`.sm-${stamp}`).first();
+    await expect(footerResult).toHaveCSS('color', color);
+    // A background refresh replaces the card list, and the card's block with it.
+    await page.evaluate((cls) => {
+      const card = document.querySelector(`.${cls}`)!;
+      const list = card.closest('.list-container, [data-list-container], .items-container') || card.parentElement!;
+      list.innerHTML = '';
+    }, `sc-${stamp}`);
+    await expect(page.locator(`.sc-${stamp}`)).toHaveCount(0);
+    await expect(footerResult).toHaveCSS('color', color);
+  });
+
   test('the hover card fragment carries the hovered category CSS', async ({ apiClient, page }) => {
     const stamp = Date.now();
     const category = await apiClient.createCategory(`CSS Hover Cat ${stamp}`, undefined, {

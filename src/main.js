@@ -77,6 +77,7 @@ import { registerConfirmDialogStore } from './components/confirmDialog.js';
 import { registerGenerationDisclosureStore } from './components/generationDisclosure.js';
 import { registerComparePixelDiffStore } from './components/comparePixelDiffStore.js';
 import { setupHoverCard } from './components/hoverCard.js';
+import { startCustomCSSHoist } from './utils/customCssHoist.js';
 import { multiSort } from './components/multiSort.js';
 import { jobCenter } from './components/jobCenter.js';
 import { jobPanel } from './components/jobPanel.js';
@@ -278,6 +279,10 @@ Alpine.data('bulkAction', bulkAction);
 // Expose Alpine globally for debugging and morph usage
 window.Alpine = Alpine;
 window.mahSelectors = { mountSingle: mountSingleEntitySelector };
+
+// Keep every category stylesheet in the head once it arrives, before Alpine renders anything
+// that could carry or replace one.
+startCustomCSSHoist();
 
 // Start Alpine
 Alpine.start();
