@@ -3,6 +3,7 @@ package api_tests
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -273,21 +274,33 @@ func TestHarnessAuthOffRunsAreOwnedByClientAddress(t *testing.T) {
 	close(release)
 }
 
+// deadlineProbe records how the second provider call of shortDeadlineHarness
+// began and ended, so a test can prove the run deadline, and not something else,
+// ended the run.
+type deadlineProbe struct {
+	entered chan struct{}
+	ended   chan error
+}
+
 // shortDeadlineHarness installs a generator whose run deadline expires inside
 // the second Turn. Run Timeout 5s and Tool timeout 20ms put the final-Turn
-// threshold at 5.02s; a 5.1s deadline leaves Turn 1 an ordinary Turn, and
-// Turn 1 taking 200ms leaves Turn 2 a call whose binding limit is the run
-// deadline, not the call timeout.
-func shortDeadlineHarness(t *testing.T, tc *TestContext) *observedGenerator {
+// threshold at 5.02s; the 5.5s deadline leaves Turn 1 an ordinary Turn with
+// almost half a second of scheduling headroom. Turn 1 then takes 800ms, so Turn
+// 2 starts with 4.7s left, less than the 5s call timeout: the run deadline, not
+// the call timeout, is the limit its call meets.
+func shortDeadlineHarness(t *testing.T, tc *TestContext) (*observedGenerator, *deadlineProbe) {
 	t.Helper()
+	probe := &deadlineProbe{entered: make(chan struct{}, 1), ended: make(chan error, 1)}
 	cfg := harnessConfig(5)
-	cfg.Harness.Deadline = 5100 * time.Millisecond
+	cfg.Harness.Deadline = 5500 * time.Millisecond
 	gen := application_context.NewTemplateHarnessGenerator(&fakeConversation{step: func(ctx context.Context, n int, _ application_context.ConversationRequest) (application_context.ConversationResponse, error) {
 		if n == 1 {
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(800 * time.Millisecond)
 			return toolReply(apiSubmit("s1", map[string]string{"CustomCSS": ".recovered{color:teal}"}, false)), nil
 		}
+		probe.entered <- struct{}{}
 		<-ctx.Done() // the model never answers; the run deadline ends the call
+		probe.ended <- ctx.Err()
 		return application_context.ConversationResponse{}, ctx.Err()
 	}}, cfg)
 	gen.(interface {
@@ -295,32 +308,77 @@ func shortDeadlineHarness(t *testing.T, tc *TestContext) *observedGenerator {
 	}).SetToolTimeouts(20*time.Millisecond, 20*time.Millisecond)
 	obs := &observedGenerator{inner: gen}
 	tc.AppCtx.SetTemplateGenerator(obs)
-	return obs
+	return obs, probe
+}
+
+// requireDeadlineEnded fails unless the second call was entered and ended by the
+// run deadline, and the generator returned the recovered Draft.
+func requireDeadlineEnded(t *testing.T, obs *observedGenerator, probe *deadlineProbe) {
+	t.Helper()
+	select {
+	case <-probe.entered:
+	default:
+		t.Fatal("the second provider call was never entered")
+	}
+	select {
+	case err := <-probe.ended:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("the second call ended with %v, want the run deadline", err)
+		}
+	default:
+		t.Fatal("the second provider call did not end")
+	}
+	res, err := obs.returned()
+	if err != nil || res == nil || res.Content != ".recovered{color:teal}" || res.StopReason != application_context.TemplateStopDeadline {
+		t.Fatalf("the generator should have returned the recovered Draft with a deadline stop, got %+v, %v", res, err)
+	}
 }
 
 // A submission followed by the run deadline expiring in a later Turn delivers
-// the recovered Draft as the terminal result while the client is connected.
+// the recovered Draft as the terminal result while the client is connected, with
+// accounts off and with a signed-in account.
 func TestHarnessRecoveredDraftAfterRunDeadlineIsDelivered(t *testing.T) {
 	if testing.Short() {
-		t.Skip("waits for a 5s run deadline")
+		t.Skip("waits for a 5.5s run deadline")
 	}
-	tc := SetupTestEnv(t)
-	shortDeadlineHarness(t, tc)
-	srv := newHarnessServer(t, tc)
-	hash := disclose(t, tc, categoryGenerate, harnessSlotBody())
-
-	resp, _ := postStream(t, srv.URL, categoryGenerate, withHash(harnessSlotBody(), hash), sameClient)
-	frames := newSSEReader(resp.Body).readUntilEnd(t, 15*time.Second)
-	last := frames[len(frames)-1]
-	if last.Event != "result" {
-		t.Fatalf("want the recovered Draft as the result event, got %q %s", last.Event, last.Data)
-	}
-	var res application_context.TemplateGenerationResult
-	if err := json.Unmarshal([]byte(last.Data), &res); err != nil {
-		t.Fatal(err)
-	}
-	if res.StopReason != application_context.TemplateStopDeadline || res.Content != ".recovered{color:teal}" {
-		t.Fatalf("want a deadline stop holding the submission, got %q %q", res.StopReason, res.Content)
+	for _, mode := range []string{"auth off", "signed in"} {
+		t.Run(mode, func(t *testing.T) {
+			var tc *TestContext
+			var header http.Header = sameClient
+			if mode == "signed in" {
+				tc = setupAuthEnv(t)
+				_, header = namedBearer(t, tc, "owner", models.RoleAdmin)
+			} else {
+				tc = SetupTestEnv(t)
+			}
+			obs, probe := shortDeadlineHarness(t, tc)
+			srv := newHarnessServer(t, tc)
+			dry := map[string]any{"dryRun": true}
+			for k, v := range harnessSlotBody() {
+				dry[k] = v
+			}
+			rr := postRunJSON(tc, categoryGenerate, dry, header)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("dry run: %d %s", rr.Code, rr.Body.String())
+			}
+			resp, _ := postStream(t, srv.URL, categoryGenerate, withHash(harnessSlotBody(), disclose2(t, rr.Body.String())), header)
+			frames := newSSEReader(resp.Body).readUntilEnd(t, 15*time.Second)
+			last := frames[len(frames)-1]
+			if last.Event != "result" {
+				t.Fatalf("want the recovered Draft as the result event, got %q %s", last.Event, last.Data)
+			}
+			var res application_context.TemplateGenerationResult
+			if err := json.Unmarshal([]byte(last.Data), &res); err != nil {
+				t.Fatal(err)
+			}
+			if res.StopReason != application_context.TemplateStopDeadline || res.Content != ".recovered{color:teal}" {
+				t.Fatalf("want a deadline stop holding the submission, got %q %q", res.StopReason, res.Content)
+			}
+			if len(res.Transcript) == 0 || !strings.Contains(last.Data, `"kind":"seed"`) || !strings.Contains(last.Data, ".recovered{color:teal}") {
+				t.Fatalf("the result should carry the transcript: %d records", len(res.Transcript))
+			}
+			requireDeadlineEnded(t, obs, probe)
+		})
 	}
 }
 
@@ -328,11 +386,11 @@ func TestHarnessRecoveredDraftAfterRunDeadlineIsDelivered(t *testing.T) {
 // generator's own final check and before the terminal write.
 func TestHarnessRecoveredDraftIsWithheldWhenAccessIsRevokedBeforeRelease(t *testing.T) {
 	if testing.Short() {
-		t.Skip("waits for a 5s run deadline")
+		t.Skip("waits for a 5.5s run deadline")
 	}
 	tc := setupAuthEnv(t)
 	ownerID, owner := namedBearer(t, tc, "owner", models.RoleAdmin)
-	obs := shortDeadlineHarness(t, tc)
+	obs, probe := shortDeadlineHarness(t, tc)
 	obs.afterRun = func() {
 		if _, err := tc.AppCtx.UpdateUser(ownerID, &application_context.UserUpdate{Disabled: application_context.UserField[bool]{Set: true, Value: true}}); err != nil {
 			t.Errorf("disable: %v", err)
@@ -349,6 +407,8 @@ func TestHarnessRecoveredDraftIsWithheldWhenAccessIsRevokedBeforeRelease(t *test
 	}
 	resp, _ := postStream(t, srv.URL, categoryGenerate, withHash(harnessSlotBody(), disclose2(t, rr.Body.String())), owner)
 	frames := newSSEReader(resp.Body).readUntilEnd(t, 15*time.Second)
+	// Before the revocation took effect the generator had the Draft in hand.
+	requireDeadlineEnded(t, obs, probe)
 	last := frames[len(frames)-1]
 	if last.Event != "error" || !strings.Contains(last.Data, `"status":403`) {
 		t.Fatalf("want a 403 error event, got %q %s", last.Event, last.Data)

@@ -101,6 +101,8 @@ type observedGenerator struct {
 	mu         sync.Mutex
 	prepares   int
 	afterRun   func()
+	lastRes    *application_context.TemplateGenerationResult
+	lastErr    error
 	prepareHk  func()
 	modeToggle func() string // when set, a Prepare after the first reports this mode
 }
@@ -132,6 +134,9 @@ func (o *observedGenerator) DiscloseTemplate(ctx context.Context, in application
 
 func (o *observedGenerator) GenerateTemplate(ctx context.Context, in application_context.TemplateGenerationInput, prompt, hash string) (*application_context.TemplateGenerationResult, error) {
 	res, err := o.inner.GenerateTemplate(ctx, in, prompt, hash)
+	o.mu.Lock()
+	o.lastRes, o.lastErr = res, err
+	o.mu.Unlock()
 	if o.afterRun != nil {
 		o.afterRun()
 	}
@@ -385,3 +390,10 @@ func waitFor(t *testing.T, d time.Duration, what string, cond func() bool) {
 
 var _ = fmt.Sprintf
 var _ = api_handlers.GetGenerateTemplateHandler
+
+// returned is what the wrapped generator last returned.
+func (o *observedGenerator) returned() (*application_context.TemplateGenerationResult, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.lastRes, o.lastErr
+}
