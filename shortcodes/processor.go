@@ -172,7 +172,7 @@ type ProcessResult struct {
 func ProcessWithDiagnostics(reqCtx context.Context, input string, ctx MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor) ProcessResult {
 	result := ProcessResult{}
 	record := func(err error) {
-		if err != nil && !errors.Is(err, ErrPluginUnavailable) && len(result.Errors) < 64 {
+		if err != nil && !errors.Is(err, ErrPluginUnavailable) && !errors.Is(err, ErrQueryUnavailable) && len(result.Errors) < 64 {
 			result.Errors = append(result.Errors, err)
 		}
 	}
@@ -192,15 +192,28 @@ func ProcessWithDiagnostics(reqCtx context.Context, input string, ctx MetaShortc
 			return value, err
 		}
 	}
-	result.HTML = Process(reqCtx, input, ctx, renderer, executor)
+	html, err := ProcessChecked(reqCtx, input, ctx, renderer, executor)
+	if err != nil && len(result.Errors) < 64 {
+		result.Errors = append(result.Errors, err)
+	}
+	result.HTML = html
 	return result
 }
 
 func Process(reqCtx context.Context, input string, ctx MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor) string {
-	return processWithDepth(reqCtx, input, ctx, renderer, executor, 0)
+	out, _ := ProcessChecked(reqCtx, input, ctx, renderer, executor)
+	return out
 }
 
 func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor, depth int) string {
+	// Admit the source before anything copies or parses it. Every partial,
+	// plugin output and re-processed branch passes through here, so repetition
+	// is what the parsed-source budget measures.
+	m := meterFrom(reqCtx)
+	if !m.chargeParsed(int64(len(input))) {
+		return ""
+	}
+
 	// Template comments go first, at every depth, so nothing inside one is
 	// parsed or run, whether it sits in a slot, a partial body or an [each].
 	input = stripTemplateComments(input)
@@ -209,14 +222,23 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 		// Emit the content as-is (it may be meaningful text), but when it still
 		// contains unexpanded shortcodes, append a comment so an author reading
 		// the page source sees why expansion stopped here.
-		if len(ParseWithBlocks(input)) > 0 {
-			return input + shortcodeComment("shortcode depth limit reached")
+		if len(parseWithBlocksM(m, input)) > 0 {
+			input += shortcodeComment("shortcode depth limit reached")
+		}
+		if !m.chargeOut(int64(len(input))) {
+			return ""
 		}
 		return input
 	}
 
-	shortcodes := ParseWithBlocks(input)
+	shortcodes := parseWithBlocksM(m, input)
+	if m.Err() != nil {
+		return ""
+	}
 	if len(shortcodes) == 0 {
+		if !m.chargeOut(int64(len(input))) {
+			return ""
+		}
 		return input
 	}
 
@@ -227,11 +249,20 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 		ctx.decodedMeta = &decodedMetaCache{}
 	}
 
+	if m != nil {
+		ctx.meter = m
+	}
+
 	var b strings.Builder
 	b.Grow(len(input) * 2)
 	lastEnd := 0
 
 	for _, sc := range shortcodes {
+		// Reserve each append before making it; after a failure every nested
+		// call returns "", so the loop unwinds at the next check.
+		if !m.tick() || !m.chargeOut(int64(sc.Start-lastEnd)) {
+			return ""
+		}
 		b.WriteString(input[lastEnd:sc.Start])
 
 		var replacement string
@@ -326,10 +357,16 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 			}
 		}
 
+		if !m.chargeOut(int64(len(replacement))) {
+			return ""
+		}
 		b.WriteString(replacement)
 		lastEnd = sc.End
 	}
 
+	if !m.chargeOut(int64(len(input) - lastEnd)) {
+		return ""
+	}
 	b.WriteString(input[lastEnd:])
 
 	return b.String()

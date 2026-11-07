@@ -56,6 +56,8 @@ the code wins. For how the system is actually put together see
 - [2026-11-03-fal-plugin-colorize-upload.md](2026-11-03-fal-plugin-colorize-upload.md)
 - [2026-11-05-failed-download-resource-link.md](2026-11-05-failed-download-resource-link.md)
 - [2026-11-06-per-slot-preview-and-history.md](2026-11-06-per-slot-preview-and-history.md)
+- [2026-11-07-template-generation-harness-class-rule-audit.md](2026-11-07-template-generation-harness-class-rule-audit.md)
+- [2026-11-07-template-generation-harness.md](2026-11-07-template-generation-harness.md)
 
 ## Archive
 

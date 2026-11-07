@@ -424,3 +424,23 @@ func TestFloatCutoffIsTestedAtTheValuesOwnWidth(t *testing.T) {
 	assert.Equal(t, "100000000000000000000", formatScalarValue(float32(1e20), "", ""))
 	assert.Equal(t, "100000000000000000000", formatScalarValue(float64(1e20), "", ""))
 }
+
+// time.Time's wall field is unexported; reaching it used to panic in Interface().
+func TestPropertyRefusesUnexportedFields(t *testing.T) {
+	type holder struct {
+		CreatedAt time.Time
+		hidden    string
+	}
+	ctx := MetaShortcodeContext{Entity: holder{CreatedAt: time.Now(), hidden: "secret"}}
+	for _, path := range []string{"CreatedAt.wall", "CreatedAt.ext", "hidden"} {
+		assert.NotPanics(t, func() {
+			got := Process(context.Background(), `[property path="`+path+`"]`, ctx, nil, nil)
+			assert.Equal(t, "", got, path)
+		}, path)
+	}
+	// Conditionals read fields the same way.
+	assert.NotPanics(t, func() {
+		got := Process(context.Background(), `[conditional field="hidden" not-empty="true"]Y[else]N[/conditional]`, ctx, nil, nil)
+		assert.Equal(t, "N", got)
+	})
+}

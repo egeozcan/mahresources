@@ -2,6 +2,7 @@ package shortcodes
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -45,6 +46,14 @@ func blockInnerSpans(content string) [][2]int {
 	return spans
 }
 
+// insideSortedSpans is insideSpans for spans that are sorted and disjoint, as
+// blockInnerSpans returns them (top-level blocks, in order): a binary search
+// instead of a scan, so a divider search over a long body is not spans x bytes.
+func insideSortedSpans(i int, spans [][2]int) bool {
+	k := sort.Search(len(spans), func(k int) bool { return spans[k][1] > i })
+	return k < len(spans) && i >= spans[k][0]
+}
+
 // insideSpans reports whether byte offset i falls within any of the given spans.
 func insideSpans(i int, spans [][2]int) bool {
 	for _, s := range spans {
@@ -61,7 +70,7 @@ func insideSpans(i int, spans [][2]int) bool {
 func SplitElse(content string) (string, string) {
 	spans := blockInnerSpans(content)
 	for i := 0; i < len(content); i++ {
-		if content[i] == '[' && strings.HasPrefix(content[i:], elseTag) && !insideSpans(i, spans) {
+		if content[i] == '[' && strings.HasPrefix(content[i:], elseTag) && !insideSortedSpans(i, spans) {
 			return content[:i], content[i+len(elseTag):]
 		}
 	}
@@ -81,7 +90,7 @@ func SplitBranches(content string) []Branch {
 	segStart := 0
 
 	for i := 0; i < len(content); {
-		if content[i] != '[' || insideSpans(i, spans) {
+		if content[i] != '[' || insideSortedSpans(i, spans) {
 			i++
 			continue
 		}
@@ -119,7 +128,7 @@ func branchDividerSpans(content string) [][2]int {
 	spans := blockInnerSpans(content)
 	var out [][2]int
 	for i := 0; i < len(content); {
-		if content[i] != '[' || insideSpans(i, spans) {
+		if content[i] != '[' || insideSortedSpans(i, spans) {
 			i++
 			continue
 		}

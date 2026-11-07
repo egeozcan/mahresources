@@ -104,7 +104,10 @@ func (b *QueryBudget) MarkExceeded() bool {
 
 // Lookup returns a private copy of a cached result for (query, opts), or false.
 func (b *QueryBudget) Lookup(query string, opts QueryOptions) (*QueryResult, bool) {
-	key := budgetCacheKey(query, opts)
+	return b.lookupKey(budgetCacheKey(query, opts))
+}
+
+func (b *QueryBudget) lookupKey(key string) (*QueryResult, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	r, ok := b.cache[key]
@@ -120,10 +123,13 @@ func (b *QueryBudget) Lookup(query string, opts QueryOptions) (*QueryResult, boo
 // returning copies from Lookup) keeps callers that mutate their result — e.g.
 // [mrql] stamping a per-item block template — from corrupting the shared entry.
 func (b *QueryBudget) Store(query string, opts QueryOptions, result *QueryResult) {
+	b.storeKey(budgetCacheKey(query, opts), result)
+}
+
+func (b *QueryBudget) storeKey(key string, result *QueryResult) {
 	if result == nil {
 		return
 	}
-	key := budgetCacheKey(query, opts)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.cache[key] = cloneQueryResult(result)
@@ -143,7 +149,14 @@ func BudgetedExecutor(base QueryExecutor, onExceeded func(limit int)) QueryExecu
 		if budget == nil {
 			return base(reqCtx, query, opts)
 		}
-		if cached, ok := budget.Lookup(query, opts); ok {
+		// The key serializes every parameter, and it is built before the cache
+		// or the query allowance is consulted, so its work is admitted first and
+		// its failure ends the render rather than reading as a cache miss.
+		key, ok := budgetCacheKeyMetered(meterFrom(reqCtx), query, opts)
+		if !ok {
+			return nil, meterFrom(reqCtx).Err()
+		}
+		if cached, ok := budget.lookupKey(key); ok {
 			return cached, nil
 		}
 		if !budget.Allow() {
@@ -158,7 +171,7 @@ func BudgetedExecutor(base QueryExecutor, onExceeded func(limit int)) QueryExecu
 		if err != nil {
 			return nil, err
 		}
-		budget.Store(query, opts, result)
+		budget.storeKey(key, result)
 		return result, nil
 	}
 }
@@ -176,6 +189,26 @@ func BudgetedExecutor(base QueryExecutor, onExceeded func(limit int)) QueryExecu
 // escapes an interior quote; the remaining fields are numeric or boolean and
 // cannot contain a separator.
 func budgetCacheKey(query string, opts QueryOptions) string {
+	key, _ := budgetCacheKeyMetered(nil, query, opts)
+	return key
+}
+
+// maxCacheKeyBytes is the key-construction work one budgeted render may do.
+const maxCacheKeyBytes = 8 << 20
+
+// budgetCacheKeyMetered is budgetCacheKey that reserves the key's size against
+// the render before building it (a limited meter only) and checks the context
+// while iterating the parameters. ok is false when the meter stopped the render.
+func budgetCacheKeyMetered(m *renderMeter, query string, opts QueryOptions) (string, bool) {
+	if m != nil {
+		size := int64(len(query)+len(opts.SavedName)) + 64
+		for k, v := range opts.Params {
+			size += int64(len(k)+len(v)) + 8
+		}
+		if !m.chargeKey(size) {
+			return "", false
+		}
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%q|%q|%d|%d|%d|%d|%t",
 		query, opts.SavedName, opts.ScopeGroupID, opts.Limit, opts.Buckets, len(opts.Params), opts.WantTotal)
@@ -186,10 +219,13 @@ func budgetCacheKey(query string, opts QueryOptions) string {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
+			if !m.tick() {
+				return "", false
+			}
 			fmt.Fprintf(&b, "|%q=%q", k, opts.Params[k])
 		}
 	}
-	return b.String()
+	return b.String(), true
 }
 
 // cloneQueryResult makes a shallow copy with fresh Items/Rows/Groups slices so
