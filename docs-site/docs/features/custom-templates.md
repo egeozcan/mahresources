@@ -824,7 +824,7 @@ Inside a `[` bracket the editor suggests shortcode names, then attribute names, 
 
 ### Generate from natural language
 
-Configure the template provider, model and key in the **AI generation** section at `/admin/settings` to use each editor's **Generate** button. DeepSeek, OpenRouter, OpenAI and Anthropic are supported, and templates can use a different provider/model from [natural-language MRQL](./mrql.md#natural-language-generation). Existing `DEEPSEEK_API_KEY` deployments keep using DeepSeek by default. Describe the section you want and the server drafts it for review. Depending on the target, the messages include:
+Configure the template provider, model and key in the **AI generation** section at `/admin/settings` to use each editor's **Generate** button. DeepSeek, OpenRouter, OpenAI and Anthropic are supported, and templates can use a different provider/model from [natural-language MRQL](./mrql.md#natural-language-generation). Existing `DEEPSEEK_API_KEY` deployments keep using DeepSeek by default. Describe the section you want and the server drafts it for review. By default the request runs as a [Generation run](#generation-runs); the rest of this section describes the data a request sends and the single-call flow of `classic` mode (repair, whole-template planning and fan-out), and the starting message of a Generation run carries the same data. Depending on the target, the messages include:
 
 - your request, the category or type's name and description, and the current unsaved Meta JSON Schema;
 - the section visibility settings and a summary of sibling slots' class names and styles, including shared CSS;
@@ -851,6 +851,41 @@ The draft is listed for review, each returned slot with its text and issues, and
 
 Generation requires a model and key for the selected provider (the button returns "not configured" otherwise), is rate-limited per client, and is gated at the same permission level as saving the template: **admin** for Category and Resource Category, **editor** for Note Type. One generation request uses one rate-limit slot, including its planning, section and repair calls. At most eight template provider calls run at once across the server, including across configuration changes. [Runtime provider settings](../configuration/runtime-settings.md#ai-providers-models-and-credentials) control models, token budgets and timeouts; [Template generation configuration](../configuration/advanced.md#template-generation) describes DeepSeek thinking defaults.
 
+### Generation runs
+
+With the default `ai_template_generation_mode` of `harness`, one request is a **Generation run**: up to a set number of **Turns**, in which the model may ask the server for read-only **Tools** before it submits a draft. The Tools read entities and their related entities (owners, owned entities and links), saved templates, template revisions, partials and shortcode documentation, lint a field, check an MRQL query without running it, and render a preview of the model's own draft against a real entity. The model submits fields as it goes (`submit`), reads the lint result of each submission, and refines. The last submission of each field is kept, and the draft you review is built from them. Set `ai_template_generation_mode` to `classic` to keep the single-call flow described above; see [the settings](../configuration/runtime-settings.md#ai-providers-models-and-credentials).
+
+**What you approve.** A run reads live data as it goes, so the **Review what will be sent** dialog states the **Envelope** instead of every message: the Tools read everything your account can read, no more, at the time each Tool runs. The dialog also lists the Tools, the caps (Turns, deadline, token budget, calls per Turn, Tool timeouts and each Tool's result cap), the provider and model. It carries two checkboxes, both off by default, that widen what a preview may read:
+
+- **Previews run `[mrql]` queries.** Off, an `[mrql]` shortcode in a preview renders an inert placeholder. On, its queries run against your data within the preview limits (at most 5 rows per query).
+- **Previews run plugin shortcodes.** Off, a plugin shortcode in a preview renders a placeholder. On, it runs read-only. A plugin shortcode runs the installed plugin's code with its own resource use; the preview limits do not apply inside it.
+
+Ticking a box refreshes the dialog, and the choice is part of what you approve: a request whose opt-ins or Envelope changed after review is refused until you review again. Opt-ins apply to one run and are ignored in `classic` mode.
+
+**While it runs.** A progress panel under the prompt shows the current Turn against the Turn cap, the token budget used against the budget, and a list of the Tools each Turn called (the Tool name, a few identifying arguments such as the field name or entity ID, the size of the result, and whether it failed) and the fields submitted with their error and warning counts. It never shows entity content while the run is in progress.
+
+- **Finish now** makes the next Turn the last one: the model is asked to submit and no other Tool runs in it. The panel says the next Turn will be the last.
+- **Cancel** stops the run and discards it. Leaving the page does the same.
+
+When the run ends, the panel names how it ended and the **Transcript** lists every message sent to and received from the provider, each with its Turn, size and exact text, and marks Tool results that were never sent. The transcript is shown once and not stored.
+
+A run ends with one of these reasons: `done` (the model submitted with `done`), `turn_cap`, `finish_now`, `deadline`, `budget`, `length_repeated` (two replies in a row cut off at the output limit), `no_tool_call` (the model answered in plain text instead of submitting) or `provider_error`. When a run ends early but the model had already submitted fields, you get the last submitted draft with a warning that the run ended early; when it submitted nothing, you get an error. The draft is linted again, held for review, and applied only when you press **Apply**, exactly as in `classic` mode.
+
+**Limits.** Four [runtime settings](../configuration/runtime-settings.md#ai-providers-models-and-credentials) bound a run:
+
+| Setting | Default | Bounds | Meaning |
+| --- | --- | --- | --- |
+| `ai_template_generation_mode` | `harness` | `harness`, `classic` | How a request is run |
+| `ai_template_max_turns` | `10` | 1–20 | Turns in one run |
+| `ai_template_run_deadline` | `5m` | 30s–15m | Wall-clock limit of one run |
+| `ai_template_run_token_budget` | `400000` | 100000–2000000 | Tokens in one run; cached prompt tokens count a quarter |
+
+A Turn calls at most 6 Tools, which run in parallel. A request is refused up front when its starting message alone does not fit the token budget, or when the selected model is known not to support tool calling. A new Turn does not start when it could exceed the budget, but the tokens a Turn actually uses can exceed its estimate. Each provider call keeps the model, reasoning setting, output limit and timeout of the call profile for the request's kind.
+
+**Who can run one.** The permission gate is the same as for `classic` mode. An account confined to a Group's subtree is refused with 403 ("Generation runs are not available to group-limited accounts"), a dry run included. An account has at most 2 runs in progress; a third request is refused with 429. With authentication disabled, every request is the administrator, so the limit, and who may finish a run, is counted per client IP address (the first `X-Forwarded-For` address, else `X-Real-IP`, else the connection's address). With authentication enabled it is counted per user. Access is checked again around every Turn and just before the draft is released: if the account is disabled, demoted or newly confined during the run, the run stops with 403 and neither the draft nor the transcript is returned.
+
+**API.** A `generateTemplate` request with `Accept: text/event-stream` is answered with server-sent events once the run reaches its first Turn (`run`, `turn`, `tool`, `submission`, `usage`, then a final `result` or `error`); errors found earlier keep their ordinary status codes. Without that header the response is one JSON object, which adds `stopReason`, `submitted` and `transcript` in harness mode. The request accepts `previewMRQL` and `previewPlugins` booleans. `POST /v1/{category|resourceCategory|noteType}/generateTemplate/finish` with `{"runId": "<id from the run event>"}` is Finish now; an unknown run and another account's run both answer 404. The OpenAPI document lists the events.
+
 ### Supporting endpoints
 
 These editor tools are backed by these API endpoints:
@@ -861,6 +896,7 @@ These editor tools are backed by these API endpoints:
 | `POST /v1/shortcodes/lint` | Linting of shortcode markup with no shortcode or plugin execution and no database access; MRQL queries are parsed and their SQL is built without a connection. |
 | `POST /v1/{category\|resourceCategory\|noteType}/previewTemplate` | Renders a slot against an entity. Gated like the corresponding template save. |
 | `POST /v1/{category\|resourceCategory\|noteType}/generateTemplate` | Drafts a slot, the Meta JSON Schema, or a whole template from a natural-language prompt. Requires the configured template provider's model and key; gated like the corresponding template save. |
+| `POST /v1/{category\|resourceCategory\|noteType}/generateTemplate/finish` | Finish now for a live [Generation run](#generation-runs): makes its next Turn the last. Only the account that started the run can; gated like `generateTemplate`. |
 
 ## Reusing templates
 
