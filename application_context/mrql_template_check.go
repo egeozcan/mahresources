@@ -1,7 +1,9 @@
 package application_context
 
 import (
+	"context"
 	"errors"
+	"fmt"
 
 	"mahresources/mrql"
 	"mahresources/shortcodes"
@@ -39,21 +41,39 @@ func ValidateMRQLInteractiveBounds(q *mrql.Query) error {
 // or a scope name is ambiguous, is decided at render time. Only the shape of
 // a SCOPE literal is checked here.
 func CheckTemplateMRQL(query string, opts shortcodes.MRQLCheckOptions, env MRQLStaticEnv) error {
+	return CheckTemplateMRQLContext(context.Background(), query, opts, env)
+}
+
+// CheckTemplateMRQLContext is CheckTemplateMRQL with the work bounded and
+// cancellable: the supplied parameters are admitted (count and bytes) before
+// they are copied, each distinct one is decoded once, and the context is
+// checked between the phases. Lint's MRQL callback and the harness check_mrql
+// Tool both come through here, so there is one bounded path.
+func CheckTemplateMRQLContext(ctx context.Context, query string, opts shortcodes.MRQLCheckOptions, env MRQLStaticEnv) error {
 	parsed, err := mrql.Parse(query)
 	if err != nil || opts.ParseOnly {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	var params map[string]any
 	if len(opts.Params) > 0 {
+		if len(opts.Params) > mrql.MaxParamCount {
+			return fmt.Errorf("too many parameters: %d supplied, at most %d are allowed", len(opts.Params), mrql.MaxParamCount)
+		}
 		params = make(map[string]any, len(opts.Params))
 		for k, v := range opts.Params {
 			params[k] = v
 		}
 	}
-	if err := mrql.BindParams(parsed, params); err != nil {
+	if err := mrql.BindParamsContext(ctx, parsed, params); err != nil {
 		return err
 	}
 	if err := mrql.Validate(parsed); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if opts.Limit > 0 {

@@ -134,8 +134,6 @@ func asTooComplex(err error, target **regexTooComplexError) bool {
 	return false
 }
 
-
-
 // AdmitRegexp reports whether pattern is within the allowance for compiling a
 // regular expression, for callers (a MetaSchema's pattern and patternProperties)
 // whose own compiler would otherwise expand it unchecked. A pattern that does

@@ -2,8 +2,8 @@ package shortcodes
 
 import (
 	"fmt"
-	"math"
 	"html"
+	"math"
 	"net/url"
 	"sort"
 	"strconv"
