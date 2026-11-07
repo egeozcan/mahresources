@@ -154,11 +154,13 @@ type harnessRun struct {
 	transcript  []TemplateTranscriptRecord
 	subs        *templateRunSubmissions
 	explanation string
-	turn        int
-	used        int
-	plainTexts  int
-	lengthTurns int
-	fieldNames  map[string]bool
+	// pendingRecords are instruction records not yet sent.
+	pendingRecords []TemplateTranscriptRecord
+	turn           int
+	used           int
+	plainTexts     int
+	lengthTurns    int
+	fieldNames     map[string]bool
 }
 
 func (g *defaultTemplateGenerator) runHarness(ctx context.Context, request templateRequest) (*TemplateGenerationResult, error) {
@@ -202,6 +204,7 @@ func (r *harnessRun) loop() (*TemplateGenerationResult, error) {
 		if !ok {
 			return r.conclude(TemplateStopBudget, nil)
 		}
+		r.flushPending()
 		if r.sink != nil {
 			r.sink.TurnStarted(TemplateTurnEvent{Turn: turn, MaxTurns: r.plan.settings.MaxTurns, FinalReason: reason})
 		}
@@ -285,9 +288,20 @@ func (r *harnessRun) admit(turn int, reason *string) (ConversationRequest, int, 
 
 // appendInstruction adds an append-only user message. It never edits the Seed
 // or a Replay.
+//
+// Its transcript record waits in pendingRecords until a provider call is
+// attempted (flushPending), so a Turn that budget admission refuses leaves no
+// instruction in a transcript that claims to list what was sent.
 func (r *harnessRun) appendInstruction(turn int, text string) {
 	r.msgs = append(r.msgs, runMessage{msg: ConversationMessage{Role: "user", Text: text}, turn: turn})
-	r.record(TemplateTranscriptRecord{Turn: turn, Kind: TemplateTranscriptInstruction, Text: text, Bytes: len(text)})
+	r.pendingRecords = append(r.pendingRecords, TemplateTranscriptRecord{Turn: turn, Kind: TemplateTranscriptInstruction, Text: text, Bytes: len(text)})
+}
+
+func (r *harnessRun) flushPending() {
+	for _, rec := range r.pendingRecords {
+		r.record(rec)
+	}
+	r.pendingRecords = nil
 }
 
 func (r *harnessRun) record(rec TemplateTranscriptRecord) int {
@@ -608,7 +622,7 @@ func (r *harnessRun) validateSubmit(call ToolCall) (out callOutcome) {
 	}()
 	args, err := parseSubmitArgs(call.Arguments, r.fieldNames, r.plan.fields)
 	if err != nil {
-		return callOutcome{text: err.Error(), isError: true}
+		return callOutcome{text: submitErrorText(err.Error()), isError: true}
 	}
 	ctx, cancel := context.WithTimeout(r.runCtx, r.g.toolTimeoutOrDefault())
 	defer cancel()
@@ -647,7 +661,13 @@ func (r *harnessRun) conclude(stop string, cause error) (*TemplateGenerationResu
 		}
 		return nil, &TemplateRunError{Err: cause, StopReason: stop, Transcript: r.transcript}
 	}
-	return r.buildResult(finalCtx, stop, cause), nil
+	result := r.buildResult(finalCtx, stop, cause)
+	// A cancelled lookup counts as existing for the linter, so the Draft built
+	// under a cancelled request must not be released.
+	if err := r.reqCtx.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // buildResult builds the Draft from the last committed submission of each
@@ -697,6 +717,7 @@ func (r *harnessRun) buildResult(ctx context.Context, stop string, cause error) 
 	default:
 		field := r.plan.fields[0]
 		if submitted[field] {
+			result.ContentSubmitted = true
 			result.Content = r.subs.resolved(field)
 			issues = append(issues, issuesByField[field]...)
 		}

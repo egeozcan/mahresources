@@ -177,6 +177,33 @@ func (s *templateRunSubmissions) validateSubmission(ctx context.Context, field, 
 	return issues
 }
 
+// Source limits of one submitted field (plan section 2, "Preview and lint work
+// is bounded"): bytes and shortcode tokens, checked before any parsing.
+const maxTemplateRunSourceTokens = 2000
+
+// admitTemplateRunSource is the one place a model-written source is admitted
+// before validation. Integration points it at the shared helper of lanes B1
+// and B2 (CheckTemplateToolSource). A shortcode token starts with "[", so
+// counting those over-counts and never under-counts.
+var admitTemplateRunSource = func(content string) error {
+	if len(content) > MaxTemplateGeneratedContentLength {
+		return fmt.Errorf("source is %d bytes; the limit is %d", len(content), MaxTemplateGeneratedContentLength)
+	}
+	if n := strings.Count(content, "["); n > maxTemplateRunSourceTokens {
+		return fmt.Errorf("source has %d shortcode tokens; the limit is %d", n, maxTemplateRunSourceTokens)
+	}
+	return nil
+}
+
+// submitErrorText formats an argument error for the model: model-chosen names
+// are clipped, and the whole text is capped and fenced (which defangs markers).
+func submitErrorText(msg string) string {
+	return strings.Join(referenceBlock("submit result", capToolText(msg, 1024)), "\n")
+}
+
+// clipName shortens a model-chosen field name for an error message.
+func clipName(name string) string { return strings.ToValidUTF8(clipBytes(name, 64), "") }
+
 // submitArgs is the decoded argument object of a submit call.
 type submitArgs struct {
 	fields      map[string]string
@@ -204,15 +231,20 @@ func parseSubmitArgs(raw string, requested map[string]bool, order []string) (sub
 			outside = append(outside, name)
 			continue
 		}
-		var text string
-		if err := json.Unmarshal(value, &text); err != nil {
+		// A JSON null is not an empty submission: only a string clears a field.
+		var text *string
+		if err := json.Unmarshal(value, &text); err != nil || text == nil {
 			notStrings = append(notStrings, name)
 			continue
 		}
-		out.fields[name] = strings.TrimSpace(text)
+		if err := admitTemplateRunSource(*text); err != nil {
+			return submitArgs{}, fmt.Errorf("not submitted: %s: %v", clipName(name), err)
+		}
+		out.fields[name] = strings.TrimSpace(*text)
 	}
 	sort.Strings(outside)
 	sort.Strings(notStrings)
+	outside, notStrings = clipNames(outside), clipNames(notStrings)
 	if len(outside) > 0 {
 		return submitArgs{}, fmt.Errorf("not submitted: %s not requested in this run; the requested fields are %s", strings.Join(outside, ", ")+" "+pluralWas(len(outside)), strings.Join(order, ", "))
 	}
@@ -224,6 +256,18 @@ func parseSubmitArgs(raw string, requested map[string]bool, order []string) (sub
 	}
 	out.done = decoded.Done != nil && *decoded.Done
 	return out, nil
+}
+
+// clipNames clips at most five names, noting the rest.
+func clipNames(names []string) []string {
+	if len(names) > 5 {
+		names = append(names[:5:5], fmt.Sprintf("and %d more", len(names)-5))
+	}
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = clipName(n)
+	}
+	return out
 }
 
 func pluralWas(n int) string {

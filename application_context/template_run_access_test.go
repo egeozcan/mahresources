@@ -3,6 +3,7 @@ package application_context
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -132,7 +133,10 @@ func TestRunRevocationJustBeforeTheFinalCheckAfterADeadline(t *testing.T) {
 // waits, and when a slot frees no call is made and nothing stays held.
 func TestRunSemaphoreWaitDoesNotSendForARevokedAccount(t *testing.T) {
 	var revoked atomic.Bool
+	firstCheck := make(chan struct{})
+	var once sync.Once
 	exec := &fakeRunExecutor{access: func(int) error {
+		defer once.Do(func() { close(firstCheck) })
 		if revoked.Load() {
 			return ErrTemplateRunAccessChanged
 		}
@@ -155,7 +159,9 @@ func TestRunSemaphoreWaitDoesNotSendForARevokedAccount(t *testing.T) {
 		res, err := gen.GenerateTemplate(context.Background(), in, "go", disclosure.GroundingHash)
 		done <- outcome{res, err}
 	}()
-	time.Sleep(80 * time.Millisecond)
+	// The Turn-start check passed, so the run is on its way to the slot that
+	// another run holds; revoke before the slot frees.
+	waitBarrier(t, firstCheck, "the run never reached its first access check")
 	revoked.Store(true)
 	<-gen.slots
 	select {

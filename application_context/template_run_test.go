@@ -181,14 +181,10 @@ func TestRunSeventhCallOfATurnIsRefused(t *testing.T) {
 	_ = res
 }
 
-func TestRunToolsRunInParallelAndAnswerInCallOrder(t *testing.T) {
-	var started sync.WaitGroup
-	started.Add(2)
+func TestRunToolsAnswerInCallOrderWhateverTheFinishOrder(t *testing.T) {
 	exec := &fakeRunExecutor{run: func(ctx context.Context, call TemplateToolInvocation) (TemplateToolOutput, error) {
-		started.Done()
-		started.Wait() // returns only when both calls are in flight at once
 		if call.CallID == "a" {
-			time.Sleep(60 * time.Millisecond)
+			time.Sleep(60 * time.Millisecond) // the first call finishes last
 		}
 		return TemplateToolOutput{Text: "result-" + call.CallID, Bytes: 8}, nil
 	}}

@@ -1324,8 +1324,8 @@ func (ctx *MahresourcesContext) TemplateGenerator() TemplateGenerator {
 }
 
 // PrepareTemplateGeneration returns the generation mode and a generator bound
-// to one settings snapshot. A generator that does not read settings per request
-// is classic. ErrTemplateGenerationNotConfigured when no generator is installed.
+// to one settings snapshot. A generator that cannot report its mode is classic.
+// ErrTemplateGenerationNotConfigured when no generator is installed.
 func (ctx *MahresourcesContext) PrepareTemplateGeneration() (TemplateGenerationPrep, error) {
 	if ctx.templateGenerator == nil {
 		return TemplateGenerationPrep{}, ErrTemplateGenerationNotConfigured

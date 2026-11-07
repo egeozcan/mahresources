@@ -176,6 +176,23 @@ type TemplateGenerationResult struct {
 	StopReason string                     `json:"stopReason,omitempty"`
 	Transcript []TemplateTranscriptRecord `json:"transcript,omitempty"`
 	Submitted  []string                   `json:"submitted,omitempty"`
+	// ContentSubmitted marks a standalone harness field the model explicitly
+	// submitted, so an empty Content serializes as "content":"" instead of
+	// disappearing. Classic never sets it.
+	ContentSubmitted bool `json:"-"`
+}
+
+// MarshalJSON keeps Content (omitempty) in the output when the model
+// explicitly submitted an empty standalone field.
+func (r TemplateGenerationResult) MarshalJSON() ([]byte, error) {
+	type plain TemplateGenerationResult
+	if !r.ContentSubmitted || r.Content != "" {
+		return json.Marshal(plain(r))
+	}
+	return json.Marshal(struct {
+		plain
+		Content string `json:"content"`
+	}{plain(r), ""})
 }
 
 // templateTruncationMessage is the issue for a reply cut off at max_tokens.
@@ -214,8 +231,9 @@ type TemplateGenerationPrep struct {
 	Generator      TemplateGenerator
 }
 
-// templateGenerationPreparer is implemented by generators that read settings
-// per request; a fixed generator is classic by construction.
+// templateGenerationPreparer is implemented by every generator that can report
+// its mode: the runtime generator binds one settings snapshot, and a fixed
+// generator reports its own mode.
 type templateGenerationPreparer interface {
 	PrepareTemplateGeneration() (TemplateGenerationPrep, error)
 }
@@ -279,6 +297,15 @@ func NewTemplateHarnessGenerator(conv TemplateConversationProvider, cfg Template
 	g.config.Harness = &settings
 	g.conversation, g.harness = conv, true
 	return g
+}
+
+// PrepareTemplateGeneration reports this generator's own mode.
+func (g *defaultTemplateGenerator) PrepareTemplateGeneration() (TemplateGenerationPrep, error) {
+	mode := TemplateGenerationModeClassic
+	if g.harness {
+		mode = TemplateGenerationModeHarness
+	}
+	return TemplateGenerationPrep{GenerationMode: mode, Generator: g}, nil
 }
 
 func (g *defaultTemplateGenerator) toolTimeoutOrDefault() time.Duration {
