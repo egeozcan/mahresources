@@ -526,7 +526,7 @@ Lane B's checklist, in pi's words. Each item is a loop or allocation the class r
 
 ### Lane B: shortcode processing and lint Class-rule instances
 
-**Plan section for every finding in this section:** §2, “Preview and lint work is bounded,” particularly the Class rule at `docs/plans/2026-11-07-template-generation-harness.md:205`. These are **P2 implementation inventory**, including mechanisms already explicitly anticipated by the plan—not independent blockers.
+**Plan section for every finding in this section:** §2, “Preview and lint work is bounded,” particularly the Class rule at `docs/plans/2026-11-07-template-generation-harness.md:205`. These are **P2 implementation inventory**, including mechanisms already explicitly anticipated by the plan:not independent blockers.
 
 | # | Finding and concrete code evidence | Concrete fix |
 |---|---|---|
