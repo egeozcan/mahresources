@@ -125,6 +125,17 @@ func customCSSForEntity(entity any) (entityType string, catID uint, css string, 
 
 	var catFieldName string
 	switch v.Type().Name() {
+	// A carrier stands for its own CSS. The list header and footer slots are
+	// processed with the carrier as their entity, and a list page filtered to a
+	// category may render none of its entities, so the slot's CSS has to come
+	// from the carrier. The key matches the one its entities produce, so the
+	// two never emit the same block twice.
+	case "Category":
+		return customCSSForCarrier(v, "group")
+	case "ResourceCategory":
+		return customCSSForCarrier(v, "resource")
+	case "NoteType":
+		return customCSSForCarrier(v, "note")
 	case "Group":
 		entityType, catFieldName = "group", "Category"
 	case "Resource":
@@ -139,18 +150,24 @@ func customCSSForEntity(entity any) (entityType string, catID uint, css string, 
 	if !catField.IsValid() || catField.Kind() != reflect.Ptr || catField.IsNil() {
 		return
 	}
-	cat := catField.Elem()
+	return customCSSForCarrier(catField.Elem(), entityType)
+}
+
+// customCSSForCarrier reads the ID and the joined global CSS of a carrier struct
+// (Category / ResourceCategory / NoteType value).
+func customCSSForCarrier(cat reflect.Value, entityType string) (string, uint, string, bool) {
+	var css string
 
 	cssField := cat.FieldByName("CustomCSS")
 	idField := cat.FieldByName("ID")
 	if !cssField.IsValid() || cssField.Kind() != reflect.String {
-		return
+		return "", 0, "", false
 	}
 	if !idField.IsValid() || idField.Kind() != reflect.Uint {
-		return
+		return "", 0, "", false
 	}
 	css = cssField.String()
-	if carrier, hasCompanions := catField.Interface().(interface{ TemplateCSSParts() []string }); hasCompanions {
+	if carrier, hasCompanions := cat.Interface().(interface{ TemplateCSSParts() []string }); hasCompanions {
 		css = shortcodes.JoinCSS(carrier.TemplateCSSParts()...)
 	}
 	return entityType, uint(idField.Uint()), css, true

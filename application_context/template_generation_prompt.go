@@ -186,7 +186,7 @@ func templateAuthoringRuleLines() []string {
 		"Every slot ending in CSS is a stylesheet (no <style> wrapper); the other slots are HTML with shortcodes. Each HTML slot has a matching global CSS companion: for example CustomMRQLResult and CustomMRQLResultCSS. Generate or modify both together with matching, distinctive class names. Put slot-specific styles in its companion and reserve CustomCSS for shared rules. If neither the companion nor CustomCSS is requested, use inline styles; never return unrequested slots. CSS is emitted once per category, so never depend on per-item values for styling.",
 		"Do not rely on Tailwind utility classes or app-owned CSS classes. Use semantic HTML and distinctive, shared, template-owned class names, and style those names in the requested companion CSS slot or CustomCSS; otherwise use inline styles.",
 		"CustomListHeader and CustomListFooter bind the category/type itself. The other HTML slots bind the current member entity.",
-		"CustomCSS is static, is emitted once per category on detail/list/custom-MRQL surfaces, and is absent from dashboard cards and timeline list views. Its shortcodes may resolve against only one representative entity, so do not use them for per-item styling.",
+		"CustomCSS is static and is emitted once per category on every page that renders one of the category's slots: detail and list pages, cards anywhere (dashboard, tag, owner and related panels), hover cards, the lightbox, and list headers and footers. Its shortcodes may resolve against only one representative entity, so do not use them for per-item styling.",
 	}
 	lines = append(lines, templateLayoutLines()...)
 	return append(lines, "Use only the built-in and enabled-plugin shortcodes and attributes documented below; never invent shortcode names or attributes.")
@@ -283,7 +283,7 @@ func slotRoleLine(slot, entityType string) string {
 	case "CustomEntityPickerResult":
 		return "CustomEntityPickerResult renders the content of one compact entity picker result. The host owns the selection control and keyboard behavior; do not add checkboxes or radios. Use self-contained HTML plus shortcodes, not Alpine directives. Make names and distinguishing category/type information readable. Detail links should open in a new tab with target=\"_blank\" and rel=\"noopener noreferrer\". Put matching styles in CustomEntityPickerResultCSS, targeted beneath .entity-picker-result."
 	case "CustomCSS":
-		return "CustomCSS is emitted on entity detail pages, list pages, and custom MRQL result cards. It is not emitted on dashboard cards or timeline list views. Scope selectors so they do not affect the rest of the page. No <style> wrapper."
+		return "CustomCSS is emitted once per category on every page that renders one of the category's slots, so its rules reach every card, hover card and lightbox panel of the category. Scope selectors so they do not affect the rest of the page. No <style> wrapper."
 	default:
 		return "This slot renders against the entity."
 	}

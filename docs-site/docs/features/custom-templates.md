@@ -389,15 +389,16 @@ Categories, Resource Categories, and Note Types each have a `CustomCSS` field. U
 
 ### Where It Is Injected
 
-A category's `CustomCSS` is emitted on:
+A category's `CustomCSS` is emitted on every page that renders one of its slots:
 
 - the entity detail page,
-- its list pages, and
-- `[mrql]` result cards that use a [Custom MRQL Result](#custom-mrql-result-templates) template.
+- any card of the category, wherever it appears: list pages, the dashboard, the category, tag, note and resource pages, and a group's owned, related and relation panels,
+- `[mrql]` result cards,
+- the hover card,
+- the lightbox details panel, and
+- `CustomListHeader` and `CustomListFooter`, including on timeline views and on a filtered list with no results.
 
-Each distinct category emits its block at most once per page render, so list and MRQL pages get one `<style>` block per category rather than one per card.
-
-Two surfaces render category templates and emit no `CustomCSS` at all: the dashboard, which draws `CustomSummary` and `CustomAvatar` on its recent-items cards, and the timeline list views, which render `CustomListHeader` and `CustomListFooter`. Markup that depends on `CustomCSS` renders unstyled there.
+Each distinct category emits its block at most once per page render, so a page with many cards gets one `<style>` block per category rather than one per card.
 
 ### Raw Injection
 

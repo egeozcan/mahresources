@@ -1,4 +1,6 @@
 {% if entity %}
+{# Emit the category's CustomCSS with the card, so every surface that shows this card (category, tag, note, resource and relation pages, the dashboard, owner panels) styles it. Deduped per page by custom_css, so a list emits one block per category. #}
+{% custom_css entity %}
 {% with cardSc=entity.Category.SectionConfig|sectionConfig:"group" %}
 {% card_entity entity %}
 <article class="card group-card{% if selectable %} card--selectable{% endif %}" {% if selectable %}x-data="selectableItem({ itemId: {{ entity.ID }} })"{% endif %}>

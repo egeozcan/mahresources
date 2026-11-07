@@ -451,6 +451,31 @@ func TestMRQLShortcodeCustomCSS(t *testing.T) {
 	assert.NotContains(t, html, ".skip {}")
 }
 
+// With a page dedup set on the context, a category whose stylesheet a card on
+// the page already wrote is not emitted again, and one the result emits is
+// recorded for the cards that follow.
+func TestMRQLShortcodeCustomCSSSharesPageDedup(t *testing.T) {
+	result := &QueryResult{
+		EntityType: "resource",
+		Mode:       "flat",
+		Items: []QueryResultItem{
+			{EntityType: "resource", EntityID: 1, CategoryID: 7, Entity: testEntity{ID: 1, Name: "A"}, Meta: []byte(`{}`),
+				CustomMRQLResult: `<div class="rc">x</div>`, CustomCSS: `.rc {}`},
+			{EntityType: "note", EntityID: 2, CategoryID: 8, Entity: testEntity{ID: 2, Name: "N"}, Meta: []byte(`{}`),
+				CustomMRQLResult: `<p>x</p>`, CustomCSS: `.nt {}`},
+		},
+	}
+	sc := Shortcode{Name: "mrql", Attrs: map[string]string{"query": "x"}, Raw: `[mrql query="x"]`}
+	seen := map[string]bool{"resource:7": true}
+	reqCtx := WithCSSSeen(context.Background(), seen)
+
+	html := RenderMRQLShortcode(reqCtx, sc, MetaShortcodeContext{EntityType: "group", EntityID: 1}, nil, mockExecutor(result, nil), 0)
+
+	assert.NotContains(t, html, `data-mr-custom-css="resource:7"`, "the page already emitted resource category 7")
+	assert.Contains(t, html, `data-mr-custom-css="note:8"`)
+	assert.True(t, seen["note:8"], "the emitted category is recorded in the page set")
+}
+
 // --- Work item 1: inline scalar value mode ---
 
 func TestMRQLInlineValueCountFlat(t *testing.T) {

@@ -121,3 +121,44 @@ func TestCustomCSS_CompanionsShareDedupedStylesheet(t *testing.T) {
 		t.Fatalf("styles were not deduplicated: %s", out)
 	}
 }
+
+// A carrier (Category / ResourceCategory / NoteType) emits its own CSS, keyed the
+// way its entities key it, so a list header on a page with no cards of that
+// category is still styled and the two never emit the same block twice.
+func TestCustomCSS_CarrierUsesEntityKey(t *testing.T) {
+	cases := []struct {
+		name    string
+		carrier any
+		entity  any
+		key     string
+	}{
+		{"category", &models.Category{ID: 5, CustomCSS: ".c{}"}, grp(1, 5, ".c{}"), "group:5"},
+		{"resource category", &models.ResourceCategory{ID: 6, CustomCSS: ".r{}"}, &models.Resource{ID: 1, ResourceCategory: &models.ResourceCategory{ID: 6, CustomCSS: ".r{}"}}, "resource:6"},
+		{"note type", &models.NoteType{ID: 7, CustomCSS: ".n{}"}, &models.Note{ID: 1, NoteType: &models.NoteType{ID: 7, CustomCSS: ".n{}"}}, "note:7"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := renderCustomCSS(t, `{% custom_css carrier %}{% custom_css entity %}`, pongo2.Context{
+				"carrier": tc.carrier,
+				"entity":  tc.entity,
+			})
+			if strings.Count(out, "<style ") != 1 || !strings.Contains(out, `data-mr-custom-css="`+tc.key+`"`) {
+				t.Fatalf("expected one block keyed %s, got %q", tc.key, out)
+			}
+		})
+	}
+}
+
+// A dedup set seeded by the page is shared into includes, so cards rendered by
+// separate includes emit their category's CSS once between them.
+func TestCustomCSS_SeededSetDedupsAcrossIncludes(t *testing.T) {
+	// pongo2's include copies Public into a fresh map, so each card runs in its
+	// own context that holds the same seeded map. Two executions reproduce it.
+	seen := map[string]bool{}
+	for _, g := range []*models.Group{grp(1, 3, ".a{}"), grp(2, 3, ".a{}")} {
+		out := renderCustomCSS(t, `{% custom_css g %}`, pongo2.Context{"g": g, "_customCSSSeen": seen})
+		if g.ID == 2 && out != "" {
+			t.Fatalf("second card re-emitted its category CSS: %q", out)
+		}
+	}
+}

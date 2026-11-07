@@ -1157,6 +1157,10 @@
                         with no authentication layer. All users are trusted, and CustomSidebar is an
                         intentional extension point for admin-authored HTML templates.{% endcomment %}
                         {# CustomLightbox wins when set, otherwise CustomSidebar renders, so a category that never opts in keeps the panel it had. Both arrive already expanded: processShortcodesForJSON runs them server-side before this response is serialized, which is why x-html on the raw field is not shortcode text. #}
+                        {# The category's global CSS (shared CustomCSS plus CustomLightboxCSS and the other companions), already shortcode-expanded by processShortcodesForJSON, for a resource whose category the page emitted no stylesheet for (paging past it, a gallery block, an [mrql] result). See categoryCSSToInject. #}
+                        <template x-if="$store.lightbox.categoryCSSToInject()">
+                            <style data-mr-lightbox-css x-text="$store.lightbox.categoryCSSToInject()"></style>
+                        </template>
                         <template x-if="$store.lightbox.displayDetails()?.resourceCategory?.CustomLightbox || $store.lightbox.displayDetails()?.resourceCategory?.CustomSidebar">
                             <div
                                 x-data="{ entity: $store.lightbox.displayDetails() }"

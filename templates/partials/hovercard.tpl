@@ -1,5 +1,7 @@
 {# Hover-card fragment (Phase 6 item 3). hoverEntity is a scoped-loaded Group/Resource/Note (or nil, fail-closed). Reuses the list-card CustomAvatar/CustomSummary machinery in a compact form. Injected via innerHTML; Alpine.initTree is called on it client-side so entity-scoped directives hydrate. #}
 {% if hoverEntity %}
+{# The hovered entity's category CSS travels with the fragment: the page it is injected into may show nothing of that category. #}
+{% custom_css hoverEntity %}
 <div class="hovercard-card" x-data='{ "entity": {{ hoverEntity|json }} }'>
     <div class="flex items-start gap-3">
         <div class="hovercard-avatar flex-shrink-0">
