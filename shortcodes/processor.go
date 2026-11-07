@@ -249,6 +249,10 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 		ctx.decodedMeta = &decodedMetaCache{}
 	}
 
+	if m != nil {
+		ctx.meter = m
+	}
+
 	var b strings.Builder
 	b.Grow(len(input) * 2)
 	lastEnd := 0
