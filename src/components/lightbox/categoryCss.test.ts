@@ -28,10 +28,10 @@ describe('categoryCSSToInject', () => {
     expect(store().categoryCSSToInject()).toBe(css);
   });
 
-  it.each(['autorefresh-shortcode', 'lazy-shortcode', 'details-shortcode'])(
-    'injects when the only copy is inside a %s body, which is replaced',
+  it.each(['autorefresh-shortcode', 'lazy-shortcode', 'details-shortcode', 'div data-shortcode-region="t"', 'div data-text-block-rendered'])(
+    'injects when the only copy is inside <%s>, whose content is replaced',
     (tag) => {
-      style(`<${tag}><style data-mr-custom-css="resource:4"></style></${tag}>`);
+      style(`<${tag}><style data-mr-custom-css="resource:4"></style></${tag.split(' ')[0]}>`);
       expect(store().categoryCSSToInject()).toBe(css);
     },
   );

@@ -203,10 +203,14 @@ func renderResultCSS(reqCtx context.Context, result *QueryResult, renderer Plugi
 	if result == nil {
 		return ""
 	}
-	seen := pageCSSSeen(reqCtx)
-	if seen == nil {
-		seen = map[string]bool{}
-	}
+	// The page set says which categories a card on the page already wrote a
+	// stylesheet for, and those are skipped. What this result emits is recorded
+	// only for the result itself: shortcode output can sit in a container the
+	// page replaces later (a [reload] region, an [autorefresh] body, a note text
+	// block), and a stylesheet that goes with it must not have stood in for
+	// content outside it.
+	page := pageCSSSeen(reqCtx)
+	seen := map[string]bool{}
 	var b strings.Builder
 	emit := func(items []QueryResultItem) {
 		for i := range items {
@@ -215,7 +219,7 @@ func renderResultCSS(reqCtx context.Context, result *QueryResult, renderer Plugi
 				continue
 			}
 			key := it.EntityType + ":" + strconv.FormatUint(uint64(it.CategoryID), 10)
-			if seen[key] {
+			if page[key] || seen[key] {
 				continue
 			}
 			seen[key] = true

@@ -452,8 +452,8 @@ func TestMRQLShortcodeCustomCSS(t *testing.T) {
 }
 
 // With a page dedup set on the context, a category whose stylesheet a card on
-// the page already wrote is not emitted again, and one the result emits is
-// recorded for the cards that follow.
+// the page already wrote is not emitted again. One the result emits is not
+// recorded in the page set: the result may be replaced later, taking it along.
 func TestMRQLShortcodeCustomCSSSharesPageDedup(t *testing.T) {
 	result := &QueryResult{
 		EntityType: "resource",
@@ -473,7 +473,7 @@ func TestMRQLShortcodeCustomCSSSharesPageDedup(t *testing.T) {
 
 	assert.NotContains(t, html, `data-mr-custom-css="resource:7"`, "the page already emitted resource category 7")
 	assert.Contains(t, html, `data-mr-custom-css="note:8"`)
-	assert.True(t, seen["note:8"], "the emitted category is recorded in the page set")
+	assert.False(t, seen["note:8"], "a result's own stylesheet must not stand in for the rest of the page")
 }
 
 // --- Work item 1: inline scalar value mode ---

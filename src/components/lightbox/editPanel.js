@@ -60,9 +60,17 @@ export const editPanelState = {
 };
 
 // Containers whose content the page removes or replaces after load, so a stylesheet inside
-// one cannot stand in for the lightbox's own: the hover card popover (cleared on close) and
-// the deferred-shortcode bodies (replaced on refresh or reload).
-const TRANSIENT_CSS_HOSTS = '#hovercard-popover, autorefresh-shortcode, lazy-shortcode, details-shortcode';
+// one cannot stand in for the lightbox's own: the hover card popover (cleared on close), the
+// deferred-shortcode bodies and [reload] slot regions (replaced on refresh or reload), and
+// rendered note text blocks (removed for editing, replaced when the block changes).
+const TRANSIENT_CSS_HOSTS = [
+  '#hovercard-popover',
+  'autorefresh-shortcode',
+  'lazy-shortcode',
+  'details-shortcode',
+  '[data-shortcode-region]',
+  '[data-text-block-rendered]',
+].join(', ');
 
 export const editPanelMethods = {
   // Shown on the image the user was on when it failed and on the image the write was for: a
