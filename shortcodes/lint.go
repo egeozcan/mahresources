@@ -2,6 +2,7 @@ package shortcodes
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"sort"
 	"strconv"
@@ -190,6 +191,7 @@ func sortLintIssues(issues []LintIssue) {
 func lintText(input string, opts LintOptions) []LintIssue {
 	var issues []LintIssue
 	w := opts.work
+	regexes := NewRegexAllowance(opts.Context) // one compile budget for every matches* of this lint
 	add := func(start, end int, severity, msg string) {
 		// The message is reserved before it is kept.
 		if !w.chargeBytes(len(msg) + 32) {
@@ -492,11 +494,18 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			// error at edit time — at render it silently evaluates to false.
 			for attrName, attrVal := range tk.attrs {
 				if stripTrailingDigits(attrName) == "matches" {
-					if _, err := compileBoundedRegexp(attrVal); err != nil {
+					if !w.step() {
+						return nil
+					}
+					if _, err := regexes.Compile(attrVal); err != nil {
 						start, end := attrOffsetW(w, tk, attrName)
-						if _, tooBig := err.(*regexTooComplexError); tooBig {
+						var tooBig *RegexTooComplexError
+						if errors.As(err, &tooBig) {
 							add(start, end, SeverityError,
-								"regular expression in "+attrName+" is too complex: it compiles to more than "+strconv.Itoa(maxRegexProgramSize)+" instructions, so it is never evaluated and never matches")
+								"regular expression in "+attrName+" is too complex ("+tooBig.Reason+"), so it is never evaluated and never matches")
+						} else if opts.Context != nil && opts.Context.Err() != nil {
+							w.poll()
+							return nil
 						} else {
 							add(start, end, SeverityError,
 								"invalid regular expression in "+attrName+": "+err.Error())

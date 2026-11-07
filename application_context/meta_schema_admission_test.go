@@ -212,3 +212,25 @@ func TestValidateMetaSchemaInvalidJSONFailsClosed(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// Round 3: ten distinct patterns of 19,000 \pL each, under $defs nothing
+// references, retained about a gigabyte of rune tables while staying under the
+// instruction count.
+func TestValidateMetaSchemaUnicodeClassPayloadIsBounded(t *testing.T) {
+	var defs []string
+	for i := 0; i < 10; i++ {
+		defs = append(defs, fmt.Sprintf(`"d%d":{"type":"string","pattern":"%s%d"}`, i, strings.Repeat(`\\pL`, 19000), i))
+	}
+	s := `{"type":"object","$defs":{` + strings.Join(defs, ",") + `}}`
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	err := ValidateMetaSchema(s)
+	runtime.ReadMemStats(&after)
+	if err == nil {
+		t.Fatal("accepted")
+	}
+	if grown := after.TotalAlloc - before.TotalAlloc; grown > 128<<20 {
+		t.Errorf("allocated %d bytes", grown)
+	}
+}

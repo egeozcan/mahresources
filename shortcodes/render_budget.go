@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"regexp"
 	"sync"
 )
 
@@ -65,7 +64,7 @@ type renderMeter struct {
 	steps  uint32
 	err    error
 
-	regexes map[string]*regexp.Regexp // compiled matches= patterns, by source
+	regexAllowance *RegexAllowance // matches= patterns, compiled once per render
 	keyWork int64                     // bytes of MRQL cache-key construction
 	attrs   int                       // attribute map entries retained by token collection
 }

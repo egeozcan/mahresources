@@ -88,7 +88,7 @@ const (
 	// MaxParamNameBytes bounds a supplied name, so a diagnostic that lists
 	// names stays small. Names in a query are bounded by the query itself.
 	MaxParamNameBytes = 128
-	maxParamNames = 10 // names listed in a missing/unknown diagnostic
+	maxParamNames     = 10 // names listed in a missing/unknown diagnostic
 )
 
 // BindParamsContext is BindParams with the work bounded: the number and total

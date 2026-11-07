@@ -224,12 +224,12 @@ func TestConditionalRegexAllowance(t *testing.T) {
 }
 
 func TestCompileBoundedRegexp(t *testing.T) {
-	_, err := compileBoundedRegexp(`a{1000}`)
+	_, err := NewRegexAllowance(nil).Compile(`a{1000}`)
 	assert.NoError(t, err)
-	_, err = compileBoundedRegexp(strings.Repeat("a{1000}", 100))
-	var tc *regexTooComplexError
+	_, err = NewRegexAllowance(nil).Compile(strings.Repeat("a{1000}", 100))
+	var tc *RegexTooComplexError
 	assert.ErrorAs(t, err, &tc)
-	_, err = compileBoundedRegexp(strings.Repeat("a", 2000))
+	_, err = NewRegexAllowance(nil).Compile(strings.Repeat("a", 2000))
 	assert.NoError(t, err, "a long literal is cheap; only the compiled size is bounded")
 }
 

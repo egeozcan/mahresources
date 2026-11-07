@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	"regexp"
-
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"mahresources/shortcodes"
@@ -33,17 +31,14 @@ const (
 	maxSchemaTotalDigits    = 10_000
 	maxSchemaDepth          = 64
 	maxSchemaTokens         = 500_000
-	// maxSchemaRegexWork is the sum of the estimated compiled sizes of every
-	// distinct regular expression the compiler is asked to compile; one is
-	// bounded by shortcodes.MaxRegexpProgramSize.
-	maxSchemaRegexWork = 200_000
 )
 
 var errSchemaNotAdmitted = errors.New("meta JSON schema is outside the supported limits")
 
 // admitMetaSchema walks schemaJSON as a token stream and refuses what the
-// compiler must not see. A document that is not valid JSON is not refused here:
-// the compiler's own parse reports it.
+// compiler must not see. It fails closed on a decoding error (the compiler is
+// not handed text this pass could not read); the full-document parse that
+// follows still validates that the document is complete.
 func admitMetaSchema(ctx context.Context, schemaJSON string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -132,31 +127,22 @@ func admitNumber(lit string, totalDigits *int) error {
 }
 
 // meterRegexpEngine is installed on the compiler before the schema is added. It
-// refuses a pattern whose compiled size is over the allowance, and refuses
-// further patterns once the distinct ones add up past maxSchemaRegexWork or the
-// context is done; each distinct source is counted once.
+// compiles through one shortcodes.RegexAllowance for the whole validation: the
+// same rule the template conditionals use (a source estimate before parsing, the
+// parse tree's instruction and rune cost before compiling, the compiled program
+// measured after), each distinct source counted once, further compiles refused
+// once the allowance is spent, and the context checked before each.
 func meterRegexpEngine(ctx context.Context) jsonschema.RegexpEngine {
-	work := int64(0)
-	seen := map[string]jsonschema.Regexp{}
+	allowance := shortcodes.NewRegexAllowance(ctx)
 	return func(pattern string) (jsonschema.Regexp, error) {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if re, ok := seen[pattern]; ok {
-			return re, nil
-		}
-		n := shortcodes.RegexpProgramSize(pattern)
-		if n > shortcodes.MaxRegexpProgramSize {
-			return nil, fmt.Errorf("%w: a pattern is too complex to compile", errSchemaNotAdmitted)
-		}
-		if work += n; work > maxSchemaRegexWork {
-			return nil, fmt.Errorf("%w: the patterns add up to more than %d compiled instructions", errSchemaNotAdmitted, maxSchemaRegexWork)
-		}
-		re, err := regexp.Compile(pattern)
+		re, err := allowance.Compile(pattern)
 		if err != nil {
+			var tooBig *shortcodes.RegexTooComplexError
+			if errors.As(err, &tooBig) {
+				return nil, fmt.Errorf("%w: %s", errSchemaNotAdmitted, tooBig.Error())
+			}
 			return nil, err
 		}
-		seen[pattern] = re
 		return re, nil
 	}
 }
