@@ -27,7 +27,20 @@ func aiTestResponse(content string) *http.Response {
 	return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(body)))}
 }
 
+// newAITestSettings builds settings in classic mode, which the pre-harness
+// tests were written against; newAIHarnessTestSettings keeps the shipped
+// defaults.
 func newAITestSettings(t *testing.T, boot TemplateGenerationConfig) *RuntimeSettings {
+	t.Helper()
+	return newAIModeTestSettings(t, boot, TemplateGenerationModeClassic)
+}
+
+func newAIHarnessTestSettings(t *testing.T, boot TemplateGenerationConfig) *RuntimeSettings {
+	t.Helper()
+	return newAIModeTestSettings(t, boot, "")
+}
+
+func newAIModeTestSettings(t *testing.T, boot TemplateGenerationConfig, mode string) *RuntimeSettings {
 	t.Helper()
 	db := newTestDB(t)
 	sqlDB, _ := db.DB()
@@ -35,6 +48,9 @@ func newAITestSettings(t *testing.T, boot TemplateGenerationConfig) *RuntimeSett
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	values := BuildDefaultsFromConfig(&MahresourcesConfig{})
 	AddAIGenerationDefaults(values, boot, nil)
+	if mode != "" {
+		values["ai_template_generation_mode"] = mode
+	}
 	s := NewRuntimeSettings(db, &stubLogger{}, buildSpecs(), values)
 	if err := s.Load(); err != nil {
 		t.Fatal(err)

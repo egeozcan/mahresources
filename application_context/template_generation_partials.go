@@ -198,10 +198,19 @@ func collapseSpace(s string) string {
 // then spent, in name order, on the room left, so a long description never
 // pushes a name out.
 func partialLines(partials []TemplatePartialSummary, total int) []string {
+	return partialLinesFor(partials, total, false)
+}
+
+// partialLinesFor is partialLines with the wording of the mode. A harness run
+// can verify any name with get_partial, so none of its statements is exclusive.
+func partialLinesFor(partials []TemplatePartialSummary, total int, harness bool) []string {
 	if total < len(partials) {
 		total = len(partials)
 	}
 	if total == 0 {
+		if harness {
+			return []string{"No template partials were listed; verify a name with get_partial before using [partial]."}
+		}
 		return []string{"No template partials exist; do not use [partial]."}
 	}
 	sorted := append([]TemplatePartialSummary(nil), partials...)
@@ -218,7 +227,7 @@ func partialLines(partials []TemplatePartialSummary, total int) []string {
 	// drops.
 	unlisted := total - len(entries)
 	build := func(kept []string, omitted int) []string {
-		return partialBlock(kept, unlisted+omitted)
+		return partialBlock(kept, unlisted+omitted, harness)
 	}
 	_, indexes := fitSection(entries, templatePartialBlockCap, build)
 	kept := make([]string, 0, len(indexes))
@@ -256,8 +265,16 @@ func partialLines(partials []TemplatePartialSummary, total int) []string {
 
 // partialBlock is the partials section for the listed entries, omitted
 // naming how many partials exist but are not listed.
-func partialBlock(entries []string, omitted int) []string {
+func partialBlock(entries []string, omitted int, harness bool) []string {
 	rules := "[partial] takes no parameters: a partial renders against the entity that includes it, so one that reads [meta] renders empty in CustomListHeader and CustomListFooter, which bind the category."
+	if harness {
+		// A partial may be used if it is listed here or get_partial finds it.
+		if omitted > 0 {
+			lines := append([]string{"Some of the template partials (not all are listed); use [partial name=\"...\"] only with a name listed in the partials block or one you verified with get_partial. " + rules}, referenceBlock("partials", strings.Join(entries, "\n"))...)
+			return append(lines, fmt.Sprintf("%d more partials exist; verify any other name with get_partial before using it.", omitted))
+		}
+		return append([]string{"These template partials are listed; use [partial name=\"...\"] only with a name listed in the partials block or one you verified with get_partial. " + rules}, referenceBlock("partials", strings.Join(entries, "\n"))...)
+	}
 	if omitted > 0 {
 		lines := append([]string{"Some of the template partials (not all are listed); use [partial name=\"...\"] only with a name listed in the partials block. " + rules}, referenceBlock("partials", strings.Join(entries, "\n"))...)
 		return append(lines, fmt.Sprintf("%d more partials exist; use [partial] only with a name listed here.", omitted))

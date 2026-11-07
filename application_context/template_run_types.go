@@ -77,7 +77,13 @@ type TemplateToolInvocation struct {
 	Name      string
 	Arguments string // exact argument text; the executor decodes and validates it
 	Turn      int
-	// Snapshot is the resolved value of every field committed as of Turn start (read-only).
+	// Snapshot holds the resolved value of every field the model has committed
+	// a submission for, as of the start of this Turn (plan section 3, "Turn-start
+	// snapshot"). lint and preview with no content read their field here; a
+	// field absent from it has no submission, so the executor uses the editor
+	// value from the Seed. For a whole-template CustomCSS the resolved value is
+	// the Seed's stylesheet plus the latest additions, the value Apply receives.
+	// Read-only: the loop shares one map across the Turn's parallel calls.
 	Snapshot map[string]string
 }
 
@@ -149,13 +155,18 @@ const (
 // transmitted form (after cap and fence). Replay is the provider payload resent
 // verbatim, shown collapsed.
 type TemplateTranscriptRecord struct {
-	Turn        int                      `json:"turn"`
-	Kind        string                   `json:"kind"`
-	Text        string                   `json:"text,omitempty"`
-	Calls       []TemplateTranscriptCall `json:"calls,omitempty"`
-	CallID      string                   `json:"callId,omitempty"`
-	IsError     bool                     `json:"isError,omitempty"`
-	Bytes       int                      `json:"bytes,omitempty"`
+	Turn    int                      `json:"turn"`
+	Kind    string                   `json:"kind"`
+	Text    string                   `json:"text,omitempty"`
+	Calls   []TemplateTranscriptCall `json:"calls,omitempty"`
+	CallID  string                   `json:"callId,omitempty"`
+	IsError bool                     `json:"isError,omitempty"`
+	Bytes   int                      `json:"bytes,omitempty"`
+	// Sent is true when the record's text reached the provider. Every kind is
+	// sent by construction except a Tool result, which goes out with the next
+	// request: results of the last Turn, or of a Turn the run then refused to
+	// continue, stay false so the UI can label them "not sent to the provider".
+	Sent        bool                     `json:"sent"`
 	StubbedFrom int                      `json:"stubbedFrom,omitempty"`
 	DurationMs  int64                    `json:"durationMs,omitempty"`
 	Usage       *TemplateTranscriptUsage `json:"usage,omitempty"`
