@@ -1,6 +1,7 @@
 package template_handlers
 
 import (
+	stdcontext "context"
 	"encoding/json"
 	"fmt"
 
@@ -11,6 +12,7 @@ import (
 	"mahresources/server/template_handlers/loaders"
 	"mahresources/server/template_handlers/template_context_providers"
 	_ "mahresources/server/template_handlers/template_filters"
+	"mahresources/shortcodes"
 	"net/http"
 	"strings"
 )
@@ -93,6 +95,20 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 		}
 
 		writer.Header().Set("Content-Type", constants.HTML)
+		// One dedup set for every {% custom_css %} on the page. The card partials
+		// emit their category's CSS themselves, from inside an include, and an
+		// include copies the Public context into a new map: a set first created
+		// there would never be seen by the next card, which would emit it again.
+		// The same set rides on the request context so an inline [mrql] result
+		// skips a category whose stylesheet a card already wrote.
+		seen, ok := context["_customCSSSeen"].(map[string]bool)
+		if !ok {
+			seen = map[string]bool{}
+			context["_customCSSSeen"] = seen
+		}
+		if rc, ok := context["_requestContext"].(stdcontext.Context); ok && rc != nil {
+			context["_requestContext"] = shortcodes.WithCSSSeen(rc, seen)
+		}
 		if statusCode, ok := context["_statusCode"].(int); ok && statusCode != http.StatusOK {
 			writer.WriteHeader(statusCode)
 			// Render the error template instead of the entity template to avoid

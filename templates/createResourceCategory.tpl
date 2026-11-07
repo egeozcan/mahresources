@@ -110,7 +110,7 @@
                     </div>
                     <div class="flex gap-2">
                         <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom CSS</dt>
-                        <dd>CSS injected as a <code class="bg-stone-100 px-1 rounded">&lt;style&gt;</code> block on the resource detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template. Styles every slot above</dd>
+                        <dd>CSS injected as a <code class="bg-stone-100 px-1 rounded">&lt;style&gt;</code> block on every page that shows one of this category's templates: the detail page, its cards anywhere, hover cards, the lightbox, list headers and footers, and MRQL result cards. Styles every slot above</dd>
                     </div>
                 </dl>
             </div>
@@ -456,7 +456,7 @@
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Entity Picker Result CSS" name="CustomEntityPickerResultCSS" value=resourceCategory.CustomEntityPickerResultCSS mode="css" description="Global styles loaded with shared CustomCSS in the picker. Target .entity-picker-result to avoid affecting other page content." shortcodes=true generate=false %}
         {% include "/partials/form/slotPreview.tpl" with slot="CustomEntityPickerResult" label="Entity Picker Result" %}
         </details>
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=resourceCategory.CustomCSS mode="css" description="Injected as a &lt;style&gt; block on the resource detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template. Styles every slot above." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=resourceCategory.CustomCSS mode="css" description="Injected as a &lt;style&gt; block on every page that shows one of this category's templates: the detail page, its cards anywhere, hover cards, the lightbox, list headers and footers, and MRQL result cards. Styles every slot above." shortcodes=true generate=true %}
         <div class="flex flex-wrap justify-end gap-2">{% include "/partials/form/slotHistoryButton.tpl" with slot="CustomCSS" label="Custom CSS" %}</div>
     </fieldset>
     {% include "/partials/form/slotHistoryDialog.tpl" %}

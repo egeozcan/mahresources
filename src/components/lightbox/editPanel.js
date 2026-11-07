@@ -552,6 +552,16 @@ export const editPanelMethods = {
     return this._currentDetails(this.getCurrentItem()?.id);
   },
 
+  // The current resource's category CSS, when the page did not already emit it. A list page
+  // writes each category's block once (style[data-mr-custom-css]); the lightbox adds its own
+  // only for a category with no card on the page (paged past, a gallery block, an [mrql] result).
+  categoryCSSToInject() {
+    const category = this.displayDetails()?.resourceCategory;
+    if (!category?.CustomCSS) return '';
+    if (document.querySelector(`style[data-mr-custom-css="resource:${Number(category.ID)}"]`)) return '';
+    return category.CustomCSS;
+  },
+
   // True while the panel is waiting on details it may paint — either a first load or a
   // revalidation behind already-painted content. Drives aria-busy so assistive tech is told
   // the panel's values are being checked, without the visual overlay that detailsLoading owns.

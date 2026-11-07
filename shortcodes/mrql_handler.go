@@ -247,7 +247,10 @@ func renderResultCSS(reqCtx context.Context, result *QueryResult, renderer Plugi
 	if result == nil {
 		return ""
 	}
-	seen := map[string]bool{}
+	seen := pageCSSSeen(reqCtx)
+	if seen == nil {
+		seen = map[string]bool{}
+	}
 	m := meterFrom(reqCtx)
 	var b strings.Builder
 	emit := func(items []QueryResultItem) {

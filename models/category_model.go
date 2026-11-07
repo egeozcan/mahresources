@@ -76,8 +76,8 @@ type Category struct {
 	CustomEntityPickerResult    string `gorm:"type:text"`
 	CustomEntityPickerResultCSS string `gorm:"type:text"`
 	// CustomCSS is injected as a page-level <style> block on pages that render this category's
-	// templates (group detail page, group list pages, and [mrql] result cards that use a
-	// CustomMRQLResult template), so the other Custom* slots can be styled globally. Shortcodes are
+	// templates (detail page, every group card wherever it appears, [mrql] result cards, hover
+	// cards, the lightbox, list headers and footers), so the other Custom* slots can be styled globally. Shortcodes are
 	// processed server-side; an entity variable is available.
 	CustomCSS string `gorm:"type:text"`
 	// MetaSchema is a JSON schema for the meta field of groups in this category

@@ -159,7 +159,7 @@ func TestTemplateGeneratorPromptPinsCorrectSlotSurfaces(t *testing.T) {
 		"CustomSummary": "entity cards in list and dashboard views",
 		"CustomAvatar":  "does not replace the resource thumbnail",
 		"CustomSidebar": "reused in the narrow, dark lightbox details panel",
-		"CustomCSS":     "not emitted on dashboard cards or timeline list views",
+		"CustomCSS":     "every page that renders one of the category's slots",
 	}
 	for slot, want := range checks {
 		t.Run(slot, func(t *testing.T) {
