@@ -120,17 +120,16 @@ func redactReplayValue(v any, secrets []string) any {
 		out := make(map[string]any, len(x))
 		for k, e := range x {
 			key := Redact(k, secrets...)
-			switch arg := e.(type) {
-			case string:
-				if k == "arguments" {
-					out[key] = SanitizeArguments(arg, secrets...)
-					continue
+			// Anthropic's "input" is the call's arguments. An adapter keeps a
+			// malformed one (a string or an array) in Replay, so every type
+			// gets the argument treatment, not only an object.
+			if k == "arguments" || k == "input" {
+				if text, ok := e.(string); ok {
+					out[key] = SanitizeArguments(text, secrets...)
+				} else {
+					out[key] = redactArgValue(e, secrets)
 				}
-			case map[string]any:
-				if k == "input" {
-					out[key] = redactArgValue(arg, secrets)
-					continue
-				}
+				continue
 			}
 			out[key] = redactReplayValue(e, secrets)
 		}
