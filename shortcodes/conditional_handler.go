@@ -58,7 +58,7 @@ func resolveConditionalValue(reqCtx context.Context, attrs map[string]string, su
 			return nil, nil
 		}
 		field := v.FieldByName(fieldName)
-		if !field.IsValid() {
+		if !field.IsValid() || !field.CanInterface() {
 			return nil, nil
 		}
 		return formatFieldValue(field), nil
