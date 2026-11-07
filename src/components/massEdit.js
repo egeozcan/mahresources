@@ -3,6 +3,7 @@ import { focusedElement, restoreFocus } from '../utils/focus.js';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import { findListContainer } from '../utils/listContainer.js';
 import { morphOptionsWithShortcodeElements } from '../utils/shortcodeElementMorph.js';
+import { hoistCustomCSS } from '../utils/customCssHoist.js';
 
 // Mass Edit: one modal that applies several ops to many entities in one
 // transaction, targeting either the checkbox selection or every entity matching
@@ -360,6 +361,7 @@ export function massEditModal() {
                 throw new Error('Could not find refreshed list');
             }
             this.selection?.deselectAll();
+            hoistCustomCSS(refreshedListContainer);
             Alpine.morph(listContainer, refreshedListContainer, morphOptionsWithShortcodeElements());
         },
     };

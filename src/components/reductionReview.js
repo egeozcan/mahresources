@@ -1,5 +1,6 @@
 import Alpine from 'alpinejs';
 import { morphOptionsWithShortcodeElements } from '../utils/shortcodeElementMorph.js';
+import { hoistCustomCSS } from '../utils/customCssHoist.js';
 
 // The Clusters container, addressed by its own attribute rather than through
 // findListContainer: that helper takes the first `.items-container` on the page,
@@ -252,6 +253,7 @@ export function registerReductionReviewStore(Alpine) {
       const current = document.querySelector(CLUSTERS);
       const next = refreshed.querySelector(CLUSTERS);
       if (!current || !next) throw new Error('Could not find the refreshed Clusters');
+      hoistCustomCSS(next);
       Alpine.morph(current, next, morphOptionsWithShortcodeElements());
       repairClusterCheckboxes(current, next);
 

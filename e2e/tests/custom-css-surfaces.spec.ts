@@ -189,8 +189,12 @@ test.describe('Custom CSS on every surface', () => {
     await expect(lightbox).toBeVisible();
     await lightbox.locator('button[title="Resource info"]').click();
     await expect(page.locator('style[data-mr-lightbox-css]')).toHaveCount(1);
-    // Closing the hover card clears it; the panel keeps its own copy.
-    await page.evaluate(() => { document.getElementById('hovercard-popover')!.innerHTML = ''; });
+    // Closing the hover card clears it, and the page head copy can go too; the panel keeps its own.
+    await page.evaluate((id) => {
+      document.getElementById('hovercard-popover')!.innerHTML = '';
+      document.querySelectorAll(`style[data-mr-custom-css="resource:${id}"]`).forEach((el) => el.remove());
+    }, rc.ID);
+    await expect(page.locator(`style[data-mr-custom-css="resource:${rc.ID}"]`)).toHaveCount(0);
     await expect(lightbox.locator(`.lbh-${stamp}`)).toHaveCSS('color', color);
   });
 

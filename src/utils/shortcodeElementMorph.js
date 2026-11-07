@@ -1,3 +1,4 @@
+import { hoistCustomCSS } from './customCssHoist.js';
 // Elements whose children are CLIENT-owned: the server only ever sends a
 // placeholder inside them, so morph must patch their attributes but never walk
 // into their subtree, or live content is overwritten with that placeholder.
@@ -70,6 +71,9 @@ export const morphOptionsWithDeferredShortcodes = morphOptionsWithShortcodeEleme
  * one that hit the problem.
  */
 export function morphAndReinitChangedComponents(from, to, options = {}) {
+  // The live side's category stylesheets already sit in the head; take the incoming ones out
+  // too, or morph's positional matching would replace unchanged cards around them.
+  hoistCustomCSS(to);
   const before = new Map();
   from.querySelectorAll('[x-data]').forEach((el) => {
     before.set(el, el.getAttribute('x-data'));

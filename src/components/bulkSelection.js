@@ -4,6 +4,7 @@ import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import { morphOptionsWithShortcodeElements } from '../utils/shortcodeElementMorph.js';
 import { findListContainer } from '../utils/listContainer.js';
 import { focusOn } from '../utils/focus.js';
+import { hoistCustomCSS } from '../utils/customCssHoist.js';
 
 const btnClasses = `bulk-action-btn inline-flex justify-center
       py-1.5 px-3 mt-3
@@ -387,6 +388,7 @@ export function createBulkSelection(scope = null) {
 
         form.reset();
         this.deselectAll();
+        hoistCustomCSS(refreshedListContainer);
         Alpine.morph(
           listContainer,
           refreshedListContainer,
