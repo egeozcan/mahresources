@@ -154,6 +154,10 @@ type runtimeAIGeneration struct {
 	boot     TemplateGenerationConfig
 	client   *http.Client
 	slots    chan struct{}
+	// wrapDraft and wrapConversation decorate the providers this instance
+	// builds (the template eval's recorder). Nil leaves them untouched.
+	wrapDraft        func(TemplateDraftProvider) TemplateDraftProvider
+	wrapConversation func(TemplateConversationProvider) TemplateConversationProvider
 }
 
 func newRuntimeAIGeneration(settings *RuntimeSettings, boot TemplateGenerationConfig, client *http.Client) *runtimeAIGeneration {
@@ -180,6 +184,18 @@ func newRuntimeAIGeneration(settings *RuntimeSettings, boot TemplateGenerationCo
 func (ctx *MahresourcesContext) InstallAIGeneration(boot TemplateGenerationConfig, client *http.Client) {
 	boot.Postgres = ctx.Config.DbType == constants.DbTypePosgres
 	g := newRuntimeAIGeneration(ctx.Settings(), boot, client)
+	ctx.SetMRQLGenerator(g)
+	ctx.SetTemplateGenerator(g)
+}
+
+// InstallAIGenerationWrapped is InstallAIGeneration with each template provider
+// the runtime generator builds passed through a decorator (either may be nil).
+// The eval uses it to record calls while exercising the production mode
+// dispatch and profile resolution.
+func (ctx *MahresourcesContext) InstallAIGenerationWrapped(boot TemplateGenerationConfig, client *http.Client, wrapDraft func(TemplateDraftProvider) TemplateDraftProvider, wrapConversation func(TemplateConversationProvider) TemplateConversationProvider) {
+	boot.Postgres = ctx.Config.DbType == constants.DbTypePosgres
+	g := newRuntimeAIGeneration(ctx.Settings(), boot, client)
+	g.wrapDraft, g.wrapConversation = wrapDraft, wrapConversation
 	ctx.SetMRQLGenerator(g)
 	ctx.SetTemplateGenerator(g)
 }
@@ -314,6 +330,9 @@ func (g *runtimeAIGeneration) templateGenerator() (TemplateGenerationPrep, error
 		return TemplateGenerationPrep{GenerationMode: TemplateGenerationModeHarness, Generator: gen}, nil
 	}
 	provider := NewGenerationTemplateDraftProvider(p.provider, p.key, p.model, g.client)
+	if g.wrapDraft != nil {
+		provider = g.wrapDraft(provider)
+	}
 	gen := NewTemplateGenerator(provider, p.template).(*defaultTemplateGenerator)
 	gen.slots = g.slots
 	return TemplateGenerationPrep{GenerationMode: TemplateGenerationModeClassic, Generator: gen}, nil
@@ -329,7 +348,11 @@ func (g *runtimeAIGeneration) templateConversationProvider() (TemplateConversati
 	if newTemplateConversationProvider == nil {
 		return nil, ErrTemplateGenerationNotConfigured
 	}
-	return newTemplateConversationProvider(p.provider, p.key, p.model, g.client), nil
+	conv := newTemplateConversationProvider(p.provider, p.key, p.model, g.client)
+	if g.wrapConversation != nil {
+		conv = g.wrapConversation(conv)
+	}
+	return conv, nil
 }
 
 // PrepareTemplateGeneration binds the generation mode and a generator to one
