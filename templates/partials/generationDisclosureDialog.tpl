@@ -12,7 +12,7 @@
         <div class="confirm-dialog-overlay fixed inset-0 flex items-center justify-center bg-black/50 p-2 sm:p-4"
              @keydown.escape.window="$store.generationDisclosure.dismiss()">
             <div x-init="$store.generationDisclosure._mount($el)"
-                 class="relative bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[92dvh] flex flex-col overflow-hidden ring-1 ring-black/5"
+                 class="relative bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[92dvh] flex flex-col overflow-hidden [@media(max-height:40rem)]:overflow-y-auto ring-1 ring-black/5"
                  role="dialog"
                  aria-modal="true"
                  aria-labelledby="generation-disclosure-title"
@@ -37,8 +37,10 @@
                         </p>
                     </div>
                 </div>
-                {# The only scrolling part. tabindex makes it reachable and scrollable by keyboard. #}
-                <div class="min-h-0 flex-1 overflow-y-auto px-4 sm:px-5 py-3 space-y-2 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-600"
+                {# The only scrolling part, except on very short viewports (zoom, landscape phones), #}
+                {# where the whole panel scrolls so the opt-ins and the actions stay reachable.     #}
+                {# tabindex makes it reachable and scrollable by keyboard.                           #}
+                <div class="min-h-0 flex-1 overflow-y-auto [@media(max-height:40rem)]:flex-none [@media(max-height:40rem)]:overflow-visible px-4 sm:px-5 py-3 space-y-2 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-600"
                      tabindex="0"
                      role="region"
                      aria-label="Messages to be sent"

@@ -8,9 +8,9 @@
 <p class="sr-only" aria-live="polite" aria-atomic="true" data-testid="run-announce-{{ name }}" x-text="run ? run.announcement : ''"></p>
 <template x-if="run">
     <section class="mt-2 rounded-md border border-stone-300 bg-white p-2 space-y-2" data-testid="run-panel-{{ name }}" aria-labelledby="{{ field_id }}-runhead">
-        <h3 id="{{ field_id }}-runhead" class="text-xs font-semibold font-mono text-stone-800">
+        <p id="{{ field_id }}-runhead" class="text-xs font-semibold font-mono text-stone-800">
             <span x-text="run.status === 'running' ? 'Generation run in progress' : 'Generation run ended'"></span>
-        </h3>
+        </p>
         <div class="grid gap-1 text-xs font-mono text-stone-700 sm:grid-cols-2">
             <div>
                 <label for="{{ field_id }}-turnmeter" class="block" data-testid="run-turn-label-{{ name }}" x-text="'Turn ' + run.turn + (run.maxTurns ? ' of ' + run.maxTurns : '')"></label>

@@ -5073,6 +5073,21 @@
       display: none;
     }
   }
+  .\[\@media\(max-height\:40rem\)\]\:flex-none {
+    @media (max-height:40rem) {
+      flex: none;
+    }
+  }
+  .\[\@media\(max-height\:40rem\)\]\:overflow-visible {
+    @media (max-height:40rem) {
+      overflow: visible;
+    }
+  }
+  .\[\@media\(max-height\:40rem\)\]\:overflow-y-auto {
+    @media (max-height:40rem) {
+      overflow-y: auto;
+    }
+  }
 }
 .meta-pills-field {
   display: inline-flex;

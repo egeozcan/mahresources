@@ -267,7 +267,14 @@ export function registerGenerationDisclosureStore(Alpine) {
       this._applyInert(dialogRoot);
       this._containment?.stop();
       this._containment = containFocus(dialogRoot);
-      dialogRoot.querySelector('[autofocus]')?.focus();
+      const first = dialogRoot.querySelector('[autofocus]');
+      first?.focus();
+      // On a very short viewport the whole panel scrolls (see the dialog template), and
+      // focus alone does not always bring a button at its end into view.
+      // The panel's own sections render after this runs, so wait for them to lay out.
+      setTimeout(() => {
+        if (this.isOpen && first && document.activeElement === first) first.scrollIntoView?.({ block: 'nearest' });
+      }, 0);
     },
 
     _releaseInert() {
