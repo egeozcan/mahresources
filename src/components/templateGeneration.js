@@ -216,6 +216,7 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
           if (outcome.kind === 'json') {
             resp = outcome.resp;
             data = await resp.json().catch(() => null);
+            this.adoptJsonResult(resp, data);
           } else if (outcome.kind === 'result') {
             resp = { ok: true, status: 200 };
             data = outcome.data;

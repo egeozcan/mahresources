@@ -196,6 +196,46 @@ describe('progress, Finish now and Cancel', () => {
   });
 });
 
+describe('the JSON fallback of a harness run', () => {
+  const body = { target: 'cluster', valid: true, stopReason: 'done', slots: { CustomMRQLResult: 'a', CustomMRQLResultCSS: 'b' }, transcript: [{ turn: 1, kind: 'seed', text: 't', sent: true }] };
+  const json = (data: unknown, status = 200) => ({ ok: status < 400, status, headers: { get: () => 'application/json' }, body: null, json: async () => data });
+
+  it('slot host: a successful result shows its transcript in an ended panel', async () => {
+    const { host, store } = setup();
+    serve(() => harnessDisclosure('h0'), async () => json(body));
+    const run = host.generateFromPrompt();
+    await vi.waitFor(() => expect(store.isOpen).toBe(true));
+    store.send();
+    await run;
+    expect(host.run.status).toBe('done');
+    expect(host.run.stopReason).toBe('done');
+    expect(host.run.records).toHaveLength(1);
+    expect(host.hasDraft()).toBe(true);
+  });
+
+  it('bundle host does the same', async () => {
+    const { host, store } = setup('bundle');
+    serve(() => harnessDisclosure('h0'), async () => json({ ...body, target: 'bundle', slots: { CustomHeader: 'a', CustomHeaderCSS: 'b' } }));
+    const run = host.generateBundle();
+    await vi.waitFor(() => expect(store.isOpen).toBe(true));
+    store.send();
+    await run;
+    expect(host.run.status).toBe('done');
+    expect(host.run.records).toHaveLength(1);
+  });
+
+  it('a pre-stream refusal or 409 leaves no panel', async () => {
+    const { host, store } = setup();
+    serve(() => harnessDisclosure('h0'), async () => json({ error: 'busy' }, 429));
+    const run = host.generateFromPrompt();
+    await vi.waitFor(() => expect(store.isOpen).toBe(true));
+    store.send();
+    await run;
+    expect(host.run).toBeNull();
+    expect(host.generationError).toBe('busy');
+  });
+});
+
 describe('a lost connection', () => {
   it('ends the panel as failed, announces it, and shows the error', async () => {
     const { host, store } = setup();

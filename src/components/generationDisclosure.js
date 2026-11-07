@@ -2,10 +2,13 @@ import { blockingModal, refuseOverModal } from '../utils/modality.js';
 import { containFocus, focusFirstAvailable } from '../utils/containFocus.js';
 
 /**
- * The template generation disclosure (decision 11 of
- * docs/plans/2026-10-24-template-generation-quality.md): before a generation
- * request is sent, this dialog lists exactly what goes to the provider, from a
- * dry run of the same request. Send resolves the approval tuple the caller sends with the
+ * The template generation disclosure, shown before a generation request is sent,
+ * from a dry run of the same request. A classic disclosure lists exactly what goes
+ * to the provider (decision 11 of docs/plans/2026-10-24-template-generation-quality.md).
+ * A harness disclosure approves the Seed messages, the Tools, the caps, the opt-ins
+ * and the Envelope (everything the account can read); what the Tools return is read
+ * live and shown in the transcript afterwards (docs/adr/0009-generation-runs-approve-an-envelope.md).
+ * Send resolves the approval tuple the caller sends with the
  * request; Cancel and Escape resolve null and nothing is sent.
  *
  * It follows the confirm dialog's pattern (templates/partials/confirmDialog.tpl):

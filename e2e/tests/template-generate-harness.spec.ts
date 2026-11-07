@@ -214,7 +214,27 @@ test.describe('Run panel and transcript', () => {
     await startRun(page);
     await send(page);
     await expect(page.getByTestId('generate-review-CustomHeader')).toContainText('[property path="Name"]');
-    await expect(page.getByTestId('run-panel-CustomHeader')).toHaveCount(0);
+    await expect(page.getByTestId('run-end-CustomHeader')).toContainText('Finished (done)');
+    await page.getByTestId('run-transcript-CustomHeader').locator('summary').first().click();
+    await page.getByTestId('run-record-1-CustomHeader').locator('summary').first().click();
+    await expect(page.getByTestId('run-record-text-1-CustomHeader')).toHaveText('<img src=x onerror="window.__pwned=1">');
+  });
+
+  test('the whole-template host shows the transcript of a JSON fallback too', async ({ page }) => {
+    await page.route('**/v1/category/generateTemplate', async (route) => {
+      if (route.request().postDataJSON()?.dryRun) {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(harnessDisclosure('hb')) });
+        return;
+      }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ target: 'bundle', valid: true, stopReason: 'done', slots: { CustomHeader: '<h1>x</h1>', CustomHeaderCSS: '' }, transcript }) });
+    });
+    await page.goto('/category/new');
+    await page.getByTestId('template-bundle-generate-prompt').fill('a whole template');
+    await page.getByTestId('template-bundle-generate-button').click();
+    await send(page);
+    await expect(page.getByTestId('run-end-bundle')).toContainText('Finished (done)');
+    await page.getByTestId('run-transcript-bundle').locator('summary').first().click();
+    await expect(page.getByTestId('run-transcript-bundle')).toContainText('Turn 1 · Model reply');
   });
 });
 

@@ -53,7 +53,7 @@
 
     <div class="border-t border-stone-200 pt-4">
         <label class="block text-sm font-mono font-medium text-stone-700 mb-1" for="tb-generate-prompt">Generate whole template from a description</label>
-        <p class="text-xs text-stone-500 mb-2">First shows exactly what would go to the configured AI provider (this description, the metadata schema, a sample entity), and sends it only when you approve. A planning step settles one design, then each section is written separately, so this can take up to a minute. The draft then waits for review; nothing is filled until you press Apply.</p>
+        <p class="text-xs text-stone-500 mb-2">First shows exactly what would go to the configured AI provider (this description, the metadata schema, a sample entity), and sends it only when you approve. This can take a while, and in a tool-calling run the progress is shown as it happens. The draft then waits for review; nothing is filled until you press Apply.</p>
         <fieldset class="mb-3 rounded-md border border-stone-200 p-3" data-testid="template-bundle-sections" x-show="sections.length">
             <legend class="px-1 text-xs font-mono font-medium text-stone-700">Sections to generate (leave all unticked to let the generator choose)</legend>
             <div class="mt-1 grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">

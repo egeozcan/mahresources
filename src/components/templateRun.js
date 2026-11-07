@@ -309,6 +309,14 @@ export function runHost() {
       }
     },
 
+    // A harness result that arrived as plain JSON (no stream) still ends a run: show its
+    // transcript. Only a successful result; refusals and 409s have no run to show.
+    adoptJsonResult(resp, data) {
+      if (!resp?.ok || !data || (!Array.isArray(data.transcript) && !data.stopReason)) return;
+      this.run = newRun();
+      finishRunState(this.run, 'done', { transcript: data.transcript, stopReason: data.stopReason });
+    },
+
     // Record how the streamed run ended, once the host knows.
     endRun(status, details) {
       if (this.run) finishRunState(this.run, status, details);
