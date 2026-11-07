@@ -20,3 +20,11 @@ func (g *defaultTemplateGenerator) RunCaps() TemplateRunCaps {
 	s := g.config.Harness.withDefaults()
 	return TemplateRunCaps{MaxTurns: s.MaxTurns, Deadline: s.Deadline, TokenBudget: s.TokenBudget}
 }
+
+// SetToolTimeouts overrides the per-Tool and preview timeouts of a harness
+// generator. The final-Turn rule leaves a run Timeout plus the Tool timeout
+// before its deadline, so a test that has to see a run deadline expire inside a
+// later Turn needs them short; no production path calls it.
+func (g *defaultTemplateGenerator) SetToolTimeouts(tool, preview time.Duration) {
+	g.toolTimeout, g.previewTimeout = tool, preview
+}

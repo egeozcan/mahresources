@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"mahresources/application_context"
+	"mahresources/models"
 )
 
 const categoryGenerate = "/v1/category/generateTemplate"
@@ -270,4 +271,91 @@ func TestHarnessAuthOffRunsAreOwnedByClientAddress(t *testing.T) {
 		t.Fatalf("another client finished a run it does not own: %d", rr.Code)
 	}
 	close(release)
+}
+
+// shortDeadlineHarness installs a generator whose run deadline expires inside
+// the second Turn. Run Timeout 5s and Tool timeout 20ms put the final-Turn
+// threshold at 5.02s; a 5.1s deadline leaves Turn 1 an ordinary Turn, and
+// Turn 1 taking 200ms leaves Turn 2 a call whose binding limit is the run
+// deadline, not the call timeout.
+func shortDeadlineHarness(t *testing.T, tc *TestContext) *observedGenerator {
+	t.Helper()
+	cfg := harnessConfig(5)
+	cfg.Harness.Deadline = 5100 * time.Millisecond
+	gen := application_context.NewTemplateHarnessGenerator(&fakeConversation{step: func(ctx context.Context, n int, _ application_context.ConversationRequest) (application_context.ConversationResponse, error) {
+		if n == 1 {
+			time.Sleep(200 * time.Millisecond)
+			return toolReply(apiSubmit("s1", map[string]string{"CustomCSS": ".recovered{color:teal}"}, false)), nil
+		}
+		<-ctx.Done() // the model never answers; the run deadline ends the call
+		return application_context.ConversationResponse{}, ctx.Err()
+	}}, cfg)
+	gen.(interface {
+		SetToolTimeouts(tool, preview time.Duration)
+	}).SetToolTimeouts(20*time.Millisecond, 20*time.Millisecond)
+	obs := &observedGenerator{inner: gen}
+	tc.AppCtx.SetTemplateGenerator(obs)
+	return obs
+}
+
+// A submission followed by the run deadline expiring in a later Turn delivers
+// the recovered Draft as the terminal result while the client is connected.
+func TestHarnessRecoveredDraftAfterRunDeadlineIsDelivered(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits for a 5s run deadline")
+	}
+	tc := SetupTestEnv(t)
+	shortDeadlineHarness(t, tc)
+	srv := newHarnessServer(t, tc)
+	hash := disclose(t, tc, categoryGenerate, harnessSlotBody())
+
+	resp, _ := postStream(t, srv.URL, categoryGenerate, withHash(harnessSlotBody(), hash), sameClient)
+	frames := newSSEReader(resp.Body).readUntilEnd(t, 15*time.Second)
+	last := frames[len(frames)-1]
+	if last.Event != "result" {
+		t.Fatalf("want the recovered Draft as the result event, got %q %s", last.Event, last.Data)
+	}
+	var res application_context.TemplateGenerationResult
+	if err := json.Unmarshal([]byte(last.Data), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.StopReason != application_context.TemplateStopDeadline || res.Content != ".recovered{color:teal}" {
+		t.Fatalf("want a deadline stop holding the submission, got %q %q", res.StopReason, res.Content)
+	}
+}
+
+// The same recovered Draft is withheld when the account loses access after the
+// generator's own final check and before the terminal write.
+func TestHarnessRecoveredDraftIsWithheldWhenAccessIsRevokedBeforeRelease(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits for a 5s run deadline")
+	}
+	tc := setupAuthEnv(t)
+	ownerID, owner := namedBearer(t, tc, "owner", models.RoleAdmin)
+	obs := shortDeadlineHarness(t, tc)
+	obs.afterRun = func() {
+		if _, err := tc.AppCtx.UpdateUser(ownerID, &application_context.UserUpdate{Disabled: application_context.UserField[bool]{Set: true, Value: true}}); err != nil {
+			t.Errorf("disable: %v", err)
+		}
+	}
+	srv := newHarnessServer(t, tc)
+	dry := map[string]any{"dryRun": true}
+	for k, v := range harnessSlotBody() {
+		dry[k] = v
+	}
+	rr := postRunJSON(tc, categoryGenerate, dry, owner)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("dry run: %d %s", rr.Code, rr.Body.String())
+	}
+	resp, _ := postStream(t, srv.URL, categoryGenerate, withHash(harnessSlotBody(), disclose2(t, rr.Body.String())), owner)
+	frames := newSSEReader(resp.Body).readUntilEnd(t, 15*time.Second)
+	last := frames[len(frames)-1]
+	if last.Event != "error" || !strings.Contains(last.Data, `"status":403`) {
+		t.Fatalf("want a 403 error event, got %q %s", last.Event, last.Data)
+	}
+	for _, f := range frames {
+		if f.Event == "result" || strings.Contains(f.Raw, ".recovered") || strings.Contains(f.Raw, `"transcript"`) {
+			t.Fatalf("the revoked account was sent run output: %s", f.Raw)
+		}
+	}
 }
