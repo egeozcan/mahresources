@@ -290,29 +290,31 @@ func TestSupportsToolsFullRecordWithoutParametersIsUnknown(t *testing.T) {
 func TestSupportsToolsOneTimeoutCoversBothFetches(t *testing.T) {
 	resetOpenRouterCatalogue()
 	t.Cleanup(resetOpenRouterCatalogue)
-	oldTimeout := openRouterCatalogueTimeout
-	openRouterCatalogueTimeout = 400 * time.Millisecond
-	t.Cleanup(func() { openRouterCatalogueTimeout = oldTimeout })
+	// Both fetches must run under the same context deadline; a fresh window per
+	// fetch would give them different ones. No wall-clock bound is involved.
+	deadlines := map[string]time.Time{}
 	client := &http.Client{Transport: generationRoundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if r.URL.String() == toolsCatalogueURL {
-			select {
-			case <-time.After(300 * time.Millisecond):
-				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(catalogueReply("a/b")))}, nil
-			case <-r.Context().Done():
-				return nil, r.Context().Err()
-			}
+		d, ok := r.Context().Deadline()
+		if !ok {
+			t.Errorf("%s fetched without a deadline", r.URL)
 		}
-		<-r.Context().Done()
-		return nil, r.Context().Err()
+		deadlines[r.URL.String()] = d
+		body := catalogueReply("a/b")
+		if r.URL.String() == fullCatalogueURL {
+			body = fullCatalogueReply("a/b")
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}
-	start := time.Now()
 	ok, err := supports(NewGenerationConversationProvider("openrouter", "k", "m", client), "other/model")
-	elapsed := time.Since(start)
-	if !ok || err == nil {
+	if !ok || !errors.Is(err, ErrToolSupportUnknown) {
 		t.Fatalf("got %v %v", ok, err)
 	}
-	if elapsed > 650*time.Millisecond {
-		t.Fatalf("lookup took %v: the second fetch got a fresh 400ms window", elapsed)
+	f, a := deadlines[toolsCatalogueURL], deadlines[fullCatalogueURL]
+	if f.IsZero() || a.IsZero() || !f.Equal(a) {
+		t.Fatalf("filtered deadline %v, full deadline %v: the fetches must share one", f, a)
+	}
+	if left := time.Until(f); left > openRouterCatalogueTimeout {
+		t.Fatalf("deadline %v ahead exceeds the %v window", left, openRouterCatalogueTimeout)
 	}
 }
 
