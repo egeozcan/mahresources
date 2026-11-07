@@ -62,6 +62,43 @@ type ToolCall struct {
 	Arguments  string `json:"arguments,omitempty"`
 	Incomplete bool   `json:"incomplete,omitempty"`
 	Malformed  bool   `json:"malformed,omitempty"`
+	// SourceCheck is the harness's source admission (byte and shortcode-token
+	// limits) of a submit call's raw field values, decided before sanitizing
+	// re-encoded the arguments: SourceAdmitted or SourceRejected. Empty on a
+	// non-submit call, on arguments that did not decode, and on older
+	// recordings, which the scorer checks from the sanitized text.
+	SourceCheck string `json:"sourceCheck,omitempty"`
+}
+
+// SourceCheck values.
+const (
+	SourceAdmitted = "admitted"
+	SourceRejected = "rejected"
+)
+
+// submitSourceCheck applies CheckTemplateToolSource to every raw string field
+// value of a submit call's arguments. It returns "" when the arguments are not
+// a submit object with string fields; the shape checks judge those.
+func submitSourceCheck(name, arguments string) string {
+	if name != application_context.ToolSubmit {
+		return ""
+	}
+	var decoded struct {
+		Fields map[string]json.RawMessage `json:"fields"`
+	}
+	if json.Unmarshal([]byte(arguments), &decoded) != nil || len(decoded.Fields) == 0 {
+		return ""
+	}
+	for _, raw := range decoded.Fields {
+		var text *string
+		if json.Unmarshal(raw, &text) != nil || text == nil {
+			continue
+		}
+		if application_context.CheckTemplateToolSource(*text) != nil {
+			return SourceRejected
+		}
+	}
+	return SourceAdmitted
 }
 
 // Call is what the recorder saw of one provider call at the provider-neutral
@@ -218,7 +255,7 @@ func (p *recordingConversationProvider) Converse(ctx context.Context, req applic
 		if !known[name] {
 			name = UnknownToolName
 		}
-		call.ToolCalls = append(call.ToolCalls, ToolCall{Name: name, Arguments: SanitizeArguments(c.Arguments, p.rec.secrets...), Incomplete: c.Incomplete, Malformed: c.Malformed})
+		call.ToolCalls = append(call.ToolCalls, ToolCall{Name: name, Arguments: SanitizeArguments(c.Arguments, p.rec.secrets...), Incomplete: c.Incomplete, Malformed: c.Malformed, SourceCheck: submitSourceCheck(c.Name, c.Arguments)})
 	}
 	if len(resp.Replay) > 0 {
 		call.Replay = SanitizeReplay(resp.Replay, p.rec.secrets...)

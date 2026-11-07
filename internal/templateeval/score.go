@@ -732,7 +732,7 @@ func scoreHarnessSubmissions(c Case, calls []Call, checks *Checks) {
 				checks.Malformed = true
 				continue
 			}
-			accepted, shape := parseRecordedSubmit(tc.Arguments, requested)
+			accepted, shape := parseRecordedSubmit(tc.Arguments, requested, tc.SourceCheck)
 			switch shape {
 			case submitMalformed:
 				// The recorder replaces text it could not decode; an adapter
@@ -768,7 +768,7 @@ const (
 // to a recorded submit call: a non-empty fields map of requested names to
 // strings, with done a boolean and explanation a string when present. It
 // returns the accepted fields only for a call that passes in full.
-func parseRecordedSubmit(arguments string, requested map[string]bool) (map[string]string, submitShape) {
+func parseRecordedSubmit(arguments string, requested map[string]bool, sourceCheck string) (map[string]string, submitShape) {
 	if !json.Valid([]byte(arguments)) {
 		return nil, submitMalformed
 	}
@@ -788,10 +788,15 @@ func parseRecordedSubmit(arguments string, requested map[string]bool) (map[strin
 		}
 		// Source admission, as submit applies it: one refused field rejects
 		// the whole call.
-		if application_context.CheckTemplateToolSource(*text) != nil {
+		// The recorder's verdict on the raw values wins when present; sanitizing
+		// re-encodes arguments, so the check here is only for older recordings.
+		if sourceCheck == "" && application_context.CheckTemplateToolSource(*text) != nil {
 			return nil, submitWrongShape
 		}
 		out[name] = *text
+	}
+	if sourceCheck == SourceRejected {
+		return nil, submitWrongShape
 	}
 	return out, submitOK
 }

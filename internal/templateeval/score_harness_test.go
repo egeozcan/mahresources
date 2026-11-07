@@ -1,6 +1,8 @@
 package templateeval
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -289,6 +291,45 @@ func TestScoreHarnessSourceAdmissionAndCallCapDoNotCountRejectedFields(t *testin
 			checks, _ := Score(pairCase(), failed, tt.calls, nil, nil, testEnv())
 			if checks.WrongShape != tt.wrong || checks.IncompletePairs != tt.gaps {
 				t.Fatalf("wrong=%v gaps=%d, want %v %d", checks.WrongShape, checks.IncompletePairs, tt.wrong, tt.gaps)
+			}
+		})
+	}
+}
+
+// Sanitizing re-encodes JSON nested in a string, so a source that is over the
+// limit as sent can look small afterwards. The recorder decides on the raw
+// values, and the scorer honours that decision.
+func TestRecorderSourceAdmissionSurvivesSanitizing(t *testing.T) {
+	spaces := "{" + strings.Repeat(" ", 20000) + "}"
+	dupKeys := "{" + strings.TrimSuffix(strings.Repeat(`"[":1,`, 2001), ",") + "}"
+	for name, header := range map[string]string{"oversized nested JSON": spaces, "duplicate bracket keys": dupKeys} {
+		t.Run(name, func(t *testing.T) {
+			args := func(fields map[string]string) string {
+				b, _ := json.Marshal(map[string]any{"fields": fields})
+				return string(b)
+			}
+			inner := &fakeConversation{replies: []application_context.ConversationResponse{
+				{Finish: "tool_calls", Calls: []application_context.ToolCall{{ID: "a", Name: "submit", Arguments: oneHalfSubmit}}},
+				{Finish: "tool_calls", Calls: []application_context.ToolCall{{ID: "b", Name: "submit", Arguments: args(map[string]string{"CustomHeader": header, "CustomHeaderCSS": ".a{}"})}}},
+			}}
+			recorder := NewRecorder()
+			provider := recorder.WrapConversationProvider(inner)
+			for i := 0; i < 2; i++ {
+				if _, err := provider.Converse(context.Background(), application_context.ConversationRequest{Model: "m", Tools: application_context.TemplateRunToolSpecs()}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			calls := recorder.Take()
+			if calls[0].ToolCalls[0].SourceCheck != SourceAdmitted || calls[1].ToolCalls[0].SourceCheck != SourceRejected {
+				t.Fatalf("source checks = %q, %q", calls[0].ToolCalls[0].SourceCheck, calls[1].ToolCalls[0].SourceCheck)
+			}
+			// The sanitized text alone would pass: that is the defect.
+			if len(calls[1].ToolCalls[0].Arguments) > 1000 {
+				t.Fatalf("expected re-encoded arguments, got %d bytes", len(calls[1].ToolCalls[0].Arguments))
+			}
+			checks, _ := Score(pairCase(), Draft{Status: 502, StopReason: application_context.TemplateStopProviderError}, calls, nil, nil, testEnv())
+			if !checks.WrongShape || checks.IncompletePairs != 1 {
+				t.Fatalf("wrong=%v gaps=%d, want true 1", checks.WrongShape, checks.IncompletePairs)
 			}
 		})
 	}
