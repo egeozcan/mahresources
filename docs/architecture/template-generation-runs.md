@@ -103,12 +103,15 @@ a run. Fourteen Tools, all read-only: `get_entity`, `list_related`,
   1 at a time inside a run (`templateRunPreviewConcurrency`,
   `templateRunDiffConcurrency`) and render under an output budget of 256 KiB and a
   parsed-source budget of 512 KiB (`templateRunRenderOutputBytes`,
-  `templateRunRenderParsedBytes`, set with `shortcodes.WithRenderBudget`). The
+  `templateRunRenderParsedBytes`, set with `shortcodes.WithRenderBudget`), each
+  applied separately to the HTML render and to the CSS render, since every
+  `ProcessChecked` call starts its own meter. The
   preview renders with `shortcodes.ProcessChecked`, so a render past either budget,
   or a `matches` pattern past the regular expression allowance, is an error result
   rather than a cut-off render. No other render sets a budget: ordinary pages and
   the editor's live preview keep rendering, and there a pattern past the allowance
-  only makes its conditional false (`renderMeter.regexp`).
+  only makes that `matches` comparison false (`renderMeter.regexp`); with
+  `combine="any"` another comparison can still show the block.
 - Lint, inside and outside a run, reads at most `shortcodes.MaxLintSourceBytes`
   (1 MiB); a larger source gets one "too large to check" error. Lint, rendering
   and MetaSchema compilation share `shortcodes.RegexAllowance`: per pattern
