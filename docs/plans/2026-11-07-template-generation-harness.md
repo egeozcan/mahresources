@@ -69,8 +69,13 @@ type ConversationMessage struct {
 }
 type ToolSpec struct{ Name, Description string; Parameters json.RawMessage }
 type ToolCall struct {
-    ID, Name  string
-    Arguments json.RawMessage
+    ID, Name string
+    // Arguments is the exact argument text the model sent, never a
+    // json.RawMessage: a call cut off at the output limit carries text that is
+    // not JSON, and a RawMessage holding it makes every later encoding of the
+    // result, transcript or eval report fail. The loop decodes it only after
+    // validation.
+    Arguments string
     // Incomplete marks a call cut off by the output limit (Finish "length"):
     // its arguments did not arrive whole. Malformed marks complete arguments
     // that are not a JSON object. Neither runs; each gets an error result,
@@ -202,7 +207,7 @@ The credential check needs `resolvePrincipal` and `sameAccess`, which are privat
 - `[property]` refuses unexported struct fields (`shortcodes/property_handler.go:83-87` reaches them through `FieldByName`, and `formatFieldValue` then panics in `Interface()`; reproduced with `[property path="CreatedAt.wall"]`). This is an existing bug in the preview route and pages, fixed at the root.
 - With the MRQL opt-in off, the executor returns a new `shortcodes.ErrQueryUnavailable`. `RenderMRQLShortcode` renders that as an inert comment carrying the static check verdict. This also applies to `[mrql]` reached through partials, conditionals, `[using]`, result templates and CSS, since all of them go through the one executor.
 - `[using]` and MRQL-backed conditionals call the executor directly (`shortcodes/using_handler.go:59-61`, `conditional_handler.go:25-33,224-229`) and render executor errors visibly. They handle `ErrQueryUnavailable` too: `[using]` renders the inert comment, and a conditional renders the inert comment in place of the whole conditional, never treating unavailability as "no match" and taking an `[else]` or `[elseif]` branch.
-- With the plugin opt-in off, the plugin renderer is nil, which renders the existing "plugin unavailable" comment. With it on, it is `previewPluginRenderer`, including its scoped-principal check.
+- With the plugin opt-in off, the plugin renderer is nil, which renders the existing "plugin unavailable" comment. With it on, it is `previewPluginRenderer`, including its scoped-principal check, behind one more gate that keeps Q8 (every Tool is read-only). The `read_only`/`can_write` values a plugin sees are advisory (`plugin_system/shortcodes.go:254-285`), and `mah.db` exposes writers by granted capability (`db_api.go:329-350,590-593`), so a write-capable plugin could change data during a model's preview. The gate runs a plugin's shortcode only when every capability the plugin is granted is in a read-only allow-list: `db:read`, `render`, `image`, `media`, `pages`, `api`, `actions`, `hooks`, `inject`, `job_events`. These either read or only register surfaces at load. A plugin granted `db:write`, `http`, `kv`, `jobs`, `schedule`, `commands` or any capability not on the list renders the inert comment "not run in model previews: this plugin can change data or reach the network". The Disclosure lists which enabled plugins the opt-in would run. Human previews are unchanged.
 - Plugin code is outside the bound. A plugin renderer returns its whole output before the budget sees it, and installed plugins are trusted, admin-installed code: a plugin can allocate or block (its DB reads run on the plugin manager's own context, `application_context/plugin_db_adapter.go:48-64`) whatever the budget says. The plugin opt-in's text in the Disclosure says so: "Plugin shortcodes run the installed plugin's code with its own resource use; the preview limits do not apply inside it." Carrying the request context into plugin DB reads is a follow-up for every plugin render path, pages included.
 
 **Submit.**
@@ -210,7 +215,7 @@ The credential check needs `resolvePrincipal` and `sameAccess`, which are privat
 - In a whole-template run, a `CustomCSS` submission is *additions*. The Draft's `CustomCSS` is the Seed's `CustomCSS`, unchanged, plus the latest additions, joined once, as `appendSharedCSS` does today. The additions are linted; the combined size gets the oversize check.
 - Companion CSS fields (`CustomHeaderCSS` and so on) and a single-slot `CustomCSS` request are whole values, as today.
 - The Turn-start snapshot keeps raw submissions and resolved values apart. Validation lints the raw submission (for whole-template `CustomCSS`, the additions). Omitted-`content` reads (`lint`, `preview`) use the resolved value, which for whole-template `CustomCSS` is the Seed's CSS plus the latest additions, the same value Apply would receive.
-- An explicitly submitted empty value is a submission (it clears the field on Apply). The result lists the submitted fields in a new `Submitted []string`, and `Content` and `Slots` carry an empty submitted value instead of omitting it. The frontend creates a pending draft for an explicitly submitted empty field in harness results, instead of the current "returned no content" rejection (`templateGeneration.js:218-221`). Classic keeps rejecting empty output.
+- An explicitly submitted empty value of a replacement field is a submission (it clears the field on Apply). Whole-template `CustomCSS` is additions, so empty additions leave the Seed's stylesheet as it is. The result lists the submitted fields in a new `Submitted []string`, and `Content` and `Slots` carry an empty submitted value instead of omitting it. The frontend creates a pending draft for an explicitly submitted empty field in harness results, instead of the current "returned no content" rejection (`templateGeneration.js:218-221`). Classic keeps rejecting empty standalone output, and keeps accepting the empty values of a complete pair or bundle, as today (`template_generation.go:441,588-589`).
 - The half-pair rule applies to the Draft as a whole: a cluster with one half submitted is reported, and the client refuses to apply it, as today.
 
 ### 3. The run loop (`application_context/template_run.go`)
@@ -361,7 +366,7 @@ New runtime entries in the "ai" group, each with a control in the AI settings pa
 
 ### 8. Eval (`internal/templateeval`, `server/api_tests/template_generation_eval_test.go`)
 
-- **Recorder.** It records at the provider-neutral seams, not the wire: `ConversationRequest`/`ConversationResponse` pairs (Turns, Tool calls, usage, stop reason) in harness mode, and `TemplateDraftRequest`/`TemplateDraftResponse` pairs in classic mode, keeping the classic report fields. Today's recorder decodes DeepSeek-shaped wire bytes (`internal/templateeval/recorder.go:91-166`) and loses evidence for OpenAI, OpenRouter and Anthropic in either mode. The HTTP status and error class it reports today come from a new sanitized typed error, `GenerationProviderError{Status int, Class string}` (class one of `http`, `transport`, `decode`, `size`, `refusal`), which `post` and the adapters return wrapped. No body or header is recorded. Raw JSON fields (`Arguments`, `Replay`) go through a JSON-aware redaction (decode, redact strings, re-encode) before they are retained, and the aggregate-report stripping covers every new free-text field, not only `Content`. Normal-suite fixtures check captured content, finish reasons, and token and cache totals for every adapter in both modes.
+- **Recorder.** It records at the provider-neutral seams, not the wire: `ConversationRequest`/`ConversationResponse` pairs (Turns, Tool calls, usage, stop reason) in harness mode, and `TemplateDraftRequest`/`TemplateDraftResponse` pairs in classic mode, keeping the classic report fields. Today's recorder decodes DeepSeek-shaped wire bytes (`internal/templateeval/recorder.go:91-166`) and loses evidence for OpenAI, OpenRouter and Anthropic in either mode. The HTTP status and error class it reports today come from a new sanitized typed error, `GenerationProviderError{Status int, Class string}` (class one of `http`, `transport`, `decode`, `size`, `refusal`), which `post` and the adapters return wrapped. No body or header is recorded. `Arguments` text is redacted as a string (decoded and re-encoded when it is valid JSON, string-redacted when it is not), and `Replay` goes through a JSON-aware redaction (decode, redact strings, re-encode) before they are retained, and the aggregate-report stripping covers every new free-text field, not only `Content`. Normal-suite fixtures check captured content, finish reasons, and token and cache totals for every adapter in both modes.
 - **Scorer.** `ScorerVersion` is bumped and the scorer becomes mode-aware:
   - Draft quality checks score the final Draft.
   - A `length` reply on an intermediate Turn followed by a complete submission is "recovered", not truncated.
@@ -415,7 +420,9 @@ A, B and C run in parallel in this worktree with disjoint files, each staging ex
 - **Schema bytes:** a 16 KiB description under three levels of twenty repeated references stops at the byte budget in a `[meta]` render and in lint.
 - **Progress payloads:** with a secret sentinel in a Tool call's `content` and `query`, no progress frame contains it, including frames drained after access is revoked.
 - **MRQL substitution:** a partial whose `[mrql]` header, footer and else slots repeat `{link-all}` 36,000 times is refused by the budget without building the string (MRQL opt-in on).
-- **Empty CSS:** `{"fields":{"CustomCSS":""},"done":true}` gives a reviewable pending draft that clears the editor only on Apply.
+- **Empty CSS:** in a standalone `CustomCSS` run, `{"fields":{"CustomCSS":""},"done":true}` gives a reviewable pending draft that clears the editor only on Apply. In a whole-template run, empty `CustomCSS` additions leave the Seed's stylesheet byte-identical.
+- **Plugin writes:** with the plugin opt-in on, a shortcode of a plugin granted `db:write` that calls `mah.db.delete_note` is not run in a model preview and the note survives; a plugin granted only `db:read` and `render` runs.
+- **Cut-off arguments:** a Turn with an incomplete call (`{"fields":`) followed by a successful submit delivers its result over JSON and SSE, and the eval recorder and report encode it.
 - **Diff budget:** six parallel `diff_revisions` over two 5,000-line fields compute one at a time within the cell budget and fall back to the coarse form; a cancelled context stops the computation.
 - **Instruction wire form:** finalization on Turn 1 and after Tool results delivers the instruction on each adapter, with earlier payloads byte-unchanged.
 - **System prompts:** no harness Seed (slot, bundle, MetaSchema) contains either classic output-envelope directive.
@@ -463,7 +470,7 @@ A, B and C run in parallel in this worktree with disjoint files, each staging ex
 - **Prompt size growth.** Each Turn resends the conversation. Stubbing and the budget bound it; the eval reports tokens per run.
 - **The final Turn is a soft request.** No provider can be forced portably. Submissions from earlier Turns are kept, and the instruction asks the model to submit early.
 - **Injected entity text reaches the model through Tools.** The boundary stays the explicit Apply step (decision 10 of the 2026-10-24 plan). The review panel's highlighting of code-running constructs is unchanged.
-- **Plugin Lua during previews** can have side effects. That is why it is a separate opt-in, off by default.
+- **Plugin Lua during previews** runs installed code. It is a separate opt-in, off by default, and runs only plugins whose granted capabilities are all read-only (section 2).
 - **Anthropic keys not scoped to a workspace** need an `anthropic-workspace-id` header that the client does not send. This affects classic mode too. It is a follow-up (a setting), not part of this plan.
 
 ## Appendix A: provider facts (researched 2026-11-07 from primary docs; no live calls)
