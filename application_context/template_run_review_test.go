@@ -14,10 +14,11 @@ import (
 // case is under the byte limit, so only the token check can reject it.
 func TestRunSubmitRejectsOversizeOrTokenHeavySourceBeforeValidating(t *testing.T) {
 	var lookups atomic.Int32
+	var afterRejected int32 = -1
 	in := harnessPairInput(&fakeRunExecutor{})
 	in.PartialExists = func(context.Context, string) (bool, error) { lookups.Add(1); return true, nil }
-	big := strings.Repeat("a", MaxTemplateGeneratedContentLength+1)
-	manyTokens := strings.Repeat("[b]", 2001)
+	big := `[partial name="sentinel"]` + strings.Repeat("a", MaxTemplateGeneratedContentLength+1)
+	manyTokens := `[partial name="sentinel"]` + strings.Repeat("[b]", 2000)
 	if len(manyTokens) >= MaxTemplateGeneratedContentLength || strings.Count(manyTokens, "[") <= 2000 {
 		t.Fatalf("fixture must be under the byte limit and over the token limit: %d bytes", len(manyTokens))
 	}
@@ -25,7 +26,8 @@ func TestRunSubmitRejectsOversizeOrTokenHeavySourceBeforeValidating(t *testing.T
 		replyCalls(
 			submitCall("big", map[string]string{"CustomHeader": big, "CustomHeaderCSS": ".a{}"}, true),
 			submitCall("tok", map[string]string{"CustomHeader": manyTokens, "CustomHeaderCSS": ".a{}"}, true)),
-		replyCalls(submitCall("ok", map[string]string{"CustomHeader": "<p>ok</p>", "CustomHeaderCSS": ".a{}"}, true)),
+		replyCalls(submitCall("ok", map[string]string{"CustomHeader": `<p>[partial name="sentinel"]</p>`, "CustomHeaderCSS": ".a{}"}, true)).
+			withHook(func(context.Context, ConversationRequest) { afterRejected = lookups.Load() }),
 	}}
 	res, err := disclosedGenerate(harnessGen(conv, nil), in, "go")
 	if err != nil {
@@ -38,10 +40,13 @@ func TestRunSubmitRejectsOversizeOrTokenHeavySourceBeforeValidating(t *testing.T
 	if !results[1].IsError || !strings.Contains(results[1].Text, "shortcode tokens") {
 		t.Fatalf("token case must be rejected by the token check: %+v", results[1])
 	}
-	if lookups.Load() != 0 { // the accepted submit has no [partial]; rejected input must not validate
-		t.Fatalf("validation ran on rejected input: %d lookups", lookups.Load())
+	if afterRejected != 0 {
+		t.Fatalf("validation ran on rejected input: %d lookups before the next Turn", afterRejected)
 	}
-	if len(conv.seen()) != 2 || res.Slots["CustomHeader"] != "<p>ok</p>" {
+	if lookups.Load() == 0 {
+		t.Fatal("positive control: an admitted source containing [partial] must reach the lookup")
+	}
+	if len(conv.seen()) != 2 || res.Slots["CustomHeader"] != `<p>[partial name="sentinel"]</p>` {
 		t.Fatalf("rejected submits must commit nothing and ignore done: calls=%d slots=%v", len(conv.seen()), res.Slots)
 	}
 }
@@ -235,5 +240,75 @@ func TestRunBudgetRefusedTurnReportsNoStubbing(t *testing.T) {
 		if r.StubbedFrom != 0 {
 			t.Fatalf("a refused Turn must not report stubbing: %+v", r)
 		}
+	}
+}
+
+// MaxTurns above the hard maximum of 20 is clamped at the constructor boundary.
+func TestHarnessConstructorClampsTurnsToTheHardMaximum(t *testing.T) {
+	gen := harnessGen(&scriptedConversation{}, func(c *TemplateGenerationConfig) { c.Harness.MaxTurns = 99 })
+	d, err := gen.DiscloseTemplate(context.Background(), harnessCSSInput(&fakeRunExecutor{}), "go")
+	if err != nil || d.Caps.MaxTurns != 20 || d.Destination.Profiles[0].MaxCalls != 20 {
+		t.Fatalf("caps=%+v err=%v", d.Caps, err)
+	}
+}
+
+func assertSentFlags(t *testing.T, records []TemplateTranscriptRecord) {
+	t.Helper()
+	for _, r := range records {
+		if r.Kind != TemplateTranscriptToolResult && !r.Sent {
+			t.Errorf("a %s record is sent by construction: %+v", r.Kind, r)
+		}
+	}
+}
+
+func toolResultSent(records []TemplateTranscriptRecord, callID string) (sent, found bool) {
+	for _, r := range records {
+		if r.Kind == TemplateTranscriptToolResult && r.CallID == callID {
+			return r.Sent, true
+		}
+	}
+	return false, false
+}
+
+// A Tool result is sent only with the next request. Same-Turn read plus done
+// never sends it; a result followed by another Turn does.
+func TestRunToolResultsAreSentOnlyWithTheNextRequest(t *testing.T) {
+	conv := &scriptedConversation{replies: []convReply{
+		replyCalls(getEntityCall("read"), submitCall("s", map[string]string{"CustomCSS": ".a{}"}, true)),
+	}}
+	res, err := disclosedGenerate(harnessGen(conv, nil), harnessCSSInput(&fakeRunExecutor{}), "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSentFlags(t, res.Transcript)
+	for _, id := range []string{"read", "s"} {
+		if sent, found := toolResultSent(res.Transcript, id); !found || sent {
+			t.Fatalf("%s: the result of the last Turn was never sent: sent=%v found=%v", id, sent, found)
+		}
+	}
+
+	conv2 := &scriptedConversation{replies: []convReply{
+		replyCalls(getEntityCall("t1")),
+		replyCalls(submitCall("s", map[string]string{"CustomCSS": ".a{}"}, true)),
+	}}
+	res2, err := disclosedGenerate(harnessGen(conv2, nil), harnessCSSInput(&fakeRunExecutor{}), "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSentFlags(t, res2.Transcript)
+	if sent, _ := toolResultSent(res2.Transcript, "t1"); !sent {
+		t.Fatal("Turn 1's result went out with Turn 2's request")
+	}
+	if sent, _ := toolResultSent(res2.Transcript, "s"); sent {
+		t.Fatal("the final submit result was never sent")
+	}
+}
+
+func TestRunRefusedContinuationLeavesResultsUnsent(t *testing.T) {
+	_, _, err, _ := budgetRun(t, replyCalls(getEntityCall("t1")), 400)
+	re := mustRunError(t, err)
+	assertSentFlags(t, re.Transcript)
+	if sent, found := toolResultSent(re.Transcript, "t1"); !found || sent {
+		t.Fatalf("a budget-refused Turn never sent the result: sent=%v found=%v", sent, found)
 	}
 }

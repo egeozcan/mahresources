@@ -34,7 +34,9 @@ const (
 
 // Default run limits (plan section 7).
 const (
-	DefaultTemplateMaxTurns         = 10
+	DefaultTemplateMaxTurns = 10
+	// MaxTemplateRunTurns is the hard maximum of ai_template_max_turns.
+	MaxTemplateRunTurns             = 20
 	DefaultTemplateRunDeadline      = 5 * time.Minute
 	DefaultTemplateRunTokenBudget   = 400000
 	defaultTemplateRunToolTimeout   = 10 * time.Second
@@ -63,6 +65,9 @@ type TemplateHarnessSettings struct {
 func (s TemplateHarnessSettings) withDefaults() TemplateHarnessSettings {
 	if s.MaxTurns <= 0 {
 		s.MaxTurns = DefaultTemplateMaxTurns
+	}
+	if s.MaxTurns > MaxTemplateRunTurns {
+		s.MaxTurns = MaxTemplateRunTurns
 	}
 	if s.Deadline <= 0 {
 		s.Deadline = DefaultTemplateRunDeadline

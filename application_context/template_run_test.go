@@ -45,6 +45,10 @@ func TestRunSubmitWithDoneEndsTheRun(t *testing.T) {
 	if len(exec.executed) != 0 {
 		t.Fatal("submit is handled by the loop, never the executor")
 	}
+	assertSentFlags(t, res.Transcript)
+	if res.Transcript[3].Sent {
+		t.Fatal("the last Turn's result was never sent")
+	}
 }
 
 func TestRunToolTurnThenSubmit(t *testing.T) {
@@ -203,24 +207,42 @@ func TestRunToolsAnswerInCallOrderWhateverTheFinishOrder(t *testing.T) {
 
 func TestRunSameTurnSubmitsResolveToTheLaterCall(t *testing.T) {
 	in := harnessPairInput(&fakeRunExecutor{})
-	// The first submit validates slower than the second, so it finishes last.
+	// The first validation blocks until the second has started, so the calls
+	// must validate in parallel, and the first finishes last.
+	secondStarted := make(chan struct{})
+	firstSawSecond := make(chan bool, 1)
 	in.PartialExists = func(ctx context.Context, name string) (bool, error) {
-		if name == "slow" {
-			time.Sleep(80 * time.Millisecond)
+		switch name {
+		case "first":
+			select {
+			case <-secondStarted:
+				firstSawSecond <- true
+			case <-time.After(3 * time.Second):
+				firstSawSecond <- false
+			}
+		case "second":
+			select {
+			case <-secondStarted:
+			default:
+				close(secondStarted)
+			}
 		}
 		return true, nil
 	}
 	conv := &scriptedConversation{replies: []convReply{
 		replyCalls(
-			submitCall("s1", map[string]string{"CustomHeader": `<p>[partial name="slow"]</p>`, "CustomHeaderCSS": ".one{}"}, false),
-			submitCall("s2", map[string]string{"CustomHeader": "<p>second</p>"}, true),
+			submitCall("s1", map[string]string{"CustomHeader": `<p>[partial name="first"]</p>`, "CustomHeaderCSS": ".one{}"}, false),
+			submitCall("s2", map[string]string{"CustomHeader": `<p>[partial name="second"]</p>`}, true),
 		),
 	}}
 	res, err := disclosedGenerate(harnessGen(conv, nil), in, "go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Slots["CustomHeader"] != "<p>second</p>" || res.Slots["CustomHeaderCSS"] != ".one{}" {
+	if !<-firstSawSecond {
+		t.Fatal("the second submit never started while the first was blocked: validation is serial")
+	}
+	if res.Slots["CustomHeader"] != `<p>[partial name="second"]</p>` || res.Slots["CustomHeaderCSS"] != ".one{}" {
 		t.Fatalf("slots = %+v", res.Slots)
 	}
 }

@@ -156,11 +156,13 @@ type harnessRun struct {
 	explanation string
 	// pendingRecords are instruction records not yet sent.
 	pendingRecords []TemplateTranscriptRecord
-	turn           int
-	used           int
-	plainTexts     int
-	lengthTurns    int
-	fieldNames     map[string]bool
+	// unsentResults are transcript indexes of Tool results not yet sent.
+	unsentResults []int
+	turn          int
+	used          int
+	plainTexts    int
+	lengthTurns   int
+	fieldNames    map[string]bool
 }
 
 func (g *defaultTemplateGenerator) runHarness(ctx context.Context, request templateRequest) (*TemplateGenerationResult, error) {
@@ -318,9 +320,15 @@ type stubCommit struct {
 // tentative request touches none of it.
 func (r *harnessRun) commitPending(turn int, stubs []stubCommit) {
 	for _, rec := range r.pendingRecords {
+		rec.Sent = true
 		r.record(rec)
 	}
 	r.pendingRecords = nil
+	// This request carries every Tool result so far.
+	for _, idx := range r.unsentResults {
+		r.transcript[idx].Sent = true
+	}
+	r.unsentResults = nil
 	for _, s := range stubs {
 		meta := &r.msgs[s.msg].results[s.result]
 		if meta.stub == "" {
@@ -460,7 +468,7 @@ func (r *harnessRun) recordAssistant(turn int, resp ConversationResponse, took t
 	calls := make([]ToolCall, len(resp.Calls))
 	copy(calls, resp.Calls)
 	rec := TemplateTranscriptRecord{
-		Turn: turn, Kind: TemplateTranscriptAssistant, Text: resp.Text, Bytes: len(resp.Text),
+		Turn: turn, Kind: TemplateTranscriptAssistant, Sent: true, Text: resp.Text, Bytes: len(resp.Text),
 		DurationMs: took.Milliseconds(), Replay: append(json.RawMessage(nil), resp.Replay...),
 		Usage: &TemplateTranscriptUsage{
 			Prompt: resp.Usage.Prompt, Completion: resp.Usage.Completion, Reasoning: resp.Usage.Reasoning,
@@ -560,6 +568,7 @@ func (r *harnessRun) handleReply(turn int, final bool, resp ConversationResponse
 			Turn: turn, Kind: TemplateTranscriptToolResult, Text: o.text, CallID: call.ID, IsError: o.isError,
 			Bytes: len(o.text), DurationMs: o.took.Milliseconds(),
 		})
+		r.unsentResults = append(r.unsentResults, idx)
 		metas[i] = runResultMeta{label: stubLabel(call), turn: turn, transcriptIdx: idx}
 		if r.sink != nil {
 			r.sink.ToolFinished(TemplateToolEvent{

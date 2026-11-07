@@ -155,13 +155,18 @@ const (
 // transmitted form (after cap and fence). Replay is the provider payload resent
 // verbatim, shown collapsed.
 type TemplateTranscriptRecord struct {
-	Turn        int                      `json:"turn"`
-	Kind        string                   `json:"kind"`
-	Text        string                   `json:"text,omitempty"`
-	Calls       []TemplateTranscriptCall `json:"calls,omitempty"`
-	CallID      string                   `json:"callId,omitempty"`
-	IsError     bool                     `json:"isError,omitempty"`
-	Bytes       int                      `json:"bytes,omitempty"`
+	Turn    int                      `json:"turn"`
+	Kind    string                   `json:"kind"`
+	Text    string                   `json:"text,omitempty"`
+	Calls   []TemplateTranscriptCall `json:"calls,omitempty"`
+	CallID  string                   `json:"callId,omitempty"`
+	IsError bool                     `json:"isError,omitempty"`
+	Bytes   int                      `json:"bytes,omitempty"`
+	// Sent is true when the record's text reached the provider. Every kind is
+	// sent by construction except a Tool result, which goes out with the next
+	// request: results of the last Turn, or of a Turn the run then refused to
+	// continue, stay false so the UI can label them "not sent to the provider".
+	Sent        bool                     `json:"sent"`
 	StubbedFrom int                      `json:"stubbedFrom,omitempty"`
 	DurationMs  int64                    `json:"durationMs,omitempty"`
 	Usage       *TemplateTranscriptUsage `json:"usage,omitempty"`
