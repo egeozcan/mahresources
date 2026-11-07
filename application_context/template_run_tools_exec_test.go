@@ -1,9 +1,13 @@
 package application_context
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"mahresources/shortcodes"
 )
 
 func TestDecodeToolArguments_Validation(t *testing.T) {
@@ -110,5 +114,72 @@ func TestToolResultCapCoversEveryCataloguedTool(t *testing.T) {
 	}
 	if ToolResultCap(ToolGetEntity) != ToolCapGetEntityBytes {
 		t.Error("get_entity cap mismatch")
+	}
+}
+
+func TestValidateTemplateRunContent_PartialLookups(t *testing.T) {
+	exists := map[string]bool{"known": true}
+	v := TemplateRunValidation{Known: shortcodes.KnownFromBuiltins(), PartialExists: func(ctx context.Context, name string) (bool, error) {
+		if name == "boom" {
+			return false, errors.New("db down")
+		}
+		return exists[name], nil
+	}}
+	messages := func(issues []shortcodes.LintIssue) string {
+		var parts []string
+		for _, i := range issues {
+			parts = append(parts, i.Severity+":"+i.Message)
+		}
+		return strings.Join(parts, "|")
+	}
+
+	got := messages(ValidateTemplateRunContent(context.Background(), v, "CustomHeader", `[partial name="known"][partial name="gone"]`))
+	if !strings.Contains(got, "gone") || strings.Contains(got, "known") {
+		t.Errorf("missing partial: %s", got)
+	}
+	// A lookup that fails counts as existing, and says it could not check.
+	got = messages(ValidateTemplateRunContent(context.Background(), v, "CustomHeader", `[partial name="boom"]`))
+	if !strings.Contains(got, "could not check that partial boom exists") || strings.Contains(got, "error:") {
+		t.Errorf("failed lookup: %s", got)
+	}
+	// A cancelled lookup is the same, never "missing".
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	got = messages(ValidateTemplateRunContent(cancelled, v, "CustomHeader", `[partial name="known"]`))
+	if !strings.Contains(got, "could not check that partial known exists") {
+		t.Errorf("cancelled lookup: %s", got)
+	}
+}
+
+func TestValidateTemplateRunContent_SourceLimitsComeBeforeParsing(t *testing.T) {
+	v := TemplateRunValidation{}
+	over := strings.Repeat("a", MaxTemplateGeneratedContentLength+1)
+	issues := ValidateTemplateRunContent(context.Background(), v, "CustomHeader", over)
+	if len(issues) != 1 || issues[0].Severity != shortcodes.SeverityError || !strings.Contains(issues[0].Message, "bytes") {
+		t.Fatalf("oversize: %+v", issues)
+	}
+	tokens := strings.Repeat("[x]", MaxTemplateToolShortcodeTokens+1)
+	issues = ValidateTemplateRunContent(context.Background(), v, "CustomHeader", tokens)
+	if len(issues) != 1 || !strings.Contains(issues[0].Message, "shortcode") {
+		t.Fatalf("token limit: %+v", issues)
+	}
+	if err := CheckTemplateToolSource("fine"); err != nil {
+		t.Errorf("small source refused: %v", err)
+	}
+}
+
+func TestValidateTemplateRunContent_MetaSchemaAndCSS(t *testing.T) {
+	v := TemplateRunValidation{}
+	issues := ValidateTemplateRunContent(context.Background(), v, "MetaSchema", `{not json`)
+	if len(issues) != 1 || !strings.Contains(issues[0].Message, "not valid JSON") {
+		t.Fatalf("schema: %+v", issues)
+	}
+	if issues := ValidateTemplateRunContent(context.Background(), v, "MetaSchema", `{"type":"object","properties":{}}`); len(issues) != 0 {
+		t.Fatalf("valid schema: %+v", issues)
+	}
+	// A stylesheet is linted in CSS mode: a shortcode in a rule value is fine,
+	// and an empty stylesheet is no issue.
+	if issues := ValidateTemplateRunContent(context.Background(), v, "CustomCSS", ``); len(issues) != 0 {
+		t.Fatalf("empty css: %+v", issues)
 	}
 }

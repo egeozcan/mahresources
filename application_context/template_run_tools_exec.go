@@ -2,12 +2,15 @@ package application_context
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"mahresources/shortcodes"
 )
 
 // The DB-free half of the Tool executor (plan section 2): argument validation
@@ -457,4 +460,88 @@ func MarshalToolJSON(v any) string {
 		return `{"error":"could not encode the result"}`
 	}
 	return strings.TrimRight(buf.String(), "\n")
+}
+
+// MaxTemplateToolShortcodeTokens bounds the shortcode tokens in one lint,
+// preview or submit source, checked before any parsing.
+const MaxTemplateToolShortcodeTokens = 2000
+
+// CheckTemplateToolSource refuses a source over the byte or shortcode-token
+// limit before it is parsed. The token count is a count of "[" bytes, which
+// over-counts prose but never under-counts a shortcode, and costs one pass.
+func CheckTemplateToolSource(src string) error {
+	if len(src) > MaxTemplateGeneratedContentLength {
+		return fmt.Errorf("content is %d bytes, the limit is %d", len(src), MaxTemplateGeneratedContentLength)
+	}
+	if strings.Count(src, "[") > MaxTemplateToolShortcodeTokens {
+		return fmt.Errorf("content has more than %d shortcode tokens", MaxTemplateToolShortcodeTokens)
+	}
+	return nil
+}
+
+// TemplateRunValidation is the harness validator's grounding: the same options
+// validateTemplateContent takes, plus a partial-existence check that sees the
+// caller's context. lint, submit and the final Draft all validate through
+// ValidateTemplateRunContent, so one input gives one verdict.
+type TemplateRunValidation struct {
+	Known                 shortcodes.KnownShortcodes
+	ValidateMRQL          func(query string, opts shortcodes.MRQLCheckOptions) error
+	DisplayTypes          []string
+	DisplayTypesTruncated bool
+	PartialExists         func(ctx context.Context, name string) (bool, error)
+}
+
+// ValidateTemplateRunContent lints one field's content. A field ending in CSS
+// is a stylesheet; MetaSchema is JSON Schema; anything else is markup. A partial
+// lookup that fails or is cancelled counts as existing, with a warning that it
+// could not be checked, so a cancelled check never reports a real partial as
+// missing.
+func ValidateTemplateRunContent(ctx context.Context, v TemplateRunValidation, field, content string) []shortcodes.LintIssue {
+	if err := CheckTemplateToolSource(content); err != nil {
+		return []shortcodes.LintIssue{{Severity: shortcodes.SeverityError, Message: err.Error()}}
+	}
+	if field == "MetaSchema" {
+		return validateMetaSchemaJSON(content, shortcodes.MetaSchemaLintOptions{
+			DisplayTypes:          v.DisplayTypes,
+			DisplayTypesTruncated: v.DisplayTypesTruncated,
+		})
+	}
+	var unchecked []string
+	seen := map[string]bool{}
+	opts := shortcodes.LintOptions{
+		Known:        v.Known,
+		ValidateMRQL: v.ValidateMRQL,
+		CSSMode:      strings.HasSuffix(field, "CSS"),
+	}
+	if v.PartialExists != nil {
+		opts.PartialExists = func(name string) bool {
+			if err := ctx.Err(); err != nil {
+				return noteUnchecked(&unchecked, seen, name)
+			}
+			ok, err := v.PartialExists(ctx, name)
+			if err != nil {
+				return noteUnchecked(&unchecked, seen, name)
+			}
+			return ok
+		}
+	}
+	issues := shortcodes.Lint(content, opts)
+	for _, name := range unchecked {
+		issues = append(issues, shortcodes.LintIssue{
+			Severity: shortcodes.SeverityWarning,
+			Message:  fmt.Sprintf("could not check that partial %s exists", name),
+		})
+	}
+	if issues == nil {
+		return []shortcodes.LintIssue{}
+	}
+	return issues
+}
+
+func noteUnchecked(list *[]string, seen map[string]bool, name string) bool {
+	if !seen[name] {
+		seen[name] = true
+		*list = append(*list, name)
+	}
+	return true
 }
