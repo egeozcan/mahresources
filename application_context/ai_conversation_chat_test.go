@@ -324,3 +324,22 @@ func TestChatConversationOpenRouterOptions(t *testing.T) {
 		})
 	}
 }
+
+func TestChatConversationRequiresATerminalFinish(t *testing.T) {
+	for name, reply := range map[string]string{
+		"absent finish": `{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`,
+		"null finish":   `{"choices":[{"finish_reason":null,"message":{"role":"assistant","content":"hi"}}]}`,
+		"empty finish":  `{"choices":[{"finish_reason":"","message":{"role":"assistant","content":"hi"}}]}`,
+		"empty object":  `{}`,
+		"null body":     `null`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := newConversationRecorder(fixedReply(reply))
+			_, err := converse(t, "deepseek", "m", rec.client(), oneTurn())
+			if err == nil {
+				t.Fatal("accepted a reply with no terminal finish")
+			}
+			wantProviderError(t, err, GenerationErrorClassDecode, 0)
+		})
+	}
+}

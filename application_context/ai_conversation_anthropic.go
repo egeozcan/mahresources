@@ -141,7 +141,9 @@ func (p *generationConversationProvider) converseAnthropic(ctx context.Context, 
 			classifyArguments(&call, false)
 			// The input arrives parsed, so a cut cannot be told from the text:
 			// at the output limit the cut is always in the last block.
-			if finish == "length" && i == len(blocks)-1 {
+			// Only an object can be a truncated object; valid JSON of another
+			// type stays Malformed.
+			if finish == "length" && i == len(blocks)-1 && !(call.Malformed && json.Valid([]byte(call.Arguments))) {
 				call.Incomplete, call.Malformed = true, false
 			}
 			calls = append(calls, call)

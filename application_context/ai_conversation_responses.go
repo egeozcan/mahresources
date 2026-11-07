@@ -96,7 +96,7 @@ func (p *generationConversationProvider) converseResponses(ctx context.Context, 
 	}
 	finish := ""
 	switch decoded.Status {
-	case "", "completed":
+	case "completed":
 	case "incomplete":
 		if decoded.IncompleteDetails == nil || decoded.IncompleteDetails.Reason != "max_output_tokens" {
 			return ConversationResponse{}, decodeFailure()
@@ -106,10 +106,10 @@ func (p *generationConversationProvider) converseResponses(ctx context.Context, 
 		return ConversationResponse{}, decodeFailure()
 	}
 	var items []json.RawMessage
-	if nonEmptyRaw(decoded.Output) {
-		if err := json.Unmarshal(decoded.Output, &items); err != nil {
-			return ConversationResponse{}, decodeFailure()
-		}
+	// A reply without an output array is not a response at all (HTTP 200 with
+	// {} or null), never an empty completed one.
+	if !nonEmptyRaw(decoded.Output) || json.Unmarshal(decoded.Output, &items) != nil {
+		return ConversationResponse{}, decodeFailure()
 	}
 	var text strings.Builder
 	var calls []ToolCall
@@ -158,9 +158,6 @@ func (p *generationConversationProvider) converseResponses(ctx context.Context, 
 		}
 	}
 	resp := ConversationResponse{Text: text.String(), Calls: calls, Finish: finish, Replay: append(json.RawMessage(nil), decoded.Output...)}
-	if !nonEmptyRaw(resp.Replay) {
-		resp.Replay = json.RawMessage("[]")
-	}
 	if u := decoded.Usage; u != nil {
 		resp.Usage = ConversationUsage{Prompt: u.InputTokens, Completion: u.OutputTokens}
 		if u.InputTokensDetails != nil {

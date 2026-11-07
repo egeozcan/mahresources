@@ -264,3 +264,28 @@ func TestResponsesConversationTextAndUsageNilWhenAbsent(t *testing.T) {
 		}
 	}
 }
+
+func TestResponsesConversationRequiresStatusAndOutputArray(t *testing.T) {
+	for name, reply := range map[string]string{
+		"empty object":   `{}`,
+		"null body":      `null`,
+		"absent status":  `{"output":[]}`,
+		"null status":    `{"status":null,"output":[]}`,
+		"absent output":  `{"status":"completed"}`,
+		"null output":    `{"status":"completed","output":null}`,
+		"object output":  `{"status":"completed","output":{}}`,
+		"unknown status": `{"status":"queued","output":[]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := responsesTurn(t, reply, oneTurn())
+			if err == nil {
+				t.Fatal("accepted a reply that is not a completed or incomplete response")
+			}
+			wantProviderError(t, err, GenerationErrorClassDecode, 0)
+		})
+	}
+	// An empty output array is a valid (if useless) completed reply.
+	if _, resp, err := responsesTurn(t, `{"status":"completed","output":[]}`, oneTurn()); err != nil || resp.Finish != "stop" {
+		t.Fatalf("resp = %+v err = %v", resp, err)
+	}
+}

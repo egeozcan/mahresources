@@ -3,6 +3,7 @@ package application_context
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -13,6 +14,25 @@ const (
 	toolsCatalogueURL = "https://openrouter.ai/api/v1/models?supported_parameters=tools"
 	fullCatalogueURL  = "https://openrouter.ai/api/v1/models"
 )
+
+// fullCatalogueReply lists every id with its supported_parameters; an id ending
+// in "no-tools" lacks "tools".
+func fullCatalogueReply(ids ...string) string {
+	var b strings.Builder
+	b.WriteString(`{"data":[`)
+	for i, id := range ids {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		params := `["temperature","tools"]`
+		if strings.HasSuffix(id, "no-tools") {
+			params = `["temperature"]`
+		}
+		b.WriteString(`{"id":"` + id + `","supported_parameters":` + params + `}`)
+	}
+	b.WriteString(`]}`)
+	return b.String()
+}
 
 func catalogueReply(ids ...string) string {
 	var b strings.Builder
@@ -38,7 +58,7 @@ func catalogueFixture(t *testing.T, withTools, all []string) *conversationRecord
 		case toolsCatalogueURL:
 			return 200, catalogueReply(withTools...)
 		case fullCatalogueURL:
-			return 200, catalogueReply(all...)
+			return 200, fullCatalogueReply(all...)
 		}
 		return 404, `{}`
 	})
@@ -218,6 +238,116 @@ func TestConversationTransportMetadata(t *testing.T) {
 		}
 		if p.ProviderName() != tc.provider || strings.Contains(tr.Authorization, "k)") {
 			t.Errorf("%s: name/authorization", tc.provider)
+		}
+	}
+}
+
+func TestSupportsToolsStaleFilteredCacheDoesNotRefuseANewToolModel(t *testing.T) {
+	resetOpenRouterCatalogue()
+	t.Cleanup(resetOpenRouterCatalogue)
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	old := openRouterCatalogueNow
+	openRouterCatalogueNow = func() time.Time { return now }
+	t.Cleanup(func() { openRouterCatalogueNow = old })
+	full := []string{"a/b", "acme/no-tools"}
+	rec := newConversationRecorder(func(_ int, url string, _ []byte) (int, string) {
+		if url == toolsCatalogueURL {
+			return 200, catalogueReply("a/b")
+		}
+		return 200, fullCatalogueReply(full...)
+	})
+	p := NewGenerationConversationProvider("openrouter", "k", "m", rec.client())
+	if ok, err := supports(p, "a/b"); !ok || err != nil {
+		t.Fatalf("warm: %v %v", ok, err)
+	}
+	// The full list is fetched later than the filtered one, and by then lists a
+	// model the cached filtered list has never heard of.
+	now = now.Add(time.Minute)
+	full = append(full, "new/tool-model")
+	if ok, err := supports(p, "new/tool-model"); !ok || err != nil {
+		t.Fatalf("new tool-capable model was refused or unknown: %v %v", ok, err)
+	}
+	if ok, err := supports(p, "acme/no-tools"); ok || err != nil {
+		t.Fatalf("a listed model without tools must still be refused: %v %v", ok, err)
+	}
+}
+
+func TestSupportsToolsFullRecordWithoutParametersIsUnknown(t *testing.T) {
+	resetOpenRouterCatalogue()
+	t.Cleanup(resetOpenRouterCatalogue)
+	rec := newConversationRecorder(func(_ int, url string, _ []byte) (int, string) {
+		if url == toolsCatalogueURL {
+			return 200, catalogueReply("a/b")
+		}
+		return 200, catalogueReply("x/y")
+	})
+	ok, err := supports(NewGenerationConversationProvider("openrouter", "k", "m", rec.client()), "x/y")
+	if !ok || err == nil {
+		t.Fatalf("a record that does not say what it supports must not refuse: %v %v", ok, err)
+	}
+}
+
+func TestSupportsToolsOneTimeoutCoversBothFetches(t *testing.T) {
+	resetOpenRouterCatalogue()
+	t.Cleanup(resetOpenRouterCatalogue)
+	oldTimeout := openRouterCatalogueTimeout
+	openRouterCatalogueTimeout = 400 * time.Millisecond
+	t.Cleanup(func() { openRouterCatalogueTimeout = oldTimeout })
+	client := &http.Client{Transport: generationRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() == toolsCatalogueURL {
+			select {
+			case <-time.After(300 * time.Millisecond):
+				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(catalogueReply("a/b")))}, nil
+			case <-r.Context().Done():
+				return nil, r.Context().Err()
+			}
+		}
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})}
+	start := time.Now()
+	ok, err := supports(NewGenerationConversationProvider("openrouter", "k", "m", client), "other/model")
+	elapsed := time.Since(start)
+	if !ok || err == nil {
+		t.Fatalf("got %v %v", ok, err)
+	}
+	if elapsed > 650*time.Millisecond {
+		t.Fatalf("lookup took %v: the second fetch got a fresh 400ms window", elapsed)
+	}
+}
+
+func TestSupportsToolsInvalidEnvelopesAreNotCachedAndNeverRefuse(t *testing.T) {
+	for _, bad := range []string{`{}`, `null`, `{"data":null}`, `{"data":{}}`, `{"error":{"message":"secret"}}`, `{"data":[],"error":{"message":"secret"}}`} {
+		for _, which := range []string{"filtered", "full"} {
+			t.Run(which+" "+bad, func(t *testing.T) {
+				resetOpenRouterCatalogue()
+				t.Cleanup(resetOpenRouterCatalogue)
+				broken := true
+				rec := newConversationRecorder(func(_ int, url string, _ []byte) (int, string) {
+					switch {
+					case url == toolsCatalogueURL && which == "filtered" && broken:
+						return 200, bad
+					case url == toolsCatalogueURL:
+						return 200, catalogueReply("a/b")
+					case which == "full" && broken:
+						return 200, bad
+					}
+					return 200, fullCatalogueReply("a/b", "acme/no-tools")
+				})
+				p := NewGenerationConversationProvider("openrouter", "k", "m", rec.client())
+				// For "full", the filtered list is valid and lacks the model, so the
+				// full list decides; a broken one must not read as "not listed".
+				ok, err := supports(p, "acme/no-tools")
+				if !ok || err == nil || strings.Contains(err.Error(), "secret") {
+					t.Fatalf("broken %s catalogue: %v %v", which, ok, err)
+				}
+				wantProviderError(t, err, GenerationErrorClassDecode, 0)
+				broken = false
+				ok, err = supports(p, "acme/no-tools")
+				if ok || err != nil {
+					t.Fatalf("the broken reply was cached: %v %v", ok, err)
+				}
+			})
 		}
 	}
 }

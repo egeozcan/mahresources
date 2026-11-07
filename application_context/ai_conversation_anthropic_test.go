@@ -256,3 +256,16 @@ func TestAnthropicConversationUsageNilWhenAbsent(t *testing.T) {
 		t.Fatalf("input only: prompt %v hit %v miss %v", *u.Prompt, u.CacheHit, *u.CacheMiss)
 	}
 }
+
+func TestAnthropicConversationLengthKeepsMalformedForValidNonObjects(t *testing.T) {
+	for _, input := range []string{`[1,2]`, `"text"`, `42`} {
+		content := `[{"type":"tool_use","id":"toolu_a","name":"get_entity","input":` + input + `}]`
+		_, resp, err := anthropicTurn(t, anthropicReply("max_tokens", content, ""), seedOnly())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !resp.Calls[0].Malformed || resp.Calls[0].Incomplete {
+			t.Fatalf("input %s: %+v (valid JSON that is not an object cannot be a truncated object)", input, resp.Calls[0])
+		}
+	}
+}

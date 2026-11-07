@@ -160,7 +160,7 @@ func TestConversationReplayIsByteIdenticalOnEveryAdapter(t *testing.T) {
 				{Role: "assistant", Replay: json.RawMessage(tc.replay)},
 				{Role: "user", Text: "next"},
 			}}
-			// The reply is irrelevant here (it will not decode); only the request matters.
+			// The reply {} is rejected as a decode error; only the request matters here.
 			_, _ = converse(t, provider, "m", rec.client(), req)
 			want := tc.replay
 			if provider == "openai" {

@@ -135,7 +135,7 @@ func (p *generationConversationProvider) converseChat(ctx context.Context, req C
 	}
 	finish := ""
 	switch choice.FinishReason {
-	case "", "stop":
+	case "stop":
 		finish = "stop"
 	case "length":
 		finish = "length"

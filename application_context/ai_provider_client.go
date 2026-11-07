@@ -71,7 +71,7 @@ func (p *generationMRQLDraftProvider) GenerateDraft(ctx context.Context, prompt 
 		return providerMRQLDraft{}, err
 	}
 	if resp.FinishReason != "stop" {
-		return providerMRQLDraft{}, errors.New("provider did not finish cleanly")
+		return providerMRQLDraft{}, newGenerationFailure("provider did not finish cleanly", GenerationErrorClassDecode, 0)
 	}
 	// Drafts are one object with the documented keys, not markdown, extra
 	// objects or a provider's free-form explanation of an error.
@@ -79,10 +79,10 @@ func (p *generationMRQLDraftProvider) GenerateDraft(ctx context.Context, prompt 
 	decoder := json.NewDecoder(strings.NewReader(resp.Content))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&draft); err != nil || draft == nil {
-		return providerMRQLDraft{}, errors.New("provider returned invalid draft JSON")
+		return providerMRQLDraft{}, newGenerationFailure("provider returned invalid draft JSON", GenerationErrorClassDecode, 0)
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
-		return providerMRQLDraft{}, errors.New("provider returned invalid draft JSON")
+		return providerMRQLDraft{}, newGenerationFailure("provider returned invalid draft JSON", GenerationErrorClassDecode, 0)
 	}
 	return *draft, nil
 }
@@ -181,14 +181,14 @@ func (p *generationProviderClient) generate(ctx context.Context, req TemplateDra
 		return TemplateDraftResponse{}, err
 	}
 	if len(decoded.Error) > 0 && string(decoded.Error) != "null" {
-		return TemplateDraftResponse{}, errors.New("provider returned an error")
+		return TemplateDraftResponse{}, newGenerationFailure("provider returned an error", GenerationErrorClassDecode, 0)
 	}
 	if len(decoded.Choices) == 0 {
-		return TemplateDraftResponse{}, errors.New("provider returned no choices")
+		return TemplateDraftResponse{}, newGenerationFailure("provider returned no choices", GenerationErrorClassDecode, 0)
 	}
 	choice := decoded.Choices[0]
 	if choice.Message.Refusal != "" {
-		return TemplateDraftResponse{}, errors.New("provider refused the request")
+		return TemplateDraftResponse{}, newGenerationFailure("provider refused the request", GenerationErrorClassRefusal, 0)
 	}
 	content, err := generationChatContent(choice.Message.Content)
 	if err != nil {
@@ -220,12 +220,12 @@ func generationChatContent(raw json.RawMessage) (string, error) {
 		Text string `json:"text"`
 	}
 	if err := json.Unmarshal(raw, &parts); err != nil {
-		return "", errors.New("provider returned invalid message content")
+		return "", newGenerationFailure("provider returned invalid message content", GenerationErrorClassDecode, 0)
 	}
 	var out strings.Builder
 	for _, part := range parts {
 		if part.Type != "text" {
-			return "", errors.New("provider returned non-text content")
+			return "", newGenerationFailure("provider returned non-text content", GenerationErrorClassDecode, 0)
 		}
 		out.WriteString(part.Text)
 	}
@@ -260,7 +260,7 @@ func (p *generationProviderClient) generateAnthropic(ctx context.Context, req Te
 		return TemplateDraftResponse{}, err
 	}
 	if decoded.StopReason == "refusal" || decoded.StopDetails.Type == "refusal" {
-		return TemplateDraftResponse{}, errors.New("provider refused the request")
+		return TemplateDraftResponse{}, newGenerationFailure("provider refused the request", GenerationErrorClassRefusal, 0)
 	}
 	finish := ""
 	switch decoded.StopReason {
@@ -269,7 +269,7 @@ func (p *generationProviderClient) generateAnthropic(ctx context.Context, req Te
 	case "max_tokens", "model_context_window_exceeded":
 		finish = "length"
 	default:
-		return TemplateDraftResponse{}, errors.New("provider did not finish cleanly")
+		return TemplateDraftResponse{}, newGenerationFailure("provider did not finish cleanly", GenerationErrorClassDecode, 0)
 	}
 	var content strings.Builder
 	for _, block := range decoded.Content {
@@ -279,7 +279,7 @@ func (p *generationProviderClient) generateAnthropic(ctx context.Context, req Te
 		case "thinking", "redacted_thinking":
 			// Internal reasoning is not part of the JSON draft.
 		default:
-			return TemplateDraftResponse{}, errors.New("provider returned non-text content")
+			return TemplateDraftResponse{}, newGenerationFailure("provider returned non-text content", GenerationErrorClassDecode, 0)
 		}
 	}
 	u := decoded.Usage
@@ -295,11 +295,11 @@ func generationDraftResponse(content, finish string, usage TemplateTokenUsage) (
 		finish = "stop"
 	case "length":
 	default:
-		return TemplateDraftResponse{}, errors.New("provider did not finish cleanly")
+		return TemplateDraftResponse{}, newGenerationFailure("provider did not finish cleanly", GenerationErrorClassDecode, 0)
 	}
 	content = strings.TrimSpace(content)
 	if content == "" && finish != "length" {
-		return TemplateDraftResponse{}, errors.New("provider returned empty content")
+		return TemplateDraftResponse{}, newGenerationFailure("provider returned empty content", GenerationErrorClassDecode, 0)
 	}
 	return TemplateDraftResponse{Content: content, FinishReason: finish, Usage: usage}, nil
 }

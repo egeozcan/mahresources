@@ -386,3 +386,32 @@ func TestGenerationProviderContentBlocks(t *testing.T) {
 		})
 	}
 }
+
+// Classic failures are typed too, with the same sanitized messages.
+func TestGenerationClassicFailuresCarryTheirClass(t *testing.T) {
+	type tc struct{ name, provider, body, message, class string }
+	cases := []tc{
+		{"chat refusal", "deepseek", `{"choices":[{"message":{"content":"{}","refusal":"x"},"finish_reason":"stop"}]}`, "provider refused the request", GenerationErrorClassRefusal},
+		{"chat error object", "deepseek", `{"error":{"message":"x"}}`, "provider returned an error", GenerationErrorClassDecode},
+		{"chat no choices", "openrouter", `{"choices":[]}`, "provider returned no choices", GenerationErrorClassDecode},
+		{"chat bad content", "openai", `{"choices":[{"message":{"content":42},"finish_reason":"stop"}]}`, "provider returned invalid message content", GenerationErrorClassDecode},
+		{"chat non-text part", "openai", `{"choices":[{"message":{"content":[{"type":"image","text":""}]},"finish_reason":"stop"}]}`, "provider returned non-text content", GenerationErrorClassDecode},
+		{"chat bad finish", "deepseek", `{"choices":[{"message":{"content":"{}"},"finish_reason":"content_filter"}]}`, "provider did not finish cleanly", GenerationErrorClassDecode},
+		{"chat empty content", "deepseek", `{"choices":[{"message":{"content":""},"finish_reason":"stop"}]}`, "provider returned empty content", GenerationErrorClassDecode},
+		{"anthropic refusal", "anthropic", `{"content":[],"stop_reason":"refusal"}`, "provider refused the request", GenerationErrorClassRefusal},
+		{"anthropic bad stop", "anthropic", `{"content":[],"stop_reason":"pause_turn"}`, "provider did not finish cleanly", GenerationErrorClassDecode},
+		{"anthropic non-text", "anthropic", `{"content":[{"type":"tool_use"}],"stop_reason":"end_turn"}`, "provider returned non-text content", GenerationErrorClassDecode},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			client := &http.Client{Transport: generationRoundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(c.body))}, nil
+			})}
+			_, err := NewGenerationTemplateDraftProvider(c.provider, "k", "m", client).GenerateDraft(context.Background(), TemplateDraftRequest{})
+			if err == nil || err.Error() != c.message {
+				t.Fatalf("message = %v, want %q", err, c.message)
+			}
+			wantProviderError(t, err, c.class, 0)
+		})
+	}
+}
