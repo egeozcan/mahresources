@@ -562,3 +562,39 @@ func TestHarnessDisconnectCancelsABlockedToolRead(t *testing.T) {
 		t.Fatalf("the provider was called again after the client left: %d", conv.calls.Load())
 	}
 }
+
+// An omitted-content lint of MetaSchema before any submission checks the
+// editor's current schema (the request's content), not the saved one.
+func TestHarnessLintWithoutContentReadsTheCurrentMetaSchema(t *testing.T) {
+	tc := SetupTestEnv(t)
+	cat := &models.Category{Name: "Typed", MetaSchema: `{"type":"object","properties":{"a":{"type":"string"}}}`}
+	if err := tc.DB.Create(cat).Error; err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var lintResult string
+	conv := &fakeConversation{step: func(_ context.Context, n int, req application_context.ConversationRequest) (application_context.ConversationResponse, error) {
+		if n == 1 {
+			return toolReply(apiToolCall("l1", application_context.ToolLint, map[string]any{"field": "MetaSchema"})), nil
+		}
+		mu.Lock()
+		for _, m := range req.Messages {
+			for _, r := range m.Results {
+				lintResult = r.Text
+			}
+		}
+		mu.Unlock()
+		return toolReply(apiSubmit("s1", map[string]string{"MetaSchema": `{"type":"object","properties":{}}`}, true)), nil
+	}}
+	installHarness(tc, conv, 5)
+	body := map[string]any{"target": "metaschema", "prompt": "describe it", "categoryId": cat.ID, "content": `{"type":"object","properties":`}
+	hash := hashOf(t, tc, auth.SystemPrincipal(), body)
+	if rr := callGenerate(tc, nil, auth.SystemPrincipal(), withHash(body, hash), nil); rr.Code != http.StatusOK {
+		t.Fatalf("%d %s", rr.Code, rr.Body.String())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(lintResult, `"error"`) {
+		t.Fatalf("lint without content should have flagged the editor's truncated schema, got: %s", lintResult)
+	}
+}

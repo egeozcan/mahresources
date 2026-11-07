@@ -134,6 +134,11 @@ func (p harnessPreparation) editorValues(in application_context.TemplateGenerati
 	}
 	values["MetaSchema"] = p.metaSchema
 	values["SectionConfig"] = p.sectionConfig
+	// A MetaSchema run's current content is the schema in the editor, the value
+	// the Seed shows; an explicit empty one stays empty.
+	if in.Target == application_context.TemplateTargetMetaSchema {
+		values["MetaSchema"] = in.CurrentContent
+	}
 	return values
 }
 
