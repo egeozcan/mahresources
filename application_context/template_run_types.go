@@ -33,9 +33,6 @@ const (
 // newly scoped since it started. No Draft or transcript is released.
 var ErrTemplateRunAccessChanged = errors.New("your access changed during the run, so it was stopped")
 
-// errTemplateRunNotImplemented is returned by Phase 0 stubs until the lanes land.
-var errTemplateRunNotImplemented = errors.New("template generation runs are not implemented yet")
-
 // TemplateRunEnv is what a harness run needs from the request. The handler
 // builds it; TemplateGenerationInput carries it as Run (nil for classic).
 type TemplateRunEnv struct {
