@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"regexp"
 	"sync"
 )
 
@@ -63,6 +64,8 @@ type renderMeter struct {
 	parsed int64
 	steps  uint32
 	err    error
+
+	regexes map[string]*regexp.Regexp // compiled matches= patterns, by source
 }
 
 func meterFrom(ctx context.Context) *renderMeter {
@@ -209,4 +212,52 @@ func ProcessChecked(reqCtx context.Context, input string, ctx MetaShortcodeConte
 		return "", err
 	}
 	return out, nil
+}
+
+// admitParsed reports whether n more bytes of source would fit the parsed-source
+// budget, without charging them: the caller is about to hand a built string to
+// processWithDepth, which does the charging. Used to refuse an expansion before
+// it is built.
+func (m *renderMeter) admitParsed(n int64) bool {
+	if m == nil {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.checkCtxLocked()
+	if m.err != nil {
+		return false
+	}
+	if n < 0 || n > math.MaxInt64-m.parsed {
+		m.failLocked(fmt.Errorf("%w: expanded size overflow", ErrRenderBudgetExceeded))
+		return false
+	}
+	if lim := int64(m.budget.ParsedSourceBytes); lim > 0 && m.parsed+n > lim {
+		m.failLocked(fmt.Errorf("%w: expansion of %d bytes exceeds the parsed source budget of %d", ErrRenderBudgetExceeded, n, lim))
+		return false
+	}
+	return true
+}
+
+// QueryUnavailableError is ErrQueryUnavailable carrying the static check
+// verdict for the query the executor declined to run, so the inert comment a
+// handler renders tells the reader what the query would have done.
+type QueryUnavailableError struct{ Verdict string }
+
+func (e *QueryUnavailableError) Error() string { return ErrQueryUnavailable.Error() }
+func (e *QueryUnavailableError) Unwrap() error { return ErrQueryUnavailable }
+
+// NewQueryUnavailable builds the error an executor returns when MRQL may not
+// run in this render. verdict is a short static-check summary (may be empty).
+func NewQueryUnavailable(verdict string) error { return &QueryUnavailableError{Verdict: verdict} }
+
+// unavailableComment renders the inert comment for an unavailable query. It
+// never reads as "no match": handlers return it in place of the whole shortcode.
+func unavailableComment(err error) string {
+	msg := ErrQueryUnavailable.Error()
+	var ue *QueryUnavailableError
+	if errors.As(err, &ue) && ue.Verdict != "" {
+		msg += ": " + ue.Verdict
+	}
+	return shortcodeComment(msg)
 }

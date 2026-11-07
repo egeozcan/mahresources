@@ -172,7 +172,7 @@ type ProcessResult struct {
 func ProcessWithDiagnostics(reqCtx context.Context, input string, ctx MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor) ProcessResult {
 	result := ProcessResult{}
 	record := func(err error) {
-		if err != nil && !errors.Is(err, ErrPluginUnavailable) && len(result.Errors) < 64 {
+		if err != nil && !errors.Is(err, ErrPluginUnavailable) && !errors.Is(err, ErrQueryUnavailable) && len(result.Errors) < 64 {
 			result.Errors = append(result.Errors, err)
 		}
 	}

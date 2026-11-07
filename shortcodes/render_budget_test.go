@@ -168,3 +168,67 @@ func TestEachLazySpliceNeverRescans(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, `[property path="Name"]`, got)
 }
+
+// errCountingCtx reports cancellation after n calls to Err and counts the
+// calls, so a test can tell whether evaluation kept going after the stop.
+type errCountingCtx struct {
+	context.Context
+	after int
+	calls int
+}
+
+func (c *errCountingCtx) Err() error {
+	c.calls++
+	if c.calls > c.after {
+		return context.Canceled
+	}
+	return nil
+}
+
+func TestConditionalStopsAfterCancellation(t *testing.T) {
+	big := strings.Repeat("v", 1<<20)
+	raw, _ := json.Marshal(map[string]any{"p": big})
+	attrs := `path="p" eq="x"`
+	for i := 2; i <= 400; i++ {
+		attrs += fmt.Sprintf(` path%d="p" contains%d="zz"`, i, i)
+	}
+	in := `[conditional ` + attrs + `]yes[/conditional]`
+
+	cc := &errCountingCtx{Context: context.Background(), after: 5}
+	bctx := WithRenderBudget(cc, RenderBudget{OutputBytes: 1 << 20, ParsedSourceBytes: 1 << 20})
+	_, err := ProcessChecked(bctx, in, MetaShortcodeContext{Meta: raw}, nil, nil)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrRenderBudgetExceeded))
+	assert.Less(t, cc.calls, 40, "evaluation must stop near the cancellation, not run all 400 conditions")
+}
+
+func TestConditionalRegexAllowance(t *testing.T) {
+	ctx := MetaShortcodeContext{Meta: json.RawMessage(`{"a":"aaa"}`)}
+	// Short source, large program: 100 counted repetitions of a{1000} are 700
+	// bytes of pattern and about 100,000 instructions once expanded.
+	in := `[conditional path="a" matches="` + strings.Repeat("a{1000}", 100) + `"]Y[else]N[/conditional]`
+	bctx := WithRenderBudget(context.Background(), RenderBudget{OutputBytes: 1 << 20, ParsedSourceBytes: 1 << 20})
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	_, err := ProcessChecked(bctx, in, ctx, nil, nil)
+	runtime.ReadMemStats(&after)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrRenderBudgetExceeded))
+	assert.Less(t, int64(after.TotalAlloc-before.TotalAlloc), int64(32<<20))
+
+	// Ordinary patterns keep their semantics, including the unparsable one.
+	got, err := ProcessChecked(bctx, `[conditional path="a" matches="^a{2,3}$"]Y[else]N[/conditional][conditional path="a" matches="("]Y[else]N[/conditional]`, ctx, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "YN", got)
+}
+
+func TestCompileBoundedRegexp(t *testing.T) {
+	_, err := compileBoundedRegexp(`a{1000}`)
+	assert.NoError(t, err)
+	_, err = compileBoundedRegexp(strings.Repeat("a{1000}", 100))
+	var tc *regexTooComplexError
+	assert.ErrorAs(t, err, &tc)
+	_, err = compileBoundedRegexp(strings.Repeat("a", 2000))
+	assert.Error(t, err)
+}

@@ -2,6 +2,7 @@ package shortcodes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html"
 	"strconv"
@@ -111,6 +112,7 @@ func RenderMRQLShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 		slots = parseMRQLSlots(sc.InnerContent)
 	}
 
+	m := meterFrom(reqCtx)
 	result, err := executor(reqCtx, query, QueryOptions{
 		SavedName:    saved,
 		Params:       params,
@@ -120,7 +122,13 @@ func RenderMRQLShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 		WantTotal:    slots.mentionsTotal(),
 	})
 	if err != nil {
+		if errors.Is(err, ErrQueryUnavailable) {
+			return unavailableComment(err)
+		}
 		return mrqlErrorHTML(err, inline)
+	}
+	if !m.alive() {
+		return ""
 	}
 
 	if result == nil {
@@ -148,6 +156,9 @@ func RenderMRQLShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 	// "No results." placeholder shows.
 	if empty && slots.HasElse {
 		elseHTML := renderMRQLSlot(reqCtx, slots.Else, result, ctx, renderer, executor, depth)
+		if m.Err() != nil {
+			return ""
+		}
 		return fmt.Sprintf(`<div class="mrql-results">%s</div>`, elseHTML)
 	}
 
@@ -155,7 +166,7 @@ func RenderMRQLShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 
 	switch result.Mode {
 	case "aggregated":
-		inner = renderAggregatedTable(result.Rows)
+		inner = renderAggregatedTable(m, result.Rows)
 	case "bucketed":
 		inner = renderBucketed(reqCtx, result.Groups, format, ctx, renderer, executor, depth)
 	default: // "flat" or empty
@@ -165,23 +176,46 @@ func RenderMRQLShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 	// Prepend each distinct category's CustomCSS (once) so inline [mrql] custom cards are styled
 	// the same way the /mrql page styles them.
 	cssPrefix := renderResultCSS(reqCtx, result, renderer, executor, depth)
+	if m.Err() != nil {
+		return ""
+	}
 
 	// Assemble: header (once) wraps the results; a default "View all →" link
 	// (link-all="true") sits after the results, before any custom footer.
 	var b strings.Builder
-	b.WriteString(`<div class="mrql-results">`)
-	b.WriteString(cssPrefix)
-	if !empty && slots.HasHeader {
-		b.WriteString(renderMRQLSlot(reqCtx, slots.Header, result, ctx, renderer, executor, depth))
+	// Each part is reserved against the output budget before it is appended;
+	// a stop leaves the part out and the render ends at the processor.
+	write := func(s string) bool {
+		if !m.chargeOut(int64(len(s))) {
+			return false
+		}
+		b.WriteString(s)
+		return true
 	}
-	b.WriteString(inner)
+	if !write(`<div class="mrql-results">`) || !write(cssPrefix) {
+		return ""
+	}
+	if !empty && slots.HasHeader {
+		if !write(renderMRQLSlot(reqCtx, slots.Header, result, ctx, renderer, executor, depth)) {
+			return ""
+		}
+	}
+	if !write(inner) {
+		return ""
+	}
 	if !empty && sc.Attrs["link-all"] == "true" {
-		b.WriteString(defaultViewAllLinkHTML(result))
+		if !write(defaultViewAllLinkHTML(result)) {
+			return ""
+		}
 	}
 	if !empty && slots.HasFooter {
-		b.WriteString(renderMRQLSlot(reqCtx, slots.Footer, result, ctx, renderer, executor, depth))
+		if !write(renderMRQLSlot(reqCtx, slots.Footer, result, ctx, renderer, executor, depth)) {
+			return ""
+		}
 	}
-	b.WriteString(`</div>`)
+	if !write(`</div>`) {
+		return ""
+	}
 	return b.String()
 }
 
@@ -189,7 +223,10 @@ func RenderMRQLShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 // it with the parent entity context (the slot renders once, around the results —
 // not per item).
 func renderMRQLSlot(reqCtx context.Context, slot string, result *QueryResult, ctx MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor, depth int) string {
-	substituted := substitutePlaceholders(slot, result)
+	substituted, ok := substitutePlaceholdersM(meterFrom(reqCtx), slot, result)
+	if !ok {
+		return ""
+	}
 	return processWithDepth(reqCtx, substituted, ctx, renderer, executor, depth+1)
 }
 
@@ -204,9 +241,13 @@ func renderResultCSS(reqCtx context.Context, result *QueryResult, renderer Plugi
 		return ""
 	}
 	seen := map[string]bool{}
+	m := meterFrom(reqCtx)
 	var b strings.Builder
 	emit := func(items []QueryResultItem) {
 		for i := range items {
+			if !m.tick() {
+				return
+			}
 			it := &items[i]
 			if it.CustomMRQLResult == "" || strings.TrimSpace(it.CustomCSS) == "" {
 				continue
@@ -230,7 +271,11 @@ func renderResultCSS(reqCtx context.Context, result *QueryResult, renderer Plugi
 				RootGroupName: it.RootGroupName, RootCategoryName: it.RootCategoryName,
 			}
 			css := processWithDepth(reqCtx, it.CustomCSS, childCtx, renderer, executor, depth+1)
-			b.WriteString(`<style data-mr-custom-css="` + key + `">` + css + `</style>`)
+			wrapped := `<style data-mr-custom-css="` + key + `">` + css + `</style>`
+			if !m.chargeOut(int64(len(wrapped))) {
+				return
+			}
+			b.WriteString(wrapped)
 		}
 	}
 	emit(result.Items)
@@ -258,11 +303,11 @@ func applyBlockTemplate(result *QueryResult, tpl string) {
 func renderFlat(reqCtx context.Context, items []QueryResultItem, format string, parentCtx MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor, depth int) string {
 	switch format {
 	case "table":
-		return renderFlatTable(items)
+		return renderFlatTable(meterFrom(reqCtx), items)
 	case "list":
-		return renderFlatList(items)
+		return renderFlatList(meterFrom(reqCtx), items)
 	case "compact":
-		return renderFlatCompact(items)
+		return renderFlatCompact(meterFrom(reqCtx), items)
 	case "custom":
 		return renderFlatWithCustom(reqCtx, items, parentCtx, renderer, executor, depth, true)
 	default:
@@ -289,19 +334,27 @@ func renderFlatWithCustom(reqCtx context.Context, items []QueryResultItem, paren
 	}
 
 	// If no custom templates and not forced, use default
+	m := meterFrom(reqCtx)
 	if !hasAnyCustom && !forceCustom {
-		return renderFlatDefault(items)
+		return renderFlatDefault(m, items)
 	}
 
 	var b strings.Builder
 	for _, item := range items {
+		if !m.tick() {
+			return ""
+		}
+		var piece string
 		if item.CustomMRQLResult != "" {
-			rendered := processWithDepth(reqCtx, item.CustomMRQLResult, contextFromItem(item, parentCtx), renderer, executor, depth+1)
-			b.WriteString(rendered)
+			piece = processWithDepth(reqCtx, item.CustomMRQLResult, contextFromItem(item, parentCtx), renderer, executor, depth+1)
 		} else {
 			// Fall back to default single-item rendering
-			b.WriteString(renderFlatDefault([]QueryResultItem{item}))
+			piece = renderFlatDefault(m, []QueryResultItem{item})
 		}
+		if !m.chargeOut(int64(len(piece))) {
+			return ""
+		}
+		b.WriteString(piece)
 	}
 	return b.String()
 }
@@ -333,13 +386,21 @@ func renderBucketed(reqCtx context.Context, groups []QueryResultGroup, format st
 		return `<p class="text-sm text-stone-500 font-mono py-2 text-center">No results.</p>`
 	}
 
+	m := meterFrom(reqCtx)
 	var b strings.Builder
 	b.WriteString(`<div class="space-y-4">`)
 	for _, group := range groups {
+		if !m.tick() {
+			return ""
+		}
 		b.WriteString(`<div class="border border-stone-200 rounded-md overflow-hidden">`)
-		b.WriteString(renderBucketHeader(group.Key, len(group.Items)))
+		b.WriteString(renderBucketHeader(m, group.Key, len(group.Items)))
 		b.WriteString(`<div class="p-3">`)
-		b.WriteString(renderFlat(reqCtx, group.Items, format, parentCtx, renderer, executor, depth))
+		inner := renderFlat(reqCtx, group.Items, format, parentCtx, renderer, executor, depth)
+		if !m.chargeOut(int64(len(inner))) {
+			return ""
+		}
+		b.WriteString(inner)
 		b.WriteString(`</div></div>`)
 	}
 	b.WriteString(`</div>`)
