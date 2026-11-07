@@ -96,6 +96,8 @@ export function newRun() {
     announcement: '',
     stopReason: '',
     transcript: [],
+    // The transcript as plain strings, built once when the run ends.
+    records: [],
     error: '',
   };
 }
@@ -163,6 +165,7 @@ const END_ANNOUNCEMENT = {
 export function finishRunState(run, status, { transcript = [], stopReason = '', error = '' } = {}) {
   run.status = status;
   run.transcript = Array.isArray(transcript) ? transcript : [];
+  run.records = run.transcript.map(recordView);
   run.stopReason = stopReason || '';
   run.error = error || '';
   run.announcement = END_ANNOUNCEMENT[status] || '';

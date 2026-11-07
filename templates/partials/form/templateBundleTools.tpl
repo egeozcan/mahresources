@@ -81,6 +81,7 @@
                 <span x-text="generating ? 'Generating…' : 'Generate'"></span>
             </button>
         </div>
+        {% include "/partials/form/templateRunProgress.tpl" with name="bundle" field_id="tb-run" %}
         {# A generated draft is held here until Apply; nothing reaches an editor before. #}
         <template x-if="pendingDraft">
             <section class="mt-3 rounded-md border border-stone-300 bg-white p-3 space-y-3" data-testid="template-bundle-review" aria-labelledby="tb-review-heading">

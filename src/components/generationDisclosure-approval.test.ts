@@ -190,3 +190,29 @@ describe('dialog ownership', () => {
     expect(await reviewDisclosure(harness('h0'), [], { owner: {} })).toBeNull();
   });
 });
+
+describe('harness details', () => {
+  it('lists the tools, the caps with the budget semantics, and the envelope', () => {
+    const store = makeStore();
+    store.disclosure = {
+      ...harness('h'),
+      envelope: 'During this run the Tools read live data.',
+      tools: [{ name: 'lint', description: 'Lint a field.', parameters: { type: 'object' } }],
+      caps: { maxTurns: 10, deadline: '5m0s', tokenBudget: 400000, callsPerTurn: 6, toolTimeout: '20s', previewTimeout: '5s', budgetNote: 'Cached prompt tokens count a quarter.', resultCaps: [{ tool: 'get_entity', bytes: 32768 }, { tool: 'list_related', bytes: 8192, entries: 50 }] },
+    };
+    expect(store.harness).toBe(true);
+    expect(store.toolRows[0]).toMatchObject({ name: 'lint', description: 'Lint a field.' });
+    expect(store.toolRows[0].parameters).toContain('"type": "object"');
+    expect(store.capLines).toContain('Turns: up to 10');
+    expect(store.capLines).toContain('Token budget: 400000. Cached prompt tokens count a quarter.');
+    expect(store.capLines).toContain('list_related result: at most 8192 bytes, 50 entries');
+    expect(store.envelope).toContain('live data');
+  });
+
+  it('a classic disclosure has no harness block', () => {
+    const store = makeStore();
+    store.disclosure = { destination: {}, sections: [] };
+    expect(store.harness).toBe(false);
+    expect(store.capLines).toEqual([]);
+  });
+});

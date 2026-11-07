@@ -103,6 +103,32 @@ export function registerGenerationDisclosureStore(Alpine) {
       return this.disclosure?.envelope || '';
     },
 
+    // Each Tool as the model sees it: name, description and parameter schema, as text.
+    get toolRows() {
+      return this.tools.map((t) => ({
+        name: t.name,
+        description: t.description || '',
+        parameters: t.parameters === undefined ? '' : JSON.stringify(t.parameters, null, 2),
+      }));
+    },
+
+    // The run's limits, one line each, with what the token budget counts.
+    get capLines() {
+      const c = this.caps;
+      if (!c) return [];
+      const lines = [
+        `Turns: up to ${c.maxTurns}`,
+        `Run deadline: ${c.deadline}`,
+        `Token budget: ${c.tokenBudget}${c.budgetNote ? `. ${c.budgetNote}` : ''}`,
+        `Tool calls per Turn: up to ${c.callsPerTurn}`,
+        `Tool timeout: ${c.toolTimeout}; preview timeout: ${c.previewTimeout}`,
+      ];
+      for (const r of c.resultCaps || []) {
+        lines.push(`${r.tool} result: at most ${r.bytes} bytes${r.entries ? `, ${r.entries} entries` : ''}`);
+      }
+      return lines;
+    },
+
     /**
      * Show `disclosure`. Resolves an immutable { groundingHash, previewMRQL,
      * previewPlugins } when the reader presses Send, else null (Cancel, Escape,
