@@ -1,7 +1,9 @@
 package shortcodes
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"math"
@@ -51,6 +53,10 @@ type MetaShortcodeContext struct {
 	// so that reaching the enclosing entity (ctx="outer") can be added without
 	// reshaping how [using] builds its child.
 	outer *MetaShortcodeContext
+	// meter is the render this context belongs to, set by processWithDepth so
+	// handlers that take no request context (the schema slice) still reach the
+	// budget and the cancellation. Nil for a handler called directly.
+	meter *renderMeter
 }
 
 // RenderMetaShortcode expands a [meta] shortcode into a <meta-shortcode> custom
@@ -90,7 +96,7 @@ func renderMetaWidget(sc Shortcode, ctx MetaShortcodeContext, extraAttrs string)
 	defaultVal := sc.Attrs["default"]
 
 	valueJSON := ctx.valueJSONAtPath(path)
-	schemaSlice := extractSchemaSlice(ctx.MetaSchema, path, ctx.decodeMetaObject())
+	schemaSlice := ctx.schemaSlice(path)
 
 	return fmt.Sprintf(
 		`<meta-shortcode data-path="%s" data-editable="%t" data-hide-empty="%t" data-default="%s" data-entity-type="%s" data-entity-id="%d" data-schema="%s" data-value="%s"%s></meta-shortcode>`,
@@ -218,6 +224,28 @@ func (ctx MetaShortcodeContext) rawValueAtPath(path string) any {
 	return value
 }
 
+// schemaSlice is the sub-schema for path, bounded by one schemaWork. A schema
+// too complex to expand yields no slice; on a budgeted or cancelled render it
+// also ends the render with the budget error, so a model cannot get a quiet
+// empty widget out of a schema the preview refused to expand.
+func (ctx MetaShortcodeContext) schemaSlice(path string) string {
+	if ctx.MetaSchema == "" {
+		return ""
+	}
+	var reqCtx context.Context
+	if ctx.meter != nil {
+		reqCtx = ctx.meter.ctx
+	}
+	w := newSchemaWork(reqCtx)
+	out := extractSchemaSliceW(w, ctx.MetaSchema, path, ctx.decodeMetaObject())
+	if err := w.Err(); err != nil && ctx.meter != nil {
+		if ctx.meter.limited() || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			ctx.meter.fail("%v", err)
+		}
+	}
+	return out
+}
+
 // extractSchemaSlice navigates a JSON Schema by dot-notation path through
 // nested "properties" and returns the JSON-encoded sub-schema, or "" if not found.
 // Handles $ref, allOf, oneOf, anyOf, and if/then/else (using metaValue to
@@ -225,6 +253,10 @@ func (ctx MetaShortcodeContext) rawValueAtPath(path string) any {
 // no value context is available; it is read, never written — see
 // TestDecodedMetaIsSharedReadOnly, since callers hand it the memoized tree.
 func extractSchemaSlice(schemaStr string, path string, metaValue map[string]any) string {
+	return extractSchemaSliceW(newSchemaWork(nil), schemaStr, path, metaValue)
+}
+
+func extractSchemaSliceW(w *schemaWork, schemaStr string, path string, metaValue map[string]any) string {
 	if schemaStr == "" {
 		return ""
 	}
@@ -241,8 +273,11 @@ func extractSchemaSlice(schemaStr string, path string, metaValue map[string]any)
 	var rawValue any = metaValue
 
 	for _, part := range parts {
-		resolved := resolveSchemaNodeWithValue(current, root, currentValue)
-		if resolved == nil {
+		if !w.charge(1) {
+			return ""
+		}
+		resolved := resolveSchemaNodeWithValue(w, current, root, currentValue)
+		if resolved == nil || !w.ok() {
 			return ""
 		}
 		props, ok := resolved["properties"].(map[string]any)
@@ -274,11 +309,19 @@ func extractSchemaSlice(schemaStr string, path string, metaValue map[string]any)
 	if leafValue == nil && rawValue != nil {
 		leafValue = map[string]any{"_self": rawValue}
 	}
-	resolved := resolveLeafSchema(current, root, leafValue)
+	resolved := resolveLeafSchema(w, current, root, leafValue, 0)
+	if !w.ok() {
+		return ""
+	}
 	if resolved == nil {
 		resolved = current
 	}
 
+	// Admit the serialized size (every repeat counted, escaping weighted)
+	// before marshaling it.
+	if !w.valueBytes(resolved) {
+		return ""
+	}
 	encoded, err := json.Marshal(resolved)
 	if err != nil {
 		return ""
@@ -289,66 +332,105 @@ func extractSchemaSlice(schemaStr string, path string, metaValue map[string]any)
 // resolveLeafSchema resolves only $ref and if/then/else on a leaf schema node,
 // preserving oneOf/anyOf/allOf so the client can detect labeled enums and other
 // composition-based display patterns.
-func resolveLeafSchema(node map[string]any, root map[string]any, value map[string]any) map[string]any {
-	if node == nil {
+func resolveLeafSchema(w *schemaWork, node map[string]any, root map[string]any, value map[string]any, depth int) map[string]any {
+	if node == nil || w.deep(depth) || !w.charge(1+len(node)) {
 		return nil
 	}
 	// Resolve $ref
 	if ref, ok := node["$ref"].(string); ok {
-		resolved := followRef(ref, root)
+		// A ref already being expanded on this path is a cycle: stop with the
+		// node as it is rather than follow it again.
+		if !w.enterRef(ref) {
+			return node
+		}
+		defer w.leaveRef(ref)
+		resolved := followRef(w, ref, root)
 		if resolved == nil {
 			return nil
 		}
-		merged := shallowMergeSchema(resolved, node)
+		merged := shallowMergeSchema(w, resolved, node, 0)
+		if merged == nil {
+			return nil
+		}
 		delete(merged, "$ref")
-		return resolveLeafSchema(merged, root, value)
+		return resolveLeafSchema(w, merged, root, value, depth+1)
 	}
 	// Recursively resolve $ref everywhere in the leaf (composition branches,
 	// properties, items) so the client doesn't need the root $defs.
-	node = inlineRefsDeep(node, root)
+	node = inlineRefsDeep(w, node, root, depth+1)
+	if !w.ok() {
+		return nil
+	}
 
 	// Resolve if/then/else
 	if _, ok := node["if"].(map[string]any); ok {
+		if !w.charge(len(node)) {
+			return nil
+		}
 		base := make(map[string]any)
 		for k, v := range node {
 			if k != "if" && k != "then" && k != "else" {
 				base[k] = v
 			}
 		}
-		matched, supported := tryEvaluateCondition(node["if"].(map[string]any), value)
-		if supported {
-			if matched {
-				if thenSchema, ok := node["then"].(map[string]any); ok {
-					base = shallowMergeSchema(base, thenSchema)
-				}
-			} else {
-				if elseSchema, ok := node["else"].(map[string]any); ok {
-					base = shallowMergeSchema(base, elseSchema)
-				}
-			}
-		} else {
-			if thenSchema, ok := node["then"].(map[string]any); ok {
-				base = shallowMergeSchema(base, thenSchema)
-			}
-			if elseSchema, ok := node["else"].(map[string]any); ok {
-				base = shallowMergeSchema(base, elseSchema)
-			}
+		matched, supported := tryEvaluateCondition(w, node["if"].(map[string]any), value)
+		base = mergeConditionBranches(w, base, node, matched, supported)
+		if base == nil {
+			return nil
 		}
 		// Re-resolve in case the merged branch introduced $ref or composition.
-		return resolveLeafSchema(base, root, value)
+		return resolveLeafSchema(w, base, root, value, depth+1)
 	}
 	return node
 }
 
+// mergeConditionBranches merges the active if/then/else branch into base, or
+// both when the condition was not evaluable. nil means the work was exhausted.
+func mergeConditionBranches(w *schemaWork, base, node map[string]any, matched, supported bool) map[string]any {
+	merge := func(key string) {
+		if base == nil {
+			return
+		}
+		if branch, ok := node[key].(map[string]any); ok {
+			base = shallowMergeSchema(w, base, branch, 0)
+		}
+	}
+	switch {
+	case !supported:
+		// Condition uses unsupported features — merge both branches so all
+		// possible properties are discoverable.
+		merge("then")
+		merge("else")
+	case matched:
+		merge("then")
+	default:
+		merge("else")
+	}
+	return base
+}
+
 // inlineRefsDeep resolves all $ref in a schema node recursively — in
-// composition branches (allOf/oneOf/anyOf), properties, and items.
-func inlineRefsDeep(node map[string]any, root map[string]any) map[string]any {
+// composition branches (allOf/oneOf/anyOf), properties, and items. A $ref that
+// is already being expanded on the current path (a recursive schema) is left in
+// place, and every visit and copy is charged to w.
+func inlineRefsDeep(w *schemaWork, node map[string]any, root map[string]any, depth int) map[string]any {
+	if w.deep(depth) || !w.charge(1+len(node)) {
+		return node
+	}
 	// Resolve direct $ref
 	if ref, ok := node["$ref"].(string); ok {
-		if refTarget := followRef(ref, root); refTarget != nil {
-			merged := shallowMergeSchema(refTarget, node)
-			delete(merged, "$ref")
-			return inlineRefsDeep(merged, root)
+		if w.enterRef(ref) {
+			defer w.leaveRef(ref)
+			if refTarget := followRef(w, ref, root); refTarget != nil {
+				merged := shallowMergeSchema(w, refTarget, node, 0)
+				if merged == nil {
+					return node
+				}
+				delete(merged, "$ref")
+				return inlineRefsDeep(w, merged, root, depth+1)
+			}
+		} else {
+			return node
 		}
 	}
 
@@ -360,12 +442,18 @@ func inlineRefsDeep(node map[string]any, root map[string]any) map[string]any {
 	// Recurse into composition branches
 	for _, keyword := range []string{"allOf", "oneOf", "anyOf"} {
 		if branches, ok := result[keyword].([]any); ok {
+			if !w.charge(len(branches)) {
+				return result
+			}
 			newBranches := make([]any, len(branches))
 			for i, branch := range branches {
 				if branchMap, ok := branch.(map[string]any); ok {
-					newBranches[i] = inlineRefsDeep(branchMap, root)
+					newBranches[i] = inlineRefsDeep(w, branchMap, root, depth+1)
 				} else {
 					newBranches[i] = branch
+				}
+				if !w.ok() {
+					return result
 				}
 			}
 			result[keyword] = newBranches
@@ -374,12 +462,18 @@ func inlineRefsDeep(node map[string]any, root map[string]any) map[string]any {
 
 	// Recurse into properties
 	if props, ok := result["properties"].(map[string]any); ok {
+		if !w.charge(len(props)) {
+			return result
+		}
 		newProps := make(map[string]any, len(props))
 		for k, v := range props {
 			if propSchema, ok := v.(map[string]any); ok {
-				newProps[k] = inlineRefsDeep(propSchema, root)
+				newProps[k] = inlineRefsDeep(w, propSchema, root, depth+1)
 			} else {
 				newProps[k] = v
+			}
+			if !w.ok() {
+				return result
 			}
 		}
 		result["properties"] = newProps
@@ -387,13 +481,13 @@ func inlineRefsDeep(node map[string]any, root map[string]any) map[string]any {
 
 	// Recurse into items
 	if items, ok := result["items"].(map[string]any); ok {
-		result["items"] = inlineRefsDeep(items, root)
+		result["items"] = inlineRefsDeep(w, items, root, depth+1)
 	}
 
 	// Recurse into if/then/else branches
 	for _, keyword := range []string{"if", "then", "else"} {
 		if branch, ok := result[keyword].(map[string]any); ok {
-			result[keyword] = inlineRefsDeep(branch, root)
+			result[keyword] = inlineRefsDeep(w, branch, root, depth+1)
 		}
 	}
 
@@ -404,24 +498,35 @@ func inlineRefsDeep(node map[string]any, root map[string]any) map[string]any {
 // and if/then/else on a schema node. The value parameter carries the entity
 // data at the current schema level for evaluating if/then/else conditions.
 // It may be nil if no value context is available.
-func resolveSchemaNodeWithValue(node map[string]any, root map[string]any, value map[string]any) map[string]any {
-	return resolveSchemaNodeImpl(node, root, value, 0)
+func resolveSchemaNodeWithValue(w *schemaWork, node map[string]any, root map[string]any, value map[string]any) map[string]any {
+	return resolveSchemaNodeImpl(w, node, root, value, 0)
 }
 
-func resolveSchemaNodeImpl(node map[string]any, root map[string]any, value map[string]any, depth int) map[string]any {
+func resolveSchemaNodeImpl(w *schemaWork, node map[string]any, root map[string]any, value map[string]any, depth int) map[string]any {
 	if node == nil || depth > 10 {
 		return node
+	}
+	// Every visit is work; a failure here is read by the caller through w.
+	if !w.charge(1 + len(node)) {
+		return nil
 	}
 
 	// Resolve $ref first, then recurse on the result.
 	if ref, ok := node["$ref"].(string); ok {
-		resolved := followRef(ref, root)
+		if !w.enterRef(ref) {
+			return node
+		}
+		defer w.leaveRef(ref)
+		resolved := followRef(w, ref, root)
 		if resolved == nil {
 			return nil
 		}
-		merged := shallowMergeSchema(resolved, node)
+		merged := shallowMergeSchema(w, resolved, node, 0)
+		if merged == nil {
+			return nil
+		}
 		delete(merged, "$ref")
-		return resolveSchemaNodeImpl(merged, root, value, depth+1)
+		return resolveSchemaNodeImpl(w, merged, root, value, depth+1)
 	}
 
 	// Resolve if/then/else using the entity value.
@@ -432,33 +537,19 @@ func resolveSchemaNodeImpl(node map[string]any, root map[string]any, value map[s
 				base[k] = v
 			}
 		}
-		matched, supported := tryEvaluateCondition(node["if"].(map[string]any), value)
-		if supported {
-			// Condition was evaluable — pick the active branch.
-			if matched {
-				if thenSchema, ok := node["then"].(map[string]any); ok {
-					base = shallowMergeSchema(base, thenSchema)
-				}
-			} else {
-				if elseSchema, ok := node["else"].(map[string]any); ok {
-					base = shallowMergeSchema(base, elseSchema)
-				}
-			}
-		} else {
-			// Condition uses unsupported features — merge both branches
-			// so all possible properties are discoverable.
-			if thenSchema, ok := node["then"].(map[string]any); ok {
-				base = shallowMergeSchema(base, thenSchema)
-			}
-			if elseSchema, ok := node["else"].(map[string]any); ok {
-				base = shallowMergeSchema(base, elseSchema)
-			}
+		matched, supported := tryEvaluateCondition(w, node["if"].(map[string]any), value)
+		base = mergeConditionBranches(w, base, node, matched, supported)
+		if base == nil {
+			return nil
 		}
-		return resolveSchemaNodeImpl(base, root, value, depth+1)
+		return resolveSchemaNodeImpl(w, base, root, value, depth+1)
 	}
 
 	// Resolve all composition keywords present on this node.
 	composed := false
+	if !w.charge(len(node)) {
+		return nil
+	}
 	merged := make(map[string]any)
 	for k, v := range node {
 		if k == "allOf" || k == "oneOf" || k == "anyOf" {
@@ -477,11 +568,17 @@ func resolveSchemaNodeImpl(node map[string]any, root map[string]any, value map[s
 			if !ok {
 				continue
 			}
-			r := resolveSchemaNodeImpl(branchMap, root, value, depth+1)
+			r := resolveSchemaNodeImpl(w, branchMap, root, value, depth+1)
+			if !w.ok() {
+				return nil
+			}
 			if r == nil {
 				r = branchMap
 			}
-			merged = shallowMergeSchema(merged, r)
+			merged = shallowMergeSchema(w, merged, r, 0)
+			if merged == nil {
+				return nil
+			}
 		}
 	}
 	if composed {
@@ -508,8 +605,8 @@ var supportedIfKeys = map[string]bool{
 //
 // Supported: direct const/enum on the value, or properties with const/enum
 // checks. Unsupported: required, minimum/maximum, pattern, $ref, allOf, etc.
-func tryEvaluateCondition(ifSchema map[string]any, value map[string]any) (matched bool, supported bool) {
-	if value == nil {
+func tryEvaluateCondition(w *schemaWork, ifSchema map[string]any, value map[string]any) (matched bool, supported bool) {
+	if value == nil || !w.charge(1+len(ifSchema)) {
 		return false, false
 	}
 
@@ -523,7 +620,7 @@ func tryEvaluateCondition(ifSchema map[string]any, value map[string]any) (matche
 
 	// Top-level type check: if: {type: "string"} or {type: ["string","null"]}.
 	if typeRaw, hasType := ifSchema["type"]; hasType {
-		types := normalizeTypeList(typeRaw)
+		types := normalizeTypeList(w, typeRaw)
 		if len(types) > 0 {
 			selfVal, hasSelf := value["_self"]
 			if hasSelf {
@@ -553,6 +650,9 @@ func tryEvaluateCondition(ifSchema map[string]any, value map[string]any) (matche
 	if enumVal, ok := ifSchema["enum"].([]any); ok {
 		selfVal, hasSelf := value["_self"]
 		if hasSelf {
+			if !w.charge(len(enumVal)) {
+				return false, false
+			}
 			for _, e := range enumVal {
 				if reflect.DeepEqual(selfVal, e) {
 					return true, true
@@ -566,6 +666,9 @@ func tryEvaluateCondition(ifSchema map[string]any, value map[string]any) (matche
 	// Properties-based check.
 	props, ok := ifSchema["properties"].(map[string]any)
 	if !ok {
+		return false, false
+	}
+	if !w.charge(len(props)) {
 		return false, false
 	}
 	for key, constraint := range props {
@@ -596,6 +699,9 @@ func tryEvaluateCondition(ifSchema map[string]any, value map[string]any) (matche
 			}
 		}
 		if enumVal, hasEnum := constraintMap["enum"].([]any); hasEnum {
+			if !w.charge(len(enumVal)) {
+				return false, false
+			}
 			found := false
 			for _, e := range enumVal {
 				if reflect.DeepEqual(actual, e) {
@@ -608,7 +714,7 @@ func tryEvaluateCondition(ifSchema map[string]any, value map[string]any) (matche
 			}
 		}
 		if typeRaw, hasType := constraintMap["type"]; hasType {
-			types := normalizeTypeList(typeRaw)
+			types := normalizeTypeList(w, typeRaw)
 			if len(types) > 0 && !jsonValueMatchesAnyType(actual, types) {
 				return false, true
 			}
@@ -648,11 +754,14 @@ func jsonValueMatchesType(v any, schemaType string) bool {
 
 // normalizeTypeList converts a JSON Schema type value (string or []any)
 // into a []string of type names.
-func normalizeTypeList(typeRaw any) []string {
+func normalizeTypeList(w *schemaWork, typeRaw any) []string {
 	if s, ok := typeRaw.(string); ok {
 		return []string{s}
 	}
 	if arr, ok := typeRaw.([]any); ok {
+		if !w.charge(len(arr)) {
+			return nil
+		}
 		types := make([]string, 0, len(arr))
 		for _, v := range arr {
 			if s, ok := v.(string); ok {
@@ -675,9 +784,13 @@ func jsonValueMatchesAnyType(v any, types []string) bool {
 }
 
 // followRef resolves a local JSON pointer ref like "#/$defs/Address" or
-// "#/definitions/Address" within the root schema.
-func followRef(ref string, root map[string]any) map[string]any {
+// "#/definitions/Address" within the root schema. Each pointer segment is
+// charged to w before it is decoded.
+func followRef(w *schemaWork, ref string, root map[string]any) map[string]any {
 	if !strings.HasPrefix(ref, "#/") {
+		return nil
+	}
+	if !w.charge(1+strings.Count(ref, "/")) || !w.chargeBytes(len(ref)) {
 		return nil
 	}
 	segments := strings.Split(ref[2:], "/")
@@ -702,10 +815,15 @@ func followRef(ref string, root map[string]any) map[string]any {
 	return result
 }
 
-// mergeSchemas deep-merges src into dst. "properties" maps are merged
+// shallowMergeSchema deep-merges src into dst. "properties" maps are merged
 // recursively so that overlapping property keys combine their children
-// rather than one branch replacing the other.
-func shallowMergeSchema(dst, src map[string]any) map[string]any {
+// rather than one branch replacing the other. The entries about to be copied
+// are charged first, and the recursion shares the depth cap; nil means w ran
+// out.
+func shallowMergeSchema(w *schemaWork, dst, src map[string]any, depth int) map[string]any {
+	if w.deep(depth) || !w.charge(len(dst)+len(src)) {
+		return nil
+	}
 	result := make(map[string]any, len(dst)+len(src))
 	for k, v := range dst {
 		result[k] = v
@@ -717,6 +835,9 @@ func shallowMergeSchema(dst, src map[string]any) map[string]any {
 			if dstProps == nil {
 				result["properties"] = v
 			} else if srcProps != nil {
+				if !w.charge(len(dstProps) + len(srcProps)) {
+					return nil
+				}
 				merged := make(map[string]any, len(dstProps)+len(srcProps))
 				for pk, pv := range dstProps {
 					merged[pk] = pv
@@ -726,7 +847,11 @@ func shallowMergeSchema(dst, src map[string]any) map[string]any {
 					// recursively merge so nested children from both survive.
 					if existing, ok := merged[pk].(map[string]any); ok {
 						if srcChild, ok := pv.(map[string]any); ok {
-							merged[pk] = shallowMergeSchema(existing, srcChild)
+							child := shallowMergeSchema(w, existing, srcChild, depth+1)
+							if child == nil {
+								return nil
+							}
+							merged[pk] = child
 							continue
 						}
 					}

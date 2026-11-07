@@ -1,6 +1,7 @@
 package mrql
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -76,8 +77,39 @@ func ListParams(q *Query) []string {
 // Substitution happens at the AST value level (never string interpolation), so
 // bound values translate to GORM bind placeholders exactly like typed literals.
 func BindParams(q *Query, params map[string]any) error {
+	return BindParamsContext(context.Background(), q, params)
+}
+
+// Bounds on separately supplied parameters. The query's own 32 KiB and
+// 2,048-token limits do not cover the values bound into it.
+const (
+	MaxParamCount = 1000
+	MaxParamBytes = 4 << 20
+	maxParamNames = 10 // names listed in a missing/unknown diagnostic
+)
+
+// BindParamsContext is BindParams with the work bounded: the number and total
+// bytes of the parameters are admitted before anything is copied, each distinct
+// parameter is decoded once and shared by its occurrences, the diagnostics list
+// a bounded number of names, and the context is checked while binding.
+func BindParamsContext(ctx context.Context, q *Query, params map[string]any) error {
 	if q == nil {
 		return nil
+	}
+	if len(params) > MaxParamCount {
+		return fmt.Errorf("too many parameters: %d supplied, at most %d are allowed", len(params), MaxParamCount)
+	}
+	total := 0
+	for _, v := range params {
+		switch x := v.(type) {
+		case string:
+			total += len(x)
+		case json.Number:
+			total += len(x)
+		}
+		if total > MaxParamBytes {
+			return fmt.Errorf("parameter values total more than %d bytes", MaxParamBytes)
+		}
 	}
 	required := ListParams(q)
 	reqSet := make(map[string]bool, len(required))
@@ -109,20 +141,60 @@ func BindParams(q *Query, params map[string]any) error {
 	}
 
 	var bindErr error
+	decoded := make(map[string]Node, len(required))
+	steps := 0
 	walkValueNodes(q, func(np *Node) {
 		if bindErr != nil {
 			return
 		}
 		if pr, ok := (*np).(*ParamRef); ok {
+			if steps++; steps&0x3f == 0 {
+				if cerr := ctx.Err(); cerr != nil {
+					bindErr = cerr
+					return
+				}
+			}
+			if first, seen := decoded[pr.Name]; seen {
+				*np = literalWithToken(first, pr.Token)
+				return
+			}
 			node, err := coerceParamValue(params[pr.Name], pr.Token)
 			if err != nil {
 				bindErr = err
 				return
 			}
+			decoded[pr.Name] = node
 			*np = node
 		}
 	})
+	if bindErr == nil {
+		bindErr = ctx.Err()
+	}
 	return bindErr
+}
+
+// literalWithToken copies an already-decoded parameter literal for another
+// occurrence: the decoded value (a string, once) is shared, the node is not, so
+// each occurrence keeps its own source position.
+func literalWithToken(n Node, tok Token) Node {
+	switch v := n.(type) {
+	case *StringLiteral:
+		c := *v
+		c.Token = tok
+		return &c
+	case *NumberLiteral:
+		c := *v
+		c.Token = tok
+		return &c
+	case *RelDateLiteral:
+		c := *v
+		c.Token = tok
+		return &c
+	case *FuncCall:
+		c := *v
+		return &c
+	}
+	return n
 }
 
 func missingParamMessage(names []string) string {
@@ -140,9 +212,17 @@ func unknownParamMessage(names []string) string {
 }
 
 func dollarize(names []string) []string {
-	out := make([]string, len(names))
+	more := 0
+	if len(names) > maxParamNames {
+		more = len(names) - maxParamNames
+		names = names[:maxParamNames]
+	}
+	out := make([]string, len(names), len(names)+1)
 	for i, n := range names {
 		out[i] = "$" + n
+	}
+	if more > 0 {
+		out = append(out, fmt.Sprintf("and %d more", more))
 	}
 	return out
 }

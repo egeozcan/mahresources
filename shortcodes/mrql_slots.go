@@ -3,6 +3,7 @@ package shortcodes
 import (
 	"fmt"
 	"html"
+	"math"
 	"net/url"
 	"sort"
 	"strconv"
@@ -110,7 +111,7 @@ func firstSlotSpan(content, tag string) (openIdx, innerStart, closeIdx, closeEnd
 
 	openIdx = -1
 	for i := 0; i+len(openTag) <= len(content); i++ {
-		if content[i] == '[' && strings.HasPrefix(content[i:], openTag) && !insideSpans(i, spans) {
+		if content[i] == '[' && strings.HasPrefix(content[i:], openTag) && !insideSortedSpans(i, spans) {
 			openIdx = i
 			break
 		}
@@ -122,7 +123,7 @@ func firstSlotSpan(content, tag string) (openIdx, innerStart, closeIdx, closeEnd
 	innerStart = openIdx + len(openTag)
 	closeIdx = -1
 	for i := innerStart; i+len(closeTag) <= len(content); i++ {
-		if content[i] == '[' && strings.HasPrefix(content[i:], closeTag) && !insideSpans(i, spans) {
+		if content[i] == '[' && strings.HasPrefix(content[i:], closeTag) && !insideSortedSpans(i, spans) {
 			closeIdx = i
 			break
 		}
@@ -155,7 +156,7 @@ func SlotTagSpans(parent, inner string) [][2]int {
 func firstElseIndex(content string) int {
 	spans := blockInnerSpans(content)
 	for i := 0; i < len(content); i++ {
-		if content[i] == '[' && strings.HasPrefix(content[i:], elseTag) && !insideSpans(i, spans) {
+		if content[i] == '[' && strings.HasPrefix(content[i:], elseTag) && !insideSortedSpans(i, spans) {
 			return i
 		}
 	}
@@ -248,20 +249,54 @@ func viewAllURL(result *QueryResult) string {
 // {total} the true total (falling back to {count} when none was computed), and
 // {link-all} the bare view-all URL (escaped for HTML attribute use).
 func substitutePlaceholders(text string, result *QueryResult) string {
+	out, _ := substitutePlaceholdersM(nil, text, result)
+	return out
+}
+
+// substitutePlaceholdersM is substitutePlaceholders under a render meter. The
+// expansion is admitted before it is built: occurrences are counted, the
+// expanded size is computed with overflow checks, and that size must fit the
+// parsed-source budget (the expanded slot is parsed next), so 36,000 {link-all}
+// over a long query is refused instead of allocating about a gigabyte. ok is
+// false when the meter stopped the render.
+func substitutePlaceholdersM(m *renderMeter, text string, result *QueryResult) (string, bool) {
 	if !strings.ContainsRune(text, '{') {
-		return text
+		return text, true
 	}
 	count := resultCount(result)
 	total := strconv.Itoa(count)
 	if result.Total != nil {
 		total = strconv.FormatInt(*result.Total, 10)
 	}
+	values := [3][2]string{
+		{"{count}", strconv.Itoa(count)},
+		{"{total}", total},
+		{"{link-all}", html.EscapeString(viewAllURL(result))},
+	}
+
+	size := int64(len(text))
+	for _, v := range values {
+		n := int64(strings.Count(text, v[0]))
+		if n == 0 {
+			continue
+		}
+		delta := int64(len(v[1])) - int64(len(v[0]))
+		if delta > 0 && n > (math.MaxInt64-size)/delta {
+			m.fail("placeholder expansion overflows")
+			return "", false
+		}
+		size += n * delta
+	}
+	if !m.admitParsed(size) {
+		return "", false
+	}
+
 	repl := strings.NewReplacer(
-		"{count}", strconv.Itoa(count),
-		"{total}", total,
-		"{link-all}", html.EscapeString(viewAllURL(result)),
+		values[0][0], values[0][1],
+		values[1][0], values[1][1],
+		values[2][0], values[2][1],
 	)
-	return repl.Replace(text)
+	return repl.Replace(text), true
 }
 
 // defaultViewAllLinkHTML renders the built-in "View all →" link appended after

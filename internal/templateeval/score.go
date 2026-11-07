@@ -32,6 +32,9 @@ type Draft struct {
 	Issues      []shortcodes.LintIssue `json:"issues,omitempty"`
 	Repair      *Repair                `json:"repair,omitempty"`
 	FailedSlots []string               `json:"failedSlots,omitempty"`
+	// StopReason is why a harness run ended (application_context.TemplateStop*);
+	// classic results have none.
+	StopReason string `json:"stopReason,omitempty"`
 }
 
 // Repair mirrors application_context.TemplateRepair: the result's report of
@@ -69,6 +72,9 @@ type Checks struct {
 	Truncated  bool `json:"truncated,omitempty"`
 	Malformed  bool `json:"malformed,omitempty"`
 	WrongShape bool `json:"wrongShape,omitempty"`
+	// LengthRecovered is a harness run that had a Turn cut at the output limit
+	// and later submitted a complete call. It is a measurement, not a failure.
+	LengthRecovered bool `json:"lengthRecovered,omitempty"`
 	// RepairAttempted is a repair call that was made, Repaired one whose draft
 	// replaced the original. Both are read from the result's repair field.
 	RepairAttempted bool `json:"repairAttempted,omitempty"`
@@ -221,9 +227,10 @@ func Score(c Case, d Draft, calls []Call, previews map[string]Preview, probes []
 
 	// A repair reply that was not applied is discarded, so the draft that stands
 	// is the first call's; an applied one is the last call's.
+	harness := isHarness(calls, d)
 	judged := calls
-	fanout := len(calls) > 0 && isPlanCall(c, calls[0], len(calls) > 1)
-	if !fanout && len(calls) > 1 && checks.RepairAttempted {
+	fanout := !harness && len(calls) > 0 && isPlanCall(c, calls[0], len(calls) > 1)
+	if !fanout && !harness && len(calls) > 1 && checks.RepairAttempted {
 		if checks.Repaired {
 			judged = calls[len(calls)-1:]
 		} else {
@@ -231,12 +238,24 @@ func Score(c Case, d Draft, calls []Call, previews map[string]Preview, probes []
 		}
 	}
 	lengthStop := false
-	for _, call := range judged {
-		if call.FinishReason == "length" && (!fanout || (d.Status != 200 && !call.Repair)) {
-			lengthStop = true
+	if harness {
+		// A cut Turn is not the Draft: only the retained Draft's own
+		// truncation (the issue loop below) fails a run that produced one, and
+		// a run that produced none fails on what its last Turn was. The
+		// classic reading of every call's finish reason would count a cut
+		// Turn that the model recovered from.
+		checks.LengthRecovered = lengthRecovered(calls)
+		if d.Status != 200 {
+			checks.Truncated = d.StopReason == application_context.TemplateStopLengthRepeated || lastHarnessFinish(calls) == "length"
 		}
+	} else {
+		for _, call := range judged {
+			if call.FinishReason == "length" && (!fanout || (d.Status != 200 && !call.Repair)) {
+				lengthStop = true
+			}
+		}
+		checks.Truncated = lengthStop
 	}
-	checks.Truncated = lengthStop
 
 	degraded := false
 	for _, issue := range d.Issues {
@@ -269,7 +288,11 @@ func Score(c Case, d Draft, calls []Call, previews map[string]Preview, probes []
 			checks.LintWarnings++
 		}
 	}
-	if d.Status != 200 || degraded {
+	if harness {
+		if d.Status != 200 {
+			scoreHarnessSubmissions(c, calls, &checks)
+		}
+	} else if d.Status != 200 || degraded {
 		scoreRawReplies(c, judged, &checks)
 		if degraded && !lengthStop && !checks.Malformed && !checks.WrongShape {
 			// No reply to read: the degrade message is all there is.
@@ -623,6 +646,159 @@ func scoreRawReplies(c Case, calls []Call, checks *Checks) {
 			checks.WrongShape = true
 		}
 	}
+}
+
+// isHarness reports whether a run was a harness run: any recorded call says
+// so, or, when no call was recorded (a failure before the first Turn), the
+// result carries a stop reason, which classic results never do. A report from
+// before scorer version 4 has neither and reads as classic.
+func isHarness(calls []Call, d Draft) bool {
+	for _, call := range calls {
+		if call.Mode == ModeHarness {
+			return true
+		}
+	}
+	return len(calls) == 0 && d.StopReason != ""
+}
+
+func harnessCalls(calls []Call) []Call {
+	var out []Call
+	for _, call := range calls {
+		if call.Mode == ModeHarness {
+			out = append(out, call)
+		}
+	}
+	return out
+}
+
+func lastHarnessFinish(calls []Call) string {
+	if h := harnessCalls(calls); len(h) > 0 {
+		return h[len(h)-1].FinishReason
+	}
+	return ""
+}
+
+// completeSubmit reports whether a recorded tool call is a submit that arrived
+// whole: neither cut off nor malformed.
+func completeSubmit(tc ToolCall) bool {
+	return tc.Name == application_context.ToolSubmit && !tc.Incomplete && !tc.Malformed
+}
+
+// lengthRecovered reports a Turn that ended at the output limit and was
+// followed, on a later Turn, by a complete submission.
+func lengthRecovered(calls []Call) bool {
+	cut := false
+	for _, call := range harnessCalls(calls) {
+		if cut {
+			for _, tc := range call.ToolCalls {
+				if completeSubmit(tc) {
+					return true
+				}
+			}
+		}
+		if call.FinishReason == "length" {
+			cut = true
+		}
+	}
+	return false
+}
+
+// scoreHarnessSubmissions is scoreRawReplies for a failed harness run: it reads
+// the recorded submit tool calls instead of classic JSON. The model's text
+// beside its calls is prose and is not read. Submissions accumulate (the last
+// submission of a field stands), so a pair is incomplete only when the fields
+// submitted across the whole run leave half of it out.
+func scoreHarnessSubmissions(c Case, calls []Call, checks *Checks) {
+	fields := map[string]string{}
+	submitted := false
+	requested := map[string]bool{}
+	for _, slot := range c.RequestedSlots() {
+		requested[slot] = true
+	}
+	if c.Kind == KindMetaSchema {
+		requested["MetaSchema"] = true
+	}
+	for _, call := range harnessCalls(calls) {
+		for i, tc := range call.ToolCalls {
+			// The harness runs only the first calls of a Turn, by position in
+			// the whole list, so a later submit never ran.
+			if i >= application_context.TemplateRunMaxCallsPerTurn {
+				break
+			}
+			if tc.Name != application_context.ToolSubmit || tc.Incomplete {
+				continue
+			}
+			if tc.Malformed {
+				checks.Malformed = true
+				continue
+			}
+			accepted, shape := parseRecordedSubmit(tc.Arguments, requested, tc.SourceCheck)
+			switch shape {
+			case submitMalformed:
+				// The recorder replaces text it could not decode; an adapter
+				// that did not flag it left a call nobody could run.
+				checks.Malformed = true
+				continue
+			case submitWrongShape:
+				checks.WrongShape = true
+				continue
+			}
+			// The harness rejects a whole call, so only a call that passed
+			// adds its fields.
+			for name, value := range accepted {
+				fields[name] = value
+			}
+			submitted = true
+		}
+	}
+	if submitted && (c.Kind == KindPair || c.Kind == KindBundle) {
+		checks.IncompletePairs += pairGaps(c.RequestedSlots(), fields)
+	}
+}
+
+type submitShape int
+
+const (
+	submitOK submitShape = iota
+	submitMalformed
+	submitWrongShape
+)
+
+// parseRecordedSubmit applies application_context's parseSubmitArgs contract
+// to a recorded submit call: a non-empty fields map of requested names to
+// strings, with done a boolean and explanation a string when present. It
+// returns the accepted fields only for a call that passes in full.
+func parseRecordedSubmit(arguments string, requested map[string]bool, sourceCheck string) (map[string]string, submitShape) {
+	if !json.Valid([]byte(arguments)) {
+		return nil, submitMalformed
+	}
+	var decoded struct {
+		Fields      map[string]json.RawMessage `json:"fields"`
+		Explanation *string                    `json:"explanation"`
+		Done        *bool                      `json:"done"`
+	}
+	if json.Unmarshal([]byte(arguments), &decoded) != nil || len(decoded.Fields) == 0 {
+		return nil, submitWrongShape
+	}
+	out := make(map[string]string, len(decoded.Fields))
+	for name, value := range decoded.Fields {
+		var text *string
+		if len(requested) > 0 && !requested[name] || json.Unmarshal(value, &text) != nil || text == nil {
+			return nil, submitWrongShape
+		}
+		// Source admission, as submit applies it: one refused field rejects
+		// the whole call.
+		// The recorder's verdict on the raw values wins when present; sanitizing
+		// re-encodes arguments, so the check here is only for older recordings.
+		if sourceCheck == "" && application_context.CheckTemplateToolSource(*text) != nil {
+			return nil, submitWrongShape
+		}
+		out[name] = *text
+	}
+	if sourceCheck == SourceRejected {
+		return nil, submitWrongShape
+	}
+	return out, submitOK
 }
 
 // Older recordings did not label calls. Only the initial reply of a multi-call

@@ -95,6 +95,22 @@ with `mrql` or `template`, and `<kind>` with `slot`, `pair`, `plan`, `bundle` or
 | `ai_template_<provider>_<kind>_model` | Optional kind-specific model; empty inherits the template default |
 | `ai_template_<provider>_<kind>_max_tokens` | Optional kind-specific token cap; `0` inherits |
 | `ai_template_<provider>_<kind>_timeout` | Optional kind-specific timeout; `0s` inherits |
+| `ai_template_generation_mode` | `harness` (default) or `classic` |
+| `ai_template_max_turns` | Integer 1–20; default `10` |
+| `ai_template_run_deadline` | Go duration 30s–15m; default `5m` |
+| `ai_template_run_token_budget` | Integer 100000–2000000; default `400000` |
+
+The last four keys control [Generation runs](../features/custom-templates.md#generation-runs).
+`harness` mode lets the model read your data with Tools over several Turns
+before it submits a draft; `classic` keeps the single-call draft with repair and
+whole-template fan-out. `ai_template_max_turns` caps the Turns of one run,
+`ai_template_run_deadline` is its wall-clock limit, and
+`ai_template_run_token_budget` is its token budget, in which cached prompt tokens
+count a quarter. A request reads the four values once, so a change applies to the
+next request and never alters a run in progress. The **Reset** button of Template
+generation resets all four with the other `ai_template_*` keys; resetting a
+single key through the API or CLI resets only that key. The key and bounds are
+defined in `application_context/ai_generation.go` (`addAIHarnessSettingSpecs`).
 
 The advanced controls show the effective inherited profiles. An explicit kind
 setting wins over a feature/provider setting, which wins over shipped defaults

@@ -154,6 +154,10 @@ type runtimeAIGeneration struct {
 	boot     TemplateGenerationConfig
 	client   *http.Client
 	slots    chan struct{}
+	// wrapDraft and wrapConversation decorate the providers this instance
+	// builds (the template eval's recorder). Nil leaves them untouched.
+	wrapDraft        func(TemplateDraftProvider) TemplateDraftProvider
+	wrapConversation func(TemplateConversationProvider) TemplateConversationProvider
 }
 
 func newRuntimeAIGeneration(settings *RuntimeSettings, boot TemplateGenerationConfig, client *http.Client) *runtimeAIGeneration {
@@ -180,6 +184,18 @@ func newRuntimeAIGeneration(settings *RuntimeSettings, boot TemplateGenerationCo
 func (ctx *MahresourcesContext) InstallAIGeneration(boot TemplateGenerationConfig, client *http.Client) {
 	boot.Postgres = ctx.Config.DbType == constants.DbTypePosgres
 	g := newRuntimeAIGeneration(ctx.Settings(), boot, client)
+	ctx.SetMRQLGenerator(g)
+	ctx.SetTemplateGenerator(g)
+}
+
+// InstallAIGenerationWrapped is InstallAIGeneration with each template provider
+// the runtime generator builds passed through a decorator (either may be nil).
+// The eval uses it to record calls while exercising the production mode
+// dispatch and profile resolution.
+func (ctx *MahresourcesContext) InstallAIGenerationWrapped(boot TemplateGenerationConfig, client *http.Client, wrapDraft func(TemplateDraftProvider) TemplateDraftProvider, wrapConversation func(TemplateConversationProvider) TemplateConversationProvider) {
+	boot.Postgres = ctx.Config.DbType == constants.DbTypePosgres
+	g := newRuntimeAIGeneration(ctx.Settings(), boot, client)
+	g.wrapDraft, g.wrapConversation = wrapDraft, wrapConversation
 	ctx.SetMRQLGenerator(g)
 	ctx.SetTemplateGenerator(g)
 }
@@ -287,10 +303,18 @@ func (g *runtimeAIGeneration) GenerateMRQL(ctx context.Context, prompt string) (
 // production always uses NewGenerationConversationProvider.
 var newTemplateConversationProvider = NewGenerationConversationProvider
 
+// afterTemplateSnapshot, when set by a test, runs right after
+// templateGenerator takes its settings snapshot, so a test can change a setting
+// at the one moment a second read would see it.
+var afterTemplateSnapshot func()
+
 // templateGenerator binds the generation mode and a generator to one settings
 // snapshot.
 func (g *runtimeAIGeneration) templateGenerator() (TemplateGenerationPrep, error) {
 	values := g.snapshot()
+	if afterTemplateSnapshot != nil {
+		afterTemplateSnapshot()
+	}
 	p := g.resolve(values, "template")
 	if !p.configured() {
 		return TemplateGenerationPrep{}, ErrTemplateGenerationNotConfigured
@@ -305,7 +329,7 @@ func (g *runtimeAIGeneration) templateGenerator() (TemplateGenerationPrep, error
 		budget, _ := values[settingTemplateRunTokenBudget].(int)
 		cfg := p.template
 		cfg.Harness = &TemplateHarnessSettings{MaxTurns: turns, Deadline: deadline, TokenBudget: budget}
-		conv, err := g.templateConversationProvider()
+		conv, err := g.conversationProviderFor(p)
 		if err != nil {
 			return TemplateGenerationPrep{}, err
 		}
@@ -314,22 +338,35 @@ func (g *runtimeAIGeneration) templateGenerator() (TemplateGenerationPrep, error
 		return TemplateGenerationPrep{GenerationMode: TemplateGenerationModeHarness, Generator: gen}, nil
 	}
 	provider := NewGenerationTemplateDraftProvider(p.provider, p.key, p.model, g.client)
+	if g.wrapDraft != nil {
+		provider = g.wrapDraft(provider)
+	}
 	gen := NewTemplateGenerator(provider, p.template).(*defaultTemplateGenerator)
 	gen.slots = g.slots
 	return TemplateGenerationPrep{GenerationMode: TemplateGenerationModeClassic, Generator: gen}, nil
 }
 
 // templateConversationProvider builds the harness-mode (tool-calling) provider
-// for the template feature's resolved provider, key and model.
+// for the template feature's resolved provider, key and model, from a fresh
+// settings snapshot.
 func (g *runtimeAIGeneration) templateConversationProvider() (TemplateConversationProvider, error) {
-	p := g.resolve(g.snapshot(), "template")
+	return g.conversationProviderFor(g.resolve(g.snapshot(), "template"))
+}
+
+// conversationProviderFor builds the provider from an already-resolved profile,
+// so a generator's provider and its limits come from one snapshot.
+func (g *runtimeAIGeneration) conversationProviderFor(p aiResolvedProfile) (TemplateConversationProvider, error) {
 	if !p.configured() {
 		return nil, ErrTemplateGenerationNotConfigured
 	}
 	if newTemplateConversationProvider == nil {
 		return nil, ErrTemplateGenerationNotConfigured
 	}
-	return newTemplateConversationProvider(p.provider, p.key, p.model, g.client), nil
+	conv := newTemplateConversationProvider(p.provider, p.key, p.model, g.client)
+	if g.wrapConversation != nil {
+		conv = g.wrapConversation(conv)
+	}
+	return conv, nil
 }
 
 // PrepareTemplateGeneration binds the generation mode and a generator to one

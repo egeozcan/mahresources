@@ -34,6 +34,11 @@ func ValidateMetaSchema(schemaJSON string) error {
 		return nil
 	}
 
+	// The compiler cannot be interrupted, so what it may see is admitted first.
+	if err := admitMetaSchema(schemaJSON); err != nil {
+		return err
+	}
+
 	doc, err := jsonschema.UnmarshalJSON(strings.NewReader(schemaJSON))
 	if err != nil {
 		return fmt.Errorf("meta JSON schema is not valid JSON: %w", err)
