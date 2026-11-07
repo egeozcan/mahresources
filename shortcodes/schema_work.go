@@ -3,6 +3,7 @@ package shortcodes
 import (
 	"context"
 	"errors"
+	"unicode/utf8"
 )
 
 // The schema expansion helpers run on schemas the author or a model wrote. Each
@@ -189,7 +190,9 @@ func (w *schemaWork) valueBytes(v any) bool {
 			}
 		}
 	default:
-		return w.chargeBytes(8) && w.step()
+		// A float64 encodes in up to 24 bytes (-1.2345678901234567e-308);
+		// true, false and null in at most 5.
+		return w.chargeBytes(24) && w.step()
 	}
 	return true
 }
@@ -199,21 +202,37 @@ func (w *schemaWork) valueBytes(v any) bool {
 const htmlQuote = 5
 
 // escapedSize is an upper bound on a string's size after json.Marshal and the
-// HTML attribute escaping that follows: the two quotes at htmlQuote each, every
-// byte at least once, and each character either step lengthens at its worst
-// (a control or "<", ">", "&" becomes a six-byte \u escape; a quote or
-// backslash two bytes and then up to five more).
+// HTML attribute escaping that follows: the two quotes at htmlQuote each, then
+// per byte. Controls and "<", ">", "&" become six-byte \u escapes; a quote or
+// backslash two bytes and then up to five more; U+2028 and U+2029 (always
+// escaped by encoding/json) and every byte of invalid UTF-8 (replaced by the
+// six-byte \ufffd) six bytes; any other multibyte character its own length.
 func escapedSize(s string) int {
 	n := 2 * htmlQuote
-	for i := 0; i < len(s); i++ {
-		switch c := s[i]; {
-		case c == '"' || c == '\\' || c == '\'':
-			n += 7
-		case c == '<' || c == '>' || c == '&' || c < 0x20:
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c < utf8.RuneSelf {
+			switch {
+			case c == '"' || c == '\\' || c == '\'':
+				n += 7
+			case c == '<' || c == '>' || c == '&' || c < 0x20:
+				n += 6
+			default:
+				n++
+			}
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			n += 6
+		case r == '\u2028' || r == '\u2029':
 			n += 6
 		default:
-			n++
+			n += size
 		}
+		i += size
 	}
 	return n
 }

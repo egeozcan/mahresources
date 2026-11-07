@@ -197,14 +197,29 @@ func TestBindParamsNamesCountAndAreBounded(t *testing.T) {
 	if err == nil || len(err.Error()) > 512 {
 		t.Fatalf("err = %v", err)
 	}
-	// Names add to the aggregate: values just under the cap plus names over it.
-	q, _ = Parse("type = resource AND name = $p")
+	// Names add to the aggregate. Every supplied name is referenced by the
+	// query, so an unknown-parameter error cannot be what refuses it: only the
+	// aggregate-byte admission can.
 	params := map[string]any{"p": strings.Repeat("x", MaxParamBytes-100)}
+	refs := []string{"$p"}
 	for i := 0; i < 20; i++ {
-		params[fmt.Sprintf("%0100d", i)] = "x"
+		name := fmt.Sprintf("n%0100d", i)
+		params[name] = "x"
+		refs = append(refs, "$"+name)
 	}
-	if err := BindParams(q, params); err == nil {
-		t.Error("names were not counted in the aggregate")
+	q, err = Parse("type = resource AND name IN (" + strings.Join(refs, ", ") + ")")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = BindParams(q, params)
+	if err == nil || !strings.Contains(err.Error(), "parameter values total more than") {
+		t.Errorf("names were not counted in the aggregate: %v", err)
+	}
+	// Control: the same query with the big value shrunk binds.
+	params["p"] = "x"
+	q, _ = Parse("type = resource AND name IN (" + strings.Join(refs, ", ") + ")")
+	if err := BindParams(q, params); err != nil {
+		t.Errorf("control failed: %v", err)
 	}
 }
 

@@ -111,21 +111,37 @@ func TestDiffTemplateSnapshotsBoundedStopsOnCancel(t *testing.T) {
 	}
 }
 
-// A pure deletion used to allocate one row per deleted line: the admission
+// A pure deletion or insertion used to allocate one row per line: the admission
 // product was zero while the table was (n+1) x 1.
-func TestDiffLinesBoundedDeletionOnlyAllocatesNoTable(t *testing.T) {
-	a := numberedLines(2_000_000, "d")
-	var before, after runtime.MemStats
-	runtime.GC()
-	runtime.ReadMemStats(&before)
-	hunks, err := DiffLinesBounded(context.Background(), a, "")
-	runtime.ReadMemStats(&after)
-	if err != nil || len(hunks) != 1 || hunks[0].Op != DiffOpDelete || len(hunks[0].Lines) != 2_000_000 {
-		t.Fatalf("hunks = %v, err = %v", summarize(hunks), err)
+func TestDiffLinesBoundedOneSidedMiddleBuildsNoTable(t *testing.T) {
+	const n = 1_000_000
+	text := numberedLines(n, "d")
+	measure := func(f func() ([]DiffHunk, error)) ([]DiffHunk, uint64) {
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		h, err := f()
+		runtime.ReadMemStats(&after)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h, after.TotalAlloc - before.TotalAlloc
 	}
-	// The split lines themselves are the only large allocation (~2M string headers).
-	if grown := after.TotalAlloc - before.TotalAlloc; grown > 400<<20 {
-		t.Errorf("allocated %d bytes", grown)
+	del, grown := measure(func() ([]DiffHunk, error) { return DiffLinesBounded(context.Background(), text, "") })
+	if len(del) != 1 || del[0].Op != DiffOpDelete || len(del[0].Lines) != n {
+		t.Fatalf("deletion hunks = %v", summarize(del))
+	}
+	// Split headers (16 B/line) and the hunk copy (16 B/line) only; the table
+	// rows added another ~32 B/line.
+	if grown > 40*n {
+		t.Errorf("deletion allocated %d bytes (%d per line)", grown, grown/n)
+	}
+	ins, grown := measure(func() ([]DiffHunk, error) { return DiffLinesBounded(context.Background(), "", text) })
+	if len(ins) != 1 || ins[0].Op != DiffOpInsert || len(ins[0].Lines) != n {
+		t.Fatalf("insertion hunks = %v", summarize(ins))
+	}
+	if grown > 40*n {
+		t.Errorf("insertion allocated %d bytes (%d per line)", grown, grown/n)
 	}
 }
 

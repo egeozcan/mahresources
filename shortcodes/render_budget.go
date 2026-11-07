@@ -67,6 +67,29 @@ type renderMeter struct {
 
 	regexes map[string]*regexp.Regexp // compiled matches= patterns, by source
 	keyWork int64                     // bytes of MRQL cache-key construction
+	attrs   int                       // attribute map entries retained by token collection
+}
+
+// budgetedAttrTotal is the attribute entries one limited parse may retain in
+// total; budgetedAttrCap bounds a single token.
+const budgetedAttrTotal = 100_000
+
+// reserveAttrs reserves n attribute map entries before they are inserted. An
+// unlimited meter (a page) reserves nothing.
+func (m *renderMeter) reserveAttrs(n int) bool {
+	if !m.limited() {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.checkCtxLocked()
+	if m.err != nil {
+		return false
+	}
+	if m.attrs += n; m.attrs > budgetedAttrTotal {
+		return false
+	}
+	return true
 }
 
 func meterFrom(ctx context.Context) *renderMeter {

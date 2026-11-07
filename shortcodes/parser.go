@@ -121,9 +121,9 @@ func matchTokensM(m *renderMeter, input string) []token {
 		if mm[4] >= 0 && mm[5] >= 0 {
 			attrStr = input[mm[4]:mm[5]]
 		}
-		attrs, over := parseAttrsLimit(strings.TrimSpace(attrStr), attrCap)
+		attrs, over := parseAttrsReserve(strings.TrimSpace(attrStr), attrCap, m.reserveAttrs)
 		if over {
-			m.fail("more than %d attributes on one shortcode", attrCap)
+			m.fail("more than %d attributes on one shortcode, or past the aggregate allowance", attrCap)
 			return nil
 		}
 		tokens = append(tokens, token{
@@ -289,6 +289,12 @@ func parseAttrs(s string) map[string]string {
 // no limit) and reports over=true when more were present, so a budgeted render
 // does not materialize every match of an attribute-heavy token.
 func parseAttrsLimit(s string, limit int) (attrs map[string]string, over bool) {
+	return parseAttrsReserve(s, limit, nil)
+}
+
+// parseAttrsReserve is parseAttrsLimit that asks reserve(n) for the n entries
+// about to be inserted, before the map is filled; false is "over".
+func parseAttrsReserve(s string, limit int, reserve func(n int) bool) (attrs map[string]string, over bool) {
 	attrs = make(map[string]string)
 	if s == "" {
 		return attrs, false
@@ -304,6 +310,9 @@ func parseAttrsLimit(s string, limit int) (attrs map[string]string, over bool) {
 	}
 	matches := attrPattern.FindAllStringSubmatch(s, n)
 	if limit >= 0 && len(matches) > limit {
+		return nil, true
+	}
+	if reserve != nil && !reserve(len(matches)) {
 		return nil, true
 	}
 	for _, m := range matches {
