@@ -171,6 +171,9 @@ type TemplateTranscriptRecord struct {
 	DurationMs  int64                    `json:"durationMs,omitempty"`
 	Usage       *TemplateTranscriptUsage `json:"usage,omitempty"`
 	Replay      json.RawMessage          `json:"replay,omitempty"`
+	// ReplayText is Replay as a string, because encoding a RawMessage compacts
+	// it and escapes HTML: the panel shows these bytes, exactly as received.
+	ReplayText string `json:"replayText,omitempty"`
 }
 
 // TemplateTranscriptCall is a Tool call as the model sent it.

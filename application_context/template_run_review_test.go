@@ -312,3 +312,40 @@ func TestRunRefusedContinuationLeavesResultsUnsent(t *testing.T) {
 		t.Fatalf("a budget-refused Turn never sent the result: sent=%v found=%v", sent, found)
 	}
 }
+
+// The review panel shows replayText rather than re-serializing replay, because
+// encoding a RawMessage compacts it and escapes HTML, so the bytes on screen
+// would not be the bytes the provider sent.
+func TestRunTranscriptReplayTextIsTheExactReplayBytes(t *testing.T) {
+	const raw = "{\"role\": \"assistant\",\n  \"n\": 123456789012345678901234567890, \"t\": \"<b>&</b>\"}"
+	reply := replyCalls(submitCall("s1", map[string]string{"CustomCSS": ".a{}"}, true))
+	reply.resp.Replay = json.RawMessage(raw)
+	conv := &scriptedConversation{replies: []convReply{reply}}
+	res, err := disclosedGenerate(harnessGen(conv, nil), harnessCSSInput(&fakeRunExecutor{}), "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, rec := range res.Transcript {
+		if rec.Kind != TemplateTranscriptAssistant {
+			continue
+		}
+		found = true
+		out, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var back struct {
+			ReplayText string `json:"replayText"`
+		}
+		if err := json.Unmarshal(out, &back); err != nil {
+			t.Fatal(err)
+		}
+		if back.ReplayText != raw {
+			t.Fatalf("replayText = %q, want %q", back.ReplayText, raw)
+		}
+	}
+	if !found {
+		t.Fatal("no assistant record")
+	}
+}

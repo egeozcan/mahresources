@@ -445,6 +445,7 @@ func (r *harnessRun) recordAssistant(turn int, resp ConversationResponse, took t
 	rec := TemplateTranscriptRecord{
 		Turn: turn, Kind: TemplateTranscriptAssistant, Sent: true, Text: resp.Text, Bytes: len(resp.Text),
 		DurationMs: took.Milliseconds(), Replay: append(json.RawMessage(nil), resp.Replay...),
+		ReplayText: string(resp.Replay),
 		Usage: &TemplateTranscriptUsage{
 			Prompt: resp.Usage.Prompt, Completion: resp.Usage.Completion, Reasoning: resp.Usage.Reasoning,
 			CacheHit: resp.Usage.CacheHit, CacheMiss: resp.Usage.CacheMiss,
