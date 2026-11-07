@@ -878,7 +878,7 @@ The partial expands with the including entity's context, so its own `[meta]`, `[
 
 ### Copy, export, and import bundles
 
-The **Reuse & Presets** panel on each edit form fills the form without saving (nothing is written until you submit):
+The **Reuse & Presets** panel on each edit form fills the form without saving (nothing is written until you submit). The panel is closed when the form loads; click its title to open it. It opens by itself to show the notice when the form is opened with a revision to load:
 
 - **Copy from…** fills the slots from another category, of the same carrier or a different one. Cross-carrier copies fill the shared fields (the ten slots every carrier has: Header, Detail Footer, Sidebar, Summary, Avatar, Hover Card, List Header, List Footer, MRQL Result and CSS, plus the Meta JSON Schema) and skip Section Config, whose shape differs per carrier.
 - **Export bundle** downloads the current editor contents as a `.json` bundle (schema version 1). It exports unsaved edits, so it doubles as a backup before experimenting.

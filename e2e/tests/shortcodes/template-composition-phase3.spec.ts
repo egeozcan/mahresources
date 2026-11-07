@@ -104,6 +104,7 @@ test.describe('Template composition (Phase 3)', () => {
 
     // Wait for the preset picker to populate from /v1/templatePresets.
     const tools = page.locator('[data-testid="template-bundle-tools"]');
+    await tools.locator('> summary').click();
     const presetSelect = tools.locator('#tb-preset');
     await expect(presetSelect.locator('option[value="project-dashboard"]')).toHaveCount(1, { timeout: 5000 });
     await presetSelect.selectOption('project-dashboard');

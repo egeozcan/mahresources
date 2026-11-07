@@ -1,8 +1,10 @@
 {# Template reuse tools. Include with carrier = category | resourceCategory | noteType. Client-side form-filling only; nothing saves until submit. #}
-<fieldset class="rounded-lg border border-stone-200 bg-stone-50/50 p-4 sm:p-6 space-y-4"
+{# Closed on load; announceRevision opens it when a revision load reports here. #}
+<details class="template-panel rounded-lg border border-stone-200 bg-stone-50/50"
           x-data="templateBundle({ carrier: '{{ carrier }}' })"
           data-testid="template-bundle-tools">
-    <legend class="text-base font-semibold font-mono text-stone-800 px-2">Reuse &amp; Presets</legend>
+    <summary>Reuse &amp; Presets</summary>
+    <div class="px-4 pb-4 sm:px-6 sm:pb-6 space-y-4">
     {# What this form applied; each entry posts with the save as revisionApplied. #}
     <template x-for="entry in appliedEntries" :key="entry">
         <input type="hidden" name="revisionApplied" :value="entry">
@@ -136,4 +138,5 @@
         <button type="button" @click="generateBundle()" data-testid="template-bundle-review-again"
                 class="px-2 py-1 text-xs font-mono text-stone-700 bg-white border border-stone-300 rounded-md hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">Review again</button>
     </template>
-</fieldset>
+    </div>
+</details>

@@ -3,7 +3,9 @@
  * category and note type editors are disclosures, closed on load. A cluster
  * opens on its summary, and opens by itself when a slot inside it is filled
  * from outside it (a preset, a copy, a bundle import or a revision load), so a
- * change the author did not type is never hidden.
+ * change the author did not type is never hidden. The Reuse & Presets panel
+ * above them is a disclosure too, closed on load; it opens by itself when a
+ * revision load reports into it.
  */
 import { test, expect } from '../fixtures/base.fixture';
 
@@ -30,6 +32,7 @@ for (const path of ['/category/new', '/resourceCategory/new', '/noteType/new']) 
 
 test('applying a preset opens the clusters it filled and leaves the rest closed', async ({ page }) => {
   await page.goto('/category/new');
+  await page.getByTestId('template-bundle-tools').locator('> summary').click();
   await expect.poll(async () => page.locator('#tb-preset option').count(), { timeout: 20_000 })
     .toBeGreaterThan(1);
   await page.locator('#tb-preset').selectOption({ index: 1 });
@@ -47,4 +50,31 @@ test('applying a preset opens the clusters it filled and leaves the rest closed'
   );
   for (const s of states) expect(s.open, `${s.slot} open iff the preset filled it`).toBe(s.filled);
   expect(states.some((s) => !s.filled), 'the preset left at least one slot empty').toBe(true);
+});
+
+for (const path of ['/category/new', '/resourceCategory/new', '/noteType/new']) {
+  test(`${path}: the Reuse & Presets panel is collapsed until its summary is clicked`, async ({ page }) => {
+    await page.goto(path);
+    const panel = page.getByTestId('template-bundle-tools');
+    await expect(panel).toHaveJSProperty('open', false);
+    await expect(panel.locator('> summary')).toHaveText('Reuse & Presets');
+    await expect(page.locator('#tb-preset')).toBeHidden();
+    await panel.locator('> summary').click();
+    await expect(panel).toHaveJSProperty('open', true);
+    await expect(page.locator('#tb-preset')).toBeVisible();
+  });
+}
+
+test('a revision loaded from a link opens the Reuse & Presets panel and focuses its notice', async ({ page, apiClient }) => {
+  const name = `Collapse Rev ${Date.now()}`;
+  const cat = await apiClient.createCategory(name, undefined, { CustomHeader: '<p>one</p>' });
+  const resp = await page.request.post('/v1/category', { form: { ID: String(cat.ID), name, CustomHeader: '<p>two</p>' } });
+  expect(resp.ok()).toBeTruthy();
+
+  await page.goto(`/category/edit?id=${cat.ID}&loadRevision=1`);
+  const notice = page.getByTestId('revision-load-notice');
+  await expect(notice).toContainText('Loaded revision #1');
+  await expect(page.getByTestId('template-bundle-tools')).toHaveJSProperty('open', true);
+  await expect(notice).toBeVisible();
+  await expect(notice).toBeFocused();
 });

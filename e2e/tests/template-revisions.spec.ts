@@ -138,6 +138,7 @@ test.describe('Template Revisions history', () => {
   test('applying a preset records preset:<name> on the save', async ({ page, apiClient }) => {
     const cat = await apiClient.createCategory(`Rev Preset ${Date.now()}`);
     await page.goto(`/category/edit?id=${cat.ID}`);
+    await page.getByTestId('template-bundle-tools').locator('> summary').click();
     await expect.poll(async () => page.locator('#tb-preset option').count(), { timeout: 20_000 }).toBeGreaterThan(1);
     await page.locator('#tb-preset').selectOption('contact-card');
     await page.getByTestId('tb-apply-preset').click();
@@ -153,6 +154,7 @@ test.describe('Template Revisions history', () => {
     const source = await apiClient.createCategory(`Rev Source ${Date.now()}`, undefined, { CustomHeader: '<p>copied</p>' });
     const cat = await apiClient.createCategory(`Rev Copy ${Date.now()}`);
     await page.goto(`/category/edit?id=${cat.ID}`);
+    await page.getByTestId('template-bundle-tools').locator('> summary').click();
     const choice = `category:${source.ID}`;
     await expect(page.locator(`#tb-copy option[value="${choice}"]`)).toHaveCount(1, { timeout: 20_000 });
     await page.locator('#tb-copy').selectOption(choice);

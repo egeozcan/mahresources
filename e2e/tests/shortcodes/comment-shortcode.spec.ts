@@ -6,10 +6,10 @@
  */
 import { test, expect } from '../../fixtures/base.fixture';
 import { previewEntityChip } from '../../helpers/template-preview-entity';
-import { openSlotClustersOnLoad } from '../../helpers/template-clusters';
+import { openTemplateSectionsOnLoad } from '../../helpers/template-sections';
 
-// These tests work inside the slot clusters, which load collapsed.
-test.beforeEach(async ({ page }) => { await openSlotClustersOnLoad(page); });
+// These tests work inside the template sections, which load collapsed.
+test.beforeEach(async ({ page }) => { await openTemplateSectionsOnLoad(page); });
 
 test.describe('[comment] template comments', () => {
   let categoryId: number;

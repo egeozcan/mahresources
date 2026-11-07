@@ -15,10 +15,10 @@
  */
 import { test, expect } from '../../fixtures/base.fixture';
 import { acceptConfirm, dismissConfirm, expectNoConfirm } from '../../helpers/confirm-dialog';
-import { openSlotClustersOnLoad } from '../../helpers/template-clusters';
+import { openTemplateSectionsOnLoad } from '../../helpers/template-sections';
 
-// These tests work inside the slot clusters, which load collapsed.
-test.beforeEach(async ({ page }) => { await openSlotClustersOnLoad(page); });
+// These tests work inside the template sections, which load collapsed.
+test.beforeEach(async ({ page }) => { await openTemplateSectionsOnLoad(page); });
 
 const DESKTOP = { width: 1280, height: 900 };
 const INVALID_SCHEMA = '{ not valid json ][';

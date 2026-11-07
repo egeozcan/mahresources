@@ -173,10 +173,15 @@ export function templateBundle({ carrier } = {}) {
     // The "Loaded revision #N" notice; empty when nothing was loaded.
     revisionNotice: '',
     revisionNoticeKind: 'info',
+    /** @type {HTMLDetailsElement|null} the panel; set in init() */
+    _panel: null,
     draftSegments,
     draftWarnings,
 
     async init() {
+      // The panel is a <details> closed on load. Captured here: $root and $el
+      // inside a method resolve against the caller, not this component.
+      this._panel = this.$root;
       this.sections = this.sectionOptions();
       document.addEventListener(REVISION_APPLIED_EVENT, (event) => this.recordApplied(event.detail.entry));
       document.addEventListener(REVISION_WRITE_EVENT, (event) => this.writeRevision(event.detail));
@@ -644,6 +649,8 @@ export function templateBundle({ carrier } = {}) {
       this.revisionNotice = text;
       this.revisionNoticeKind = kind;
       if (!focus) return;
+      // The notice lives in the collapsed panel; it cannot take focus closed.
+      if (this._panel) this._panel.open = true;
       setTimeout(() => {
         const notice = this.$refs && this.$refs.revisionNotice;
         if (notice) notice.focus();
