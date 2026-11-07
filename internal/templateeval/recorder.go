@@ -1,22 +1,20 @@
 package templateeval
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net"
-	"net/http"
 	"reflect"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"mahresources/application_context"
 )
 
-// Usage is the token accounting of one provider call. DeepSeek reports the
-// prefix-cache split as prompt_cache_hit_tokens and prompt_cache_miss_tokens.
+// Usage is the token accounting of one provider call.
 type Usage struct {
 	Prompt     int `json:"prompt"`
 	Completion int `json:"completion"`
@@ -29,151 +27,254 @@ func (u Usage) add(o Usage) Usage {
 	return Usage{u.Prompt + o.Prompt, u.Completion + o.Completion, u.Reasoning + o.Reasoning, u.CacheHit + o.CacheHit, u.CacheMiss + o.CacheMiss}
 }
 
-// Error classes of a recorded call.
+// Generation modes a call can be recorded in. A call without a mode (a report
+// older than scorer version 4) is classic.
+const (
+	ModeClassic = "classic"
+	ModeHarness = "harness"
+)
+
+// Error classes of a recorded call. http_status, decode, size and refusal come
+// from application_context.GenerationProviderError; timeout and transport are
+// the two readings of its transport class.
 const (
 	ErrorClassTimeout    = "timeout"
 	ErrorClassHTTPStatus = "http_status"
 	ErrorClassTransport  = "transport"
 	ErrorClassDecode     = "decode"
+	ErrorClassSize       = "size"
+	ErrorClassRefusal    = "refusal"
 )
 
-// knownFinishReasons are the finish_reason values DeepSeek documents. Any other
-// value is recorded as "other", so the field never carries upstream text.
-var knownFinishReasons = map[string]bool{"": true, "stop": true, "length": true, "content_filter": true, "tool_calls": true, "insufficient_system_resource": true, "other": true}
+// UnknownToolName replaces the name of a tool call that names no Tool of its
+// request: the name is model-chosen text, and the aggregate report may only
+// hold fixed vocabulary.
+const UnknownToolName = "unknown"
 
-// Call is what the recorder saw of one provider round trip. It keeps no
-// headers and no upstream error text: a failure is its class and, for an HTTP
-// error, the status code. An upstream can echo the Authorization header back
-// in an error body or a broken status line, in any encoding, so the only safe
+// knownFinishReasons are the finish reasons the adapters normalize to. Any
+// other value is recorded as "other", so the field never carries upstream text.
+var knownFinishReasons = map[string]bool{"": true, "stop": true, "length": true, "tool_calls": true, "content_filter": true, "insufficient_system_resource": true, "other": true}
+
+// ToolCall is one tool call of a harness reply as recorded. Arguments is the
+// sanitized text (SanitizeArguments); AggregateOnly drops it.
+type ToolCall struct {
+	Name       string `json:"name"`
+	Arguments  string `json:"arguments,omitempty"`
+	Incomplete bool   `json:"incomplete,omitempty"`
+	Malformed  bool   `json:"malformed,omitempty"`
+}
+
+// Call is what the recorder saw of one provider call at the provider-neutral
+// seam. It keeps no headers, no body and no upstream error text: a failure is
+// its class and, for an HTTP error, the status code. An upstream can echo the
+// Authorization header back in an error body, in any encoding, so the only safe
 // amount of that text to keep is none.
 type Call struct {
-	Model        string `json:"model"`
-	Thinking     bool   `json:"thinking"`
-	Plan         bool   `json:"plan,omitempty"`
-	Repair       bool   `json:"repair,omitempty"`
-	MaxTokens    int    `json:"maxTokens"`
+	// Mode is classic (a TemplateDraftRequest/Response pair) or harness (a
+	// ConversationRequest/Response pair).
+	Mode      string `json:"mode,omitempty"`
+	Model     string `json:"model"`
+	Thinking  bool   `json:"thinking"`
+	Plan      bool   `json:"plan,omitempty"`
+	Repair    bool   `json:"repair,omitempty"`
+	MaxTokens int    `json:"maxTokens"`
+	// Turn is the 1-based Turn of a harness call: the number of assistant
+	// messages in its request, plus one.
+	Turn      int `json:"turn,omitempty"`
+	ToolCount int `json:"toolCount,omitempty"`
+	// Status is the HTTP status of a failed call (0 on success and for a
+	// failure with no status), ErrorClass its class.
 	Status       int    `json:"status"`
 	ErrorClass   string `json:"errorClass,omitempty"`
 	FinishReason string `json:"finishReason,omitempty"`
 	Usage        Usage  `json:"usage"`
-	LatencyMS    int64  `json:"latencyMs"`
-	// Content is the model's raw reply. AggregateOnly drops it.
+	// UsageUnreported is set when the provider left out a prompt or completion
+	// count, or both cache counts: Usage then holds zeros that mean "unknown".
+	UsageUnreported bool  `json:"usageUnreported,omitempty"`
+	LatencyMS       int64 `json:"latencyMs"`
+	// Content is the model's raw reply (harness: its text beside any tool
+	// calls). AggregateOnly drops it.
 	Content string `json:"content,omitempty"`
+	// ToolCalls and Replay are harness only. Replay is the sanitized
+	// diagnostic copy of the provider's assistant payload.
+	ToolCalls []ToolCall      `json:"toolCalls,omitempty"`
+	Replay    json.RawMessage `json:"replay,omitempty"`
 }
 
-// Recorder is an http.RoundTripper that records every chat-completions call
-// passing through it and hands the request and response on unchanged.
+// Recorder records every provider call that passes through a provider it
+// wrapped, at the provider-neutral seams, and hands requests and responses on
+// unchanged. One Recorder can wrap a classic and a harness provider built from
+// one provider configuration; their calls interleave in Take order.
 type Recorder struct {
-	base    http.RoundTripper
 	secrets []string
 	mu      sync.Mutex
 	calls   []Call
 }
 
-// NewRecorder wraps base; nil means http.DefaultTransport. secrets are
-// redacted from everything recorded, on top of any "Bearer ..." token.
-func NewRecorder(base http.RoundTripper, secrets ...string) *Recorder {
-	if base == nil {
-		base = http.DefaultTransport
-	}
-	return &Recorder{base: base, secrets: secrets}
+// NewRecorder returns a recorder that redacts secrets, and any "Bearer ..."
+// token, from everything it records.
+func NewRecorder(secrets ...string) *Recorder {
+	return &Recorder{secrets: secrets}
 }
 
-func (r *Recorder) RoundTrip(req *http.Request) (*http.Response, error) {
-	var call Call
-	if req.Body != nil {
-		body, err := io.ReadAll(req.Body)
-		_ = req.Body.Close()
-		if err != nil {
-			return nil, err
-		}
-		req.Body = io.NopCloser(bytes.NewReader(body))
-		var sent struct {
-			Model     string                           `json:"model"`
-			MaxTokens int                              `json:"max_tokens"`
-			Messages  []struct{ Role, Content string } `json:"messages"`
-			Thinking  struct {
-				Type string `json:"type"`
-			} `json:"thinking"`
-		}
-		if json.Unmarshal(body, &sent) == nil {
-			call.Model, call.MaxTokens, call.Thinking = sent.Model, sent.MaxTokens, sent.Thinking.Type == "enabled"
-			for _, message := range sent.Messages {
-				if message.Role == "user" {
-					call.Repair = strings.Contains(message.Content, "\nRepair request: your previous reply could not be used as it stands.")
-				}
-				if message.Role == "user" && strings.Contains(message.Content, "\nTask: plan the design of a whole template.") {
-					call.Plan = true
-				}
-			}
-		}
-	}
+// WrapDraftProvider records classic-mode calls. The wrapper also exposes the
+// optional Transport, ProviderName and ReasoningMode methods the generator's
+// disclosure reads, forwarding to inner where it has them.
+func (r *Recorder) WrapDraftProvider(inner application_context.TemplateDraftProvider) application_context.TemplateDraftProvider {
+	return &recordingDraftProvider{inner: inner, rec: r}
+}
 
+// WrapConversationProvider records harness-mode calls, forwarding the rest of
+// the provider interface unchanged.
+func (r *Recorder) WrapConversationProvider(inner application_context.TemplateConversationProvider) application_context.TemplateConversationProvider {
+	return &recordingConversationProvider{TemplateConversationProvider: inner, rec: r}
+}
+
+type recordingDraftProvider struct {
+	inner application_context.TemplateDraftProvider
+	rec   *Recorder
+}
+
+func (p *recordingDraftProvider) Endpoint() string { return p.inner.Endpoint() }
+
+func (p *recordingDraftProvider) ProviderName() string {
+	if named, ok := p.inner.(interface{ ProviderName() string }); ok {
+		return named.ProviderName()
+	}
+	return ""
+}
+
+func (p *recordingDraftProvider) Transport() application_context.TemplateTransport {
+	if t, ok := p.inner.(interface {
+		Transport() application_context.TemplateTransport
+	}); ok {
+		return t.Transport()
+	}
+	return application_context.TemplateTransport{}
+}
+
+func (p *recordingDraftProvider) ReasoningMode() string {
+	if m, ok := p.inner.(interface{ ReasoningMode() string }); ok {
+		return m.ReasoningMode()
+	}
+	return ""
+}
+
+func (p *recordingDraftProvider) GenerateDraft(ctx context.Context, req application_context.TemplateDraftRequest) (application_context.TemplateDraftResponse, error) {
+	call := Call{
+		Mode: ModeClassic, Model: req.Model, Thinking: req.Thinking, MaxTokens: req.MaxTokens,
+		Repair: strings.Contains(req.User, "\nRepair request: your previous reply could not be used as it stands."),
+		Plan:   strings.Contains(req.User, "\nTask: plan the design of a whole template."),
+	}
 	start := time.Now()
-	resp, err := r.base.RoundTrip(req)
-	if err != nil {
-		call.LatencyMS = time.Since(start).Milliseconds()
-		call.ErrorClass = transportErrorClass(req.Context(), err)
-		r.record(call)
-		return nil, err
-	}
-	body, readErr := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
+	resp, err := p.inner.GenerateDraft(ctx, req)
 	call.LatencyMS = time.Since(start).Milliseconds()
-	call.Status = resp.StatusCode
-	resp.Body = io.NopCloser(bytes.NewReader(body))
-	if readErr != nil {
-		call.ErrorClass = transportErrorClass(req.Context(), readErr)
-		r.record(call)
-		return resp, nil
+	if err != nil {
+		call.Status, call.ErrorClass = classifyError(ctx, err)
+		p.rec.record(call)
+		return resp, err
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		call.ErrorClass = ErrorClassHTTPStatus
-		r.record(call)
-		return resp, nil
-	}
-
-	var decoded struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-			FinishReason string `json:"finish_reason"`
-		} `json:"choices"`
-		Usage struct {
-			PromptTokens            int `json:"prompt_tokens"`
-			CompletionTokens        int `json:"completion_tokens"`
-			PromptCacheHitTokens    int `json:"prompt_cache_hit_tokens"`
-			PromptCacheMissTokens   int `json:"prompt_cache_miss_tokens"`
-			CompletionTokensDetails struct {
-				ReasoningTokens int `json:"reasoning_tokens"`
-			} `json:"completion_tokens_details"`
-		} `json:"usage"`
-	}
-	if err := json.Unmarshal(body, &decoded); err != nil {
-		call.ErrorClass = ErrorClassDecode
-		r.record(call)
-		return resp, nil
-	}
-	if len(decoded.Choices) > 0 {
-		call.Content = decoded.Choices[0].Message.Content
-		call.FinishReason = decoded.Choices[0].FinishReason
-		if !knownFinishReasons[call.FinishReason] {
-			call.FinishReason = "other"
-		}
-	}
-	u := decoded.Usage
-	call.Usage = Usage{u.PromptTokens, u.CompletionTokens, u.CompletionTokensDetails.ReasoningTokens, u.PromptCacheHitTokens, u.PromptCacheMissTokens}
-	r.record(call)
+	call.Status = 200
+	call.Content = resp.Content
+	call.FinishReason = normalizeFinish(resp.FinishReason)
+	u := resp.Usage
+	call.Usage = Usage{Prompt: u.Prompt, Completion: u.Completion, Reasoning: u.Reasoning, CacheHit: u.CacheHit, CacheMiss: u.CacheMiss}
+	p.rec.record(call)
 	return resp, nil
 }
 
-func transportErrorClass(ctx context.Context, err error) string {
+type recordingConversationProvider struct {
+	application_context.TemplateConversationProvider
+	rec *Recorder
+}
+
+func (p *recordingConversationProvider) Converse(ctx context.Context, req application_context.ConversationRequest) (application_context.ConversationResponse, error) {
+	turn := 1
+	for _, m := range req.Messages {
+		if m.Role == "assistant" {
+			turn++
+		}
+	}
+	call := Call{Mode: ModeHarness, Model: req.Model, Thinking: req.Thinking, MaxTokens: req.MaxTokens, Turn: turn, ToolCount: len(req.Tools)}
+	start := time.Now()
+	resp, err := p.TemplateConversationProvider.Converse(ctx, req)
+	call.LatencyMS = time.Since(start).Milliseconds()
+	if err != nil {
+		call.Status, call.ErrorClass = classifyError(ctx, err)
+		p.rec.record(call)
+		return resp, err
+	}
+	call.Status = 200
+	call.Content = resp.Text
+	call.FinishReason = normalizeFinish(resp.Finish)
+	call.Usage, call.UsageUnreported = conversationUsage(resp.Usage)
+	known := make(map[string]bool, len(req.Tools))
+	for _, tool := range req.Tools {
+		known[tool.Name] = true
+	}
+	for _, c := range resp.Calls {
+		name := c.Name
+		if !known[name] {
+			name = UnknownToolName
+		}
+		call.ToolCalls = append(call.ToolCalls, ToolCall{Name: name, Arguments: SanitizeArguments(c.Arguments, p.rec.secrets...), Incomplete: c.Incomplete, Malformed: c.Malformed})
+	}
+	if len(resp.Replay) > 0 {
+		call.Replay = SanitizeReplay(resp.Replay, p.rec.secrets...)
+	}
+	p.rec.record(call)
+	return resp, nil
+}
+
+// conversationUsage turns the pointer-valued usage into counts. A missing cache
+// side is derived from the other and the prompt total, as classic mode does;
+// anything the provider left out reads as zero and sets unreported.
+func conversationUsage(u application_context.ConversationUsage) (Usage, bool) {
+	val := func(p *int) int {
+		if p == nil {
+			return 0
+		}
+		return *p
+	}
+	out := Usage{Prompt: val(u.Prompt), Completion: val(u.Completion), Reasoning: val(u.Reasoning), CacheHit: val(u.CacheHit), CacheMiss: val(u.CacheMiss)}
+	switch {
+	case u.CacheHit != nil && u.CacheMiss == nil:
+		out.CacheMiss = max(0, out.Prompt-out.CacheHit)
+	case u.CacheHit == nil && u.CacheMiss != nil:
+		out.CacheHit = max(0, out.Prompt-out.CacheMiss)
+	}
+	return out, u.Prompt == nil || u.Completion == nil || (u.CacheHit == nil && u.CacheMiss == nil)
+}
+
+func normalizeFinish(finish string) string {
+	if knownFinishReasons[finish] {
+		return finish
+	}
+	return "other"
+}
+
+// classifyError reads the sanitized typed error the adapters return, never its
+// text. An error with no type (a fake, or a failure before the adapter) is a
+// timeout when a deadline caused it and a transport failure otherwise.
+func classifyError(ctx context.Context, err error) (status int, class string) {
+	var typed *application_context.GenerationProviderError
+	if errors.As(err, &typed) {
+		switch typed.Class {
+		case application_context.GenerationErrorClassHTTP:
+			return typed.Status, ErrorClassHTTPStatus
+		case application_context.GenerationErrorClassDecode:
+			return typed.Status, ErrorClassDecode
+		case application_context.GenerationErrorClassSize:
+			return typed.Status, ErrorClassSize
+		case application_context.GenerationErrorClassRefusal:
+			return typed.Status, ErrorClassRefusal
+		}
+	}
 	var netErr net.Error
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
-		return ErrorClassTimeout
+		return 0, ErrorClassTimeout
 	}
-	return ErrorClassTransport
+	return 0, ErrorClassTransport
 }
 
 func (r *Recorder) record(c Call) {

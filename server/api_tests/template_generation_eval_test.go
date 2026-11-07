@@ -75,13 +75,8 @@ func TestTemplateGenerationEval(t *testing.T) {
 	// Every case dry-runs, then sends: lift both limiters.
 	tc.AppCtx.SetTemplateGenerationRateLimiter(application_context.NewMRQLGenerationRateLimiter(math.MaxInt, time.Minute))
 	tc.AppCtx.SetTemplateDisclosureRateLimiter(application_context.NewMRQLGenerationRateLimiter(math.MaxInt, time.Minute))
-	recorder := templateeval.NewRecorder(nil, apiKey)
-	provider := application_context.NewDeepSeekTemplateDraftProvider(
-		application_context.DefaultDeepSeekChatCompletionsURL,
-		apiKey,
-		model,
-		&http.Client{Transport: recorder},
-	)
+	recorder := templateeval.NewRecorder(apiKey)
+	provider := recorder.WrapDraftProvider(application_context.NewGenerationTemplateDraftProvider("deepseek", apiKey, model, nil))
 	generationConfig, err := application_context.TemplateGenerationConfigFromEnv(apiKey, os.Getenv, model, timeout)
 	if err != nil {
 		t.Fatal(err)
