@@ -118,9 +118,15 @@ func firstSlotSpanM(m *renderMeter, content, tag string) (openIdx, innerStart, c
 	openTag := "[" + tag + "]"
 	closeTag := "[/" + tag + "]"
 	spans := blockInnerSpansM(m, content)
+	if m.Err() != nil {
+		return -1, -1, -1, -1
+	}
 
 	openIdx = -1
 	for i := 0; i+len(openTag) <= len(content); i++ {
+		if i&0x3ff == 0 && !m.alive() {
+			return -1, -1, -1, -1
+		}
 		if content[i] == '[' && strings.HasPrefix(content[i:], openTag) && !insideSortedSpans(i, spans) {
 			openIdx = i
 			break
@@ -133,6 +139,9 @@ func firstSlotSpanM(m *renderMeter, content, tag string) (openIdx, innerStart, c
 	innerStart = openIdx + len(openTag)
 	closeIdx = -1
 	for i := innerStart; i+len(closeTag) <= len(content); i++ {
+		if i&0x3ff == 0 && !m.alive() {
+			return -1, -1, -1, -1
+		}
 		if content[i] == '[' && strings.HasPrefix(content[i:], closeTag) && !insideSortedSpans(i, spans) {
 			closeIdx = i
 			break
@@ -167,7 +176,13 @@ func slotTagSpansM(m *renderMeter, parent, inner string) [][2]int {
 
 func firstElseIndexM(m *renderMeter, content string) int {
 	spans := blockInnerSpansM(m, content)
+	if m.Err() != nil {
+		return -1
+	}
 	for i := 0; i < len(content); i++ {
+		if i&0x3ff == 0 && !m.alive() {
+			return -1
+		}
 		if content[i] == '[' && strings.HasPrefix(content[i:], elseTag) && !insideSortedSpans(i, spans) {
 			return i
 		}
@@ -180,7 +195,12 @@ func firstElseIndexM(m *renderMeter, content string) int {
 // each remainder back to offsets in inner.
 func mrqlSlotTagSpansM(m *renderMeter, inner string) [][2]int {
 	var out [][2]int
-	// origin[i] is the offset in inner of byte i of the current remainder.
+	// origin[i] is the offset in inner of byte i of the current remainder. Its
+	// storage (8 bytes a byte) is reserved before it is allocated, as is each
+	// copy of it and of the remainder below.
+	if !m.chargeScratch(8 * int64(len(inner)+1)) {
+		return nil
+	}
 	origin := make([]int, len(inner)+1)
 	for i := range origin {
 		origin[i] = i
@@ -190,6 +210,9 @@ func mrqlSlotTagSpansM(m *renderMeter, inner string) [][2]int {
 		o, is, ci, ce := firstSlotSpanM(m, rest, tag)
 		if o < 0 {
 			continue
+		}
+		if m.Err() != nil || !m.chargeScratch(8*int64(len(origin))+int64(len(rest))) {
+			return nil
 		}
 		out = append(out, [2]int{origin[o], origin[o] + (is - o)}, [2]int{origin[ci], origin[ci] + (ce - ci)})
 		rest = rest[:o] + rest[ce:]

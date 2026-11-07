@@ -102,6 +102,9 @@ func splitBranchesM(m *renderMeter, content string) []Branch {
 	var branches []Branch
 	current := Branch{}
 	segStart := 0
+	if m.Err() != nil {
+		return nil
+	}
 
 	for i := 0; i < len(content); {
 		if !m.tick() {
@@ -112,6 +115,9 @@ func splitBranchesM(m *renderMeter, content string) []Branch {
 			continue
 		}
 		if strings.HasPrefix(content[i:], elseTag) {
+			if !m.reserveDividers(1) {
+				return branches
+			}
 			current.Content = content[segStart:i]
 			branches = append(branches, current)
 			segStart = i + len(elseTag)
@@ -120,6 +126,11 @@ func splitBranchesM(m *renderMeter, content string) []Branch {
 			continue
 		}
 		if loc := elseifDividerPattern.FindStringSubmatchIndex(content[i:]); loc != nil {
+			// The record and its (possibly empty) attribute map count before
+			// they are built.
+			if !m.reserveDividers(1) {
+				return branches
+			}
 			attrStr := ""
 			if loc[2] >= 0 {
 				attrStr = content[i+loc[2] : i+loc[3]]
@@ -155,19 +166,31 @@ func branchDividerSpans(content string) [][2]int { return branchDividerSpansM(ni
 func branchDividerSpansM(m *renderMeter, content string) [][2]int {
 	spans := blockInnerSpansM(m, content)
 	var out [][2]int
+	if m.Err() != nil {
+		return nil
+	}
 	for i := 0; i < len(content); {
+		if i&0x3ff == 0 && !m.alive() {
+			return out
+		}
 		if content[i] != '[' || insideSortedSpans(i, spans) {
 			i++
 			continue
 		}
 		if strings.HasPrefix(content[i:], elseTag) {
+			if !m.reserveDividers(1) {
+				return out
+			}
 			out = append(out, [2]int{i, i + len(elseTag)})
 			i += len(elseTag)
 			continue
 		}
-		if m := elseifDividerPattern.FindStringSubmatchIndex(content[i:]); m != nil {
-			out = append(out, [2]int{i, i + m[1]})
-			i += m[1]
+		if loc := elseifDividerPattern.FindStringSubmatchIndex(content[i:]); loc != nil {
+			if !m.reserveDividers(1) {
+				return out
+			}
+			out = append(out, [2]int{i, i + loc[1]})
+			i += loc[1]
 			continue
 		}
 		i++

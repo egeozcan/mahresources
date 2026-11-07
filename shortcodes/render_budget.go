@@ -67,6 +67,56 @@ type renderMeter struct {
 	regexAllowance *RegexAllowance // matches= patterns, compiled once per render
 	keyWork        int64           // bytes of MRQL cache-key construction
 	attrs          int             // attribute map entries retained by token collection
+	scratch        int64           // helper scratch bytes
+	dividers       int             // branch and divider records
+}
+
+// maxScratchBytes is the helper scratch (origin arrays, remainder copies) one
+// limited operation may allocate in total; maxDividerRecords the branch and
+// divider records ([else], [elseif], empty ones included) it may collect.
+const (
+	maxScratchBytes   = 64 << 20
+	maxDividerRecords = budgetedTokenCap
+)
+
+// chargeScratch reserves n bytes of helper scratch before it is allocated. Only
+// a limited meter is capped; any meter stops when its context does.
+func (m *renderMeter) chargeScratch(n int64) bool {
+	if m == nil {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.checkCtxLocked()
+	if m.err != nil {
+		return false
+	}
+	m.scratch += n
+	if m.limited() && (n < 0 || m.scratch > maxScratchBytes) {
+		m.failLocked(fmt.Errorf("%w: helper scratch exceeds %d bytes", ErrRenderBudgetExceeded, maxScratchBytes))
+		return false
+	}
+	return true
+}
+
+// reserveDividers reserves n branch or divider records before they are
+// appended (an empty [elseif] allocates a record and a map like any other).
+func (m *renderMeter) reserveDividers(n int) bool {
+	if m == nil {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.checkCtxLocked()
+	if m.err != nil {
+		return false
+	}
+	m.dividers += n
+	if m.limited() && m.dividers > maxDividerRecords {
+		m.failLocked(fmt.Errorf("%w: more than %d [else]/[elseif] dividers", ErrRenderBudgetExceeded, maxDividerRecords))
+		return false
+	}
+	return true
 }
 
 // budgetedAttrTotal is the attribute entries one limited parse may retain in

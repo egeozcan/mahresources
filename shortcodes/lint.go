@@ -144,6 +144,9 @@ var looseBracketPattern = regexp.MustCompile(`\[/?([a-zA-Z][a-zA-Z0-9_:-]*)`)
 // text with them removed: what is inside one is not checked, and what removing
 // one joins together is. Offsets are mapped back to input.
 func Lint(input string, opts LintOptions) []LintIssue {
+	if len(input) > MaxLintSourceBytes {
+		return lintTooLarge("template")
+	}
 	w := newLintWork(opts.Context)
 	opts.work = w
 	if !w.poll() || !w.charge(1+len(input)/64) {
@@ -170,6 +173,16 @@ func Lint(input string, opts LintOptions) []LintIssue {
 	}
 	sortLintIssues(issues)
 	return issues
+}
+
+// MaxLintSourceBytes is the largest source Lint and LintMetaSchema read. Every
+// lint allocation is linear in at most this much, whoever the caller is; the
+// harness caps generated content far below it.
+const MaxLintSourceBytes = 1 << 20
+
+// lintTooLarge is the single issue for a source over MaxLintSourceBytes.
+func lintTooLarge(what string) []LintIssue {
+	return []LintIssue{{Severity: SeverityError, Message: "The " + what + " is too large to check: lint reads at most 1 MiB."}}
 }
 
 // lintTooComplex is the single issue a lint reports when it ran past its work
@@ -937,7 +950,13 @@ func countTopLevelElse(content string) int { return countTopLevelElseM(nil, cont
 func countTopLevelElseM(m *renderMeter, content string) int {
 	spans := blockInnerSpansM(m, content)
 	count := 0
+	if m.Err() != nil {
+		return 0
+	}
 	for i := 0; i < len(content); {
+		if i&0x3ff == 0 && !m.alive() {
+			return count
+		}
 		if content[i] == '[' && strings.HasPrefix(content[i:], elseTag) && !insideSortedSpans(i, spans) {
 			count++
 			i += len(elseTag)

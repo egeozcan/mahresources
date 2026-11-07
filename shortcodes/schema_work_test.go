@@ -161,7 +161,7 @@ func TestLintMetaSchemaBytesBudget(t *testing.T) {
 	// Many properties whose names are long enough that their warnings alone
 	// pass the byte allowance.
 	props := map[string]any{}
-	for i := 0; i < 3000; i++ {
+	for i := 0; i < 2000; i++ {
 		props[fmt.Sprintf("bad.key.%d.%s", i, strings.Repeat("k", 400))] = map[string]any{"type": "string"}
 	}
 	b, _ := json.Marshal(map[string]any{"type": "object", "properties": props})

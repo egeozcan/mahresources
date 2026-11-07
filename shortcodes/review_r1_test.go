@@ -35,14 +35,14 @@ func TestLintURLPrefixCopiesAreBounded(t *testing.T) {
 
 // P1-5: tokens are bounded while they are collected, not after.
 func TestLintTokenCollectionIsBounded(t *testing.T) {
-	in := strings.Repeat("[meta]", 1_000_000)
+	in := strings.Repeat("[meta]", 160_000)
 	var issues []LintIssue
 	grown := allocDuring(func() { issues = Lint(in, LintOptions{Known: KnownFromBuiltins()}) })
 	require.Len(t, issues, 1)
 	assert.Contains(t, issues[0].Message, "too complex")
 	assert.Less(t, grown, int64(64<<20))
 
-	loose := strings.Repeat("[x", 1_000_000)
+	loose := strings.Repeat("[x", 500_000)
 	issues = Lint(loose, LintOptions{})
 	require.Len(t, issues, 1)
 	assert.Contains(t, issues[0].Message, "too complex")
@@ -152,7 +152,7 @@ func TestConditionalNumberedMRQLSharesParams(t *testing.T) {
 // Round 2: aggregate attribute entries are reserved before the maps are built.
 func TestLintAggregateAttributeRetentionIsBounded(t *testing.T) {
 	var sb strings.Builder
-	for i := 0; i < 3000; i++ {
+	for i := 0; i < 140; i++ { // ~1 MB, under MaxLintSourceBytes: 140,000 entries past the 100,000 allowance
 		sb.WriteString("[meta")
 		for j := 0; j < 1000; j++ {
 			fmt.Fprintf(&sb, " a%d=1", j)
@@ -164,8 +164,7 @@ func TestLintAggregateAttributeRetentionIsBounded(t *testing.T) {
 	grown := allocDuring(func() { issues = Lint(in, LintOptions{Known: KnownFromBuiltins()}) })
 	require.Len(t, issues, 1)
 	assert.Contains(t, issues[0].Message, "too complex")
-	// 3,000,000 retained entries cost well over 200 MB; the reservation stops at 100,000.
-	assert.Less(t, grown, int64(120<<20))
+	assert.Less(t, grown, int64(60<<20))
 }
 
 // Round 2: the estimate is an upper bound of the real JSON, and of the real
@@ -361,7 +360,7 @@ func elseifBomb(dividers, attrs int) string {
 // outside the aggregate reservation. 1,500 dividers x 1,000 attributes retained
 // 1.5 million entries.
 func TestElseifAttributeMapsAreAdmittedInLintAndRender(t *testing.T) {
-	in := elseifBomb(1500, 1000)
+	in := elseifBomb(150, 900)
 
 	var issues []LintIssue
 	opts := LintOptions{Known: KnownFromBuiltins(), ValidateMRQL: func(string, MRQLCheckOptions) error { return nil }}
@@ -389,4 +388,98 @@ func TestElseifSplitStopsOnCancellation(t *testing.T) {
 	splitBranchesM(m, inner)
 	assert.ErrorIs(t, m.Err(), context.Canceled)
 	assert.Less(t, cc.calls, 200)
+}
+
+// Round 4: the lint source cap, and the helper reservations beneath it.
+func TestLintRefusesSourceOverTheCap(t *testing.T) {
+	issues := Lint(strings.Repeat("a", MaxLintSourceBytes+1), LintOptions{})
+	require.Len(t, issues, 1)
+	assert.Contains(t, issues[0].Message, "too large")
+	assert.Empty(t, Lint(strings.Repeat("a", MaxLintSourceBytes), LintOptions{}))
+	issues = LintMetaSchema(`{"description":"`+strings.Repeat("a", MaxLintSourceBytes)+`"}`, MetaSchemaLintOptions{})
+	require.Len(t, issues, 1)
+	assert.Contains(t, issues[0].Message, "too large")
+}
+
+func limitedMeter(ctx context.Context) *renderMeter {
+	return &renderMeter{ctx: ctx, budget: RenderBudget{ParsedSourceBytes: 1 << 62}}
+}
+
+// An [mrql] body of plain text: the origin array is 8 bytes a byte, reserved
+// first. Under a tight scratch allowance the helper allocates nothing.
+func TestMRQLSlotSpansReserveOriginStorage(t *testing.T) {
+	inner := strings.Repeat("x", 1<<20) + "[header]h[/header]"
+	m := limitedMeter(nil)
+	m.scratch = maxScratchBytes - 1<<20 // leaves 1 MiB; the origin array needs 8 MiB
+	var out [][2]int
+	grown := allocDuring(func() { out = mrqlSlotTagSpansM(m, inner) })
+	assert.Nil(t, out)
+	assert.ErrorIs(t, m.Err(), ErrRenderBudgetExceeded)
+	assert.Less(t, grown, int64(2<<20), "the origin array was allocated before the reservation")
+
+	// With room it still returns the spans.
+	m = limitedMeter(nil)
+	spans := mrqlSlotTagSpansM(m, "a[header]h[/header]b")
+	assert.Len(t, spans, 2)
+}
+
+// Empty dividers are records too: 1.3 million [elseif] used to allocate a
+// branch, a map and a span each.
+func TestEmptyDividersAreReserved(t *testing.T) {
+	inner := strings.Repeat("[elseif]", 200_000)
+	m := limitedMeter(nil)
+	var branches []Branch
+	grown := allocDuring(func() { branches = splitBranchesM(m, inner) })
+	assert.ErrorIs(t, m.Err(), ErrRenderBudgetExceeded)
+	assert.LessOrEqual(t, len(branches), maxDividerRecords+1)
+	assert.Less(t, grown, int64(40<<20))
+
+	m = limitedMeter(nil)
+	spans := branchDividerSpansM(m, strings.Repeat("[else]", 200_000))
+	assert.ErrorIs(t, m.Err(), ErrRenderBudgetExceeded)
+	assert.LessOrEqual(t, len(spans), maxDividerRecords+1)
+
+	// Through lint, at a size under the cap.
+	in := `[conditional path="a" eq="1"]` + strings.Repeat("[elseif]", 120_000) + `[/conditional]`
+	issues := Lint(in, LintOptions{Known: KnownFromBuiltins(), ValidateMRQL: func(string, MRQLCheckOptions) error { return nil }})
+	require.Len(t, issues, 1)
+	assert.Contains(t, issues[0].Message, "too complex")
+}
+
+// The helper scans are cancellable: each returns promptly on a done context.
+func TestSlotHelpersCheckTheMeter(t *testing.T) {
+	cc := &errCountingCtx{Context: context.Background(), after: 0}
+	body := strings.Repeat("x", 1<<20)
+	for name, f := range map[string]func(m *renderMeter){
+		"firstSlotSpan":     func(m *renderMeter) { firstSlotSpanM(m, body, "header") },
+		"firstElseIndex":    func(m *renderMeter) { firstElseIndexM(m, body) },
+		"branchDivider":     func(m *renderMeter) { branchDividerSpansM(m, body) },
+		"countTopLevelElse": func(m *renderMeter) { countTopLevelElseM(m, body) },
+		"splitElse":         func(m *renderMeter) { splitElseM(m, body) },
+	} {
+		cc.calls = 0
+		m := limitedMeter(cc)
+		f(m)
+		assert.Error(t, m.Err(), name)
+		assert.Less(t, cc.calls, 50, name)
+	}
+}
+
+// markItems preflights the marked source: 49,000 bare [item] expand to ~2 MB.
+func TestMarkItemsPreflightsTheMarkedSource(t *testing.T) {
+	branch := strings.Repeat("[item]", 40000)
+	m := newRenderMeter(WithRenderBudget(context.Background(), RenderBudget{OutputBytes: 1 << 20, ParsedSourceBytes: 512 << 10}))
+	var out string
+	parseOnly := allocDuring(func() {
+		parseWithBlocksM(newRenderMeter(WithRenderBudget(context.Background(), RenderBudget{OutputBytes: 1 << 20, ParsedSourceBytes: 512 << 10})), branch)
+	})
+	grown := allocDuring(func() { out, _ = markItems(m, branch) })
+	assert.Empty(t, out)
+	assert.ErrorIs(t, m.Err(), ErrRenderBudgetExceeded)
+	assert.Less(t, grown, parseOnly+int64(512<<10), "the marked source (~1.6 MB) was built after the parse")
+	// Within the allowance it marks as before.
+	m = newRenderMeter(WithRenderBudget(context.Background(), RenderBudget{OutputBytes: 1 << 20, ParsedSourceBytes: 512 << 10}))
+	marked, items := markItems(m, "a[item]b[item path=\"x\"]c")
+	assert.Len(t, items, 2)
+	assert.Contains(t, marked, itemSentinelPrefix)
 }

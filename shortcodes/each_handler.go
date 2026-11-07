@@ -19,6 +19,16 @@ const defaultEachLimit = 100
 // the output by some other handler cannot forge a placeholder.
 var itemSentinelPrefix = "\x00mahitem" + rand.Text() + ":"
 
+// decimalDigits is len(strconv.Itoa(n)) without the allocation.
+func decimalDigits(n int) int {
+	d := 1
+	for n >= 10 {
+		n /= 10
+		d++
+	}
+	return d
+}
+
 func itemSentinel(i int) string { return itemSentinelPrefix + strconv.Itoa(i) + "\x00" }
 
 // RenderEachShortcode expands an [each] block by iterating an array value at the
@@ -114,12 +124,29 @@ func markItems(m *renderMeter, branch string) (string, []Shortcode) {
 		return branch, nil
 	}
 
+	// The marked source is longer than the branch (a sentinel is longer than
+	// most [item] tokens), so its size is admitted before it is built, and the
+	// item records are reserved with it.
+	size, count := int64(len(branch)), 0
+	for _, sc := range scs {
+		if sc.Name == "item" {
+			size += int64(len(itemSentinelPrefix)+decimalDigits(count)+1) - int64(sc.End-sc.Start)
+			count++
+		}
+	}
+	if m.Err() != nil || !m.admitParsed(size) || !m.chargeScratch(int64(count)*160) {
+		return "", nil
+	}
+
 	var items []Shortcode
 	var b strings.Builder
 	lastEnd := 0
 	for _, sc := range scs {
 		if sc.Name != "item" {
 			continue
+		}
+		if !m.tick() {
+			return "", nil
 		}
 		b.WriteString(branch[lastEnd:sc.Start])
 		b.WriteString(itemSentinel(len(items)))

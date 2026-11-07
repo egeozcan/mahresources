@@ -152,6 +152,9 @@ func LintMetaSchema(schema string, opts MetaSchemaLintOptions) []LintIssue {
 	if strings.TrimSpace(schema) == "" {
 		return nil
 	}
+	if len(schema) > MaxLintSourceBytes {
+		return lintTooLarge("schema")
+	}
 	var root any
 	if err := json.Unmarshal([]byte(schema), &root); err != nil {
 		return nil
