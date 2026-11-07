@@ -56,6 +56,7 @@ func ValidateMetaSchemaContext(ctx context.Context, schemaJSON string) error {
 		return err
 	}
 	c := jsonschema.NewCompiler()
+	c.UseRegexpEngine(meterRegexpEngine(ctx))
 	c.UseLoader(refuseExternalSchemaLoader{})
 	const id = "mem://meta-schema.json"
 	if err := c.AddResource(id, doc); err != nil {

@@ -160,7 +160,7 @@ func TestValidateMetaSchemaAggregateRegexWork(t *testing.T) {
 	p := strings.Repeat("a{1000}", 19) // ~19,000 instructions each: under the single-pattern allowance
 	var props []string
 	for i := 0; i < 20; i++ {
-		props = append(props, fmt.Sprintf(`"p%d":{"type":"string","pattern":"%s"}`, i, p))
+		props = append(props, fmt.Sprintf(`"p%d":{"type":"string","pattern":"%s%d"}`, i, p, i)) // distinct sources: each counts once
 	}
 	s := `{"type":"object","properties":{` + strings.Join(props, ",") + `}}`
 	err := ValidateMetaSchema(s)
@@ -173,6 +173,42 @@ func TestValidateMetaSchemaContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := ValidateMetaSchemaContext(ctx, `{"type":"object"}`); !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// Round 2: the compiler's own regexp engine is metered, so these all see the
+// patterns the compiler really compiles.
+func TestValidateMetaSchemaRegexEngineSeesWhatTheCompilerCompiles(t *testing.T) {
+	bad := strings.Repeat("a{1000}", 100)
+	refs := strings.Repeat(`{"$ref":"#"},`, 10000)
+	cases := map[string]string{
+		"number beyond float64 beside oversized regex": `{"minimum":1e400,"pattern":"` + bad + `"}`,
+		"encoded pointer into default":                 `{"$ref":"#/default/%78","default":{"x":{"pattern":"` + bad + `"}}}`,
+		"self-document absolute ref":                   `{"$id":"https://example.test/s","$ref":"https://example.test/s#/default/x","default":{"x":{"pattern":"` + bad + `"}}}`,
+		"nested resource":                              `{"$defs":{"n":{"$id":"https://example.test/n","properties":{"a":{"pattern":"` + bad + `"}}}}}`,
+		"dynamic ref":                                  `{"$schema":"https://json-schema.org/draft/2020-12/schema","$dynamicRef":"#anchor","$defs":{"a":{"$dynamicAnchor":"anchor","pattern":"` + bad + `"}}}`,
+		"10,000 refs then an oversized target":         `{"allOf":[` + refs + `{"$ref":"#/default"}],"default":{"pattern":"` + bad + `"}}`,
+	}
+	for name, s := range cases {
+		if err := ValidateMetaSchema(s); err == nil {
+			t.Errorf("%s: accepted", name)
+		} else if !strings.Contains(err.Error(), "complex") && !strings.Contains(err.Error(), "add up") {
+			t.Errorf("%s: refused for another reason: %v", name, err)
+		}
+	}
+}
+
+func TestValidateMetaSchemaInactiveDialectKeywordsStaySavable(t *testing.T) {
+	bad := strings.Repeat("a{1000}", 100)
+	s := `{"$schema":"http://json-schema.org/draft-07/schema#","prefixItems":[{"pattern":"` + bad + `"}]}`
+	if err := ValidateMetaSchema(s); err != nil {
+		t.Errorf("unknown keyword in draft-07 refused: %v", err)
+	}
+}
+
+func TestValidateMetaSchemaInvalidJSONFailsClosed(t *testing.T) {
+	if err := ValidateMetaSchema(`{"type":`); err == nil || !strings.Contains(err.Error(), "not valid JSON") {
 		t.Errorf("err = %v", err)
 	}
 }
