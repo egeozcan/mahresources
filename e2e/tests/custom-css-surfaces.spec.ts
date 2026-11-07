@@ -129,6 +129,42 @@ test.describe('Custom CSS on every surface', () => {
     await expect(page.locator('style[data-mr-lightbox-css]')).toHaveCount(1);
   });
 
+  test('a copy inside the hover card does not stop the lightbox bringing its own', async ({ apiClient, page }) => {
+    const stamp = Date.now();
+    const rc = await apiClient.createResourceCategory(`CSS LB Hover RC ${stamp}`, undefined, {
+      CustomLightbox: `<span class="lbh-${stamp}">lightbox</span>`,
+      CustomCSS: `.lbh-${stamp} { color: ${color}; }`,
+    });
+    const ownerCat = await apiClient.createCategory(`CSS LB Hover Owner Cat ${stamp}`);
+    const owner = await apiClient.createGroup({ name: `CSS LB Hover Owner ${stamp}`, categoryId: ownerCat.ID });
+    await apiClient.createResource({
+      filePath: path.join(__dirname, '../test-assets/sample-image-21.png'),
+      name: `CSS LB Hover Res ${stamp}`,
+      resourceCategoryId: rc.ID,
+      ownerId: owner.ID,
+    });
+
+    await page.goto(`/resources?OwnerId=${owner.ID}`);
+    // The only copy is the one an open hover card carries.
+    await page.evaluate((id) => {
+      let popover = document.getElementById('hovercard-popover');
+      if (!popover) {
+        popover = document.createElement('div');
+        popover.id = 'hovercard-popover';
+        document.body.appendChild(popover);
+      }
+      document.querySelectorAll(`style[data-mr-custom-css="resource:${id}"]`).forEach((el) => popover!.appendChild(el));
+    }, rc.ID);
+    await page.locator('[data-lightbox-item]').first().click();
+    const lightbox = page.getByRole('dialog', { name: `CSS LB Hover Res ${stamp}`, exact: true });
+    await expect(lightbox).toBeVisible();
+    await lightbox.locator('button[title="Resource info"]').click();
+    await expect(page.locator('style[data-mr-lightbox-css]')).toHaveCount(1);
+    // Closing the hover card clears it; the panel keeps its own copy.
+    await page.evaluate(() => { document.getElementById('hovercard-popover')!.innerHTML = ''; });
+    await expect(lightbox.locator(`.lbh-${stamp}`)).toHaveCSS('color', color);
+  });
+
   test('the lightbox adds no second copy of CSS the page already has', async ({ apiClient, page }) => {
     const stamp = Date.now();
     const rc = await apiClient.createResourceCategory(`CSS LB Dup RC ${stamp}`, undefined, {

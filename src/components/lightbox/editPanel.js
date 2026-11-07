@@ -59,6 +59,11 @@ export const editPanelState = {
   _writeSeq: 0,
 };
 
+// Containers whose content the page removes or replaces after load, so a stylesheet inside
+// one cannot stand in for the lightbox's own: the hover card popover (cleared on close) and
+// the deferred-shortcode bodies (replaced on refresh or reload).
+const TRANSIENT_CSS_HOSTS = '#hovercard-popover, autorefresh-shortcode, lazy-shortcode, details-shortcode';
+
 export const editPanelMethods = {
   // Shown on the image the user was on when it failed and on the image the write was for: a
   // failure that lands after they moved on names that image, and they go back there to retry.
@@ -555,10 +560,16 @@ export const editPanelMethods = {
   // The current resource's category CSS, when the page did not already emit it. A list page
   // writes each category's block once (style[data-mr-custom-css]); the lightbox adds its own
   // only for a category with no card on the page (paged past, a gallery block, an [mrql] result).
+  // Only a block that stays counts: one inside the hover card or a deferred region body is
+  // removed when that card closes or the body is replaced, and that removal is not a reactive
+  // change, so the panel would stay unstyled until something else made it look again.
   categoryCSSToInject() {
     const category = this.displayDetails()?.resourceCategory;
     if (!category?.CustomCSS) return '';
-    if (document.querySelector(`style[data-mr-custom-css="resource:${Number(category.ID)}"]`)) return '';
+    const blocks = document.querySelectorAll(`style[data-mr-custom-css="resource:${Number(category.ID)}"]`);
+    for (const block of blocks) {
+      if (!block.closest(TRANSIENT_CSS_HOSTS)) return '';
+    }
     return category.CustomCSS;
   },
 

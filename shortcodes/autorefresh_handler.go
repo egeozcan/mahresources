@@ -36,16 +36,19 @@ func RenderAutorefreshShortcode(reqCtx context.Context, sc Shortcode, ctx MetaSh
 		return shortcodeErrorMarker("autorefresh", `[autorefresh] on= accepts only "edit"`)
 	}
 
-	inner := processWithDepth(reqCtx, sc.InnerContent, ctx, renderer, executor, depth+1)
-
-	signer := refreshSignerFrom(reqCtx)
-	if signer == nil || !isDeferrableEntity(ctx) {
-		return inner
+	// The token seals the raw body, so it is known before the body renders.
+	var token string
+	if signer := refreshSignerFrom(reqCtx); signer != nil && isDeferrableEntity(ctx) {
+		token = signer(ctx.EntityType, ctx.EntityID, sc.InnerContent)
 	}
-	token := signer(ctx.EntityType, ctx.EntityID, sc.InnerContent)
 	if token == "" {
-		return inner
+		// No host: the body never refreshes, stays on the page, and shares the
+		// page's stylesheet set.
+		return processWithDepth(reqCtx, sc.InnerContent, ctx, renderer, executor, depth+1)
 	}
+	// The host replaces this body on refresh, so its stylesheets count only
+	// inside it.
+	inner := processWithDepth(withRegionCSSSeen(reqCtx), sc.InnerContent, ctx, renderer, executor, depth+1)
 	return fmt.Sprintf(
 		`<autorefresh-shortcode data-token="%s" data-entity-type="%s" data-entity-id="%d">%s</autorefresh-shortcode>`,
 		html.EscapeString(token), html.EscapeString(ctx.EntityType), ctx.EntityID, inner,
