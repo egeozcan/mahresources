@@ -2,6 +2,7 @@ package shortcodes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp/syntax"
 	"strings"
@@ -36,18 +37,80 @@ func TestRegexCostBoundsCompiledProgram(t *testing.T) {
 	}
 }
 
+// The fixture is under MaxRegexpSource, so the source-length gate cannot be what
+// refuses it: only the Unicode pre-parse estimate can (deleting that estimate
+// makes this test fail on allocation).
 func TestRegexAllowanceUnicodeClassesAreRefusedBeforeParsing(t *testing.T) {
-	p := strings.Repeat(`\pL`, 19000)
+	p := strings.Repeat(`\pL`, 10000)
+	require.Less(t, len(p), MaxRegexpSource, "prerequisite: the source-length gate must not apply")
 	var err error
 	grown := allocDuring(func() { _, err = NewRegexAllowance(nil).Compile(p) })
 	var tc *RegexTooComplexError
 	require.ErrorAs(t, err, &tc)
-	assert.Less(t, grown, int64(8<<20), "the parser must not build 19,000 rune tables")
+	assert.Contains(t, tc.Reason, "Unicode")
+	assert.Less(t, grown, int64(4<<20), "the parser must not build 10,000 rune tables")
 
 	// A handful of classes is fine and matches.
 	re, err := NewRegexAllowance(nil).Compile(`^\pL+\pN$`)
 	require.NoError(t, err)
 	assert.True(t, re.MatchString("abc1"))
+}
+
+// Literal text is not a class: quoted, escaped-backslash and out-of-class
+// look-alikes keep matching.
+func TestRegexPreflightPreservesLiterals(t *testing.T) {
+	quoted := `\Q` + strings.Repeat(`\p`, 77) + `\E`
+	re, err := NewRegexAllowance(nil).Compile(quoted)
+	require.NoError(t, err)
+	assert.True(t, re.MatchString(strings.Repeat(`\p`, 77)))
+
+	escapedBackslash := strings.Repeat(`\\p`, 200) // a literal backslash then "p", 200 times
+	re, err = NewRegexAllowance(nil).Compile(escapedBackslash)
+	require.NoError(t, err)
+	assert.True(t, re.MatchString(strings.Repeat(`\p`, 200)))
+
+	outsideClass := strings.Repeat(`\Q[:\E`, 100) // "[:" only as quoted text
+	_, err = NewRegexAllowance(nil).Compile(outsideClass)
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(0), preParseRunes(quoted))
+	assert.Equal(t, int64(0), preParseRunes(escapedBackslash))
+	assert.Equal(t, int64(unicodeClassRunes), preParseRunes(`[[:alpha:]]`))
+	assert.Equal(t, int64(unicodeClassRunes), preParseRunes(`[\p{L}]`))
+	assert.Equal(t, int64(0), preParseRunes(`a[:b`)) // "[:" opens a class here, not a POSIX name
+	assert.Equal(t, int64(unicodeClassRunes), preParseRunes(`\\\pL`))
+}
+
+// A failed parse still spent its work and its outcome is cached: the same
+// invalid pattern is parsed once, and distinct ones run the aggregate dry.
+func TestRegexAllowanceChargesAndCachesFailedParses(t *testing.T) {
+	bad := strings.Repeat(`\pL`, 75) + `)`
+	require.Less(t, len(bad), MaxRegexpSource)
+	a := NewRegexAllowance(nil)
+	_, first := a.Compile(bad)
+	require.Error(t, first)
+	spent := a.runes
+	assert.GreaterOrEqual(t, spent, int64(75*unicodeClassRunes), "the parse work is kept on failure")
+	grown := allocDuring(func() {
+		for i := 0; i < 1000; i++ {
+			_, err := a.Compile(bad)
+			assert.Equal(t, first, err)
+		}
+	})
+	assert.Equal(t, spent, a.runes, "repeats are free")
+	assert.Less(t, grown, int64(1<<20))
+
+	// Distinct invalid patterns exhaust the aggregate instead of parsing forever.
+	b := NewRegexAllowance(nil)
+	refused := 0
+	for i := 0; i < 60; i++ {
+		_, err := b.Compile(fmt.Sprintf("%s%d)", strings.Repeat(`\pL`, 75), i))
+		var tc *RegexTooComplexError
+		if errors.As(err, &tc) {
+			refused++
+		}
+	}
+	assert.Greater(t, refused, 30)
 }
 
 func TestRegexAllowanceIsPerOperationAndCaches(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"mahresources/shortcodes"
 	"runtime"
 	"strings"
 	"sync"
@@ -219,7 +220,12 @@ func TestValidateMetaSchemaInvalidJSONFailsClosed(t *testing.T) {
 func TestValidateMetaSchemaUnicodeClassPayloadIsBounded(t *testing.T) {
 	var defs []string
 	for i := 0; i < 10; i++ {
-		defs = append(defs, fmt.Sprintf(`"d%d":{"type":"string","pattern":"%s%d"}`, i, strings.Repeat(`\\pL`, 19000), i))
+		const classes = 10000
+		p := strings.Repeat(`\\pL`, classes) + fmt.Sprint(i) // JSON text; decodes to 3 bytes per class
+		if decoded := 3*classes + len(fmt.Sprint(i)); decoded >= shortcodes.MaxRegexpSource {
+			t.Fatalf("prerequisite: %d decoded bytes is not under the %d byte source gate", decoded, shortcodes.MaxRegexpSource)
+		}
+		defs = append(defs, fmt.Sprintf(`"d%d":{"type":"string","pattern":"%s"}`, i, p))
 	}
 	s := `{"type":"object","$defs":{` + strings.Join(defs, ",") + `}}`
 	var before, after runtime.MemStats

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"regexp"
 	"regexp/syntax"
-	"strings"
 )
 
 // A regular expression written by an author or a model can cost far more to
@@ -48,81 +47,154 @@ func (e *RegexTooComplexError) Error() string {
 // RegexAllowance is one operation's compile budget. It is not safe for
 // concurrent use.
 type RegexAllowance struct {
-	ctx        context.Context
-	insts      int64
-	runes      int64
-	compiled   map[string]*regexp.Regexp
-	refusedErr error // sticky once the aggregate is spent
+	ctx      context.Context
+	insts    int64
+	runes    int64 // rune-table elements, parsed or compiled
+	source   int64 // pattern bytes handed to the parser
+	outcomes map[string]regexOutcome
+	spent    error // sticky once the aggregate is spent
 }
+
+// regexOutcome is a cached result: the pattern's compiled form, or the error it
+// gets every time (a syntax error, a refusal), so a pattern repeated across a
+// loop is parsed once and an invalid one costs nothing after its first sight.
+type regexOutcome struct {
+	re  *regexp.Regexp
+	err error
+}
+
+const regexAllowanceSource = 4 << 20
 
 // NewRegexAllowance returns a fresh allowance. ctx may be nil.
 func NewRegexAllowance(ctx context.Context) *RegexAllowance {
-	return &RegexAllowance{ctx: ctx, compiled: map[string]*regexp.Regexp{}}
+	return &RegexAllowance{ctx: ctx, outcomes: map[string]regexOutcome{}}
 }
 
-func (a *RegexAllowance) refuse(reason string) error {
-	return &RegexTooComplexError{Reason: reason}
+// preParseRunes estimates, from the source alone, the rune-table elements the
+// parser builds: unicodeClassRunes for each \p{..} or \P{..} escape and for each
+// POSIX [:name:] inside a bracket class. Escaped backslashes, \Q...\E quoted
+// text and a "[:" outside a class are literals and cost nothing.
+func preParseRunes(p string) int64 {
+	var est int64
+	quoted, inClass := false, false
+	classStart := 0
+	for i := 0; i < len(p); {
+		c := p[i]
+		if quoted {
+			if c == '\\' && i+1 < len(p) && p[i+1] == 'E' {
+				quoted = false
+				i += 2
+				continue
+			}
+			i++
+			continue
+		}
+		switch c {
+		case '\\':
+			if i+1 >= len(p) {
+				return est
+			}
+			switch p[i+1] {
+			case 'Q':
+				quoted = true
+			case 'p', 'P':
+				est += unicodeClassRunes
+			}
+			i += 2
+			continue
+		case '[':
+			if !inClass {
+				inClass, classStart = true, i
+				if i+1 < len(p) && p[i+1] == '^' {
+					classStart = i + 1
+				}
+			} else if i+1 < len(p) && p[i+1] == ':' {
+				est += unicodeClassRunes
+			}
+		case ']':
+			// A "]" first in a class is a literal member.
+			if inClass && i > classStart {
+				inClass = false
+			}
+		}
+		i++
+	}
+	return est
+}
+
+func (a *RegexAllowance) remember(pattern string, re *regexp.Regexp, err error) (*regexp.Regexp, error) {
+	a.outcomes[pattern] = regexOutcome{re, err}
+	return re, err
 }
 
 // Compile compiles pattern with regexp.Compile semantics within the allowance.
 // A pattern that does not parse returns its syntax error. A pattern over the
-// allowance (or any pattern once the aggregate is spent) returns
-// *RegexTooComplexError; a done context returns its error.
+// allowance (or any new pattern once the aggregate is spent) returns
+// *RegexTooComplexError; a done context returns its error. Every outcome except
+// a done context is cached, so a repeated pattern is never parsed again.
 func (a *RegexAllowance) Compile(pattern string) (*regexp.Regexp, error) {
 	if a.ctx != nil {
 		if err := a.ctx.Err(); err != nil {
 			return nil, err
 		}
 	}
-	if re, ok := a.compiled[pattern]; ok {
-		return re, nil
+	if o, ok := a.outcomes[pattern]; ok {
+		return o.re, o.err
 	}
-	if a.refusedErr != nil {
-		return nil, a.refusedErr
+	if a.spent != nil {
+		return nil, a.spent
 	}
-	fail := func(reason string) (*regexp.Regexp, error) {
-		return nil, a.refuse(reason)
+	refuse := func(reason string) (*regexp.Regexp, error) {
+		return a.remember(pattern, nil, &RegexTooComplexError{Reason: reason})
 	}
 	if len(pattern) > MaxRegexpSource {
-		return fail("the pattern is longer than 32 KiB")
+		return refuse("the pattern is longer than 32 KiB")
 	}
-	// Before parsing: what the parser itself would build for the class escapes.
-	if est := int64(strings.Count(pattern, `\p`)+strings.Count(pattern, `\P`)+strings.Count(pattern, "[:")) * unicodeClassRunes; est > MaxRegexpRunes {
-		return fail("too many Unicode classes")
+	// Parsing is work too: charge the source and the class tables the parser
+	// will build before it runs, and keep the charge if the parse fails.
+	est := preParseRunes(pattern)
+	if a.source+int64(len(pattern)) > regexAllowanceSource {
+		a.spent = &RegexTooComplexError{Reason: "the patterns of this operation add up past the allowance"}
+		return nil, a.spent
 	}
+	a.source += int64(len(pattern))
+	if est > MaxRegexpRunes {
+		return refuse("too many Unicode classes") // refused unparsed: nothing to charge but the scan
+	}
+	if a.runes+est > regexAllowanceRunes {
+		a.spent = &RegexTooComplexError{Reason: "the patterns of this operation add up past the allowance"}
+		return nil, a.spent
+	}
+	a.runes += est
 	parsed, err := syntax.Parse(pattern, syntax.Perl)
 	if err != nil {
-		return nil, err
+		return a.remember(pattern, nil, err)
 	}
 	insts, runes := regexCost(parsed)
 	insts += regexProgOverhead
 	if insts > MaxRegexpProgramSize || runes > MaxRegexpRunes {
-		return fail("it would compile to more than the per-pattern allowance")
+		return refuse("it would compile to more than the per-pattern allowance")
 	}
 	if a.insts+insts > regexAllowanceInsts || a.runes+runes > regexAllowanceRunes {
-		a.refusedErr = a.refuse("the patterns of this operation add up past the allowance")
-		return nil, a.refusedErr
+		a.spent = &RegexTooComplexError{Reason: "the patterns of this operation add up past the allowance"}
+		return nil, a.spent
 	}
 	// Measure the real program before compiling it into a Regexp.
 	prog, err := syntax.Compile(parsed.Simplify())
 	if err != nil {
-		return nil, err
+		return a.remember(pattern, nil, err)
 	}
 	var progRunes int64
 	for i := range prog.Inst {
 		progRunes += int64(len(prog.Inst[i].Rune))
 	}
 	if int64(len(prog.Inst)) > MaxRegexpProgramSize || progRunes > MaxRegexpRunes {
-		return fail("the compiled program is over the per-pattern allowance")
+		return refuse("the compiled program is over the per-pattern allowance")
 	}
 	a.insts += max(insts, int64(len(prog.Inst)))
 	a.runes += max(runes, progRunes)
 	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return nil, err
-	}
-	a.compiled[pattern] = re
-	return re, nil
+	return a.remember(pattern, re, err)
 }
 
 const satCap = int64(1) << 40
