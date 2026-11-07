@@ -38,10 +38,14 @@ func TestTemplateRunAccessFactory(t *testing.T) {
 	t.Run("auth disabled keeps the request's principal", func(t *testing.T) {
 		appCtx := newRunAccessContext(t, false)
 		req := httptest.NewRequest(http.MethodPost, "/", nil)
-		req = req.WithContext(auth.WithPrincipal(req.Context(), auth.SystemPrincipal()))
+		marked := &auth.Principal{UserID: 41, Username: "marked", Role: models.RoleAdmin, SuperUser: true}
+		req = req.WithContext(auth.WithPrincipal(req.Context(), marked))
 		bound, err := templateRunAccessFactory(appCtx)(req)(context.Background())
 		if err != nil || bound == nil {
 			t.Fatalf("auth off: %v, %v", bound, err)
+		}
+		if p := bound.Principal(); p == nil || p.UserID != 41 || !p.SuperUser {
+			t.Errorf("auth off bound principal = %+v, want the request's (user 41, superuser)", p)
 		}
 	})
 
@@ -60,8 +64,12 @@ func TestTemplateRunAccessFactory(t *testing.T) {
 		req = req.WithContext(auth.WithPrincipal(req.Context(), auth.FromUser(editor)))
 		check := templateRunAccessFactory(appCtx)(req)
 
-		if bound, err := check(context.Background()); err != nil || bound == nil {
+		bound, err := check(context.Background())
+		if err != nil || bound == nil {
 			t.Fatalf("unchanged access: %v, %v", bound, err)
+		}
+		if p := bound.Principal(); p == nil || p.UserID != editor.ID || p.Role != models.RoleEditor || p.SuperUser {
+			t.Errorf("bound principal = %+v, want editor %d", p, editor.ID)
 		}
 
 		cancelled, cancel := context.WithCancel(context.Background())
@@ -98,12 +106,16 @@ func TestTemplateRunAccessFactoryCancelledDuringLookup(t *testing.T) {
 	req = req.WithContext(auth.WithPrincipal(req.Context(), auth.FromUser(editor)))
 	check := templateRunAccessFactory(appCtx)(req)
 
-	runCtx, cancel := context.WithCancel(context.Background())
+	type sentinelKey struct{}
+	runCtx, cancel := context.WithCancel(context.WithValue(context.Background(), sentinelKey{}, "run"))
 	defer cancel()
-	armed := true
+	armed, carried := true, false
 	if err := db.Callback().Query().Before("gorm:query").Register("test:cancel_mid_lookup", func(tx *gorm.DB) {
 		if armed {
 			armed = false
+			// The credential query must run on the run's context, or
+			// cancelling the run would not stop it.
+			carried = tx.Statement.Context.Value(sentinelKey{}) == "run"
 			cancel()
 		}
 	}); err != nil {
@@ -114,6 +126,9 @@ func TestTemplateRunAccessFactoryCancelledDuringLookup(t *testing.T) {
 	_, err = check(runCtx)
 	if armed {
 		t.Fatal("the credential lookup ran no query, so the interleave was not exercised")
+	}
+	if !carried {
+		t.Error("the credential query did not run on the run's context")
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("cancelled during lookup: %v, want context.Canceled", err)

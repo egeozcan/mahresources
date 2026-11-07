@@ -154,5 +154,10 @@ var templateRunToolSpecs = []ToolSpec{
 func TemplateRunToolSpecs() []ToolSpec {
 	out := make([]ToolSpec, len(templateRunToolSpecs))
 	copy(out, templateRunToolSpecs)
+	// Parameters is a byte slice; a shallow copy would let a caller edit the
+	// process-wide catalogue through it.
+	for i := range out {
+		out[i].Parameters = append(json.RawMessage(nil), out[i].Parameters...)
+	}
 	return out
 }

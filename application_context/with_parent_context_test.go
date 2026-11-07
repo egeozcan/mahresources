@@ -130,3 +130,12 @@ func TestTemplateRunToolCatalogueIsWellFormed(t *testing.T) {
 		}
 	}
 }
+
+func TestTemplateRunToolSpecsReturnsAnIndependentCopy(t *testing.T) {
+	first := TemplateRunToolSpecs()
+	original := string(first[0].Parameters)
+	first[0].Parameters[0] = 'X'
+	if got := string(TemplateRunToolSpecs()[0].Parameters); got != original {
+		t.Errorf("editing a returned schema changed the catalogue: %q", got)
+	}
+}
