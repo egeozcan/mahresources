@@ -184,6 +184,11 @@ func (e *templateToolExecutor) Execute(ctx context.Context, call application_con
 	if err != nil {
 		return e.failure(ctx, call.Name, err)
 	}
+	// A result computed while the context ended may rest on a lookup that was
+	// cut short; it is not released.
+	if cerr := ctx.Err(); cerr != nil {
+		return application_context.TemplateToolOutput{}, cerr
+	}
 	return application_context.ShapeToolResult("tool "+call.Name, body, application_context.ToolResultCap(call.Name)), nil
 }
 

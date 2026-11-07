@@ -638,3 +638,32 @@ end
 		t.Fatalf("human preview: %d %s", rr.Code, rr.Body.String())
 	}
 }
+
+// A partial lookup blocked in the database is released when the Tool's context
+// ends, and the lint says it could not check rather than calling the partial
+// missing.
+func TestToolLintPartialLookupIsCancelledWithTheTool(t *testing.T) {
+	f := newToolFixture(t, nil, nil)
+	name := "tooltest:block-partials"
+	_ = f.tc.DB.Callback().Query().Before("gorm:query").Register(name, func(tx *gorm.DB) {
+		if tx.Statement.Table == "template_partials" {
+			<-tx.Statement.Context.Done()
+			_ = tx.AddError(tx.Statement.Context.Err())
+		}
+	})
+	t.Cleanup(func() { _ = f.tc.DB.Callback().Query().Remove(name) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	out, err := f.exec.Execute(ctx, application_context.TemplateToolInvocation{
+		Name: "lint", Arguments: `{"field":"CustomHeader","content":"[partial name=\"badge\"]"}`,
+	})
+	if time.Since(start) > 3*time.Second {
+		t.Fatal("the blocked partial lookup was not released by the Tool's deadline")
+	}
+	// The deadline passed during the lookup, so no result is released.
+	if !errors.Is(err, context.DeadlineExceeded) || out.Text != "" {
+		t.Errorf("out=%q err=%v, want the context error and no result", out.Text, err)
+	}
+}
