@@ -66,6 +66,7 @@ type renderMeter struct {
 	err    error
 
 	regexes map[string]*regexp.Regexp // compiled matches= patterns, by source
+	keyWork int64                     // bytes of MRQL cache-key construction
 }
 
 func meterFrom(ctx context.Context) *renderMeter {
@@ -286,4 +287,24 @@ func CheckGeneratedSource(content string, maxBytes int) error {
 		return fmt.Errorf("%w: more than %d shortcode tokens", ErrSourceLimit, MaxGeneratedShortcodeTokens)
 	}
 	return nil
+}
+
+// chargeKey reserves the bytes of one MRQL cache key. Only a budgeted render
+// is limited; any render stops when its context does.
+func (m *renderMeter) chargeKey(n int64) bool {
+	if m == nil {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.checkCtxLocked()
+	if m.err != nil {
+		return false
+	}
+	m.keyWork += n
+	if m.limited() && (n < 0 || m.keyWork > maxCacheKeyBytes) {
+		m.failLocked(fmt.Errorf("%w: building MRQL cache keys exceeds %d bytes", ErrRenderBudgetExceeded, maxCacheKeyBytes))
+		return false
+	}
+	return true
 }

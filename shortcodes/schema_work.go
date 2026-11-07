@@ -23,16 +23,32 @@ const (
 var errSchemaTooComplex = errors.New("the schema is too complex to check")
 
 type schemaWork struct {
-	ctx   context.Context
-	units int
-	bytes int
-	steps uint32
-	err   error
-	refs  map[string]int // $ref pointers on the path being expanded
+	ctx      context.Context
+	units    int
+	bytes    int
+	maxUnits int
+	maxBytes int
+	steps    uint32
+	err      error
+	refs     map[string]int // $ref pointers on the path being expanded
 }
 
 func newSchemaWork(ctx context.Context) *schemaWork {
-	return &schemaWork{ctx: ctx, refs: map[string]int{}}
+	return &schemaWork{ctx: ctx, refs: map[string]int{}, maxUnits: schemaWorkUnits, maxBytes: schemaWorkBytes}
+}
+
+// Lint allowances. A template lint is bounded by the source it is given; these
+// only stop a source built to make a quadratic pass worse (many numbered
+// attributes on one opener, thousands of candidate positions).
+const (
+	lintWorkUnits = 5_000_000
+	lintWorkBytes = 64 << 20
+)
+
+func newLintWork(ctx context.Context) *schemaWork {
+	w := newSchemaWork(ctx)
+	w.maxUnits, w.maxBytes = lintWorkUnits, lintWorkBytes
+	return w
 }
 
 func (w *schemaWork) fail() {
@@ -60,7 +76,7 @@ func (w *schemaWork) charge(n int) bool {
 	if w.err != nil {
 		return false
 	}
-	if n < 0 || w.units > schemaWorkUnits-n {
+	if n < 0 || w.units > w.maxUnits-n {
 		w.fail()
 		return false
 	}
@@ -91,7 +107,7 @@ func (w *schemaWork) chargeBytes(n int) bool {
 	if w.err != nil {
 		return false
 	}
-	if n < 0 || w.bytes > schemaWorkBytes-n {
+	if n < 0 || w.bytes > w.maxBytes-n {
 		w.fail()
 		return false
 	}

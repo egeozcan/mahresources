@@ -111,7 +111,7 @@ func firstSlotSpan(content, tag string) (openIdx, innerStart, closeIdx, closeEnd
 
 	openIdx = -1
 	for i := 0; i+len(openTag) <= len(content); i++ {
-		if content[i] == '[' && strings.HasPrefix(content[i:], openTag) && !insideSpans(i, spans) {
+		if content[i] == '[' && strings.HasPrefix(content[i:], openTag) && !insideSortedSpans(i, spans) {
 			openIdx = i
 			break
 		}
@@ -123,7 +123,7 @@ func firstSlotSpan(content, tag string) (openIdx, innerStart, closeIdx, closeEnd
 	innerStart = openIdx + len(openTag)
 	closeIdx = -1
 	for i := innerStart; i+len(closeTag) <= len(content); i++ {
-		if content[i] == '[' && strings.HasPrefix(content[i:], closeTag) && !insideSpans(i, spans) {
+		if content[i] == '[' && strings.HasPrefix(content[i:], closeTag) && !insideSortedSpans(i, spans) {
 			closeIdx = i
 			break
 		}
@@ -156,7 +156,7 @@ func SlotTagSpans(parent, inner string) [][2]int {
 func firstElseIndex(content string) int {
 	spans := blockInnerSpans(content)
 	for i := 0; i < len(content); i++ {
-		if content[i] == '[' && strings.HasPrefix(content[i:], elseTag) && !insideSpans(i, spans) {
+		if content[i] == '[' && strings.HasPrefix(content[i:], elseTag) && !insideSortedSpans(i, spans) {
 			return i
 		}
 	}

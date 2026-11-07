@@ -244,3 +244,47 @@ func TestCheckGeneratedSource(t *testing.T) {
 	// A hostile run is refused without parsing it all.
 	assert.ErrorIs(t, CheckGeneratedSource(strings.Repeat("[/meta]", 500000), 1<<30), ErrSourceLimit)
 }
+
+// Building the cache key serializes every parameter, and does so before the
+// cache is consulted or the query allowance checked. On a budgeted render that
+// work is admitted and its failure is a render-budget error, not a cache miss.
+func TestBudgetedExecutorAdmitsCacheKeyWork(t *testing.T) {
+	var calls int
+	base := func(ctx context.Context, q string, o QueryOptions) (*QueryResult, error) {
+		calls++
+		return &QueryResult{Mode: "flat"}, nil
+	}
+	exec := BudgetedExecutor(base, nil)
+	big := strings.Repeat("p", 1<<20)
+
+	rctx := WithQueryBudget(WithRenderBudget(context.Background(), RenderBudget{OutputBytes: 1 << 20, ParsedSourceBytes: 1 << 20}), 1)
+	// ProcessChecked installs the meter; drive the executor through a handler.
+	in := strings.Repeat(`[mrql query="type = group" param-p="`+big[:10]+`"]`, 1)
+	_, err := ProcessChecked(rctx, in, MetaShortcodeContext{}, nil, exec)
+	require.NoError(t, err)
+
+	// Direct: a meter on the context, 20 calls of ~1 MiB keys (cache hits and
+	// then an exhausted query budget) must stop on the key-work allowance.
+	m := newRenderMeter(rctx)
+	mctx := context.WithValue(rctx, renderMeterKey{}, m)
+	var lastErr error
+	stoppedAt := 0
+	for i := 0; i < 20; i++ {
+		_, lastErr = exec(mctx, "type = group", QueryOptions{Params: map[string]string{"p": big}})
+		if lastErr != nil && errors.Is(lastErr, ErrRenderBudgetExceeded) {
+			stoppedAt = i + 1
+			break
+		}
+	}
+	require.NotZero(t, stoppedAt, "key construction was never refused; last err %v", lastErr)
+	assert.Less(t, stoppedAt, 12)
+	assert.ErrorIs(t, m.Err(), ErrRenderBudgetExceeded)
+}
+
+func TestBudgetCacheKeyUnchangedForOrdinaryInputs(t *testing.T) {
+	a := budgetCacheKey("a|b", QueryOptions{SavedName: "c"})
+	b := budgetCacheKey("a", QueryOptions{SavedName: "b|c"})
+	assert.NotEqual(t, a, b)
+	k := budgetCacheKey("q", QueryOptions{Params: map[string]string{"y": "2", "x": "1"}, Limit: 3})
+	assert.Equal(t, `"q"|""|0|3|0|2|false|"x"="1"|"y"="2"`, k)
+}
