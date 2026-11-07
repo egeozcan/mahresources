@@ -342,10 +342,15 @@ func (r RunReport) EffectiveScorerVersion() int {
 
 // Comparison is the result of comparing a candidate run against a baseline.
 type Comparison struct {
-	Compatible  bool         `json:"compatible"`
-	Errors      []string     `json:"errors,omitempty"`
-	Deltas      []GroupDelta `json:"deltas,omitempty"`
-	Regressions []string     `json:"regressions,omitempty"`
+	// BaseMode and CandidateMode are the generation modes of the two reports.
+	// They may differ: the two-mode comparison is a classic baseline against a
+	// harness candidate.
+	BaseMode      string       `json:"baseMode,omitempty"`
+	CandidateMode string       `json:"candidateMode,omitempty"`
+	Compatible    bool         `json:"compatible"`
+	Errors        []string     `json:"errors,omitempty"`
+	Deltas        []GroupDelta `json:"deltas,omitempty"`
+	Regressions   []string     `json:"regressions,omitempty"`
 }
 
 // GroupDelta is one summary group in both runs. Deltas are in percentage points.
@@ -368,7 +373,7 @@ type GroupDelta struct {
 // summaries recomputed from the results. A kind whose pass rate drops by more
 // than RegressionThresholdPP is a regression.
 func Compare(base, candidate RunReport) Comparison {
-	cmp := Comparison{Compatible: true}
+	cmp := Comparison{Compatible: true, BaseMode: effectiveMode(base), CandidateMode: effectiveMode(candidate)}
 	fail := func(format string, args ...any) {
 		cmp.Compatible = false
 		cmp.Errors = append(cmp.Errors, fmt.Sprintf(format, args...))
@@ -445,6 +450,13 @@ func Compare(base, candidate RunReport) Comparison {
 	return cmp
 }
 
+func effectiveMode(r RunReport) string {
+	if r.Mode == "" {
+		return ModeClassic
+	}
+	return r.Mode
+}
+
 // pp converts a rate difference to percentage points, rounded to 0.1 so that
 // float noise cannot push an exact 10-point drop over the threshold.
 func pp(f float64) float64 { return math.Round(f*1000) / 10 }
@@ -466,6 +478,9 @@ func caseCounts(r RunReport) string {
 // FormatComparison renders a comparison as text.
 func FormatComparison(c Comparison) string {
 	var b strings.Builder
+	if c.BaseMode != "" || c.CandidateMode != "" {
+		b.WriteString("baseline mode " + c.BaseMode + ", candidate mode " + c.CandidateMode + "\n")
+	}
 	if !c.Compatible {
 		b.WriteString("incompatible reports:\n")
 		for _, e := range c.Errors {

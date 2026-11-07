@@ -207,3 +207,22 @@ func TestReportRecordsModeSettingsAndCostIsNotComputed(t *testing.T) {
 		t.Fatalf("header = %q", FormatReportHeader(r))
 	}
 }
+
+func TestCompareAcceptsAClassicBaselineAgainstAHarnessCandidate(t *testing.T) {
+	base := reportWith(result("a", KindPair, "group", true))
+	base.Mode = ModeClassic
+	candidate := reportWith(result("a", KindPair, "group", true))
+	candidate.Mode = ModeHarness
+	got := Compare(base, candidate)
+	if !got.Compatible || got.BaseMode != ModeClassic || got.CandidateMode != ModeHarness {
+		t.Fatalf("%#v", got)
+	}
+	if !strings.Contains(FormatComparison(got), "candidate mode harness") {
+		t.Fatalf("modes are not shown: %s", FormatComparison(got))
+	}
+	// A report with no mode is classic.
+	old := reportWith(result("a", KindPair, "group", true))
+	if Compare(old, candidate).BaseMode != ModeClassic {
+		t.Fatal("a report with no mode must read as classic")
+	}
+}
