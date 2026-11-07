@@ -226,6 +226,15 @@ type recordingConversationProvider struct {
 	rec *Recorder
 }
 
+// ReasoningMode forwards the inner adapter's answer, so the Disclosure of a
+// recorded run reads the same as an unrecorded one.
+func (p *recordingConversationProvider) ReasoningMode() string {
+	if m, ok := p.TemplateConversationProvider.(interface{ ReasoningMode() string }); ok {
+		return m.ReasoningMode()
+	}
+	return ""
+}
+
 func (p *recordingConversationProvider) Converse(ctx context.Context, req application_context.ConversationRequest) (application_context.ConversationResponse, error) {
 	turn := 1
 	for _, m := range req.Messages {

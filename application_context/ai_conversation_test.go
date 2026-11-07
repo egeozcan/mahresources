@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -204,5 +205,40 @@ func TestRuntimeBuildsTheConversationProviderFromTemplateSettings(t *testing.T) 
 	}
 	if p.ProviderName() != "openai" || p.Endpoint() != "https://api.openai.com/v1/responses" {
 		t.Fatalf("provider = %s %s", p.ProviderName(), p.Endpoint())
+	}
+}
+
+// The harness Disclosure reports what each adapter really sends for reasoning:
+// only DeepSeek always sends a toggle, so only it may read as "off".
+func TestHarnessDisclosureReportsEffectiveReasoning(t *testing.T) {
+	cases := []struct {
+		provider string
+		thinking bool
+		want     string
+	}{
+		{"deepseek", false, "disabled"},
+		{"deepseek", true, "enabled"},
+		{"anthropic", false, "provider_default"},
+		{"openai", false, "provider_default"},
+		{"openrouter", false, "provider_default"},
+		{"openrouter", true, "enabled"},
+	}
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("%s/thinking=%t", c.provider, c.thinking), func(t *testing.T) {
+			conv := NewGenerationConversationProvider(c.provider, "k", "m", nil)
+			gen := harnessGen(conv, func(cfg *TemplateGenerationConfig) {
+				cfg.Overrides = map[string]TemplateCallOverride{}
+				for _, kind := range templateKinds {
+					cfg.Overrides[kind] = TemplateCallOverride{Thinking: c.thinking}
+				}
+			})
+			d, err := gen.DiscloseTemplate(context.Background(), harnessCSSInput(&fakeRunExecutor{}), "go")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := d.Destination.Profiles[0].ReasoningMode; got != c.want {
+				t.Fatalf("reasoningMode = %q, want %q", got, c.want)
+			}
+		})
 	}
 }
