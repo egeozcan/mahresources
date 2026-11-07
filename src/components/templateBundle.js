@@ -15,6 +15,7 @@ import { askToConfirm } from './confirmDialog.js';
 import { announceApplied, REVISION_APPLIED_EVENT } from './revisionApplied.js';
 import { draftSegments, draftWarnings } from './templateDraftReview.js';
 import { afterDialogTeardown, returnFocusToGenerate, reviewDisclosure } from './generationDisclosure.js';
+import { runHost } from './templateRun.js';
 
 // One map for all three carriers, not three. Carrier-specific slots (preview,
 // lightbox and cell are resource-only; ownEntities is group-only) are listed
@@ -144,6 +145,7 @@ export const REVISION_WRITE_EVENT = 'template-revision-write';
 
 export function templateBundle({ carrier } = {}) {
   return {
+    ...runHost(),
     carrier,
     carriers: CARRIERS,
     // sources[carrier] = array of full entity objects (from the list endpoint).
@@ -187,6 +189,11 @@ export function templateBundle({ carrier } = {}) {
       document.addEventListener(REVISION_WRITE_EVENT, (event) => this.writeRevision(event.detail));
       this.loadRevisionFromUrl();
       await Promise.all([this.loadSources(), this.loadPresets()]);
+    },
+
+    // Leaving the form ends a run in flight and closes this form's open review.
+    destroy() {
+      this.stopGeneration();
     },
 
     // recordApplied remembers one revisionApplied entry for the save.
@@ -705,8 +712,11 @@ export function templateBundle({ carrier } = {}) {
       }
       const store = (window.Alpine && window.Alpine.store('templatePreview')) || {};
       const generatePath = `/v1/${this.carrier}/generateTemplate`;
+      // A new run supersedes the previous one: abort it and any open review first.
+      this.stopGeneration();
       const requestId = ++this._generationRequestId;
       this.generating = true;
+      this.run = null;
       this.pendingDraft = null;
       this.groundingChanged = false;
       this.notify('Preparing what will be sent…', 'info');
@@ -725,10 +735,13 @@ export function templateBundle({ carrier } = {}) {
       };
       // Ticked sections are forced; none ticked lets the generator choose.
       if (this.selectedSections.length) body.slots = [...this.selectedSections];
-      const post = (extra) => fetch(generatePath, {
+      // The frozen body: every request of this generation is this plus what the call adds.
+      const frozen = Object.freeze({ ...body });
+      const post = (extra, { signal, stream = false } = {}) => fetch(generatePath, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...body, ...extra }),
+        headers: stream ? { 'Content-Type': 'application/json', Accept: 'text/event-stream' } : { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...frozen, ...extra }),
+        signal,
       });
       // Missing refs (a test fixture, a partial render) only cost the focus moves.
       const { bundleGenerate, bundleStatus, bundlePrompt } = this.$refs || {};
@@ -745,16 +758,53 @@ export function templateBundle({ carrier } = {}) {
         // Generate is enabled while the dialog is open, so Cancel can return to it.
         this.generating = false;
         this.notify('', 'info');
-        const approved = await reviewDisclosure(disclosure, [bundleGenerate, bundleStatus, bundlePrompt]);
-        if (requestId !== this._generationRequestId || !approved) return;
+        // A harness disclosure carries the opt-ins; toggling one repeats the dry run.
+        const harness = !!disclosure.optIns;
+        const owner = {};
+        this._reviewOwner = owner;
+        const approval = await reviewDisclosure(disclosure, [bundleGenerate, bundleStatus, bundlePrompt], {
+          owner,
+          redisclose: harness ? async (requested, signal) => {
+            const resp = await post({ dryRun: true, ...requested }, { signal });
+            const next = await resp.json().catch(() => null);
+            if (!resp.ok || !next?.groundingHash) throw new Error((next && (next.error || next.Error)) || `Could not update what will be sent (${resp.status}).`);
+            return next;
+          } : null,
+        });
+        if (this._reviewOwner === owner) this._reviewOwner = null;
+        if (requestId !== this._generationRequestId || !approval) return;
 
         this.generating = true;
-        this.notify('Generating the whole template… this can take up to a minute.', 'info');
+        this.notify(harness ? 'Generating the whole template…' : 'Generating the whole template… this can take up to a minute.', 'info');
         afterDialogTeardown().then(() => {
           if (requestId === this._generationRequestId && this.generating) bundleStatus?.focus();
         });
-        const resp = await post({ groundingHash: disclosure.groundingHash });
-        const data = await resp.json().catch(() => null);
+        const sent = { groundingHash: approval.groundingHash };
+        if (harness) Object.assign(sent, { previewMRQL: approval.previewMRQL, previewPlugins: approval.previewPlugins });
+        let resp;
+        let data;
+        if (harness) {
+          const outcome = await this.streamRun((signal) => post(sent, { signal, stream: true }), `${generatePath}/finish`);
+          if (requestId !== this._generationRequestId) return;
+          if (outcome.kind === 'json') {
+            resp = outcome.resp;
+            data = await resp.json().catch(() => null);
+          } else if (outcome.kind === 'result') {
+            resp = { ok: true, status: 200 };
+            data = outcome.data;
+            this.endRun('done', { transcript: data?.transcript, stopReason: data?.stopReason });
+          } else {
+            const message = outcome.kind === 'error'
+              ? (outcome.data?.error || outcome.data?.Error || 'Generation failed.')
+              : 'The connection closed before the run finished.';
+            this.endRun(outcome.kind === 'error' ? 'error' : 'closed', { transcript: outcome.data?.transcript, stopReason: outcome.data?.stopReason, error: message });
+            this.notify(message, 'warn');
+            return;
+          }
+        } else {
+          resp = await post(sent);
+          data = await resp.json().catch(() => null);
+        }
         if (requestId !== this._generationRequestId) return;
         if (resp.status === 409) {
           // Never reopen the dialog by itself: another modal may be open by now.
@@ -821,6 +871,11 @@ export function templateBundle({ carrier } = {}) {
         }
       } catch (err) {
         if (requestId !== this._generationRequestId) return;
+        if (err?.name === 'AbortError') {
+          this.endRun('cancelled');
+          this.notify('Run cancelled. Nothing was changed.', 'info');
+          return;
+        }
         this.notify(err.message || 'Network error', 'warn');
       } finally {
         if (requestId === this._generationRequestId) {

@@ -1,6 +1,7 @@
 import { askToConfirm } from './confirmDialog.js';
 import { announceApplied } from './revisionApplied.js';
 import { afterDialogTeardown, returnFocusToGenerate, reviewDisclosure } from './generationDisclosure.js';
+import { runHost } from './templateRun.js';
 import { changedSince, draftSegments, draftWarnings } from './templateDraftReview.js';
 
 // The CodeMirror view behind a field's editor container, or a promise of it: the editor
@@ -13,6 +14,7 @@ function editorFor(container) {
 // Shared generation state for a template/CSS pair or a standalone schema/CSS editor.
 export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
   return {
+    ...runHost(),
     mode,
     // One prompt and draft state shared by all fields this control generates.
     generationPrompt: '',
@@ -31,6 +33,12 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
     // The send was refused with 409: what would be sent changed after review.
     groundingChanged: false,
     _generationRequestId: 0,
+
+    // The cluster host's teardown. codeEditor spreads this object into its own and
+    // defines its own destroy, which calls stopGeneration too.
+    destroy() {
+      this.stopGeneration();
+    },
 
     // A method, not a getter: codeEditor spreads this object into its own, and a
     // spread copies a getter's value once instead of the getter.
@@ -65,8 +73,11 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
       // Every submission replaces whatever came before it, including one about to be
       // refused below: a request still waiting for its editors, or still in flight, must
       // not land a draft after the reader has asked for something else.
+      // A new run supersedes the previous one: abort it and any open review first.
+      this.stopGeneration();
       const requestId = ++this._generationRequestId;
       this.generating = false;
+      this.run = null;
       const prompt = (this.generationPrompt || '').trim();
       this.generationError = '';
       this.generationStatus = '';
@@ -141,10 +152,14 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
           [...(form?.querySelectorAll('input[name^="Custom"]') || [])].map((input) => [input.name, input.value]),
         )),
       };
-      const post = (extra) => fetch(generatePath, {
+      // The frozen body: every request of this generation, dry runs included, is this
+      // plus the fields the call adds.
+      const frozen = Object.freeze({ ...body });
+      const post = (extra, { signal, stream = false } = {}) => fetch(generatePath, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...body, ...extra }),
+        headers: stream ? { 'Content-Type': 'application/json', Accept: 'text/event-stream' } : { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...frozen, ...extra }),
+        signal,
       });
       // Missing refs (a test fixture, a partial render) only cost the focus moves.
       const { generateButton, generateStatus, generatePrompt } = this.$refs || {};
@@ -165,8 +180,21 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
         // Generate is enabled while the dialog is open, so Cancel can return to it.
         this.generating = false;
         this.generationStatus = '';
-        const approved = await reviewDisclosure(disclosure, [generateButton, generateStatus, generatePrompt]);
-        if (requestId !== this._generationRequestId || !approved) return;
+        // A harness disclosure carries the opt-ins; toggling one repeats the dry run.
+        const harness = !!disclosure.optIns;
+        const owner = {};
+        this._reviewOwner = owner;
+        const approval = await reviewDisclosure(disclosure, [generateButton, generateStatus, generatePrompt], {
+          owner,
+          redisclose: harness ? async (requested, signal) => {
+            const resp = await post({ dryRun: true, ...requested }, { signal });
+            const next = await resp.json().catch(() => null);
+            if (!resp.ok || !next?.groundingHash) throw new Error((next && (next.error || next.Error)) || `Could not update what will be sent (${resp.status}).`);
+            return next;
+          } : null,
+        });
+        if (this._reviewOwner === owner) this._reviewOwner = null;
+        if (requestId !== this._generationRequestId || !approval) return;
 
         this.generating = true;
         this.generationStatus = 'Generating…';
@@ -176,8 +204,33 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
         afterDialogTeardown().then(() => {
           if (requestId === this._generationRequestId && this.generating) generateStatus?.focus();
         });
-        const resp = await post({ groundingHash: disclosure.groundingHash });
-        const data = await resp.json().catch(() => null);
+        const sent = { groundingHash: approval.groundingHash };
+        if (harness) Object.assign(sent, { previewMRQL: approval.previewMRQL, previewPlugins: approval.previewPlugins });
+        let resp;
+        let data;
+        if (harness) {
+          const outcome = await this.streamRun((signal) => post(sent, { signal, stream: true }), `${generatePath}/finish`);
+          if (requestId !== this._generationRequestId) return;
+          if (outcome.kind === 'json') {
+            resp = outcome.resp;
+            data = await resp.json().catch(() => null);
+          } else if (outcome.kind === 'result') {
+            resp = { ok: true, status: 200 };
+            data = outcome.data;
+            this.endRun('done', { transcript: data?.transcript, stopReason: data?.stopReason });
+          } else {
+            const message = outcome.kind === 'error'
+              ? (outcome.data?.error || outcome.data?.Error || 'Generation failed.')
+              : 'The connection closed before the run finished.';
+            this.endRun(outcome.kind === 'error' ? 'error' : 'closed', { transcript: outcome.data?.transcript, stopReason: outcome.data?.stopReason, error: message });
+            this.generationError = message;
+            this.generationStatus = '';
+            return;
+          }
+        } else {
+          resp = await post(sent);
+          data = await resp.json().catch(() => null);
+        }
         if (requestId !== this._generationRequestId) return;
         if (resp.status === 409) {
           // Never reopen the dialog by itself: another modal may be open by now.
@@ -215,7 +268,12 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
         this.generatedContent = this.generatedSlots ? this.generatedSlots[fieldName] : (target !== 'cluster' && data && data.content) || '';
         this.generatedValid = !!(data && data.valid);
 
-        if (!this.generatedContent && !this.generatedSlots) {
+        // A harness run can submit an empty standalone field on purpose ("content":""),
+        // which is a reviewable draft that clears the editor only on Apply. Classic
+        // output with no content is still a failure.
+        const submittedEmpty = harness && target !== 'cluster' && !this.generatedContent
+          && typeof data?.content === 'string' && Array.isArray(data.submitted) && data.submitted.includes(fieldName);
+        if (!this.generatedContent && !this.generatedSlots && !submittedEmpty) {
           this.generationError = issueText || 'The model returned no content.';
           this.generationStatus = '';
           return;
@@ -239,6 +297,11 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
         this.generationStatus = `Generated draft is ready${repairedNote}. Read it below, then Apply.`;
       } catch (err) {
         if (requestId !== this._generationRequestId) return;
+        if (err?.name === 'AbortError') {
+          this.endRun('cancelled');
+          this.generationStatus = 'Run cancelled. Nothing was changed.';
+          return;
+        }
         this.generationError = err.message || 'Network error';
         this.generationStatus = '';
       } finally {

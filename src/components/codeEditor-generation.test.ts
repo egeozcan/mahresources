@@ -15,7 +15,7 @@ function fixture(shared = true) {
     return view;
   });
   const confirmDialog = { ask: vi.fn(async () => true) };
-  const disclosure = { open: vi.fn(async () => true) };
+  const disclosure = { open: vi.fn(async () => ({ groundingHash: 'h', previewMRQL: false, previewPlugins: false })) };
   const stores: Record<string, unknown> = { confirmDialog, generationDisclosure: disclosure, templatePreview: { generatePath: '/generate' } };
   Object.assign(window, { Alpine: { store: (name: string) => stores[name] } });
   const editor = Object.assign(shared ? templateGeneration({ fieldName: 'CustomMRQLResult', mode: 'html' }) : codeEditor({ mode: 'html', generate: true }), {
