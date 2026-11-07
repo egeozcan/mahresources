@@ -240,7 +240,7 @@ func (ctx MetaShortcodeContext) schemaSlice(path string) string {
 	out := extractSchemaSliceW(w, ctx.MetaSchema, path, ctx.decodeMetaObject())
 	if err := w.Err(); err != nil && ctx.meter != nil {
 		if ctx.meter.limited() || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			ctx.meter.fail("%v", err)
+			ctx.meter.failErr(err)
 		}
 	}
 	return out

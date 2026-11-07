@@ -40,7 +40,7 @@ func RenderUsingShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcod
 		return shortcodeErrorMarker("using", "[using] requires a closing [/using] tag")
 	}
 
-	body, elseBranch := SplitElse(sc.InnerContent)
+	body, elseBranch := splitElseM(meterFrom(reqCtx), sc.InnerContent)
 
 	renderElse := func() string {
 		if strings.TrimSpace(elseBranch) == "" {

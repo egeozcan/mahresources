@@ -2112,9 +2112,7 @@ func (tc *translateContext) lowerText(val interface{}) string {
 	if tc.lowerMemo == nil {
 		tc.lowerMemo = map[string]string{}
 	}
-	if len(tc.lowerMemo) < 64 {
-		tc.lowerMemo[text] = p
-	}
+	tc.lowerMemo[text] = p
 	return p
 }
 
@@ -2133,9 +2131,10 @@ func (tc *translateContext) likePattern(val interface{}) string {
 	if tc.likeMemo == nil {
 		tc.likeMemo = map[string]string{}
 	}
-	if len(tc.likeMemo) < 64 {
-		tc.likeMemo[text] = p
-	}
+	// Every distinct operand is kept: a cap would let an operand used after the
+	// cap is full be copied once per occurrence. The distinct operands are
+	// bounded by the admitted parameter bytes.
+	tc.likeMemo[text] = p
 	return p
 }
 

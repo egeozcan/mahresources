@@ -389,7 +389,7 @@ func attributeContextsForW(w *schemaWork, input string, spans []bareValueSpan) (
 	if !w.chargeBytes(len(substituted)) {
 		return out, alt
 	}
-	lex := lexicalContexts(substituted, len(spans))
+	lex := lexicalContexts(w, substituted, len(spans))
 	// The oracle for the one danger the parser's placement hides: an unquoted
 	// value the parser dropped (a repeated attribute, or a merge duplicate on
 	// <body>/<html>) still adds a live sibling attribute, because escaping does
@@ -698,10 +698,13 @@ func couldCompleteEndTag(text string, at int, name string) bool {
 // ignored comment and gets the zero lexFact, and the PARSE, which does place it
 // in a text node (kText), is what answers it. A sentinel in ordinary text is
 // likewise the zero lexFact, answered by the parser.
-func lexicalContexts(src string, nspans int) []lexFact {
+func lexicalContexts(w *schemaWork, src string, nspans int) []lexFact {
 	facts := make([]lexFact, nspans)
 	z := html.NewTokenizer(strings.NewReader(src))
 	for {
+		if !w.step() {
+			return facts
+		}
 		tt := z.Next()
 		// Never let the tokenizer go into raw-text mode: a browser reads the
 		// bodies of <script>, <iframe>, <noscript> and friends as raw text,
@@ -727,7 +730,7 @@ func lexicalContexts(src string, nspans int) []lexFact {
 			}
 			return facts
 		case html.StartTagToken, html.SelfClosingTagToken:
-			for _, h := range sentinelsInTag(string(z.Raw())) {
+			for _, h := range sentinelsInTag(w, string(z.Raw())) {
 				if h.index < 0 || h.index >= nspans || !h.ctx.inValue {
 					continue
 				}
@@ -896,7 +899,7 @@ type sentinelHit struct {
 // attribute value or a tag/attribute name. The tag is already delimited by
 // lexicalContexts, so this is a flat walk over "name=value" pairs — no
 // comments, no raw-text bodies, no nesting.
-func sentinelsInTag(tag string) []sentinelHit {
+func sentinelsInTag(w *schemaWork, tag string) []sentinelHit {
 	var hits []sentinelHit
 	i := 0
 	// Skip "<" and the element name — but not before checking it, since an
@@ -980,6 +983,12 @@ func sentinelsInTag(tag string) []sentinelHit {
 			// Only the URL rules read the prefix, and unescaping a growing
 			// prefix once per occurrence is quadratic in a value holding many.
 			if urlBearingAttrs[name] {
+				// Each unescaped prefix is a fresh copy that is also retained,
+				// so a value holding many sentinels is quadratic: reserve the
+				// copy first and stop collecting once the allowance is spent.
+				if !w.chargeBytes(idx.at) || !w.step() {
+					return hits
+				}
 				// html.UnescapeString so a prefix written as "java&#x73;cript"
 				// is judged as the "javascript" the browser will see.
 				ctx.valueSoFar = html.UnescapeString(value[:idx.at])

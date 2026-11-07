@@ -19,6 +19,16 @@ const defaultEachLimit = 100
 // the output by some other handler cannot forge a placeholder.
 var itemSentinelPrefix = "\x00mahitem" + rand.Text() + ":"
 
+// decimalDigits is len(strconv.Itoa(n)) without the allocation.
+func decimalDigits(n int) int {
+	d := 1
+	for n >= 10 {
+		n /= 10
+		d++
+	}
+	return d
+}
+
 func itemSentinel(i int) string { return itemSentinelPrefix + strconv.Itoa(i) + "\x00" }
 
 // RenderEachShortcode expands an [each] block by iterating an array value at the
@@ -38,7 +48,7 @@ func RenderEachShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 		return ""
 	}
 
-	itemBranch, elseBranch := SplitElse(sc.InnerContent)
+	itemBranch, elseBranch := splitElseM(meterFrom(reqCtx), sc.InnerContent)
 
 	renderElse := func() string {
 		if strings.TrimSpace(elseBranch) == "" {
@@ -55,7 +65,7 @@ func RenderEachShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 	limit := parseIntAttr(sc.Attrs["limit"], defaultEachLimit)
 
 	m := meterFrom(reqCtx)
-	marked, items := markItems(itemBranch)
+	marked, items := markItems(m, itemBranch)
 
 	var b strings.Builder
 	for i, elem := range arr {
@@ -102,16 +112,30 @@ func RenderEachShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 // the prefix being per-process, could not be consumed even in principle.
 // Widening this means classifying every block by whether its body is rendered in
 // this pass, which belongs with those handlers rather than here.
-func markItems(branch string) (string, []Shortcode) {
+func markItems(m *renderMeter, branch string) (string, []Shortcode) {
 	// A branch that already contains NUL could otherwise carry sentinel bytes
 	// of its own. Replacing it byte-for-byte keeps every parsed offset valid.
 	if strings.IndexByte(branch, 0) >= 0 {
 		branch = strings.ReplaceAll(branch, "\x00", " ")
 	}
 
-	scs := ParseWithBlocks(branch)
+	scs := parseWithBlocksM(m, branch)
 	if len(scs) == 0 {
 		return branch, nil
+	}
+
+	// The marked source is longer than the branch (a sentinel is longer than
+	// most [item] tokens), so its size is admitted before it is built, and the
+	// item records are reserved with it.
+	size, count := int64(len(branch)), 0
+	for _, sc := range scs {
+		if sc.Name == "item" {
+			size += int64(len(itemSentinelPrefix)+decimalDigits(count)+1) - int64(sc.End-sc.Start)
+			count++
+		}
+	}
+	if m.Err() != nil || !m.admitParsed(size) || !m.chargeScratch(int64(count)*160) {
+		return "", nil
 	}
 
 	var items []Shortcode
@@ -120,6 +144,9 @@ func markItems(branch string) (string, []Shortcode) {
 	for _, sc := range scs {
 		if sc.Name != "item" {
 			continue
+		}
+		if !m.tick() {
+			return "", nil
 		}
 		b.WriteString(branch[lastEnd:sc.Start])
 		b.WriteString(itemSentinel(len(items)))

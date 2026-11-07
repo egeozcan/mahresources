@@ -110,3 +110,55 @@ func TestDiffTemplateSnapshotsBoundedStopsOnCancel(t *testing.T) {
 		t.Errorf("bounded %d slots, unbounded %d", len(got), len(want))
 	}
 }
+
+// A pure deletion or insertion used to allocate one row per line: the admission
+// product was zero while the table was (n+1) x 1.
+func TestDiffLinesBoundedOneSidedMiddleBuildsNoTable(t *testing.T) {
+	const n = 1_000_000
+	text := numberedLines(n, "d")
+	measure := func(f func() ([]DiffHunk, error)) ([]DiffHunk, uint64) {
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		h, err := f()
+		runtime.ReadMemStats(&after)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h, after.TotalAlloc - before.TotalAlloc
+	}
+	del, grown := measure(func() ([]DiffHunk, error) { return DiffLinesBounded(context.Background(), text, "") })
+	if len(del) != 1 || del[0].Op != DiffOpDelete || len(del[0].Lines) != n {
+		t.Fatalf("deletion hunks = %v", summarize(del))
+	}
+	// Split headers (16 B/line) and the hunk copy (16 B/line) only; the table
+	// rows added another ~32 B/line.
+	if grown > 40*n {
+		t.Errorf("deletion allocated %d bytes (%d per line)", grown, grown/n)
+	}
+	ins, grown := measure(func() ([]DiffHunk, error) { return DiffLinesBounded(context.Background(), "", text) })
+	if len(ins) != 1 || ins[0].Op != DiffOpInsert || len(ins[0].Lines) != n {
+		t.Fatalf("insertion hunks = %v", summarize(ins))
+	}
+	if grown > 40*n {
+		t.Errorf("insertion allocated %d bytes (%d per line)", grown, grown/n)
+	}
+}
+
+func TestDiffLinesBoundedAdmitsRowOverhead(t *testing.T) {
+	// 900 x 1,110 middle lines: the product is 999,000, but the table is
+	// 901 x 1,111 cells plus row headers, over the 1,000,000 allowance. A shared
+	// line in the middle shows whether an LCS ran: the coarse form has no equal hunk.
+	mk := func(n int, tag string) string {
+		return numberedLines(n/2, tag) + "\nCOMMON\n" + numberedLines(n/2-1, tag+"x")
+	}
+	hunks, err := DiffLinesBounded(context.Background(), mk(900, "a"), mk(1110, "b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range hunks {
+		if h.Op == DiffOpEqual {
+			t.Fatalf("an LCS table was built: %v", summarize(hunks))
+		}
+	}
+}

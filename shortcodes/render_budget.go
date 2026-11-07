@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"regexp"
 	"sync"
 )
 
@@ -65,8 +64,81 @@ type renderMeter struct {
 	steps  uint32
 	err    error
 
-	regexes map[string]*regexp.Regexp // compiled matches= patterns, by source
-	keyWork int64                     // bytes of MRQL cache-key construction
+	regexAllowance *RegexAllowance // matches= patterns, compiled once per render
+	keyWork        int64           // bytes of MRQL cache-key construction
+	attrs          int             // attribute map entries retained by token collection
+	scratch        int64           // helper scratch bytes
+	dividers       int             // branch and divider records
+}
+
+// maxScratchBytes is the helper scratch (origin arrays, remainder copies) one
+// limited operation may allocate in total; maxDividerRecords the branch and
+// divider records ([else], [elseif], empty ones included) it may collect.
+const (
+	maxScratchBytes   = 64 << 20
+	maxDividerRecords = budgetedTokenCap
+)
+
+// chargeScratch reserves n bytes of helper scratch before it is allocated. Only
+// a limited meter is capped; any meter stops when its context does.
+func (m *renderMeter) chargeScratch(n int64) bool {
+	if m == nil {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.checkCtxLocked()
+	if m.err != nil {
+		return false
+	}
+	m.scratch += n
+	if m.limited() && (n < 0 || m.scratch > maxScratchBytes) {
+		m.failLocked(fmt.Errorf("%w: helper scratch exceeds %d bytes", ErrRenderBudgetExceeded, maxScratchBytes))
+		return false
+	}
+	return true
+}
+
+// reserveDividers reserves n branch or divider records before they are
+// appended (an empty [elseif] allocates a record and a map like any other).
+func (m *renderMeter) reserveDividers(n int) bool {
+	if m == nil {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.checkCtxLocked()
+	if m.err != nil {
+		return false
+	}
+	m.dividers += n
+	if m.limited() && m.dividers > maxDividerRecords {
+		m.failLocked(fmt.Errorf("%w: more than %d [else]/[elseif] dividers", ErrRenderBudgetExceeded, maxDividerRecords))
+		return false
+	}
+	return true
+}
+
+// budgetedAttrTotal is the attribute entries one limited parse may retain in
+// total; budgetedAttrCap bounds a single token.
+const budgetedAttrTotal = 100_000
+
+// reserveAttrs reserves n attribute map entries before they are inserted. An
+// unlimited meter (a page) reserves nothing.
+func (m *renderMeter) reserveAttrs(n int) bool {
+	if !m.limited() {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.checkCtxLocked()
+	if m.err != nil {
+		return false
+	}
+	if m.attrs += n; m.attrs > budgetedAttrTotal {
+		return false
+	}
+	return true
 }
 
 func meterFrom(ctx context.Context) *renderMeter {
@@ -100,6 +172,18 @@ func (m *renderMeter) fail(format string, args ...any) {
 	}
 	m.mu.Lock()
 	m.failLocked(fmt.Errorf("%w: %s", ErrRenderBudgetExceeded, fmt.Sprintf(format, args...)))
+	m.mu.Unlock()
+}
+
+// failErr records err (wrapped as a budget error) keeping its own chain, so a
+// cancellation that stopped a schema expansion still satisfies
+// errors.Is(err, context.Canceled).
+func (m *renderMeter) failErr(err error) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.failLocked(fmt.Errorf("%w: %w", ErrRenderBudgetExceeded, err))
 	m.mu.Unlock()
 }
 

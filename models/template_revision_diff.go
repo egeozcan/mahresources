@@ -127,8 +127,12 @@ func diffLines(ctx context.Context, maxCells int, a, b string) ([]DiffHunk, erro
 
 	add(DiffOpEqual, x[:prefix])
 	mx, my := x[prefix:len(x)-suffix], y[prefix:len(y)-suffix]
-	// Compared as a division so the product cannot overflow.
-	if len(my) > 0 && len(mx) > maxCells/len(my) {
+	// The table is (len(mx)+1) x (len(my)+1) cells plus one slice header per
+	// row (counted as 6 cells of 4 bytes). A side with nothing in the middle
+	// is a plain insert or delete and needs no table at all.
+	cells := (int64(len(mx)) + 1) * (int64(len(my)) + 1)
+	cells += 6 * (int64(len(mx)) + 1)
+	if len(mx) == 0 || len(my) == 0 || cells > int64(maxCells) {
 		add(DiffOpDelete, mx)
 		add(DiffOpInsert, my)
 	} else {

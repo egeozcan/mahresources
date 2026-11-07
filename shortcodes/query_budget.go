@@ -201,9 +201,13 @@ const maxCacheKeyBytes = 8 << 20
 // while iterating the parameters. ok is false when the meter stopped the render.
 func budgetCacheKeyMetered(m *renderMeter, query string, opts QueryOptions) (string, bool) {
 	if m != nil {
-		size := int64(len(query)+len(opts.SavedName)) + 64
+		// %q writes up to four bytes per byte (\x00), so reserve the quoted
+		// worst case, not the raw length.
+		// The fixed part is five numbers of at most 20 digits, six separators,
+		// the booleans and four pairs of quotes: well under 160.
+		size := 4*int64(len(query)+len(opts.SavedName)) + 160
 		for k, v := range opts.Params {
-			size += int64(len(k)+len(v)) + 8
+			size += 4*int64(len(k)+len(v)) + 16
 		}
 		if !m.chargeKey(size) {
 			return "", false

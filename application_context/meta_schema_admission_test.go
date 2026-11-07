@@ -1,7 +1,10 @@
 package application_context
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"mahresources/shortcodes"
 	"runtime"
 	"strings"
 	"sync"
@@ -121,5 +124,126 @@ func TestValidateMetaSchemaStructureBounds(t *testing.T) {
 	ok := `{"type":"object","properties":{"n":{"type":"number","minimum":0,"maximum":1e9},"s":{"type":"string","pattern":"^[a-z]+$"}}}`
 	if err := ValidateMetaSchema(ok); err != nil {
 		t.Errorf("ordinary schema refused: %v", err)
+	}
+}
+
+// Review r1: a member named "pattern" inside const/enum/default/examples is
+// data, not a regular expression.
+func TestValidateMetaSchemaPatternDataIsNotAPattern(t *testing.T) {
+	long := strings.Repeat("a", 3000)
+	for _, s := range []string{
+		`{"const":{"pattern":"` + long + `{1000}{1000}"}}`,
+		`{"enum":[{"pattern":"` + strings.Repeat("a{1000}", 100) + `"}]}`,
+		`{"type":"object","default":{"pattern":"` + strings.Repeat("a{1000}", 100) + `"}}`,
+		`{"examples":[{"pattern":"` + strings.Repeat("a{1000}", 100) + `"}]}`,
+	} {
+		if err := ValidateMetaSchema(s); err != nil {
+			t.Errorf("data refused: %v\n%.80s", err, s)
+		}
+	}
+	// The same text at a schema position is refused, including through $defs
+	// and a local $ref target.
+	bad := strings.Repeat("a{1000}", 100)
+	for _, s := range []string{
+		`{"properties":{"a":{"pattern":"` + bad + `"}}}`,
+		`{"$defs":{"x":{"pattern":"` + bad + `"}}}`,
+		`{"patternProperties":{"` + bad + `":{}}}`,
+		`{"allOf":[{"items":{"pattern":"` + bad + `"}}]}`,
+	} {
+		if err := ValidateMetaSchema(s); err == nil {
+			t.Errorf("accepted: %.80s", s)
+		}
+	}
+}
+
+// Many individually admitted patterns add up.
+func TestValidateMetaSchemaAggregateRegexWork(t *testing.T) {
+	p := strings.Repeat("a{1000}", 19) // ~19,000 instructions each: under the single-pattern allowance
+	var props []string
+	for i := 0; i < 20; i++ {
+		props = append(props, fmt.Sprintf(`"p%d":{"type":"string","pattern":"%s%d"}`, i, p, i)) // distinct sources: each counts once
+	}
+	s := `{"type":"object","properties":{` + strings.Join(props, ",") + `}}`
+	err := ValidateMetaSchema(s)
+	if err == nil || !strings.Contains(err.Error(), "add up") {
+		t.Errorf("aggregate not refused: %v", err)
+	}
+}
+
+func TestValidateMetaSchemaContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := ValidateMetaSchemaContext(ctx, `{"type":"object"}`); !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// Round 2: the compiler's own regexp engine is metered, so these all see the
+// patterns the compiler really compiles.
+func TestValidateMetaSchemaRegexEngineSeesWhatTheCompilerCompiles(t *testing.T) {
+	bad := strings.Repeat("a{1000}", 100)
+	refs := strings.Repeat(`{"$ref":"#"},`, 10000)
+	cases := map[string]string{
+		"number beyond float64 beside oversized regex": `{"minimum":1e400,"pattern":"` + bad + `"}`,
+		"encoded pointer into default":                 `{"$ref":"#/default/%78","default":{"x":{"pattern":"` + bad + `"}}}`,
+		"self-document absolute ref":                   `{"$id":"https://example.test/s","$ref":"https://example.test/s#/default/x","default":{"x":{"pattern":"` + bad + `"}}}`,
+		"nested resource":                              `{"$defs":{"n":{"$id":"https://example.test/n","properties":{"a":{"pattern":"` + bad + `"}}}}}`,
+		"dynamic ref":                                  `{"$schema":"https://json-schema.org/draft/2020-12/schema","$dynamicRef":"#anchor","$defs":{"a":{"$dynamicAnchor":"anchor","pattern":"` + bad + `"}}}`,
+		"10,000 refs then an oversized target":         `{"allOf":[` + refs + `{"$ref":"#/default"}],"default":{"pattern":"` + bad + `"}}`,
+	}
+	for name, s := range cases {
+		if err := ValidateMetaSchema(s); err == nil {
+			t.Errorf("%s: accepted", name)
+		} else if !strings.Contains(err.Error(), "complex") && !strings.Contains(err.Error(), "add up") {
+			t.Errorf("%s: refused for another reason: %v", name, err)
+		}
+	}
+}
+
+func TestValidateMetaSchemaInactiveDialectKeywordsStaySavable(t *testing.T) {
+	bad := strings.Repeat("a{1000}", 100)
+	s := `{"$schema":"http://json-schema.org/draft-07/schema#","prefixItems":[{"pattern":"` + bad + `"}]}`
+	if err := ValidateMetaSchema(s); err != nil {
+		t.Errorf("unknown keyword in draft-07 refused: %v", err)
+	}
+}
+
+func TestValidateMetaSchemaInvalidJSONFailsClosed(t *testing.T) {
+	if err := ValidateMetaSchema(`{"type":`); err == nil || !strings.Contains(err.Error(), "not valid JSON") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// Round 3: ten distinct patterns of 19,000 \pL each, under $defs nothing
+// references, retained about a gigabyte of rune tables while staying under the
+// instruction count.
+func TestValidateMetaSchemaUnicodeClassPayloadIsBounded(t *testing.T) {
+	var defs []string
+	for i := 0; i < 10; i++ {
+		const classes = 10000
+		p := strings.Repeat(`\\pL`, classes) + fmt.Sprint(i) // JSON text; decodes to 3 bytes per class
+		if decoded := 3*classes + len(fmt.Sprint(i)); decoded >= shortcodes.MaxRegexpSource {
+			t.Fatalf("prerequisite: %d decoded bytes is not under the %d byte source gate", decoded, shortcodes.MaxRegexpSource)
+		}
+		defs = append(defs, fmt.Sprintf(`"d%d":{"type":"string","pattern":"%s"}`, i, p))
+	}
+	s := `{"type":"object","$defs":{` + strings.Join(defs, ",") + `}}`
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	err := ValidateMetaSchema(s)
+	runtime.ReadMemStats(&after)
+	if err == nil {
+		t.Fatal("accepted")
+	}
+	if grown := after.TotalAlloc - before.TotalAlloc; grown > 128<<20 {
+		t.Errorf("allocated %d bytes", grown)
+	}
+}
+
+// A valid pattern that only looks like a POSIX class saves.
+func TestValidateMetaSchemaPOSIXLookalikePattern(t *testing.T) {
+	if err := ValidateMetaSchema(`{"type":"object","properties":{"s":{"type":"string","pattern":"[[:]]"}}}`); err != nil {
+		t.Fatalf("valid schema refused: %v", err)
 	}
 }

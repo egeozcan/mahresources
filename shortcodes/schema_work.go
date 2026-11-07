@@ -2,8 +2,9 @@ package shortcodes
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"strings"
+	"unicode/utf8"
 )
 
 // The schema expansion helpers run on schemas the author or a model wrote. Each
@@ -84,6 +85,20 @@ func (w *schemaWork) charge(n int) bool {
 	return w.step()
 }
 
+// poll consults the context now, for operation entry and exit: the amortized
+// check in step would let a small input finish before it ever looked.
+func (w *schemaWork) poll() bool {
+	if w == nil {
+		return true
+	}
+	if w.err == nil && w.ctx != nil {
+		if cerr := w.ctx.Err(); cerr != nil {
+			w.err = errors.Join(errSchemaTooComplex, cerr)
+		}
+	}
+	return w.err == nil
+}
+
 // step counts one iteration and consults the context every 64th.
 func (w *schemaWork) step() bool {
 	if w == nil {
@@ -155,21 +170,80 @@ func (w *schemaWork) valueBytes(v any) bool {
 	}
 	switch x := v.(type) {
 	case string:
-		return w.chargeBytes(len(x)+2+4*strings.Count(x, `"`)) && w.step()
+		return w.chargeBytes(escapedSize(x)) && w.step()
 	case map[string]any:
+		if !w.chargeBytes(2 * htmlQuote) {
+			return false
+		}
 		for k, e := range x {
-			if !w.chargeBytes(len(k)+3) || !w.step() || !w.valueBytes(e) {
+			// key, its quotes, the colon and the comma
+			if !w.chargeBytes(escapedSize(k)+2) || !w.step() || !w.valueBytes(e) {
 				return false
 			}
 		}
 	case []any:
+		if !w.chargeBytes(2) {
+			return false
+		}
 		for _, e := range x {
 			if !w.chargeBytes(1) || !w.step() || !w.valueBytes(e) {
 				return false
 			}
 		}
+	case nil:
+		return w.chargeBytes(4) && w.step()
+	case bool:
+		return w.chargeBytes(5) && w.step()
 	default:
-		return w.chargeBytes(8) && w.step()
+		// A number is measured, not bounded: encoding/json switches between
+		// fixed-point and exponent forms, so no short constant is safe (the
+		// 25-byte -0.0000010000000000000002 broke a 24-byte one). Digits, signs
+		// and the exponent mark need no HTML escaping.
+		encoded, err := json.Marshal(x)
+		if err != nil {
+			encoded = make([]byte, 32)
+		}
+		return w.chargeBytes(len(encoded)) && w.step()
 	}
 	return true
+}
+
+// htmlQuote is the length of a quote character once the JSON is embedded in an
+// HTML attribute (&#34;).
+const htmlQuote = 5
+
+// escapedSize is an upper bound on a string's size after json.Marshal and the
+// HTML attribute escaping that follows: the two quotes at htmlQuote each, then
+// per byte. Controls and "<", ">", "&" become six-byte \u escapes; a quote or
+// backslash two bytes and then up to five more; U+2028 and U+2029 (always
+// escaped by encoding/json) and every byte of invalid UTF-8 (replaced by the
+// six-byte \ufffd) six bytes; any other multibyte character its own length.
+func escapedSize(s string) int {
+	n := 2 * htmlQuote
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c < utf8.RuneSelf {
+			switch {
+			case c == '"' || c == '\\' || c == '\'':
+				n += 7
+			case c == '<' || c == '>' || c == '&' || c < 0x20:
+				n += 6
+			default:
+				n++
+			}
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			n += 6
+		case r == '\u2028' || r == '\u2029':
+			n += 6
+		default:
+			n += size
+		}
+		i += size
+	}
+	return n
 }

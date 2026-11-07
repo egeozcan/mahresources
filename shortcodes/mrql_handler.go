@@ -109,7 +109,10 @@ func RenderMRQLShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 	// query runs (otherwise the extra COUNT query never happens).
 	var slots mrqlSlots
 	if sc.IsBlock && !inline {
-		slots = parseMRQLSlots(sc.InnerContent)
+		slots = parseMRQLSlotsM(meterFrom(reqCtx), sc.InnerContent)
+		if meterFrom(reqCtx).Err() != nil {
+			return ""
+		}
 	}
 
 	m := meterFrom(reqCtx)
@@ -157,6 +160,10 @@ func RenderMRQLShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 	if empty && slots.HasElse {
 		elseHTML := renderMRQLSlot(reqCtx, slots.Else, result, ctx, renderer, executor, depth)
 		if m.Err() != nil {
+			return ""
+		}
+		// The wrapper copies the branch: reserve the copy before making it.
+		if !m.chargeOut(int64(len(elseHTML) + len(`<div class="mrql-results"></div>`))) {
 			return ""
 		}
 		return fmt.Sprintf(`<div class="mrql-results">%s</div>`, elseHTML)
@@ -388,22 +395,30 @@ func renderBucketed(reqCtx context.Context, groups []QueryResultGroup, format st
 
 	m := meterFrom(reqCtx)
 	var b strings.Builder
+	c := charged{m: m}
 	b.WriteString(`<div class="space-y-4">`)
 	for _, group := range groups {
 		if !m.tick() {
 			return ""
 		}
 		b.WriteString(`<div class="border border-stone-200 rounded-md overflow-hidden">`)
-		b.WriteString(renderBucketHeader(m, group.Key, len(group.Items)))
+		// The header and every wrapper are reserved as they are written.
+		if !writeBucketHeader(m, &b, &c, group.Key, len(group.Items)) {
+			return ""
+		}
 		b.WriteString(`<div class="p-3">`)
 		inner := renderFlat(reqCtx, group.Items, format, parentCtx, renderer, executor, depth)
-		if !m.chargeOut(int64(len(inner))) {
+		if !c.flush(&b) || !m.chargeOut(int64(len(inner))) {
 			return ""
 		}
 		b.WriteString(inner)
+		c.n = b.Len() // inner is already paid
 		b.WriteString(`</div></div>`)
 	}
 	b.WriteString(`</div>`)
+	if !c.flush(&b) {
+		return ""
+	}
 	return b.String()
 }
 

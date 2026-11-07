@@ -1,12 +1,15 @@
 package application_context
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"mahresources/shortcodes"
 )
@@ -15,9 +18,13 @@ import (
 // budget and keeps every numeric constraint as an exact big.Rat. A 15 KB schema
 // of 500 "minimum": 1e-1000000 retained about 200 MB, and plain json.Unmarshal
 // lets the value through as zero. The compiler cannot be interrupted once it
-// starts, so what it may be handed is admitted first, on a streaming pass that
-// builds no tree: numbers, nesting, size and the regular expressions it will
-// expand.
+// starts, so what it may be handed is admitted first: a streaming pass checks
+// numbers, nesting and size, and the compiler's own regexp engine is replaced
+// (meterRegexpEngine) by one that adds up the work of every expression the
+// compiler actually compiles. There is no shadow traversal of the schema: the
+// engine sees exactly the patterns the compiler resolves, through encoded
+// pointers, self-document and absolute refs, nested $id bases, $dynamicRef,
+// the active dialect, and the metaschema's own regex-format checks.
 const (
 	maxSchemaNumberExponent = 400
 	maxSchemaSignificant    = 100
@@ -29,81 +36,51 @@ const (
 var errSchemaNotAdmitted = errors.New("meta JSON schema is outside the supported limits")
 
 // admitMetaSchema walks schemaJSON as a token stream and refuses what the
-// compiler must not see. A document that is not valid JSON is not refused here:
-// the compiler's own parse reports it.
-func admitMetaSchema(schemaJSON string) error {
+// compiler must not see. It fails closed on a decoding error (the compiler is
+// not handed text this pass could not read); the full-document parse that
+// follows still validates that the document is complete.
+func admitMetaSchema(ctx context.Context, schemaJSON string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	dec := json.NewDecoder(strings.NewReader(schemaJSON))
 	dec.UseNumber()
 
-	type frame struct {
-		object    bool
-		name      string // the key this container sits under in its parent
-		key       string // the current key, in an object
-		expectKey bool
-	}
-	var stack []frame
-	totalDigits, tokens := 0, 0
-
-	valueDone := func() {
-		if n := len(stack); n > 0 && stack[n-1].object {
-			stack[n-1].expectKey = true
-		}
-	}
-
+	depth, totalDigits, tokens := 0, 0, 0
 	for {
 		tok, err := dec.Token()
 		if err == io.EOF {
-			return nil
+			break
 		}
 		if err != nil {
-			return nil // malformed: the compiler's parse says where
+			// Fail closed: the compiler is not handed text this pass could not read.
+			return fmt.Errorf("meta JSON schema is not valid JSON: %w", err)
 		}
 		if tokens++; tokens > maxSchemaTokens {
 			return fmt.Errorf("%w: more than %d values", errSchemaNotAdmitted, maxSchemaTokens)
+		}
+		if tokens&0x3ff == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 		}
 		switch t := tok.(type) {
 		case json.Delim:
 			switch t {
 			case '{', '[':
-				name := ""
-				if n := len(stack); n > 0 && stack[n-1].object {
-					name = stack[n-1].key
-				}
-				if len(stack) >= maxSchemaDepth {
+				if depth++; depth > maxSchemaDepth {
 					return fmt.Errorf("%w: nested more than %d levels", errSchemaNotAdmitted, maxSchemaDepth)
 				}
-				stack = append(stack, frame{object: t == '{', name: name, expectKey: t == '{'})
 			default:
-				stack = stack[:len(stack)-1]
-				valueDone()
-			}
-		case string:
-			n := len(stack)
-			switch {
-			case n > 0 && stack[n-1].object && stack[n-1].expectKey:
-				stack[n-1].key, stack[n-1].expectKey = t, false
-				if stack[n-1].name == "patternProperties" {
-					if err := shortcodes.AdmitRegexp(t); err != nil {
-						return fmt.Errorf("%w: a patternProperties pattern is too complex", errSchemaNotAdmitted)
-					}
-				}
-			default:
-				if n > 0 && stack[n-1].object && stack[n-1].key == "pattern" {
-					if err := shortcodes.AdmitRegexp(t); err != nil {
-						return fmt.Errorf("%w: a pattern is too complex to compile", errSchemaNotAdmitted)
-					}
-				}
-				valueDone()
+				depth--
 			}
 		case json.Number:
 			if err := admitNumber(string(t), &totalDigits); err != nil {
 				return err
 			}
-			valueDone()
-		default:
-			valueDone()
 		}
 	}
+	return nil
 }
 
 // admitNumber refuses a number whose exact form would be large: an exponent
@@ -147,4 +124,25 @@ func admitNumber(lit string, totalDigits *int) error {
 		return fmt.Errorf("%w: the numbers add up to more than %d digits", errSchemaNotAdmitted, maxSchemaTotalDigits)
 	}
 	return nil
+}
+
+// meterRegexpEngine is installed on the compiler before the schema is added. It
+// compiles through one shortcodes.RegexAllowance for the whole validation: the
+// same rule the template conditionals use (a source estimate before parsing, the
+// parse tree's instruction and rune cost before compiling, the compiled program
+// measured after), each distinct source counted once, further compiles refused
+// once the allowance is spent, and the context checked before each.
+func meterRegexpEngine(ctx context.Context) jsonschema.RegexpEngine {
+	allowance := shortcodes.NewRegexAllowance(ctx)
+	return func(pattern string) (jsonschema.Regexp, error) {
+		re, err := allowance.Compile(pattern)
+		if err != nil {
+			var tooBig *shortcodes.RegexTooComplexError
+			if errors.As(err, &tooBig) {
+				return nil, fmt.Errorf("%w: %s", errSchemaNotAdmitted, tooBig.Error())
+			}
+			return nil, err
+		}
+		return re, nil
+	}
 }
