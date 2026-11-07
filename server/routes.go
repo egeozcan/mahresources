@@ -930,6 +930,12 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/noteType/generateTemplate").HandlerFunc(scopedAPI(appContext, func(ctx api_handlers.TemplateGenerationContext) func(http.ResponseWriter, *http.Request) {
 		return api_handlers.GetGenerateTemplateHandler(ctx, "note", runAccess)
 	}))
+	// Finish now for a live run. Mounted under each carrier's prefix, so the
+	// role gate is the generate route's; it reads no entities, so it takes no
+	// request-scoped context.
+	for _, carrier := range []string{"category", "resourceCategory", "noteType"} {
+		router.Methods(http.MethodPost).Path("/v1/" + carrier + "/generateTemplate/finish").HandlerFunc(api_handlers.GetFinishTemplateRunHandler())
+	}
 
 	// Global Search
 	router.Methods(http.MethodGet).Path("/v1/search").HandlerFunc(scopedAPI(appContext, api_handlers.GetGlobalSearchHandler))

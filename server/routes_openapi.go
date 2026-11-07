@@ -2671,6 +2671,9 @@ Request body fields:
   - dryRun     (boolean) — return the disclosure instead of generating; calls no provider
   - groundingHash (string) — required unless dryRun: the groundingHash of the
     disclosure the user approved
+  - previewMRQL, previewPlugins (boolean) — harness mode only, both off by default,
+    both part of the disclosure and so of its groundingHash: previews run [mrql]
+    queries; previews run plugin shortcodes read-only. Classic mode ignores them.
 
 Generation takes two requests. A dry run returns the disclosure: {"sections":
 [{"call", "role", "key", "label", "bytes", "text", "constant", "shared"}], "destination":
@@ -2687,6 +2690,44 @@ the same fields with "groundingHash"; the server rebuilds the disclosure and
 answers 409 "the data to be sent changed; review it again" when the hash no
 longer matches (for example a new member entity became the sample), and 400
 when it is missing. Neither calls the provider.
+
+Harness mode (ai_template_generation_mode, the default) runs the request as a
+multi-Turn Generation run: the model reads through Tools, then submits a Draft.
+A group-limited account (confined to a Group's subtree, or a role that requires
+one) is refused with 403 "Generation runs are not available to group-limited
+accounts", a dry run included. An account has at most 2 live runs; a third is a
+429. Access is re-checked around every Turn and again just before the Draft or
+transcript is written; an account whose access changed gets a 403 (an "error"
+event with status 403 on a stream) and nothing the run read.
+
+A real harness request sent with "Accept: text/event-stream" is answered as a
+stream of server-sent events once the run reaches its first Turn; any error
+found earlier keeps its ordinary status code. Without that header the answer is
+one JSON result at the end, and a failed run's JSON error body adds "stopReason"
+and "transcript" when the run kept one. Events (the data line of each is one JSON
+object):
+  - run: {"runId", "maxTurns", "deadline" (a duration such as "5m0s"), "tokenBudget"}, first. The
+    caps are omitted when the generator does not report them.
+  - turn: {"turn", "maxTurns", "finalReason"}; finalReason is empty or the stop
+    reason that made this the final Turn (turn_cap, finish_now, deadline, budget).
+  - tool: {"turn", "name", "args", "bytes", "isError", "durationMs"}; "name" is a
+    Tool name or "unknown". "args" holds only field, type, kind, entityType,
+    direction and carrierType from fixed sets, and id, entityId, number, from, to,
+    offset, limit and buckets as decimal text.
+  - submission: {"turn", "field", "errors", "warnings"}.
+  - usage: {"turn", "budgetUsed", "budgetMax"}.
+  - result: the full response described below, plus "stopReason" (done, turn_cap,
+    finish_now, deadline, budget, length_repeated, no_tool_call or provider_error),
+    "submitted" (the fields the model submitted) and "transcript". Last.
+  - error: {"error", "status", "stopReason", "transcript"}. "status" is the code
+    the same failure has without a stream. "transcript" is every message sent and
+    received so far; it is absent when access changed. Last.
+Progress events (turn, tool, submission, usage) carry no free text: only Tool
+names, values from fixed sets, IDs and counts. They can be dropped when the
+client reads slowly; run, result and error are not. A comment line ": heartbeat"
+is sent every 15 seconds. A write that blocks for 10 seconds ends the run.
+Leaving the stream cancels the run.
+POST .../generateTemplate/finish asks a live run to make its next Turn the final one.
 
 Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair", "failedSlots"}.
 "content" is set for slot/metaschema; "slots" (a field→markup map) for bundle.
@@ -2736,7 +2777,32 @@ category/resourceCategory, editor for noteType).`
 			Description:          generateDescription,
 			Tags:                 shortcodesTag,
 			RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+			ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentType("text/event-stream")},
+			ErrorResponses: map[int]string{
+				http.StatusForbidden:       "Generation runs are not available to group-limited accounts, or the account's access changed during the run",
+				http.StatusTooManyRequests: "A rate limit was exceeded, or the account already has 2 live generation runs",
+			},
+		})
+	}
+
+	for _, p := range []struct{ path, op string }{
+		{"/v1/category/generateTemplate/finish", "finishCategoryTemplateRun"},
+		{"/v1/resourceCategory/generateTemplate/finish", "finishResourceCategoryTemplateRun"},
+		{"/v1/noteType/generateTemplate/finish", "finishNoteTypeTemplateRun"},
+	} {
+		r.Register(openapi.RouteInfo{
+			Method:               http.MethodPost,
+			Path:                 p.path,
+			OperationID:          p.op,
+			Summary:              "Make a live generation run's next Turn its final one",
+			Description:          `Finish now: the run's next Turn is the final one, in which the model is asked to submit and no other Tool runs. Returns {"ok": true}. Only the account that started the run can finish it; an unknown run ID and another account's both answer 404. Gated like the carrier's generateTemplate route.`,
+			Tags:                 shortcodesTag,
+			RequestType:          reflect.TypeOf(api_handlers.TemplateRunFinishRequest{}),
+			RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON},
 			ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+			ErrorResponses: map[int]string{
+				http.StatusNotFound: "No such live generation run for this account",
+			},
 		})
 	}
 }
