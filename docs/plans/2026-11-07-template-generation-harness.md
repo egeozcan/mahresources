@@ -8,7 +8,7 @@ Status: planned 2026-11-07 from a grilling session (questions Q1 to Q34), revise
 2. The run works with all four providers through native tool calling. A model that cannot call Tools is refused with a clear message.
 3. Before a run, the Disclosure states the destination, the Seed messages, the Tools and what they can reach, the caps, and two opt-ins (previews run `[mrql]`; previews run plugin shortcodes), both off by default. The `groundingHash` covers all of that, and the mode.
 4. The browser shows each Turn as it happens, offers Finish now and Cancel, and afterwards shows the full transcript, each message and Tool result expandable to the exact text sent.
-5. A run never reads beyond the account's current access. Access is re-checked before every Turn; a revoked, demoted or re-scoped account ends the run with no Draft.
+5. A run never reads beyond the account's current access. Group-limited accounts cannot start a run. Access is re-checked around every Turn; a revoked, demoted or newly scoped account ends the run with no Draft.
 6. A model-written preview cannot exhaust memory or run past its deadline.
 7. Classic mode (draft, repair, fan-out) is unchanged in behaviour and Disclosure, and stays selectable until an eval report compares the two. Removing it is the user's decision.
 8. Go unit, Postgres, E2E (browser and CLI) suites pass. Docs describe the feature exactly as built.
@@ -83,7 +83,7 @@ type ConversationResponse struct {
     Calls  []ToolCall
     Finish string          // stop | length | tool_calls
     Replay json.RawMessage
-    Usage  TemplateTokenUsage
+    Usage  ConversationUsage
 }
 type TemplateConversationProvider interface {
     Converse(ctx context.Context, req ConversationRequest) (ConversationResponse, error)
@@ -111,7 +111,13 @@ type ConversationUsage struct {
 }
 ```
 
-`ConversationResponse.Usage` is a `ConversationUsage`. Missing `Prompt` falls back to the Turn's prompt estimate; missing `Completion` to the Turn's full `max_tokens`; missing cache fields count the whole prompt as uncached.
+`ConversationResponse.Usage` is a `ConversationUsage`. Normalization, per Turn:
+- Missing `Prompt` falls back to the Turn's prompt estimate; missing `Completion` to the Turn's full `max_tokens`.
+- With `Prompt` and `CacheHit` reported, the uncached part is `Prompt − CacheHit` whether or not `CacheMiss` is reported (OpenAI and OpenRouter report no miss counter; the classic adapter already derives it this way, `ai_provider_client.go:198-207`).
+- Anthropic keeps its own normalization: uncached is `input_tokens + cache_creation_input_tokens`, cached is `cache_read_input_tokens`.
+- Only with no cache information at all is the whole prompt counted as uncached.
+
+For example, `Prompt=10000, CacheHit=8000, Completion=1000` with no `CacheMiss` charges 1000 + 2000 + 8000/4 = 5000.
 
 Three wire adapters on the existing `generationProviderClient` (redirect blocking, the 4 MiB response cap and sanitized errors are kept; `post` takes the endpoint per call so one client serves both OpenAI endpoints):
 
@@ -151,7 +157,8 @@ The credential check needs `resolvePrincipal` and `sameAccess`, which are privat
 
 `server/api_handlers/template_run_tools.go` implements the executor:
 
-- **Live access.** `CheckAccess` re-resolves the credential when auth is enabled, compares `sameAccess`, and rebinds the principal (and so the subtree allow-list). It also compares a fingerprint (sha256 of the sorted allowed group IDs) with the one taken when the run started, because `sameAccess` compares only user, role, superuser and scope root (`server/request_scope.go:112-127`) and so misses a group moved out of the subtree. Any change to either, a shrink or a growth, ends the run: earlier results already in the conversation may hold data the account can no longer read. A changed identity is never adopted. The loop calls it before each Turn's provider call, again after the provider returns and before any Tool runs, and again before a Draft or transcript is released on any exit path (section 3).
+- **Group-limited accounts cannot start a run.** The handler refuses a harness run (403, "Generation runs are not available to group-limited accounts") when the principal `IsScoped()` or `RequiresScope()`. No role that can reach the generation routes is group-limited today (`server/api_tests/template_generation_scope_test.go:19-22`: editors and admins never are), so this removes nothing anyone can do. It closes a class of problems that would otherwise need provenance tracking: an entity or group moved out of a subtree mid-run, whose content earlier Turns already put into the conversation. Classic mode keeps its scoped behaviour.
+- **Live access.** `CheckAccess` re-resolves the credential when auth is enabled and compares `sameAccess` (user, role, superuser, scope root; `server/request_scope.go:112-127`) with the identity the run started with. A disabled account, a changed role or a newly assigned scope group ends the run. A changed identity is never adopted. The loop calls it before each Turn's provider call, again after the provider returns and before any Tool runs, and again before a Draft or transcript is released on any exit path (section 3).
 - **Cancellation reaches the DB.** A new method `WithParentContext(ctx) *MahresourcesContext` returns a copy whose `db` handle is rebased onto `ctx`, keeping the scope filter and acting user, as `WithRequest`'s rebase branch does (`application_context/context.go:1368-1390`). Credential resolution and the principal rebinding in `CheckAccess` run on such a copy under the context they are given. The rebinding uses a new exported `WithPrincipalContext(ctx, p) (*MahresourcesContext, error)`, implemented through the private `withPrincipalWithin` (`application_context/scoping.go:120-131`), not `WithPrincipal`'s `context.Background()`. The check before releasing a result runs under the request context with a 5 s timeout, not the run context, which may already have reached its deadline; client cancellation still cancels it. Each Tool call runs on a copy rebased onto its own context. Cancel, the run deadline and the per-Tool timeout therefore cancel every query.
 - **Panics are contained.** Each Tool call runs under a `recover` that turns a panic into a sanitized error result ("the Tool failed") and logs the stack. A panic never reaches the run or the process.
 - **Scope.** Entity reads use the same `Find`/`Pluck`/`Count` readers as the HTTP routes, never `Scan`. Carriers and partials are global tables readable by every role, as their GET routes are. Revisions on a carrier other than the one being edited check edit rights with `requireTemplateCarrierEdit` (`application_context/template_revision_context.go`).
@@ -180,13 +187,14 @@ The credential check needs `resolvePrincipal` and `sameAccess`, which are privat
 
 `list_members` (added during planning) exists because `list_carriers` finds carriers but not their members, and the samples are only five of them.
 
-**One validation contract.** `lint`, `submit` and the final Draft all use one harness validator: `validateTemplateContent`'s options plus a partial-existence check. The handler supplies it through a new `TemplateGenerationInput.PartialExists func(ctx context.Context, name string) bool` seam, built on `WithParentContext(ctx)` per call, so a blocked partial lookup is cancelled by the Tool timeout or the run deadline. Each validation wraps it in the `func(string) bool` the linter takes, closing over that validation's context. Classic mode keeps its current validator unchanged.
+**One validation contract.** `lint`, `submit` and the final Draft all use one harness validator: `validateTemplateContent`'s options plus a partial-existence check. The handler supplies it through a new `TemplateGenerationInput.PartialExists func(ctx context.Context, name string) (bool, error)` seam, built on `WithParentContext(ctx)` per call, so a blocked partial lookup is cancelled by the Tool timeout or the run deadline. Each validation wraps it in the `func(string) bool` the linter takes, closing over that validation's context. A lookup that fails or is cancelled counts as existing for the linter, and the validation adds a warning ("could not check that partial X exists"), so a cancelled check never reports an existing partial as missing. Final validation of the Draft runs under the same request-parent 5 s context as the final access check, not the run context, so a Draft recovered after the run deadline is validated normally. Classic mode keeps its current validator unchanged.
 
 **Preview and lint work is bounded.**
 - `preview` builds the meta context with `BuildMetaContextForEntity` like the preview route, and previews `ListHeader`/`ListFooter` fields against the carrier.
 - Source limits: the `content` and `css` of `lint`, `preview` and `submit` are each at most `MaxTemplateGeneratedContentLength` bytes and 2,000 shortcode tokens; over either is an error result before parsing.
 - Rendering runs with a new render budget on the request context (`shortcodes.WithRenderBudget(ctx, 256 KiB output, 512 KiB parsed source)`). Parsed source counts every partial and plugin output parsed during the render. `processWithDepth`, `[each]` and every other loop that appends output check the budget before appending, and check `ctx.Err()` on every iteration. The parser's token loop checks `ctx.Err()` too. Exhausting any of these ends the render with `shortcodes.ErrRenderBudgetExceeded`, which the Tool reports as an error result.
 - Pages and the preview route set no budget, so they behave as today apart from the cancellation checks.
+- What the bound covers: the budget is checked before each append, so a render holds at most the budget plus one replacement value. One replacement (a `[property]` over a slice, a `[meta]` value) costs time and memory linear in data already stored on the entity, the same as a human pressing Preview. What a model can multiply is repetition and nesting, which the budget stops at the first append over the limit. At most 2 previews of a run render at once, so 6 parallel calls do not mean 6 concurrent renders.
 - Schema expansion is bounded. `[meta]` resolves the MetaSchema through `inlineRefsDeep` (`shortcodes/meta_handler.go:345-396`), which follows `$ref` with no cycle detection: a schema whose `$defs.node.child` refers to `node` passes `ValidateMetaSchema` and then overflows the stack, a fatal error no `recover` can catch (reproduced in review round 3). The fix tracks the refs on the current expansion path, stops at a repeated ref, caps expansion at 32 levels and 10,000 nodes, and checks `ctx.Err()`. This is an existing crash on every page that renders `[meta]`, fixed at the root.
 - `[property]` refuses unexported struct fields (`shortcodes/property_handler.go:83-87` reaches them through `FieldByName`, and `formatFieldValue` then panics in `Interface()`; reproduced with `[property path="CreatedAt.wall"]`). This is an existing bug in the preview route and pages, fixed at the root.
 - With the MRQL opt-in off, the executor returns a new `shortcodes.ErrQueryUnavailable`. `RenderMRQLShortcode` renders that as an inert comment carrying the static check verdict. This also applies to `[mrql]` reached through partials, conditionals, `[using]`, result templates and CSS, since all of them go through the one executor.
@@ -367,12 +375,11 @@ A, B and C run in parallel in this worktree with disjoint files, each staging ex
 
 ## Tests (beyond each lane's unit tests)
 
-- **Entity scope** (`server/api_tests`, SQLite and Postgres): through the real router, a run by a group-scoped principal cannot read an entity or related entity outside its subtree through `get_entity`, `list_related`, `list_members` or `preview`. The run uses the synthetic scoped editor setup of `template_generation_scope_test.go`, since ordinary scoped roles cannot reach the route.
+- **Group-limited refusal** (`server/api_tests`, SQLite and Postgres): a harness run by a group-limited principal (the synthetic scoped editor of `template_generation_scope_test.go`) and by a role that requires a scope but has none is refused with 403 before any provider call, dry run included. Classic mode's existing scope test still passes.
 - **Live access:** with the scripted provider paused between Turns, and separately with it blocked inside the final Turn's call, the run ends with no Draft, no transcript and no Tool executed after the change, when any of these happens:
   - the account is disabled
   - the account is demoted
-  - the account's scope group changes
-  - a child group is moved out of the subtree; that child's entities become unreadable on the next Turn
+  - the account is assigned a scope group
 - **Carriers and revisions:** every role that can start a run reads every carrier through `get_template` and `list_carriers`. Revision Tools on another carrier follow `requireTemplateCarrierEdit`; for example, an editor's NoteType run cannot read a Category's revisions.
 - **Generation roles:** the real router refuses the run route to roles without the carrier's edit capability, as today.
 - **Hash:** the hash changes with the mode, each opt-in, the Turn cap, the Tool list and the account. It is stable across two dry runs with unchanged data.
