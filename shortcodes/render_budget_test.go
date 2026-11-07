@@ -232,3 +232,15 @@ func TestCompileBoundedRegexp(t *testing.T) {
 	_, err = compileBoundedRegexp(strings.Repeat("a", 2000))
 	assert.Error(t, err)
 }
+
+func TestCheckGeneratedSource(t *testing.T) {
+	assert.NoError(t, CheckGeneratedSource("plain text", 100))
+	assert.ErrorIs(t, CheckGeneratedSource(strings.Repeat("a", 101), 100), ErrSourceLimit)
+	assert.NoError(t, CheckGeneratedSource(strings.Repeat("[meta]", 2000), 1<<20))
+	assert.ErrorIs(t, CheckGeneratedSource(strings.Repeat("[meta]", 2001), 1<<20), ErrSourceLimit)
+	// Openers and closers both count.
+	assert.ErrorIs(t, CheckGeneratedSource(strings.Repeat("[link][/link]", 1001), 1<<20), ErrSourceLimit)
+	assert.NoError(t, CheckGeneratedSource(strings.Repeat("[link][/link]", 1000), 1<<20))
+	// A hostile run is refused without parsing it all.
+	assert.ErrorIs(t, CheckGeneratedSource(strings.Repeat("[/meta]", 500000), 1<<30), ErrSourceLimit)
+}

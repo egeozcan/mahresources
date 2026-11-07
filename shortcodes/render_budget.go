@@ -261,3 +261,29 @@ func unavailableComment(err error) string {
 	}
 	return shortcodeComment(msg)
 }
+
+// MaxGeneratedShortcodeTokens is the most shortcode tokens (openers and
+// closers) a model-written field may hold.
+const MaxGeneratedShortcodeTokens = 2000
+
+// ErrSourceLimit is wrapped by CheckGeneratedSource errors.
+var ErrSourceLimit = errors.New("template source is over the generation limit")
+
+// CheckGeneratedSource refuses model-written template or CSS text over maxBytes
+// or holding more than MaxGeneratedShortcodeTokens shortcode tokens. It runs
+// before lint, preview or submit parse anything: the token count stops at the
+// limit instead of materializing every match.
+func CheckGeneratedSource(content string, maxBytes int) error {
+	if maxBytes > 0 && len(content) > maxBytes {
+		return fmt.Errorf("%w: %d bytes exceeds the %d byte limit", ErrSourceLimit, len(content), maxBytes)
+	}
+	limit := MaxGeneratedShortcodeTokens + 1
+	n := len(shortcodePattern.FindAllStringIndex(content, limit))
+	if n < limit {
+		n += len(closingTagPattern.FindAllStringIndex(content, limit-n))
+	}
+	if n > MaxGeneratedShortcodeTokens {
+		return fmt.Errorf("%w: more than %d shortcode tokens", ErrSourceLimit, MaxGeneratedShortcodeTokens)
+	}
+	return nil
+}
