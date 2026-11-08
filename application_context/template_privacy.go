@@ -224,7 +224,11 @@ func (p *TemplatePrivacy) issueLocked(key, value, forceKind string) *privacyIssu
 	if existing, ok := p.byValue[key]; ok {
 		return existing
 	}
-	if len(value) > templatePrivacyMaxValueBytes || p.bytes+len(value) > templatePrivacyMaxLegendBytes || len(p.issued)+len(p.protected) >= templatePrivacyMaxValues {
+	// An original enrolled earlier (a Date's instant, a stripped content type) is
+	// already guarded and already charged: issuing it moves it from protected to
+	// issued without recharging its bytes or adding its patterns again.
+	_, transfer := p.protected[value]
+	if !transfer && (len(value) > templatePrivacyMaxValueBytes || p.bytes+len(value) > templatePrivacyMaxLegendBytes || len(p.issued)+len(p.protected) >= templatePrivacyMaxValues) {
 		if p.err == nil {
 			p.err = ErrTemplatePrivacyLimit
 		}
@@ -238,8 +242,12 @@ func (p *TemplatePrivacy) issueLocked(key, value, forceKind string) *privacyIssu
 	entry := &privacyIssued{placeholder: p.shapedPlaceholder(kind, p.next, value), value: value}
 	p.byValue[key] = entry
 	p.issued = append(p.issued, entry)
-	p.bytes += len(value)
-	p.guard.addValue(value)
+	if transfer {
+		delete(p.protected, value)
+	} else {
+		p.bytes += len(value)
+		p.guard.addValue(value)
+	}
 	// A Placeholder is text this run generated, never a stored value, so it is
 	// readable even when some other stored value happens to equal it.
 	p.guard.addCorpus(entry.placeholder)
@@ -374,6 +382,17 @@ func (p *TemplatePrivacy) Legend() []TemplatePrivacyLegendEntry {
 		}
 	}
 	return out
+}
+
+// IsIssuedPlaceholder reports whether s is exactly a Placeholder this masker
+// issued. A nil masker has issued none.
+func (p *TemplatePrivacy) IsIssuedPlaceholder(s string) bool {
+	if p == nil || !strings.HasPrefix(s, "⟦") {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.isIssuedPlaceholder(s)
 }
 
 // ContainsIssued reports the first Placeholder this run issued, in either

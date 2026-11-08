@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -281,6 +282,32 @@ type templateSampleStat struct {
 // samples, fenced together. It iterates in sorted key order, so unchanged
 // samples always give the same bytes.
 func DescribeTemplateSamples(samples []TemplateSample, target string, preview bool) []string {
+	return DescribeTemplateSamplesFor(samples, target, preview, nil)
+}
+
+// sampleCountMarkers match the counts the projection and the summary generate
+// themselves: omission markers, the relation count and the summary's own numbers.
+var sampleCountMarkers = regexp.MustCompile(`…\((\d+) [a-z]+\)|"RelationCount":(\d+)|(\d+) more fields|\((\d+) of (\d+)\)|Summary of (\d+)`)
+
+// DescribeTemplateSamplesFor is DescribeTemplateSamples for a request that may
+// run under Privacy mode: a value that is exactly a Placeholder p issued counts
+// as short whatever its length, and the counts the text generates are registered
+// as preserved numbers. A nil p gives the original output byte for byte.
+func DescribeTemplateSamplesFor(samples []TemplateSample, target string, preview bool, p *TemplatePrivacy) []string {
+	lines := describeTemplateSamples(samples, target, preview, p)
+	if p != nil {
+		for _, m := range sampleCountMarkers.FindAllStringSubmatch(strings.Join(lines, "\n"), -1) {
+			for _, digits := range m[1:] {
+				if n, err := strconv.ParseInt(digits, 10, 64); err == nil && digits != "" {
+					p.keepScalar(n)
+				}
+			}
+		}
+	}
+	return lines
+}
+
+func describeTemplateSamples(samples []TemplateSample, target string, preview bool, p *TemplatePrivacy) []string {
 	if len(samples) == 0 {
 		return nil
 	}
@@ -291,16 +318,16 @@ func DescribeTemplateSamples(samples []TemplateSample, target string, preview bo
 			if key == "Meta" {
 				meta, _ := value.(map[string]any)
 				for metaKey, metaValue := range meta {
-					observeSampleValue(metaPaths, "meta."+metaKey, metaValue)
+					observeSampleValue(p, metaPaths, "meta."+metaKey, metaValue)
 					if nested, ok := metaValue.(map[string]any); ok {
 						for nestedKey, nestedValue := range nested {
-							observeSampleValue(metaPaths, "meta."+metaKey+"."+nestedKey, nestedValue)
+							observeSampleValue(p, metaPaths, "meta."+metaKey+"."+nestedKey, nestedValue)
 						}
 					}
 				}
 				continue
 			}
-			observeSampleValue(fields, key, value)
+			observeSampleValue(p, fields, key, value)
 		}
 	}
 
@@ -355,7 +382,7 @@ func DescribeTemplateSamples(samples []TemplateSample, target string, preview bo
 	return lines
 }
 
-func observeSampleValue(stats map[string]*templateSampleStat, key string, value any) {
+func observeSampleValue(p *TemplatePrivacy, stats map[string]*templateSampleStat, key string, value any) {
 	stat := stats[key]
 	if stat == nil {
 		stat = &templateSampleStat{types: map[string]bool{}, strings: map[string]int{}, enumOK: true}
@@ -363,7 +390,7 @@ func observeSampleValue(stats map[string]*templateSampleStat, key string, value 
 	}
 	stat.present++
 	stat.types[sampleValueType(value)] = true
-	if s, ok := value.(string); ok && (len(s) <= 40 || isSamplePlaceholder(s)) {
+	if s, ok := value.(string); ok && (len(s) <= 40 || p.IsIssuedPlaceholder(s)) {
 		stat.strings[s]++
 	} else {
 		stat.enumOK = false
@@ -424,11 +451,4 @@ func sortedStatKeys(stats map[string]*templateSampleStat) []string {
 	}
 	sort.Strings(keys)
 	return keys
-}
-
-// isSamplePlaceholder reports an exact Privacy mode Placeholder. Its length says
-// nothing about the value it stands for, so a short value that repeats keeps its
-// summary line whatever the Placeholder's byte length.
-func isSamplePlaceholder(s string) bool {
-	return strings.HasPrefix(s, "⟦") && strings.HasSuffix(s, "⟧") && !strings.Contains(s[len("⟦"):len(s)-len("⟧")], "⟧")
 }

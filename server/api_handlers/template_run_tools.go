@@ -663,7 +663,7 @@ func (e *templateToolExecutor) getShortcodeDocs(mc *application_context.Mahresou
 		if d.Name == name {
 			var b strings.Builder
 			writeBuiltinShortcodeDoc(&b, d)
-			return b.String(), nil
+			return e.cfg.Privacy.Keep(b.String()), nil
 		}
 	}
 	if pm := mc.PluginManager(); pm != nil {
@@ -671,7 +671,7 @@ func (e *templateToolExecutor) getShortcodeDocs(mc *application_context.Mahresou
 			if sc.FullName == name {
 				var b strings.Builder
 				writePluginShortcodeDoc(&b, canonicalPluginShortcodeDoc(sc))
-				return b.String(), nil
+				return e.cfg.Privacy.Keep(b.String()), nil
 			}
 		}
 	}

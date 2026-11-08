@@ -222,7 +222,7 @@ func buildFanOutPromptSections(in TemplateGenerationInput, userPrompt string, fa
 	shared.add(promptRoleUser, "identity", "Category", false, identityLinesFor(in)...)
 	shared.add(promptRoleUser, "layout", "Detail page layout", false, DescribeSectionConfig(in.EntityType, in.SectionConfig, schemaShowsFields(in.MetaSchema))...)
 	shared.add(promptRoleUser, "schema", "Metadata schema", false, schemaLines(in.MetaSchema)...)
-	shared.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamples(in.Samples, in.Target, in.SamplesArePreview)...)
+	shared.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamplesFor(in.Samples, in.Target, in.SamplesArePreview, in.Privacy)...)
 	shared.add(promptRoleUser, "request", "Your request", false, "User request: "+userPrompt)
 	shared = insertPrivacySection(in, shared)
 	for i := range shared {

@@ -128,7 +128,7 @@ func buildTemplateRunSections(in TemplateGenerationInput, userPrompt string, fie
 		p.add(promptRoleUser, "display-types", "Plugin display types", false, displayTypeLines(in.DisplayTypes)...)
 		p.add(promptRoleUser, "identity", "Category", false, identityLinesFor(in)...)
 		p.add(promptRoleUser, "schema", "Metadata schema", false, schemaLines(in.MetaSchema)...)
-		p.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamples(in.Samples, in.Target, in.SamplesArePreview)...)
+		p.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamplesFor(in.Samples, in.Target, in.SamplesArePreview, in.Privacy)...)
 	default:
 		p.add(promptRoleSystem, "system", "System prompt", true, templateHarnessAuthoringSystemPrompt)
 		addTemplateReferencePrefixFor(&p, in, true)
@@ -137,7 +137,7 @@ func buildTemplateRunSections(in TemplateGenerationInput, userPrompt string, fie
 		p.add(promptRoleUser, "identity", "Category", false, identityLinesFor(in)...)
 		p.add(promptRoleUser, "layout", "Detail page layout", false, DescribeSectionConfig(in.EntityType, in.SectionConfig, schemaShowsFields(in.MetaSchema))...)
 		p.add(promptRoleUser, "schema", "Metadata schema", false, schemaLines(in.MetaSchema)...)
-		p.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamples(in.Samples, in.Target, in.SamplesArePreview)...)
+		p.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamplesFor(in.Samples, in.Target, in.SamplesArePreview, in.Privacy)...)
 	}
 	p.add(promptRoleUser, "starting-points", "Starting points", false, startingPointLines(in.StartingPoints, in.Privacy)...)
 	p.add(promptRoleUser, "request", "Your request", false, "User request: "+userPrompt)
