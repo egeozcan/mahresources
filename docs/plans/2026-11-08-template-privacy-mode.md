@@ -1,6 +1,6 @@
 # Template generation Privacy mode
 
-Status: planned 2026-11-08. Grilled the same day, decisions Q1 to Q19. Terms are in
+Status: planned 2026-11-08; pi-reviewed to a clean round (round 5; blocking 8, 5, 1, 1, 0). Grilled the same day, decisions Q1 to Q19. Terms are in
 `GLOSSARY.md` (Privacy mode, Entity value, Placeholder). The decision record is
 `docs/adr/0010-privacy-mode-masks-entity-values-at-the-source.md`. Builds on
 `docs/architecture/template-generation-runs.md` and ADR 0009.
