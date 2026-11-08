@@ -670,4 +670,41 @@ bytes, which the existing golden and Seed tests pin.
 
 ## Review
 
-(to be filled after execution)
+Executed 2026-11-08 in two lanes (A backend, B browser, E2E and user docs), merged on
+`feat/template-privacy-mode`.
+
+**Review rounds.**
+- The plan: blocking 8, 5, 1, 1, 0.
+- Lane B: one round, 0 blocking. Its nine P2s were fixed, including blocking the E2E
+  servers' provider egress through a dead proxy.
+- Lane A: blocking 10, 12, 3, 2, 1, 1, 2, 2, 0. A test regression found after the
+  clean round was fixed in the test, since the behaviour was correct.
+
+**Decisions made during execution.**
+- **Guard detection matches complete values only.** The 64-byte prefix detection was
+  dropped in round 2 because it produced a run of findings in both directions: a
+  readable prefix exempted a secret suffix, and readable boilerplate blocked a run.
+  Masking at the source is the mechanism. A truncated or reformatted copy is not caught
+  by the guard, and ADR 0010 says so.
+- **Guard false positives were graded by realism from backend round 3.** A false
+  positive counts as blocking only when realistic data triggers it. One that needs a
+  contrived exact collision with server-generated text is P2, because it fails closed
+  and the run can be repeated with Privacy mode off.
+- **Renderer scaffolding is not registered.** The default `[mrql]` card markup is not
+  in the readable corpus, which is a known limitation recorded in ADR 0010.
+- **Two false-positive classes were fixed by their shape** rather than site by site:
+  JSON's literals `true`/`false`/`null` are readable from the start, and every JSON
+  object key of a Tool result is readable, since keys are vocabulary under P5.
+- **The `upper` transformation case in criterion 1 was replaced.** The shortcodes have
+  no `upper` filter, so the case uses `format="filesize"` and an HTML-sensitive Name
+  rendered through a preview.
+- **E2E servers get a fixture `DEEPSEEK_API_KEY`**, so the real dry run is configured.
+  Provider egress is blocked by `HTTP(S)_PROXY=127.0.0.1:9`.
+
+**Not done.**
+- No test covers running out of masker capacity inside a nested `[mrql]` preview;
+  limits and cancellation are tested at the masker and `Entity` level.
+- The planner-only `sharedCssAdditions` case is tested at `assembleFanOut` plus the
+  final withholding pass, not through a full HTTP fan-out.
+- The masker mutex is held during a guard scan.
+- No live eval report was produced, as the plan allowed.
