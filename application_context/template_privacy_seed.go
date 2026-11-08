@@ -239,7 +239,7 @@ func (p *TemplatePrivacy) KeepModelOutput(text string, calls []ToolCall, replay 
 // (P16): the Seed is partial, so no Disclosure is published and the request is a 400.
 func privacySeedError(in TemplateGenerationInput) error {
 	if err := in.Privacy.Err(); err != nil {
-		return fmt.Errorf("%w: %v", ErrTemplateGenerationBadRequest, err)
+		return fmt.Errorf("%w: %w", ErrTemplateGenerationBadRequest, err)
 	}
 	return nil
 }

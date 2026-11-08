@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"reflect"
 	"regexp"
@@ -162,7 +163,10 @@ func (c *privacyCopier) copy(src reflect.Value, structName, field string, parent
 	case privacyJSONType:
 		raw := src.Interface().(types.JSON)
 		if len(raw) == 0 {
-			return src
+			if raw == nil {
+				return src
+			}
+			return reflect.ValueOf(types.JSON{}) // never the original's backing array
 		}
 		if privacyFieldKept(structName, field) {
 			c.p.Keep(string(raw))
@@ -395,9 +399,48 @@ func (p *TemplatePrivacy) queryValue(w *privacyWalk, v any) any {
 		return out
 	case []byte:
 		return p.Text(string(x))
+	case json.Number:
+		p.keepScalar(x)
+		return x
 	}
-	p.keepScalar(v)
-	return v
+	if v == nil {
+		return nil
+	}
+	// Anything else is classified by kind. A pointer or interface cell (GORM's map
+	// scan hands SQL expression columns back as *interface{}) is unwrapped into a
+	// detached value, never returned as the cache's own pointer; numbers and
+	// booleans pass through; a representation this does not understand is masked
+	// as text rather than sent.
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Ptr, reflect.Interface:
+		if rv.IsNil() {
+			return nil
+		}
+		return p.queryValue(w, rv.Elem().Interface())
+	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
+		p.keepScalar(v)
+		return v
+	case reflect.String:
+		return p.Text(rv.String())
+	case reflect.Map:
+		if rv.Type().Key().Kind() == reflect.String {
+			row := make(map[string]any, rv.Len())
+			iter := rv.MapRange()
+			for iter.Next() {
+				row[iter.Key().String()] = iter.Value().Interface()
+			}
+			return p.queryRow(w, row)
+		}
+	case reflect.Slice, reflect.Array:
+		out := make([]any, rv.Len())
+		for i := range out {
+			out[i] = p.queryValue(w, rv.Index(i).Interface())
+		}
+		return out
+	}
+	return p.Text(fmt.Sprint(v))
 }
 
 // privacyContentType keeps the lower-case type/subtype of a content type and

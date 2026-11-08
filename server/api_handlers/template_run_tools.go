@@ -336,6 +336,7 @@ func (e *templateToolExecutor) getEntity(mc *application_context.MahresourcesCon
 		sample["Meta"] = privacy.Value(meta, parseToolSchema(schema))
 	}
 	privacy.KeepScalar(int64(a.ID))
+	privacy.Keep(a.Type)
 	result := map[string]any{"type": a.Type, "id": a.ID, "entity": sample}
 	if carrierID != 0 {
 		if carrier, cerr := loadPreviewCarrier(mc, a.Type, carrierID); cerr == nil {
@@ -357,6 +358,7 @@ func toolEntries(privacy *application_context.TemplatePrivacy, in []application_
 	out := make([]toolEntry, len(in))
 	for i, e := range in {
 		privacy.KeepScalar(int64(e.ID))
+		privacy.Keep(e.Type)
 		out[i] = toolEntry{Type: e.Type, ID: e.ID, Name: privacy.Text(e.Name)}
 		if e.CarrierID != 0 {
 			privacy.KeepScalar(int64(e.CarrierID))
@@ -418,6 +420,8 @@ func (e *templateToolExecutor) getTemplate(mc *application_context.MahresourcesC
 			fields[name] = e.templateFieldValue(name, v)
 		}
 	}
+	e.cfg.Privacy.Keep(a.CarrierType)
+	e.cfg.Privacy.KeepScalar(int64(a.ID))
 	return application_context.MarshalToolJSON(map[string]any{
 		"carrierType": a.CarrierType, "id": a.ID, "name": e.cfg.Privacy.Keep(carrierNameOf(carrier)), "fields": fields,
 	}), nil
@@ -869,6 +873,11 @@ func (e *templateToolExecutor) maskRevisionSummary(r contracts.TemplateRevisionS
 	raw, _ := json.Marshal(r)
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
+	privacy.Keep(r.Source) // a fixed enum: baseline, form, restore ...
+	privacy.Keep(r.CarrierType)
+	for _, slot := range r.ChangedSlots {
+		privacy.Keep(slot)
+	}
 	out["label"] = privacy.Text(r.Label)
 	out["createdAt"] = privacy.Date(r.CreatedAt)
 	applied := make([]string, len(r.Applied))

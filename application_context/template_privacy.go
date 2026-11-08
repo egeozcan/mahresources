@@ -524,8 +524,12 @@ func (w *privacyWalk) tick() bool {
 }
 
 func (p *TemplatePrivacy) metaWalk(w *privacyWalk, raw []byte, schema string) []byte {
-	if p == nil || len(strings.TrimSpace(string(raw))) == 0 {
+	if p == nil {
 		return raw
+	}
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		// Nothing to mask, but the copy must not alias the original's bytes.
+		return append([]byte(nil), raw...)
 	}
 	decoded, err := decodeJSONNumber(raw)
 	if err != nil {

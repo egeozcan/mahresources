@@ -449,6 +449,7 @@ func ShapeToolResult(label, body string, capBytes int) TemplateToolOutput {
 // mode: the cut notice the shaping itself generates, and its numbers, are
 // registered as readable. The body is never registered.
 func ShapeToolResultFor(privacy *TemplatePrivacy, label, body string, capBytes int) TemplateToolOutput {
+	privacy.keepJSONKeys(body)
 	full := len(body)
 	truncated := false
 	if capBytes > 0 && full > capBytes {
@@ -591,4 +592,33 @@ func noteUnchecked(list *[]string, seen map[string]bool, name string) bool {
 		*list = append(*list, name)
 	}
 	return true
+}
+
+// keepJSONKeys registers every object key of a JSON Tool result as readable.
+// Keys are the Tool's own vocabulary (P5): "warnings", "nextOffset", a Meta
+// key. Their values are not registered here. Text that is not JSON has no keys.
+func (p *TemplatePrivacy) keepJSONKeys(body string) {
+	if p == nil {
+		return
+	}
+	var doc any
+	dec := json.NewDecoder(strings.NewReader(body))
+	if err := dec.Decode(&doc); err != nil {
+		return
+	}
+	var walk func(v any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			for k, e := range x {
+				p.Keep(k)
+				walk(e)
+			}
+		case []any:
+			for _, e := range x {
+				walk(e)
+			}
+		}
+	}
+	walk(doc)
 }
