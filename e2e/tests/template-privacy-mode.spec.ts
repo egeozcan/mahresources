@@ -301,7 +301,7 @@ for (const host of hosts) {
 }
 
 test.describe('Withheld Draft fields are never applicable', () => {
-  const withheldSlot = { ...slotResult, slots: { CustomHeader: '', CustomHeaderCSS: 'h1{}' }, valid: false, withheld: ['CustomHeader'], issues: [{ severity: 'error', message: 'contains a Placeholder' }] };
+  const withheldSlot = { ...slotResult, slots: { CustomHeader: '', CustomHeaderCSS: 'h1{}' }, valid: false, withheldFields: ['CustomHeader', 'CustomHeaderCSS'], issues: [{ severity: 'error', message: 'contains a Placeholder' }] };
 
   test('slot host: the draft is listed, says why, and has no Apply', async ({ page }) => {
     await stub(page, { harness: true }, sseResult(withheldSlot));
@@ -314,7 +314,7 @@ test.describe('Withheld Draft fields are never applicable', () => {
   });
 
   test('bundle host: the withheld field and its CSS are not applied, the other slots are', async ({ page }) => {
-    const result = { ...bundleResult, slots: { CustomHeader: '', CustomHeaderCSS: 'h1{}', CustomSidebar: '<p>side</p>', CustomSidebarCSS: 'p{}' }, withheld: ['CustomHeader'] };
+    const result = { ...bundleResult, slots: { CustomHeader: '', CustomHeaderCSS: 'h1{}', CustomSidebar: '<p>side</p>', CustomSidebarCSS: 'p{}' }, withheldFields: ['CustomHeader', 'CustomHeaderCSS'] };
     await stub(page, { harness: true }, sseResult(result));
     await open(page, 'bundle');
     await send(page);
@@ -328,7 +328,7 @@ test.describe('Withheld Draft fields are never applicable', () => {
   });
 
   test('bundle host: when every field is withheld there is no Apply at all', async ({ page }) => {
-    const result = { ...bundleResult, slots: { CustomHeader: '', CustomHeaderCSS: '' }, withheld: ['CustomHeader'] };
+    const result = { ...bundleResult, slots: { CustomHeader: '', CustomHeaderCSS: '' }, withheldFields: ['CustomHeader', 'CustomHeaderCSS'] };
     await stub(page, { harness: true }, sseResult(result));
     await open(page, 'bundle');
     await send(page);

@@ -54,26 +54,13 @@ export function legendSegments(text, legend, reveal = false) {
   return out;
 }
 
-export const PLACEHOLDER_CLASS = 'rounded-sm bg-sky-100 text-sky-900 outline outline-1 outline-sky-700';
-
 /**
  * The Draft fields the server withheld because they carried a Placeholder the run
- * issued (P11). A withheld field is empty and must never be applied. The server marks
- * it with `withheld: true` on its per-field entry; `data.withheld` as a list of names is
- * read too. Returns a Set of field names.
+ * issued (P11): the top-level `withheldFields` list of canonical field names. A
+ * withheld field's content is the empty string and it is never applicable; a field
+ * that is merely empty is not listed. Returns a Set of field names.
  */
 export function withheldFields(data) {
-  const names = new Set();
-  if (!data || typeof data !== 'object') return names;
-  if (Array.isArray(data.withheld)) for (const n of data.withheld) if (typeof n === 'string') names.add(n);
-  for (const key of ['fields', 'slotFields', 'draft']) {
-    const entries = data[key];
-    if (!entries || typeof entries !== 'object') continue;
-    if (Array.isArray(entries)) {
-      for (const e of entries) if (e && e.withheld === true && typeof e.name === 'string') names.add(e.name);
-    } else {
-      for (const [name, e] of Object.entries(entries)) if (e && e.withheld === true) names.add(name);
-    }
-  }
-  return names;
+  const list = data && Array.isArray(data.withheldFields) ? data.withheldFields : [];
+  return new Set(list.filter((n) => typeof n === 'string'));
 }
