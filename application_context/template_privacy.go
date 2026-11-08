@@ -224,7 +224,7 @@ func (p *TemplatePrivacy) issueLocked(key, value, forceKind string) *privacyIssu
 	if existing, ok := p.byValue[key]; ok {
 		return existing
 	}
-	if len(value) > templatePrivacyMaxValueBytes || p.bytes+len(value) > templatePrivacyMaxLegendBytes || len(p.issued) >= templatePrivacyMaxValues {
+	if len(value) > templatePrivacyMaxValueBytes || p.bytes+len(value) > templatePrivacyMaxLegendBytes || len(p.issued)+len(p.protected) >= templatePrivacyMaxValues {
 		if p.err == nil {
 			p.err = ErrTemplatePrivacyLimit
 		}

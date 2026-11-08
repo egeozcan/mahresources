@@ -73,10 +73,15 @@ func TestFanOutPlaceholderPairsAreWithheldNotFailed(t *testing.T) {
 	}
 	fan, _ := templateFanOutFor(in)
 	withheld := func(base string) pairOutcome {
-		return pairOutcome{base: base, withheld: true, result: &TemplateGenerationResult{
-			Slots:  map[string]string{base: "", base + "CSS": ""},
+		// Built the way generatePair builds it: the pair result goes through
+		// withholdFields, which empties the members, lists them and adds the issues.
+		result := &TemplateGenerationResult{
+			Target: TemplateTargetBundle,
+			Slots:  map[string]string{base: "<p>" + ph + "</p>", base + "CSS": ".a{}"},
 			Issues: []shortcodes.LintIssue{{Severity: shortcodes.SeverityError, Message: templatePlaceholderIssuePrefix + ph + ", x"}},
-		}}
+		}
+		withholdFields(result, []string{base, base + "CSS"}, "")
+		return pairOutcome{base: base, withheld: true, result: result}
 	}
 	ok := pairOutcome{base: "CustomSidebar", result: &TemplateGenerationResult{Slots: map[string]string{"CustomSidebar": "<p>ok</p>", "CustomSidebarCSS": ".a{}"}}}
 

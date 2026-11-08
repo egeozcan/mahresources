@@ -418,8 +418,8 @@ It detects and exempts COMPLETE values only. A value is exempt when a spelling o
 the whole value occurs in the run's readable corpus, and readable text that merely
 equals a prefix of a long value neither triggers nor exempts anything. The guard is
 a backstop for a value that reached a request unmasked: it does not catch a
-truncated or transformed copy of a value (a clipped, upper-cased or reformatted
-one). The protection is masking at the source; the guard checks that nothing
+truncated or reformatted copy of a value. (Matching is case-insensitive, so a
+case change is caught.) The protection is masking at the source; the guard checks that nothing
 slipped past it. Exemption is permanent. The corpus
 stores every entry in the same spellings and is filled by `Keep`: readable Seed sections, the Tool catalogue and the model
 identifier, each adapter's protocol strings (`SkeletonStrings`), the model's own

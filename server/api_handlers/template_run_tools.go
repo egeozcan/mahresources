@@ -212,14 +212,10 @@ func (e *templateToolExecutor) Execute(ctx context.Context, call application_con
 	if perr := e.cfg.Privacy.Err(); perr != nil {
 		return application_context.ToolErrorResult("too much entity data for Privacy mode"), nil
 	}
-	switch call.Name {
-	case application_context.ToolGetPartial, application_context.ToolLint, application_context.ToolCheckMRQL, application_context.ToolGetShortcodeDocs:
-		// Partial source, documentation and verdicts: readable. Any Entity value
-		// in them (a partial description) has already been masked, so the body
-		// carries only its Placeholder. get_template, get_revision and
-		// diff_revisions mix readable slots with stored values (AutoDetectRules),
-		// so they register only the leaves they have vetted, field by field.
-	}
+	// Readable leaves are registered where each Tool builds its result (partial
+	// source, lint messages, check_mrql text, documentation, template slots), not
+	// from the finished body: a body that mixes readable and stored text must not
+	// be exempted wholesale.
 	return application_context.ShapeToolResult("tool "+call.Name, body, application_context.ToolResultCap(call.Name)), nil
 }
 
@@ -616,7 +612,14 @@ func (e *templateToolExecutor) lint(ctx context.Context, mc *application_context
 	}
 	out := make([]toolLintIssue, len(issues))
 	errs, warns := 0, 0
+	privacy := e.cfg.Privacy
+	privacy.Keep(a.Field)
 	for i, is := range issues {
+		// Lint messages quote the author's source and the shortcode catalogue.
+		privacy.Keep(is.Message)
+		privacy.Keep(is.Severity)
+		privacy.KeepScalar(int64(is.Start))
+		privacy.KeepScalar(int64(is.End))
 		out[i] = toolLintIssue{Severity: is.Severity, Message: is.Message, Start: is.Start, End: is.End}
 		switch is.Severity {
 		case shortcodes.SeverityError:
@@ -625,6 +628,8 @@ func (e *templateToolExecutor) lint(ctx context.Context, mc *application_context
 			warns++
 		}
 	}
+	privacy.KeepScalar(int64(errs))
+	privacy.KeepScalar(int64(warns))
 	return application_context.MarshalToolJSON(map[string]any{"field": a.Field, "errors": errs, "warnings": warns, "issues": out}), nil
 }
 
@@ -632,6 +637,8 @@ func (e *templateToolExecutor) checkMRQL(mc *application_context.MahresourcesCon
 	// The same checker lint reaches through LintOptions.ValidateMRQL.
 	err := templateMRQLValidator(mc.MRQLStaticEnv())(a.Query, shortcodes.MRQLCheckOptions{Params: a.Params, Limit: a.Limit, Buckets: a.Buckets})
 	if err != nil {
+		// The checker's text describes the model's own query.
+		e.cfg.Privacy.Keep(err.Error())
 		return application_context.MarshalToolJSON(map[string]any{"ok": false, "error": err.Error()}), nil
 	}
 	return application_context.MarshalToolJSON(map[string]any{"ok": true}), nil
@@ -645,7 +652,9 @@ func (e *templateToolExecutor) getPartial(mc *application_context.MahresourcesCo
 		}
 		return "", err
 	}
-	return application_context.MarshalToolJSON(map[string]any{"name": e.cfg.Privacy.Keep(p.Name), "description": e.cfg.Privacy.Text(p.Description), "source": p.Content}), nil
+	// The source is the author's template and is readable; the description is an
+	// Entity value and is masked.
+	return application_context.MarshalToolJSON(map[string]any{"name": e.cfg.Privacy.Keep(p.Name), "description": e.cfg.Privacy.Text(p.Description), "source": e.cfg.Privacy.Keep(p.Content)}), nil
 }
 
 func (e *templateToolExecutor) getShortcodeDocs(mc *application_context.MahresourcesContext, a application_context.NameArgs) (string, error) {
@@ -744,6 +753,12 @@ func (e *templateToolExecutor) preview(ctx context.Context, mc *application_cont
 	if metaCtx == nil {
 		return "", errors.New("could not build the preview context")
 	}
+	// The scope, parent and root IDs are resolved from the database, beyond the
+	// owners the entity loaded, and [link to="root"] prints them: preserved scalars.
+	privacy.KeepScalar(int64(metaCtx.EntityID))
+	privacy.KeepScalar(int64(metaCtx.ScopeGroupID))
+	privacy.KeepScalar(int64(metaCtx.ParentGroupID))
+	privacy.KeepScalar(int64(metaCtx.RootGroupID))
 
 	renderCtx, cancel := buildMRQLAPIRenderContext(ctx, mc, false)
 	defer cancel()
