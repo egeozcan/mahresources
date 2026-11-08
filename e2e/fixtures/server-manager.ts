@@ -253,6 +253,14 @@ function startServerProcessWithDatabase(port: number, sharePort: number, opts: S
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
     FILE_ALT_COUNT: '0',
+    // A provider key so the template generator exists and a dry run can be answered. A dry run
+    // calls no provider; every test that reaches the provider stubs the route.
+    DEEPSEEK_API_KEY: 'e2e-fixture-key-never-sent',
+    // ...and nothing may leave the machine: the provider client uses http.DefaultClient, which
+    // honours these, so a request that reached the provider would be refused at a dead proxy.
+    HTTPS_PROXY: 'http://127.0.0.1:9',
+    HTTP_PROXY: 'http://127.0.0.1:9',
+    NO_PROXY: 'localhost,127.0.0.1,::1',
     PLUGIN_COMMAND_PATH: deterministicCommandPath,
     // This harness starts a fresh, single-process database, so no pre-fence
     // writer can still be attached while the startup migration advances the

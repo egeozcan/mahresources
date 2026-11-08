@@ -14,7 +14,8 @@
 import { askToConfirm } from './confirmDialog.js';
 import { announceApplied, REVISION_APPLIED_EVENT } from './revisionApplied.js';
 import { draftSegments, draftWarnings } from './templateDraftReview.js';
-import { afterDialogTeardown, returnFocusToGenerate, reviewDisclosure } from './generationDisclosure.js';
+import { withheldFields } from './privacyLegend.js';
+import { afterDialogTeardown, returnFocusToGenerate, makeRedisclose, approvedFields, reviewDisclosure } from './generationDisclosure.js';
 import { runHost } from './templateRun.js';
 
 // One map for all three carriers, not three. Carrier-specific slots (preview,
@@ -142,6 +143,12 @@ export async function editorsReady(fields) {
 
 // The slot history dialog dispatches this, synchronously, to write a revision's slot.
 export const REVISION_WRITE_EVENT = 'template-revision-write';
+
+// The other member of a field's HTML/CSS pair; CustomCSS stands alone.
+function pairMembers(field) {
+  if (field === 'CustomCSS') return [];
+  return field.endsWith('CSS') ? [field.slice(0, -3)] : [`${field}CSS`];
+}
 
 export function templateBundle({ carrier } = {}) {
   return {
@@ -766,12 +773,7 @@ export function templateBundle({ carrier } = {}) {
         this._reviewOwner = owner;
         const approval = await reviewDisclosure(disclosure, [bundleGenerate, bundleStatus, bundlePrompt], {
           owner,
-          redisclose: harness ? async (requested, signal) => {
-            const resp = await post({ dryRun: true, ...requested }, { signal });
-            const next = await resp.json().catch(() => null);
-            if (!resp.ok || !next?.groundingHash) throw new Error((next && (next.error || next.Error)) || `Could not update what will be sent (${resp.status}).`);
-            return next;
-          } : null,
+          redisclose: makeRedisclose(post, () => requestId === this._generationRequestId, harness),
         });
         if (this._reviewOwner === owner) this._reviewOwner = null;
         if (requestId !== this._generationRequestId || !approval) return;
@@ -781,8 +783,7 @@ export function templateBundle({ carrier } = {}) {
         afterDialogTeardown().then(() => {
           if (requestId === this._generationRequestId && this.generating) bundleStatus?.focus();
         });
-        const sent = { groundingHash: approval.groundingHash };
-        if (harness) Object.assign(sent, { previewMRQL: approval.previewMRQL, previewPlugins: approval.previewPlugins });
+        const sent = approvedFields(approval, harness);
         let resp;
         let data;
         if (harness) {
@@ -791,16 +792,18 @@ export function templateBundle({ carrier } = {}) {
           if (outcome.kind === 'json') {
             resp = outcome.resp;
             data = await resp.json().catch(() => null);
+            // A body that was still decoding when this request was superseded is not adopted.
+            if (requestId !== this._generationRequestId) return;
             this.adoptJsonResult(resp, data);
           } else if (outcome.kind === 'result') {
             resp = { ok: true, status: 200 };
             data = outcome.data;
-            this.endRun('done', { transcript: data?.transcript, stopReason: data?.stopReason });
+            this.endRun('done', { transcript: data?.transcript, stopReason: data?.stopReason, legend: data?.legend });
           } else {
             const message = outcome.kind === 'error'
               ? (outcome.data?.error || outcome.data?.Error || 'Generation failed.')
               : 'The connection closed before the run finished.';
-            this.endRun(outcome.kind === 'error' ? 'error' : 'closed', { transcript: outcome.data?.transcript, stopReason: outcome.data?.stopReason, error: message });
+            this.endRun(outcome.kind === 'error' ? 'error' : 'closed', { transcript: outcome.data?.transcript, stopReason: outcome.data?.stopReason, legend: outcome.data?.legend, error: message });
             this.notify(message, 'warn');
             return;
           }
@@ -826,13 +829,19 @@ export function templateBundle({ carrier } = {}) {
         // review but blocked from Apply; from a clean reply it is a broken
         // contract and nothing is offered.
         const blocked = [];
+        // Fields Privacy mode withheld never apply, and neither does their pair partner.
+        const withheld = [...withheldFields(data)];
+        for (const field of withheld) {
+          for (const name of [field, ...pairMembers(field)]) if (!blocked.includes(name)) blocked.push(name);
+        }
         for (const field of Object.values(SLOT_FIELDS).filter((name) => !name.endsWith('CSS'))) {
           const htmlPresent = Object.prototype.hasOwnProperty.call(slots, field);
           const cssPresent = Object.prototype.hasOwnProperty.call(slots, `${field}CSS`);
           const malformed = (htmlPresent && typeof slots[field] !== 'string') || (cssPresent && typeof slots[`${field}CSS`] !== 'string');
           if (htmlPresent === cssPresent && !malformed) continue;
           if (!malformed && issues.length) {
-            blocked.push(htmlPresent ? field : `${field}CSS`);
+            const half = htmlPresent ? field : `${field}CSS`;
+            if (!blocked.includes(half)) blocked.push(half);
             continue;
           }
           this.notify(`The model must return ${field} and ${field}CSS together. No changes applied.`, 'warn');
@@ -861,6 +870,7 @@ export function templateBundle({ carrier } = {}) {
           slotIssues,
           snapshot,
           blocked,
+          withheld,
           failedSlots,
         };
         // Display only: Apply depends on the pending draft, never on this text.
@@ -935,6 +945,17 @@ export function templateBundle({ carrier } = {}) {
       this.pendingDraft = null;
       this.notify('Discarded the generated draft.', 'info');
       this._focusAfterPanelCloses();
+    },
+
+    // Why `field` is not applied: the Privacy mode reason only when it, or the companion it
+    // applies with, was withheld; otherwise the reply's own half-pair reason.
+    blockedReason(field) {
+      const withheld = (this.pendingDraft && this.pendingDraft.withheld) || [];
+      const group = [field, ...pairMembers(field)];
+      const hit = group.filter((name) => withheld.includes(name));
+      if (!hit.length) return 'Not applied: its companion did not arrive.';
+      const base = `Not applied: Privacy mode withheld ${hit.join(' and ')} because it contained a Placeholder`;
+      return group.length > 1 ? `${base}, and a template and its CSS apply together.` : `${base}.`;
     },
 
     // Whether Apply has anything to write: half pairs are listed, not applied.

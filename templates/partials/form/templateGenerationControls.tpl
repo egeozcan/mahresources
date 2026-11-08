@@ -49,7 +49,8 @@
                     <pre tabindex="0" role="region" :aria-label="'Draft text of ' + field.name" :data-testid="'generate-review-text-' + field.name" class="mt-1 max-h-48 overflow-auto rounded border border-stone-200 bg-stone-50 p-2 text-xs font-mono whitespace-pre-wrap break-all focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-600"><template x-for="(segment, i) in draftSegments(field.text || '(empty)', field.css)" :key="i"><span :class="segment.flagged ? 'bg-amber-200 text-stone-900 outline outline-1 outline-amber-700' : ''" x-text="segment.text"></span></template></pre>
                 </div>
             </template>
-            <p x-show="draftBlocked()" class="text-xs font-mono text-red-700">This draft cannot be applied: a template and its CSS are applied together, and the reply was cut off before both arrived.</p>
+            <p x-show="draftWithheld().length" data-testid="generate-withheld-{{ name }}" class="text-xs font-mono text-red-700" x-text="'This draft cannot be applied: Privacy mode withheld ' + draftWithheld().join(', ') + ' because it contained a Placeholder instead of a reference to the field.'"></p>
+            <p x-show="draftBlocked() && !draftWithheld().length" class="text-xs font-mono text-red-700">This draft cannot be applied: a template and its CSS are applied together, and the reply was cut off before both arrived.</p>
             <div class="flex flex-wrap gap-2">
                 <button type="button"
                         x-show="!draftBlocked()"

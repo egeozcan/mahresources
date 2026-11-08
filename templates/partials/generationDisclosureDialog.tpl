@@ -45,6 +45,37 @@
                      role="region"
                      aria-label="Messages to be sent"
                      data-testid="generation-disclosure-sections">
+                    {# Both modes: Privacy mode, and the status of a repeated dry run. Outside the        #}
+                    {# harness-only subtree below, so a classic disclosure has them too and Send's     #}
+                    {# disabled state is always explained.                                            #}
+                    <div class="space-y-2" data-testid="generation-disclosure-common">
+                        <template x-if="$store.generationDisclosure.hasPrivacy">
+                            <fieldset class="rounded border border-stone-200 px-3 py-2 space-y-2" data-testid="generation-disclosure-privacy" :aria-busy="$store.generationDisclosure.redisclosing ? 'true' : 'false'">
+                                <legend class="px-1 text-sm font-mono font-medium text-stone-800">Privacy mode</legend>
+                                <div class="flex items-start gap-2">
+                                    <input type="checkbox" id="generation-optin-privacy" data-testid="generation-optin-privacy"
+                                           class="mt-1 h-4 w-4 rounded border-stone-300 text-amber-700 focus:ring-amber-600"
+                                           :checked="$store.generationDisclosure.privacyOn"
+                                           :disabled="$store.generationDisclosure.privacyLocked"
+                                           :aria-describedby="$store.generationDisclosure.privacyLocked ? 'generation-privacy-locked' : null"
+                                           @change="$store.generationDisclosure.setOptIn('privacyOn', $event.target.checked)">
+                                    <label for="generation-optin-privacy" class="text-sm text-stone-800">Replace the values stored in your data (names, descriptions, metadata, dates, URLs) with Placeholders before anything is sent. Template source, field names, the schema and your request are sent as written.</label>
+                                </div>
+                                <p id="generation-privacy-locked" class="text-xs text-stone-700" data-testid="generation-privacy-locked" x-show="$store.generationDisclosure.privacyLocked">Required by the administrator</p>
+                                <div x-show="$store.generationDisclosure.privacyOn && $store.generationDisclosure.legend.length">
+                                    <button type="button"
+                                            @click="$store.generationDisclosure.toggleReveal()"
+                                            :aria-pressed="$store.generationDisclosure.reveal ? 'true' : 'false'"
+                                            data-testid="generation-reveal-toggle"
+                                            class="px-2 py-1 text-xs font-mono text-stone-700 bg-white border border-stone-300 rounded-md hover:bg-stone-50 aria-pressed:bg-sky-100 aria-pressed:border-sky-700 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">Show real values</button>
+                                    <span class="ml-1 text-xs text-stone-600">Real values stay in this browser and are never sent.</span>
+                                </div>
+                            </fieldset>
+                        </template>
+                        {# The live regions stay mounted outside the aria-busy content and change their text, so the change is announced. #}
+                        <p class="text-xs text-stone-600 empty:hidden" role="status" data-testid="generation-disclosure-redisclosing" x-text="$store.generationDisclosure.redisclosing ? 'Updating what will be sent…' : ''"></p>
+                        <p class="text-xs text-red-700 empty:hidden" role="alert" data-testid="generation-disclosure-redisclose-error" x-text="$store.generationDisclosure.redisclosureError ? 'Send is disabled: ' + $store.generationDisclosure.redisclosureError : ''"></p>
+                    </div>
                     {# Harness runs only: the opt-ins, the Envelope, the Tools and the caps. They live in #}
                     {# this scrolling region, not the fixed summary, so they stay reachable at small   #}
                     {# viewports and high zoom. All of it is bound with x-text.                         #}
@@ -64,11 +95,12 @@
                                     <input type="checkbox" id="generation-optin-plugins" data-testid="generation-optin-plugins"
                                            class="mt-1 h-4 w-4 rounded border-stone-300 text-amber-700 focus:ring-amber-600"
                                            :checked="$store.generationDisclosure.previewPlugins"
+                                           :disabled="$store.generationDisclosure.privacyOn"
+                                           :aria-describedby="$store.generationDisclosure.privacyOn ? 'generation-optin-plugins-why' : null"
                                            @change="$store.generationDisclosure.setOptIn('previewPlugins', $event.target.checked)">
                                     <label for="generation-optin-plugins" class="text-sm text-stone-800">Let previews run plugin shortcodes, read-only. Plugin shortcodes run the installed plugin's code with its own resource use; the preview limits do not apply inside it. Off: each renders a placeholder.</label>
                                 </div>
-                                <p class="text-xs text-stone-600" role="status" data-testid="generation-disclosure-redisclosing" x-show="$store.generationDisclosure.redisclosing">Updating what will be sent…</p>
-                                <p class="text-xs text-red-700" role="alert" data-testid="generation-disclosure-redisclose-error" x-show="$store.generationDisclosure.redisclosureError" x-text="'Send is disabled: ' + $store.generationDisclosure.redisclosureError"></p>
+                                <p id="generation-optin-plugins-why" class="text-xs text-stone-700" data-testid="generation-optin-plugins-why" x-show="$store.generationDisclosure.privacyOn">Not available in Privacy mode: a plugin's code could read or send real values. Untick Privacy mode to allow it.</p>
                             </fieldset>
                             <details class="rounded border border-stone-200" data-testid="generation-disclosure-caps">
                                 <summary class="cursor-pointer px-2 py-1 text-sm font-mono text-stone-800 bg-stone-50">Limits of the run</summary>
@@ -98,7 +130,7 @@
                                 <span x-text="section.label"></span>
                                 <span class="text-xs text-stone-500" x-text="'(' + section.role + ', ' + section.bytes + ' bytes' + (section.constant ? ', same for every request' : '') + ')'"></span>
                             </summary>
-                            <pre class="px-2 py-1 text-xs font-mono whitespace-pre-wrap break-all text-stone-800" x-text="section.text"></pre>
+                            <pre class="px-2 py-1 text-xs font-mono whitespace-pre-wrap break-all text-stone-800" :data-testid="'generation-disclosure-section-text-' + section.key"><template x-for="(segment, j) in $store.generationDisclosure.segments(section.text)" :key="j"><span :class="segment.placeholder ? 'rounded-sm bg-sky-100 text-sky-900 outline outline-1 outline-sky-700' : ''" :title="segment.placeholder ? segment.value : null" x-text="segment.text"></span></template></pre>
                         </details>
                     </template>
                 </div>

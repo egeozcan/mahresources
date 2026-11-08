@@ -136,8 +136,8 @@ test.describe('Harness disclosure', () => {
     await send(page);
     await expect(page.getByTestId('run-end-CustomHeader')).toBeVisible();
     const [first, again, final] = bodies;
-    expect(again).toEqual({ ...first, previewMRQL: true, previewPlugins: false });
-    expect(final).toEqual({ ...first, dryRun: undefined, groundingHash: 'h-m0', previewMRQL: true, previewPlugins: false });
+    expect(again).toEqual({ ...first, previewMRQL: true, previewPlugins: false, privacyOff: false });
+    expect(final).toEqual({ ...first, dryRun: undefined, groundingHash: 'h-m0', previewMRQL: true, previewPlugins: false, privacyOff: false });
     expect(headers[2].accept).toBe('text/event-stream');
   });
 
