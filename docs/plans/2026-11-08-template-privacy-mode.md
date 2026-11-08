@@ -176,6 +176,17 @@ listed so a reviewer can contest them.
         preserved `FileSize` of 734928601.
       - **The stand-in.** The stand-in instant's text forms (RFC 3339 and the
         layouts the shortcodes use) are registered once.
+      - **Formatted scalars.** Formatted forms of preserved scalars are registered
+        at the formatting boundary. A new context hook,
+        `shortcodes.WithScalarFormatObserver(ctx, func(string))`, is called by
+        `formatPropertyValue` (and the Meta/item formatters that share it) with
+        the text it produces from a number or a `time.Time`: humanised byte sizes,
+        custom date layouts. In a masked render the only numbers are preserved
+        ones and the only times are the stand-in, so that text is readable. The
+        preview installs the hook to call `Keep`. Strings are never reported, and
+        the full rendered preview is never registered. Collision tests cover a Name
+        equal to a FileSize's humanised form and to a custom-layout stand-in date,
+        and assert that the request is sent while the Name stays masked.
     - partial source that a preview resolves. The preview's `PartialResolver` is
       wrapped so each resolved partial's source passes through `Keep` before it is
       expanded, nested partials included. The rendered output is not registered.
@@ -276,11 +287,21 @@ listed so a reviewer can contest them.
     `refused: contains the Placeholder ⟦…⟧; reference the field with
     [meta]/[property] instead`. Other fields of the same call commit normally.
   - **The final Draft.** It is built only from committed values, so it can never
-    hold one. As a backstop, `buildResult` rechecks: a field that would carry an
-    issued Placeholder is withheld. Its content is empty, `withheld: true`, and it
-    carries an error issue.
-  - **Classic mode.** The validator raises the issue so that repair runs. If the
-    repaired draft still has one, that field is withheld in the same way.
+    hold one. As a backstop, `buildResult` rechecks.
+  - **What withholding looks like on the wire.** A withheld field's content is the
+    empty string, its canonical field name is listed in a new top-level
+    `withheldFields: []string` on `TemplateGenerationResult` (in standalone and
+    bundle responses alike), and it carries an error issue. Content stays
+    string-valued, so a legitimately empty field is told apart by not being
+    listed.
+  - **A pair is withheld whole.** Withholding either member of an HTML/CSS pair
+    withholds both.
+  - **Classic mode.** The validator raises the issue so that repair runs. Then one
+    final withholding pass runs over every classic result, after fan-out assembly
+    and after ordinary finalization, so it also covers the planner's
+    `sharedCssAdditions` appended into `CustomCSS` by `assembleFanOut`
+    (`template_generation_fanout.go`). A regression test covers the case where only
+    the planner CSS carries an issued Placeholder and every pair succeeds.
   - **Never applicable.** The UI disables Apply for a withheld field, in the slot
     and the bundle host alike. Tests prove refusal and the absence of an Apply path
     in both modes.
@@ -424,7 +445,11 @@ The other Seed sections:
 - **identity:** the name is passed through `Keep`, the description through `Text`.
 - **starting-points:** names go through `Text`.
 - **samples:** the "values seen" summary is derived from the masked samples, so it
-  is masked automatically.
+  is masked automatically. `observeSampleValue` treats an exact issued Placeholder
+  as short whatever its byte length, so a short repeated value keeps its summary
+  line (its Placeholder is often longer than the 40-byte threshold). The
+  distinct-value and count limits stay the same, and privacy off is unchanged. A
+  test covers a short value repeated only in samples four and five.
 - **request:** goes through `Keep`.
 - **current, siblings, schema, layout and the reference prefix:** each is passed
   through `Keep`. The one exception is in the partials block: each partial's
