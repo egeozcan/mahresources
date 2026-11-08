@@ -130,10 +130,10 @@ func (c *privacyCopier) copy(src reflect.Value, structName, field string, parent
 	}
 	switch typ {
 	case privacyTimeType:
+		// Every present instant becomes the stand-in, the zero instant included (a
+		// Note's StartDate can be a stored 0001-01-01). A nil pointer never gets
+		// here: it stays nil.
 		t := src.Interface().(time.Time)
-		if t.IsZero() {
-			return src
-		}
 		c.p.protectTime(t) // the original is replaced, not issued: enroll it
 		return reflect.ValueOf(templatePrivacyStandIn)
 	case privacyDeletedAtType:

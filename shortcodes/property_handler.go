@@ -192,15 +192,14 @@ func formatJSONScalarObserved(ctx MetaShortcodeContext, v any, format, layout st
 	if ctx.scalarObserver == nil || text == "" || v == nil {
 		return text
 	}
-	if s, ok := v.(string); ok {
-		if format == "date" || format == "datetime" || format == "time" || layout != "" {
-			if _, parsed := parseTimeString(s); parsed {
-				ctx.scalarObserver(text)
-			}
-		}
-		return text
+	// Only text made from a number, a boolean or a time.Time is reported: never a
+	// string (readable strings are registered at their source) and never a
+	// container, whose rendering would carry whatever it holds.
+	switch v.(type) {
+	case float64, float32, bool, json.Number, time.Time,
+		int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		ctx.scalarObserver(text)
 	}
-	ctx.scalarObserver(text)
 	return text
 }
 

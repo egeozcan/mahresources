@@ -356,7 +356,7 @@ func (p *TemplatePrivacy) protect(value string) {
 // protectTime enrolls the wire spellings of an original instant: RFC 3339 with
 // and without fractional seconds, in UTC and in the zone it was stored in.
 func (p *TemplatePrivacy) protectTime(t time.Time) {
-	if p == nil || t.IsZero() {
+	if p == nil {
 		return
 	}
 	for _, v := range []time.Time{t, t.UTC()} {
