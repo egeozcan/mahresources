@@ -32,6 +32,15 @@ every run. **Done** means all of the following:
      - Every readable marker does.
      - Every scripted Tool call succeeded rather than hiding a failure behind a
        fixed error.
+     - **Every render is checked on its own.**
+       - Each preview contains its expected structure and the intended entity's
+         Placeholder.
+       - A successful render contains no MRQL error, unavailable text or
+         partial-not-found fallback.
+       - The saved-query case renders exactly the fixed refusal.
+       - The cases cover `[using]`, nested `[partial]`, an inline query whose error
+         is sanitised, and one transformation (for example `upper` on a name). For
+         the transformation, the transformed protected text is absent too.
      - Placeholders appear, and the legend maps each one back to its marker.
    - **A determinism test.** Two fresh maskers, given the same data loaded in
      shuffled association order, build the same Seed bytes.
@@ -156,6 +165,17 @@ listed so a reviewer can contest them.
       - `ToolErrorResult`/`refusef` text. Lane A audits every `refusef` site. A
         refusal that formats a database value passes that value through `Text`
         first.
+    - the text form of every scalar that is deliberately passed through: numbers,
+      booleans and IDs.
+      - **Where they come from.** Projections, Meta leaves, Tool response
+        structures (IDs, counts, sizes) and `QueryResult` rows.
+      - **When they register.** At the point the masker keeps them. For example,
+        `Entity` registers each preserved numeric field it copies, in its decimal
+        form and, for floats, in its `strconv` `'g'` and `'f'` forms.
+      - **Why.** A protected Name `"734928601"` must not trip the guard on a
+        preserved `FileSize` of 734928601.
+      - **The stand-in.** The stand-in instant's text forms (RFC 3339 and the
+        layouts the shortcodes use) are registered once.
     - partial source that a preview resolves. The preview's `PartialResolver` is
       wrapped so each resolved partial's source passes through `Keep` before it is
       expanded, nested partials included. The rendered output is not registered.
@@ -177,12 +197,18 @@ listed so a reviewer can contest them.
     in three spellings in every string leaf: raw, JSON-string-escaped, and
     JSON-escaped with HTML escaping (`<` etc.). Corpus entries are stored in the
     same three spellings. All matching is on `strings.ToLower` forms.
-  - **The algorithm.** Exemption is settled per value, not per hit.
-    - **Corpus scan.** Each new corpus text is scanned once, when it is registered,
-      with an Aho-Corasick automaton over the spellings of the values that are not
-      yet exempt. A value found there becomes exempt permanently, since the corpus
-      only grows. Values added later are checked against the stored corpus once,
-      when they are added.
+  - **The algorithm.** Exemption is settled per value, not per hit. All the heavy
+    work happens in `CheckOutbound(ctx, payload)`, under the caller's context.
+    `Text` and `Keep` only append to pending lists, so they stay cheap and never
+    hold a context.
+    - **Reconciliation, in two batches at each check.**
+      - Values added since the last check form one automaton, scanned once over the
+        whole stored corpus.
+      - Corpus text added since the last check is scanned once with an automaton
+        over the older values that are still not exempt.
+
+      A value found in either scan becomes exempt permanently, since the corpus only
+      grows.
     - **Payload scan.** The outbound check scans the payload's string leaves with an
       automaton over the remaining non-exempt values only, rebuilt when that set
       changes, and stops at the first hit. A hit is a leak, so exempt values never
@@ -193,7 +219,13 @@ listed so a reviewer can contest them.
       - 20,000 random values against a 2 MB payload: under 50 ms.
       - An adversarial set of overlapping values (runs of one character, nested
         prefixes) with a 2 MB repetitive corpus and payload: under 200 ms.
-    - **Cancellation.** Building the automaton and scanning check the context.
+      - A lifecycle benchmark: register a 2 MB corpus first, then add 20,000 values
+        through `Text`, then check a 2 MB payload, timing reconciliation and the
+        check together. Under 300 ms.
+    - **Cancellation.** Reconciliation, automaton construction and scanning check
+      the `ctx` they are given, which is `postPayload`'s per-call context. A test
+      cancels mid-reconciliation and asserts the check returns promptly and the
+      transport made no call.
 - **P8. Where the guard runs.** In `generationProviderClient.postPayload`, reached
   through the request context (`WithTemplatePrivacy`).
   - **What it checks.** It decodes the payload and walks every string leaf.
@@ -286,6 +318,13 @@ listed so a reviewer can contest them.
   - **Inline-query errors become fixed text.** "the query failed; details are
     hidden in Privacy mode; use check_mrql to check its syntax". The exception is
     `ErrQueryUnavailable`, which keeps its inert rendering.
+  - **The input is never mutated.** `privacy.QueryResult` never mutates its input
+    or anything reachable from it, because the query cache shares row maps and
+    bucket-key maps between clones (`shortcodes/query_budget.go`,
+    `cloneQueryResult`). It allocates new row maps, bucket-key maps and nested
+    containers. A regression test renders the same aggregate and bucketed query
+    twice through the real cache, in HTML and in CSS. It asserts stable
+    Placeholders, correct legend values and an unchanged cached raw result.
   - **Results are masked field by field** (`privacy.QueryResult`):
     - flat and bucketed `Items`: `Entity` through `Entity`, `Meta` through `Meta`
       with that item's `MetaSchema`, the `Scope`/`Parent`/`RootGroupName`
@@ -338,7 +377,7 @@ func (p *TemplatePrivacy) QueryResult(ctx context.Context, r *shortcodes.QueryRe
 func (p *TemplatePrivacy) Err() error                       // sticky limit error (P16)
 func (p *TemplatePrivacy) ContainsIssued(s string) (string, bool)  // P11
 func (p *TemplatePrivacy) Legend() []TemplatePrivacyLegendEntry    // [{placeholder, value}] in issue order
-func (p *TemplatePrivacy) CheckOutbound(payload []byte) error      // P7, P8
+func (p *TemplatePrivacy) CheckOutbound(ctx context.Context, payload []byte) error // P7, P8; all scanning happens here
 func WithTemplatePrivacy(ctx context.Context, p *TemplatePrivacy) context.Context
 func TemplatePrivacyFrom(ctx context.Context) *TemplatePrivacy
 ```
@@ -540,7 +579,11 @@ B starts after A merges, because B's E2E needs A's API.
    - `docs/architecture/template-generation-runs.md`: a "Privacy mode" section,
      the settings table, the stop reasons table and the opt-ins text;
    - `docs/architecture/ai-generation.md`: the classic mode note;
-   - the OpenAPI spec, regenerated for the new request field.
+   - the OpenAPI spec. The generate route's request and response are documented
+     by hand in `server/routes_openapi.go` (`generateDescription`; the route
+     registers no request type). Update that first: `privacyOff`, its default and
+     the administrator lock, the plugin refusal, the hashed privacy state, legend
+     delivery, `withheld`, and `privacy_guard` with HTTP 500. Then regenerate.
 
 **Lane B, browser, E2E and user docs.**
 
