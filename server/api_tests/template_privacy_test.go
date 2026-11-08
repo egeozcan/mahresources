@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"mahresources/application_context"
 	"mahresources/models"
@@ -30,6 +31,7 @@ type privacyFixture struct {
 	mu                  sync.Mutex
 	script              func(n int, req map[string]any) map[string]any
 	calls               int
+	repair              bool
 	inject              func(n int) string // text appended to the n-th request's last message, to model a leak below the masker
 }
 
@@ -131,7 +133,7 @@ func (f *privacyFixture) install(t *testing.T, mode string) {
 		encoded, _ := json.Marshal(resp)
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(encoded)), Request: r}, nil
 	})}
-	f.tc.AppCtx.InstallAIGeneration(application_context.TemplateGenerationConfig{RepairDisabled: true}, client)
+	f.tc.AppCtx.InstallAIGeneration(application_context.TemplateGenerationConfig{RepairDisabled: !f.repair}, client)
 	update := map[string]any{"values": map[string]string{
 		"ai_deepseek_api_key": "test-key", "ai_template_provider": "deepseek", "ai_template_deepseek_model": "ds-model",
 		"ai_template_generation_mode": mode,
@@ -501,5 +503,199 @@ func TestPrivacyModeHashCoversTheFlag(t *testing.T) {
 	rec := f.tc.MakeRequest(http.MethodPost, path, withHash(f.requestBody(map[string]any{"privacyOff": true}), hash))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func classicReply(content string) map[string]any {
+	return map[string]any{
+		"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": content}}},
+		"usage":   map[string]any{"prompt_tokens": 100, "completion_tokens": 20},
+	}
+}
+
+func (f *privacyFixture) classicBody(extra map[string]any) map[string]any {
+	body := f.requestBody(extra)
+	delete(body, "previewMRQL")
+	return body
+}
+
+// Criterion 2: a classic request, repair call included, sends no protected value.
+func TestPrivacyModeClassicRequestAndRepairSendNoEntityValues(t *testing.T) {
+	f := newPrivacyFixture(t)
+	f.repair = true
+	f.script = func(n int, req map[string]any) map[string]any {
+		if n == 1 {
+			return classicReply(`{"slots":{"CustomHeader":"[conditional path='x'] never closed","CustomHeaderCSS":""},"explanation":"first"}`)
+		}
+		return classicReply(`{"slots":{"CustomHeader":"<h1>[property path='Name']</h1>","CustomHeaderCSS":".a{color:blue}"},"explanation":"fixed"}`)
+	}
+	f.install(t, "classic")
+	path := "/v1/category/generateTemplate"
+	body := f.classicBody(map[string]any{"slot": "CustomHeader", "mode": "html", "target": "slot"})
+	hash := disclose(t, f.tc, path, body)
+	rec := f.tc.MakeRequest(http.MethodPost, path, withHash(body, hash))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("classic run: %d %s", rec.Code, rec.Body.String())
+	}
+	if f.calls != 2 {
+		t.Fatalf("expected a first call and a repair call, got %d", f.calls)
+	}
+	bodies := f.allBodies()
+	for _, marker := range f.protected {
+		if strings.Contains(bodies, marker) {
+			t.Errorf("protected marker %q reached the provider in classic mode", marker)
+		}
+	}
+	for _, marker := range []string{"READABLE_CATEGORY_NAME", "READABLE_META_KEY", "READABLE_USER_REQUEST"} {
+		if !strings.Contains(bodies, marker) {
+			t.Errorf("readable marker %q missing", marker)
+		}
+	}
+	var out struct {
+		Legend []struct{ Value string } `json:"legend"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if len(out.Legend) == 0 {
+		t.Errorf("the classic result carries the legend: %s", rec.Body.String())
+	}
+}
+
+// classicLeaker builds a classic generator over the real adapter whose input is
+// altered below the masker.
+func (f *privacyFixture) classicLeaker(fan bool, mutate func(in *application_context.TemplateGenerationInput)) {
+	cfg := application_context.TemplateGenerationConfig{APIKey: "k", Model: "ds-model"}
+	inner := application_context.NewTemplateGenerator(application_context.NewGenerationTemplateDraftProvider("deepseek", "k", "ds-model", f.transportClient()), cfg)
+	f.tc.AppCtx.SetTemplateGenerator(&leakingGenerator{inner: inner, mode: application_context.TemplateGenerationModeClassic, mutate: mutate})
+}
+
+func TestPrivacyModeClassicGuardCatchesALeakInTheFirstCall(t *testing.T) {
+	f := newPrivacyFixture(t)
+	leak := "LEAKFIRST \"q\"\nline — ünï"
+	f.script = func(n int, req map[string]any) map[string]any {
+		return classicReply(`{"content":".a{}","explanation":"x"}`)
+	}
+	f.install(t, "classic")
+	f.classicLeaker(false, func(in *application_context.TemplateGenerationInput) {
+		in.Privacy.Text(leak)
+		in.Samples = append(in.Samples, application_context.TemplateSample{"Name": leak})
+	})
+	f.mu.Lock()
+	f.bodies, f.calls = nil, 0
+	f.mu.Unlock()
+	path := "/v1/category/generateTemplate"
+	body := f.classicBody(nil)
+	hash := disclose(t, f.tc, path, body)
+	rec := f.tc.MakeRequest(http.MethodPost, path, withHash(body, hash))
+	if rec.Code != http.StatusInternalServerError || f.calls != 0 || strings.Contains(rec.Body.String(), "ünï") {
+		t.Fatalf("first-call leak: %d calls=%d %s", rec.Code, f.calls, rec.Body.String())
+	}
+}
+
+func TestPrivacyModeClassicGuardCatchesALeakInTheRepairCall(t *testing.T) {
+	f := newPrivacyFixture(t)
+	leak := "LEAKREPAIR \"q\"\nline — ünï"
+	var masker *application_context.TemplatePrivacy
+	f.script = func(n int, req map[string]any) map[string]any {
+		if n == 1 {
+			// The masker learns the value only now: the first request passed, the repair call must not.
+			masker.Text(leak)
+			return classicReply(`{"slots":{"CustomHeader":"[conditional path='x'] never closed","CustomHeaderCSS":""},"explanation":"first"}`)
+		}
+		return classicReply(`{"slots":{"CustomHeader":"<h1>x</h1>","CustomHeaderCSS":""},"explanation":"fixed"}`)
+	}
+	f.repair = true
+	f.install(t, "classic")
+	f.classicLeaker(false, func(in *application_context.TemplateGenerationInput) {
+		masker = in.Privacy
+		in.Samples = append(in.Samples, application_context.TemplateSample{"Name": leak})
+	})
+	f.mu.Lock()
+	f.bodies, f.calls = nil, 0
+	f.mu.Unlock()
+	path := "/v1/category/generateTemplate"
+	body := f.classicBody(map[string]any{"slot": "CustomHeader", "mode": "html"})
+	hash := disclose(t, f.tc, path, body)
+	f.mu.Lock()
+	f.bodies, f.calls = nil, 0
+	f.mu.Unlock()
+	rec := f.tc.MakeRequest(http.MethodPost, path, withHash(body, hash))
+	if rec.Code != http.StatusInternalServerError || f.calls != 1 {
+		t.Fatalf("repair-call leak: %d calls=%d %s", rec.Code, f.calls, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "fixed") || strings.Contains(rec.Body.String(), "content") {
+		t.Fatalf("no Draft may come back: %s", rec.Body.String())
+	}
+}
+
+// gatedDraftProvider holds the pair call of one section until another section's
+// call has returned, so the masker can learn a value between the two requests.
+type gatedDraftProvider struct {
+	application_context.TemplateDraftProvider
+	gateSection string
+	gate        chan struct{}
+	onFirstDone func()
+}
+
+func (g *gatedDraftProvider) GenerateDraft(ctx context.Context, req application_context.TemplateDraftRequest) (application_context.TemplateDraftResponse, error) {
+	if strings.Contains(req.User, "Task: fill the "+g.gateSection+" section") {
+		select {
+		case <-g.gate:
+		case <-time.After(5 * time.Second):
+		}
+		return g.TemplateDraftProvider.GenerateDraft(ctx, req)
+	}
+	resp, err := g.TemplateDraftProvider.GenerateDraft(ctx, req)
+	if strings.Contains(req.User, "Task: fill the ") {
+		g.onFirstDone()
+		close(g.gate)
+	}
+	return resp, err
+}
+
+func TestPrivacyModeClassicGuardCatchesALeakInOneFanOutSection(t *testing.T) {
+	f := newPrivacyFixture(t)
+	leak := "LEAKPAIR \"q\"\nline — ünï"
+	var masker *application_context.TemplatePrivacy
+	f.script = func(n int, req map[string]any) map[string]any {
+		if n == 1 {
+			return classicReply(`{"classPrefix":"t","palette":"p","layout":"l","sharedCssAdditions":"","sections":{"CustomHeader":{"fill":true,"intent":"i"},"CustomSidebar":{"fill":true,"intent":"i"}},"explanation":"e"}`)
+		}
+		return classicReply(`{"slots":{"CustomHeader":"<h1>x</h1>","CustomHeaderCSS":".t-a{}"},"explanation":"ok"}`)
+	}
+	f.install(t, "classic")
+	real := application_context.NewGenerationTemplateDraftProvider("deepseek", "k", "ds-model", f.transportClient())
+	gated := &gatedDraftProvider{TemplateDraftProvider: real, gateSection: "CustomSidebar", gate: make(chan struct{}), onFirstDone: func() { masker.Text(leak) }}
+	inner := application_context.NewTemplateGenerator(gated, application_context.TemplateGenerationConfig{APIKey: "k", Model: "ds-model"})
+	f.tc.AppCtx.SetTemplateGenerator(&leakingGenerator{inner: inner, mode: application_context.TemplateGenerationModeClassic,
+		mutate: func(in *application_context.TemplateGenerationInput) {
+			masker = in.Privacy
+			in.Samples = append(in.Samples, application_context.TemplateSample{"Name": leak})
+		}})
+	path := "/v1/category/generateTemplate"
+	body := f.classicBody(map[string]any{"target": "bundle", "slots": []string{"CustomHeader", "CustomSidebar"}, "mode": "html"})
+	delete(body, "slot")
+	hash := disclose(t, f.tc, path, body)
+	f.mu.Lock()
+	f.bodies, f.calls = nil, 0
+	f.mu.Unlock()
+	rec := f.tc.MakeRequest(http.MethodPost, path, withHash(body, hash))
+	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "CustomHeader") {
+		t.Fatalf("fan-out leak: %d %s", rec.Code, rec.Body.String())
+	}
+	if f.calls != 2 {
+		t.Fatalf("the plan and the sibling's pair were sent, the leaking section's was not: calls=%d", f.calls)
+	}
+}
+
+// A readable Replay leaf and a model identifier that equal a masked value do not trip the guard.
+func TestPrivacyModeGuardHasNoFalsePositiveOnReplayOrModel(t *testing.T) {
+	f := newPrivacyFixture(t)
+	f.script = harnessScript(f)
+	f.install(t, "harness")
+	// A library value equal to the model identifier and to a word the model said.
+	f.tc.DB.Model(&models.Tag{}).Where("name = ?", "PROT_TAG_NAME").Update("name", "ds-model")
+	res := f.generate(t, "/v1/category/generateTemplate", nil)
+	if res.code != http.StatusOK {
+		t.Fatalf("a value equal to the model id must not trip the guard: %d %s", res.code, res.body)
 	}
 }
