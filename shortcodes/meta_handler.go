@@ -57,6 +57,9 @@ type MetaShortcodeContext struct {
 	// handlers that take no request context (the schema slice) still reach the
 	// budget and the cancellation. Nil for a handler called directly.
 	meter *renderMeter
+	// scalarObserver is the render's WithScalarFormatObserver hook, copied from
+	// the request context by processWithDepth.
+	scalarObserver func(string)
 }
 
 // RenderMetaShortcode expands a [meta] shortcode into a <meta-shortcode> custom
@@ -138,7 +141,7 @@ func renderMetaWidget(sc Shortcode, ctx MetaShortcodeContext, extraAttrs string)
 // inline mode emits no element for a client to act on.
 func renderInlineMetaValue(sc Shortcode, ctx MetaShortcodeContext) string {
 	value, _ := navigateJSONValue(ctx.decodeMeta(), sc.Attrs["path"])
-	text := formatJSONScalar(value, sc.Attrs["format"], sc.Attrs["layout"])
+	text := formatJSONScalarObserved(ctx, value, sc.Attrs["format"], sc.Attrs["layout"])
 
 	// Trimmed for the emptiness decision only — the widget's client side treats
 	// a whitespace-only value as empty (meta-shortcode.ts), and inline mode must

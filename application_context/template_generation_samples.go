@@ -363,7 +363,7 @@ func observeSampleValue(stats map[string]*templateSampleStat, key string, value 
 	}
 	stat.present++
 	stat.types[sampleValueType(value)] = true
-	if s, ok := value.(string); ok && len(s) <= 40 {
+	if s, ok := value.(string); ok && (len(s) <= 40 || isSamplePlaceholder(s)) {
 		stat.strings[s]++
 	} else {
 		stat.enumOK = false
@@ -424,4 +424,11 @@ func sortedStatKeys(stats map[string]*templateSampleStat) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// isSamplePlaceholder reports an exact Privacy mode Placeholder. Its length says
+// nothing about the value it stands for, so a short value that repeats keeps its
+// summary line whatever the Placeholder's byte length.
+func isSamplePlaceholder(s string) bool {
+	return strings.HasPrefix(s, "⟦") && strings.HasSuffix(s, "⟧") && !strings.Contains(s[len("⟦"):len(s)-len("⟧")], "⟧")
 }

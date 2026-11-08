@@ -27,6 +27,9 @@ const (
 	TemplateStopLengthRepeated = "length_repeated"
 	TemplateStopNoToolCall     = "no_tool_call"
 	TemplateStopProviderError  = "provider_error"
+	// TemplateStopPrivacyGuard ends a run whose next request carried an Entity
+	// value; the request was not sent.
+	TemplateStopPrivacyGuard = "privacy_guard"
 )
 
 // ErrTemplateRunAccessChanged ends a run whose account was disabled, demoted or
@@ -197,6 +200,9 @@ type TemplateRunError struct {
 	Err        error
 	StopReason string
 	Transcript []TemplateTranscriptRecord
+	// Legend maps the run's Placeholders to their values. It travels with the
+	// transcript and is dropped exactly when the transcript is.
+	Legend []TemplatePrivacyLegendEntry
 }
 
 func (e *TemplateRunError) Error() string { return e.Err.Error() }

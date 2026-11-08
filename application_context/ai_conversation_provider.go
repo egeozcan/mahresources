@@ -65,6 +65,18 @@ func (p *generationConversationProvider) Transport() TemplateTransport {
 	return t
 }
 
+// SkeletonStrings are the fixed strings this adapter's requests carry beyond
+// their message content, for Privacy mode's readable corpus.
+func (p *generationConversationProvider) SkeletonStrings() []string {
+	switch p.transport.provider {
+	case "anthropic":
+		return anthropicSkeleton
+	case "openai":
+		return responsesSkeleton
+	}
+	return chatSkeleton
+}
+
 // HistoryRewritable is true only where earlier messages may be edited between
 // Turns. Anthropic binds signed thinking to every preceding message, OpenAI's
 // encrypted reasoning items are not documented either way, and an OpenRouter

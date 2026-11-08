@@ -21,6 +21,10 @@ const (
 	maxGenerationProviderResponseBytes = 4 << 20
 )
 
+// classicSkeleton is the fixed protocol strings of the classic single-call
+// requests (roles, response format and reasoning toggle values).
+var classicSkeleton = []string{"system", "user", "json_object", "disabled", "enabled"}
+
 type generationProviderClient struct {
 	provider, endpoint, apiKey, model string
 	client                            *http.Client
@@ -96,6 +100,9 @@ func NewGenerationTemplateDraftProvider(provider, apiKey, model string, client *
 }
 
 func (p *generationTemplateDraftProvider) Endpoint() string { return p.transport.endpoint }
+
+// SkeletonStrings are the fixed strings classic requests carry beyond their messages.
+func (p *generationTemplateDraftProvider) SkeletonStrings() []string { return classicSkeleton }
 
 func (p *generationTemplateDraftProvider) ProviderName() string { return p.transport.provider }
 

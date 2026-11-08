@@ -85,7 +85,7 @@ func RenderEachShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 		// Values are formatted at their sentinel, one at a time, so a budget
 		// stop precedes the next formatting instead of following a slice of all.
 		spliced, ok := spliceLazy(m, rendered, len(items), func(idx int) string {
-			return stripNUL(renderItemValue(items[idx], elem, i+1))
+			return stripNUL(renderItemValueObserved(ctx, items[idx], elem, i+1))
 		})
 		if !ok {
 			return ""
@@ -234,6 +234,12 @@ func stripNUL(s string) string {
 // that and nothing more: the value is text either way, never template source —
 // the same contract raw= carries on [property] and [meta inline="true"].
 func renderItemValue(sc Shortcode, elem any, index int) string {
+	return renderItemValueObserved(MetaShortcodeContext{}, sc, elem, index)
+}
+
+// renderItemValueObserved is renderItemValue for a render whose scalar-format
+// hook (WithScalarFormatObserver) rides on ctx.
+func renderItemValueObserved(ctx MetaShortcodeContext, sc Shortcode, elem any, index int) string {
 	if sc.Attrs["index"] == "true" {
 		return strconv.Itoa(index)
 	}
@@ -243,7 +249,7 @@ func renderItemValue(sc Shortcode, elem any, index int) string {
 	// came out of a Meta blob, where a timestamp is a string and every number is
 	// a float64.
 	value, _ := navigateJSONValue(elem, sc.Attrs["path"])
-	text := formatJSONScalar(value, sc.Attrs["format"], sc.Attrs["layout"])
+	text := formatJSONScalarObserved(ctx, value, sc.Attrs["format"], sc.Attrs["layout"])
 
 	if text == "" {
 		if def := sc.Attrs["default"]; def != "" {
