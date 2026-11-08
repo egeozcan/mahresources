@@ -552,14 +552,13 @@ export const editPanelMethods = {
     return this._currentDetails(this.getCurrentItem()?.id);
   },
 
-  // The current resource's category CSS, when the page did not already emit it. A list page
-  // writes each category's block once (style[data-mr-custom-css]); the lightbox adds its own
-  // only for a category with no card on the page (paged past, a gallery block, an [mrql] result).
+  // The current resource's category CSS, which the panel always carries itself. A copy the page
+  // already holds cannot stand in for it: the page replaces or clears the containers its copies
+  // live in (card lists refreshed in the background, the hover card, [reload] regions, deferred
+  // shortcode bodies, note text blocks), and that removal is not a change the panel sees, so it
+  // would stay unstyled. The same rules twice render the same.
   categoryCSSToInject() {
-    const category = this.displayDetails()?.resourceCategory;
-    if (!category?.CustomCSS) return '';
-    if (document.querySelector(`style[data-mr-custom-css="resource:${Number(category.ID)}"]`)) return '';
-    return category.CustomCSS;
+    return this.displayDetails()?.resourceCategory?.CustomCSS || '';
   },
 
   // True while the panel is waiting on details it may paint — either a first load or a

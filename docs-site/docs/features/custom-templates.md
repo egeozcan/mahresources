@@ -398,7 +398,7 @@ A category's `CustomCSS` is emitted on every page that renders one of its slots:
 - the lightbox details panel, and
 - `CustomListHeader` and `CustomListFooter`, including on timeline views and on a filtered list with no results.
 
-Each distinct category emits its block at most once per page render, so a page with many cards gets one `<style>` block per category rather than one per card.
+Each distinct category emits its block at most once per page render, so a page with many cards gets one `<style>` block per category rather than one per card. In the browser each block is moved into the page head as soon as it arrives, so it stays when the content it came with is replaced: a card list refreshed in the background, a `[reload]` region, an `[autorefresh]` body, a note text block or the hover card. The lightbox details panel always carries its own copy of its category's CSS.
 
 ### Raw Injection
 

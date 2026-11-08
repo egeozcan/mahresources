@@ -19,6 +19,7 @@ export interface Category extends Entity {
   CustomListFooter?: string;
   CustomHoverCard?: string;
   CustomOwnEntities?: string;
+  CustomMRQLResult?: string;
   CustomCSS?: string;
   MetaSchema?: string;
   SectionConfig?: string;
@@ -259,6 +260,7 @@ export class ApiClient {
     if (options?.CustomListFooter) formData.append('CustomListFooter', options.CustomListFooter);
     if (options?.CustomHoverCard) formData.append('CustomHoverCard', options.CustomHoverCard);
     if (options?.CustomOwnEntities) formData.append('CustomOwnEntities', options.CustomOwnEntities);
+    if (options?.CustomMRQLResult) formData.append('CustomMRQLResult', options.CustomMRQLResult);
     if (options?.CustomCSS) formData.append('CustomCSS', options.CustomCSS);
     if (options?.MetaSchema) formData.append('MetaSchema', options.MetaSchema);
     if (options?.SectionConfig) formData.append('SectionConfig', options.SectionConfig);

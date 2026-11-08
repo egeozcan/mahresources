@@ -9,6 +9,7 @@ import { morphOptionsWithShortcodeElements } from '../utils/shortcodeElementMorp
 import { parseUploadError } from '../utils/uploadError.js';
 import { snapshotDrop, walkDrop } from '../utils/dropEntries.js';
 import { blockingModal, refuseOverModal } from '../utils/modality.js';
+import { hoistCustomCSS } from '../utils/customCssHoist.js';
 
 // ---------------------------------------------------------------------------
 // Helpers (module-private)
@@ -837,6 +838,7 @@ export function registerPasteUploadStore(Alpine) {
         const main = document.querySelector('.main');
 
         if (main && newMain) {
+          hoistCustomCSS(newMain);
           window.Alpine.morph(main, newMain, morphOptionsWithShortcodeElements({
             updating(el, toEl, childrenOnly, skip) {
               if (el._x_dataStack) {

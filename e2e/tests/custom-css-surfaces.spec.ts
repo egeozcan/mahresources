@@ -71,6 +71,35 @@ test.describe('Custom CSS on every surface', () => {
     await expect(page.locator(`.c-${stamp}`).first()).toHaveCSS('color', color);
   });
 
+  test('a stylesheet a refreshed list carried stays for the rest of the page', async ({ apiClient, page }) => {
+    const stamp = Date.now();
+    // The owned-group card writes this category's block first; the footer's [mrql] result
+    // after it relies on that block instead of writing its own.
+    const styled = await apiClient.createCategory(`CSS Stay Cat ${stamp}`, undefined, {
+      CustomSummary: `<span class="sc-${stamp}">card</span>`,
+      CustomMRQLResult: `<span class="sm-${stamp}">[property path="Name"]</span>`,
+      CustomCSS: `.sc-${stamp}, .sm-${stamp} { color: ${color}; }`,
+    });
+    const ownerCat = await apiClient.createCategory(`CSS Stay Owner Cat ${stamp}`, undefined, {
+      CustomDetailFooter: `[mrql query='type = "group" AND name = "CSS Stay Other ${stamp}"' scope="global"]`,
+    });
+    const owner = await apiClient.createGroup({ name: `CSS Stay Owner ${stamp}`, categoryId: ownerCat.ID });
+    await apiClient.createGroup({ name: `CSS Stay Child ${stamp}`, categoryId: styled.ID, ownerId: owner.ID });
+    await apiClient.createGroup({ name: `CSS Stay Other ${stamp}`, categoryId: styled.ID });
+
+    await page.goto(`/group?id=${owner.ID}`);
+    const footerResult = page.locator(`.sm-${stamp}`).first();
+    await expect(footerResult).toHaveCSS('color', color);
+    // A background refresh replaces the card list, and the card's block with it.
+    await page.evaluate((cls) => {
+      const card = document.querySelector(`.${cls}`)!;
+      const list = card.closest('.list-container, [data-list-container], .items-container') || card.parentElement!;
+      list.innerHTML = '';
+    }, `sc-${stamp}`);
+    await expect(page.locator(`.sc-${stamp}`)).toHaveCount(0);
+    await expect(footerResult).toHaveCSS('color', color);
+  });
+
   test('the hover card fragment carries the hovered category CSS', async ({ apiClient, page }) => {
     const stamp = Date.now();
     const category = await apiClient.createCategory(`CSS Hover Cat ${stamp}`, undefined, {
@@ -129,7 +158,47 @@ test.describe('Custom CSS on every surface', () => {
     await expect(page.locator('style[data-mr-lightbox-css]')).toHaveCount(1);
   });
 
-  test('the lightbox adds no second copy of CSS the page already has', async ({ apiClient, page }) => {
+  test('a copy inside the hover card does not stop the lightbox bringing its own', async ({ apiClient, page }) => {
+    const stamp = Date.now();
+    const rc = await apiClient.createResourceCategory(`CSS LB Hover RC ${stamp}`, undefined, {
+      CustomLightbox: `<span class="lbh-${stamp}">lightbox</span>`,
+      CustomCSS: `.lbh-${stamp} { color: ${color}; }`,
+    });
+    const ownerCat = await apiClient.createCategory(`CSS LB Hover Owner Cat ${stamp}`);
+    const owner = await apiClient.createGroup({ name: `CSS LB Hover Owner ${stamp}`, categoryId: ownerCat.ID });
+    await apiClient.createResource({
+      filePath: path.join(__dirname, '../test-assets/sample-image-21.png'),
+      name: `CSS LB Hover Res ${stamp}`,
+      resourceCategoryId: rc.ID,
+      ownerId: owner.ID,
+    });
+
+    await page.goto(`/resources?OwnerId=${owner.ID}`);
+    // The only copy is the one an open hover card carries.
+    await page.evaluate((id) => {
+      let popover = document.getElementById('hovercard-popover');
+      if (!popover) {
+        popover = document.createElement('div');
+        popover.id = 'hovercard-popover';
+        document.body.appendChild(popover);
+      }
+      document.querySelectorAll(`style[data-mr-custom-css="resource:${id}"]`).forEach((el) => popover!.appendChild(el));
+    }, rc.ID);
+    await page.locator('[data-lightbox-item]').first().click();
+    const lightbox = page.getByRole('dialog', { name: `CSS LB Hover Res ${stamp}`, exact: true });
+    await expect(lightbox).toBeVisible();
+    await lightbox.locator('button[title="Resource info"]').click();
+    await expect(page.locator('style[data-mr-lightbox-css]')).toHaveCount(1);
+    // Closing the hover card clears it, and the page head copy can go too; the panel keeps its own.
+    await page.evaluate((id) => {
+      document.getElementById('hovercard-popover')!.innerHTML = '';
+      document.querySelectorAll(`style[data-mr-custom-css="resource:${id}"]`).forEach((el) => el.remove());
+    }, rc.ID);
+    await expect(page.locator(`style[data-mr-custom-css="resource:${rc.ID}"]`)).toHaveCount(0);
+    await expect(lightbox.locator(`.lbh-${stamp}`)).toHaveCSS('color', color);
+  });
+
+  test('the lightbox keeps its own copy when the page copy is replaced away', async ({ apiClient, page }) => {
     const stamp = Date.now();
     const rc = await apiClient.createResourceCategory(`CSS LB Dup RC ${stamp}`, undefined, {
       CustomLightbox: `<span class="lbd-${stamp}">lightbox</span>`,
@@ -150,7 +219,11 @@ test.describe('Custom CSS on every surface', () => {
     await expect(lightbox).toBeVisible();
     await lightbox.locator('button[title="Resource info"]').click();
     await expect(lightbox.locator(`.lbd-${stamp}`)).toHaveCSS('color', color);
-    await expect(page.locator(`style[data-mr-custom-css="resource:${rc.ID}"]`)).toHaveCount(1);
-    await expect(page.locator('style[data-mr-lightbox-css]')).toHaveCount(0);
+    await expect(page.locator('style[data-mr-lightbox-css]')).toHaveCount(1);
+    // A background list refresh replaces the cards and their stylesheet; the panel keeps its own.
+    await page.evaluate((id) => {
+      document.querySelectorAll(`style[data-mr-custom-css="resource:${id}"]`).forEach((el) => el.remove());
+    }, rc.ID);
+    await expect(lightbox.locator(`.lbd-${stamp}`)).toHaveCSS('color', color);
   });
 });
