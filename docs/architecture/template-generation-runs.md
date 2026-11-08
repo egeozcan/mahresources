@@ -404,7 +404,7 @@ fixed text "saved queries are not available in Privacy mode" and an inline query
 error becomes fixed text. Readable vocabulary is an allow-list
 (`privacyFieldKept`): taxonomy names and `Custom*`, MetaSchema and SectionConfig of
 the three carriers, relation type names, note block types, Meta keys, partial names,
-and a Resource ContentType that is plain `type/subtype`. A Meta string equal to an
+and a Resource ContentType's lower-case `type/subtype` (its parameters are dropped). A Meta string equal to an
 `enum` or `const` of its own field stays readable. The sample projection is
 project, then mask, then clip.
 
@@ -413,14 +413,16 @@ project, then mask, then clip.
 (`WithTemplatePrivacy`, put there by `runHarness` and by classic
 `GenerateTemplate`). It walks every string leaf and looks, with an in-package
 Aho-Corasick automaton, for each masked value of four or more characters in its raw,
-JSON-escaped and HTML-escaped spelling, case-insensitively. Only the first 64 bytes
-of a value are matched, so a truncated copy of a long value is still found. A value
-that also occurs in the run's readable corpus is exempt, permanently. The corpus is
-filled by `Keep`: readable Seed sections, the Tool catalogue and the model
+JSON-escaped and HTML-escaped spelling, case-insensitively. A value longer than 64
+bytes is looked for by its first 64 bytes, so a truncated copy is still found, but it
+is exempt only when a spelling of the COMPLETE value occurs in the run's readable
+corpus (a readable prefix never exempts the rest). Exemption is permanent. The corpus
+stores every entry in the same three spellings and is filled by `Keep`: readable Seed sections, the Tool catalogue and the model
 identifier, each adapter's protocol strings (`SkeletonStrings`), the model's own
 output, server-authored loop strings, readable Tool results, partial source a
 preview resolves, preserved numbers and the formatted text made from them
-(`shortcodes.WithScalarFormatObserver`). A source nobody registered can only cause a
+(`shortcodes.WithScalarFormatObserver`). Every preserved JSON key, number, boolean, pagination cursor and server-authored
+error or refusal text is registered where it is produced. A source nobody registered can only cause a
 false positive, never a missed leak. All reconciliation happens inside
 `CheckOutbound`, under the call's context. The masker stops at 20,000 values, 4 MiB
 of legend bytes or one value over 256 KiB: past a limit it returns the fixed

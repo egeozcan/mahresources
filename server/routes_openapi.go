@@ -2733,8 +2733,8 @@ event with status 403 on a stream) and nothing the run read.
 A real harness request sent with "Accept: text/event-stream" is answered as a
 stream of server-sent events once the run reaches its first Turn; any error
 found earlier keeps its ordinary status code. Without that header the answer is
-one JSON result at the end, and a failed run's JSON error body adds "stopReason"
-and "transcript" when the run kept one. Events (the data line of each is one JSON
+one JSON result at the end, and a failed run's JSON error body adds "stopReason",
+"transcript" and, with Privacy mode on, "legend" when the run kept a transcript. Events (the data line of each is one JSON
 object):
   - run: {"runId", "maxTurns", "deadline" (a duration such as "5m0s"), "tokenBudget"}, first. The
     caps are omitted when the generator does not report them.
@@ -2747,11 +2747,14 @@ object):
   - submission: {"turn", "field", "errors", "warnings"}.
   - usage: {"turn", "budgetUsed", "budgetMax"}.
   - result: the full response described below, plus "stopReason" (done, turn_cap,
-    finish_now, deadline, budget, length_repeated, no_tool_call or provider_error),
-    "submitted" (the fields the model submitted) and "transcript". Last.
-  - error: {"error", "status", "stopReason", "transcript"}. "status" is the code
+    finish_now, deadline, budget, length_repeated, no_tool_call, provider_error or
+    privacy_guard), "submitted" (the fields the model submitted), "transcript" and,
+    with Privacy mode on, "legend". Last.
+  - error: {"error", "status", "stopReason", "transcript", "legend"}. "status" is the code
     the same failure has without a stream. "transcript" is every message sent and
-    received so far; it is absent when access changed. Last.
+    received so far, and "legend" (Privacy mode only) maps its Placeholders to their
+    values; both are absent when access changed, and the legend is dropped exactly
+    when the transcript is. Last.
 Progress events (turn, tool, submission, usage) carry no free text: only Tool
 names, values from fixed sets, IDs and counts. They can be dropped when the
 client reads slowly; run, result and error are not. A comment line ": heartbeat"
@@ -2759,7 +2762,7 @@ is sent every 15 seconds. A write that blocks for 10 seconds ends the run.
 Leaving the stream cancels the run.
 POST .../generateTemplate/finish asks a live run to make its next Turn the final one.
 
-Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair", "failedSlots"}; "repair" and "failedSlots" occur in classic mode only.
+Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair", "failedSlots", "legend", "withheldFields"}; "repair" and "failedSlots" occur in classic mode only, "legend" and "withheldFields" only with Privacy mode on (see below).
 "content" is set for slot/metaschema; "slots" (a field→markup map) for bundle.
 "valid" is false with "issues" when the draft fails lint / JSON-Schema validation,
 was cut off at the output limit, or exceeds 20,000 bytes; the draft is still
@@ -2791,6 +2794,25 @@ there is nothing to add. A single pair (one section, no CustomCSS) is one call
 and never returns CustomCSS.
 Rate-limited per client IP: 10 generations and, separately, 30 dry runs a minute.
 A whole-template request takes one generation slot however many calls it makes.
+Privacy mode and the response. "legend" is [{"placeholder", "value"}], one entry per
+spelling (a URL value has two), for the browser only: it is never stored or logged. A
+Placeholder is never mapped back into a Draft. A harness "submit" containing one is
+refused with an error result (other fields of the call still commit), and any field of
+the final Draft that still carries a Placeholder this request issued (classic mode
+after repair, planner CSS appended into CustomCSS included, or the harness backstop) is
+returned as "" and named in "withheldFields", with an error issue; "content" stays a
+string (an empty "content" for a standalone field is told apart from a legitimately
+empty one by not being listed), and withholding either member of an HTML/CSS pair
+withholds both. A request the privacy guard refuses to send because it carried an
+Entity value is never sent: the answer is 500 "Privacy mode stopped a request that
+contained an entity value. Nothing was sent" with no Draft. A harness run reports
+stopReason "privacy_guard"; its transcript marks every record of the refused Turn
+"sent": false (and reverts a stub first written in that Turn), and the JSON error
+body and the stream's "error" event carry that transcript with the "legend". When the
+Seed alone exceeds the masker's limits (20,000 distinct values, 4 MiB of values, or one
+value over 256 KiB) the dry run and the request are a 400 "too much entity data for
+Privacy mode" and no disclosure is published. If the account's access changed during
+the run, both the transcript and the legend are dropped (403).
 Gated at the same capability as saving the template (admin for
 category/resourceCategory, editor for noteType).`
 
