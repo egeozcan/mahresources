@@ -216,7 +216,7 @@ func (e *templateToolExecutor) Execute(ctx context.Context, call application_con
 	// source, lint messages, check_mrql text, documentation, template slots), not
 	// from the finished body: a body that mixes readable and stored text must not
 	// be exempted wholesale.
-	return application_context.ShapeToolResult("tool "+call.Name, body, application_context.ToolResultCap(call.Name)), nil
+	return application_context.ShapeToolResultFor(e.cfg.Privacy, "tool "+call.Name, body, application_context.ToolResultCap(call.Name)), nil
 }
 
 // failure turns a Tool error into the result the model sees. A missing entity

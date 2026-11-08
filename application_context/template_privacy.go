@@ -104,18 +104,27 @@ type TemplatePrivacy struct {
 	byValue map[string]*privacyIssued
 	// protected are originals enrolled in the guard without a Placeholder.
 	protected map[string]struct{}
-	issued    []*privacyIssued
-	bytes     int
-	err       error
+	// enrolled is every original ever enrolled in the guard, protected or issued,
+	// so enrolling it again (a re-read date, the same instant on another entity)
+	// is free whatever key its Placeholder is stored under.
+	enrolled map[string]struct{}
+	issued   []*privacyIssued
+	bytes    int
+	err      error
 
 	guard privacyGuard
 }
 
 // NewTemplatePrivacy returns an empty masker whose Placeholders carry tag.
 func NewTemplatePrivacy(tag string) *TemplatePrivacy {
-	p := &TemplatePrivacy{tag: tag, byValue: map[string]*privacyIssued{}, protected: map[string]struct{}{}, guard: newPrivacyGuard()}
+	p := &TemplatePrivacy{tag: tag, byValue: map[string]*privacyIssued{}, protected: map[string]struct{}{}, enrolled: map[string]struct{}{}, guard: newPrivacyGuard()}
 	// The stand-in instant is deliberately sent in every rendered date; a real
 	// date that equals one of its spellings is therefore not a leak.
+	// true, false and null are JSON's own words in every Tool result and Seed
+	// sample, so a string value that spells one cannot tell them from a leak.
+	for _, literal := range []string{"true", "false", "null"} {
+		p.guard.addCorpus(literal)
+	}
 	for _, layout := range []string{time.RFC3339, "2006-01-02", "2006-01-02 15:04:05", "2006-01-02T15:04:05", time.RFC1123, time.RFC1123Z, time.RFC822, time.RFC850, time.ANSIC, time.Kitchen, "Jan 2, 2006", "January 2, 2006", "02/01/2006", "01/02/2006", "2006/01/02", "15:04:05"} {
 		p.guard.addCorpus(templatePrivacyStandIn.Format(layout))
 	}
@@ -247,6 +256,7 @@ func (p *TemplatePrivacy) issueLocked(key, value, forceKind string) *privacyIssu
 	} else {
 		p.bytes += len(value)
 		p.guard.addValue(value)
+		p.enrolled[value] = struct{}{}
 	}
 	// A Placeholder is text this run generated, never a stored value, so it is
 	// readable even when some other stored value happens to equal it.
@@ -324,7 +334,7 @@ func (p *TemplatePrivacy) protect(value string) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if _, ok := p.protected[value]; ok {
+	if _, ok := p.enrolled[value]; ok {
 		return
 	}
 	if _, ok := p.byValue[value]; ok {
@@ -338,6 +348,7 @@ func (p *TemplatePrivacy) protect(value string) {
 		return
 	}
 	p.protected[value] = struct{}{}
+	p.enrolled[value] = struct{}{}
 	p.bytes += len(value)
 	p.guard.addValue(value)
 }

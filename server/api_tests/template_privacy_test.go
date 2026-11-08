@@ -109,7 +109,7 @@ func newPrivacyFixture(t *testing.T) *privacyFixture {
 	token := "PROTSHARETOKEN0123456789abcdef12"
 	f.note = &models.Note{Name: "PROT_NOTE_NAME", OwnerId: &f.child.ID, ShareToken: &token}
 	create(f.note)
-	create(&models.NoteBlock{NoteID: f.note.ID, Type: "text", Position: "a", Content: types.JSON(`{"text":"PROT_BLOCK_TEXT"}`), State: types.JSON(`{}`)})
+	create(&models.NoteBlock{NoteID: f.note.ID, Type: "text", Position: "a", Content: types.JSON(`{"text":"PROT_BLOCK_TEXT"}`), State: types.JSON(`{"collapsed":"PROT_BLOCK_STATE"}`)})
 	create(&models.TemplatePartial{Name: "READABLE_partial", Description: "PROT_PARTIAL_DESC", Content: `<i>READABLE_PARTIAL_SOURCE [partial name="READABLE_inner"]</i>`})
 	create(&models.TemplatePartial{Name: "READABLE_inner", Description: "inner", Content: `<u>READABLE_INNER_SOURCE [property path="Name"]</u>`})
 	for i, label := range []string{"PROT_REV_LABEL", ""} {
@@ -121,7 +121,7 @@ func newPrivacyFixture(t *testing.T) *privacyFixture {
 	f.protected = []string{
 		"PROT_OWNER_NAME", "PROT_OWNER_DESC", "PROT_RELATION_TARGET", "PROT_GROUP_NAME", "PROT_GROUP_DESC", "PROT_URL_PATH", "prot-host.example",
 		"PROT_META_VALUE", "PROT_LIST_ITEM_A", "PROT_LIST_ITEM_B", "PROT_TAG_NAME", "PROT_RES_NAME", "PROT_ORIGINAL_NAME", "PROT_HASH_VALUE",
-		"PROT_LOCATION", "PROT_CT_PARAM", "PROT_RES_DESC", "PROTSHARETOKEN", "PROT_NOTE_NAME", "PROT_BLOCK_TEXT", "PROT_PARTIAL_DESC",
+		"PROT_LOCATION", "PROT_CT_PARAM", "PROT_RES_DESC", "PROTSHARETOKEN", "PROT_NOTE_NAME", "PROT_BLOCK_TEXT", "PROT_BLOCK_STATE", "PROT_PARTIAL_DESC",
 		"PROT_REV_LABEL", "PROT_CATEGORY_DESC", "PROT_HTML",
 	}
 	f.readable = []string{"READABLE_CATEGORY_NAME", "READABLE_META_KEY", "READABLE_TEMPLATE_SOURCE", "READABLE_RELTYPE", "READABLE_partial", "READABLE_PARTIAL_SOURCE", "READABLE_INNER_SOURCE", "READABLE_REV_SOURCE_1", "READABLE_USER_REQUEST"}
@@ -241,7 +241,7 @@ func harnessScript(f *privacyFixture) func(n int, req map[string]any) map[string
 			return chatToolCalls(
 				preview("p1", `<h1>[property path="Name"]</h1><p>[property path="Description"]</p><a>[property path="URL"]</a><b>[property path="Owner.Name"]</b>[meta path="READABLE_META_KEY"]`, "group", childID),
 				preview("p2", `[property path="Hash"]|[property path="Location"]|[property path="OriginalName"]|[property path="ContentType"]|[property path="Name"]|[property path="FileSize" format="filesize"]`, "resource", resID),
-				preview("p3", `[property path="ShareToken"]|[property path="Name"]`, "note", noteID),
+				preview("p3", `[property path="ShareToken"]|[property path="Name"]|[property path="Blocks.0.Content"]|[property path="Blocks.0.State"]`, "note", noteID),
 				preview("p4", `[each path="list"]<li>[item]</li>[/each][conditional path="READABLE_META_KEY" not-empty="true"]READABLE_YES[else]READABLE_NO[/conditional]`, "group", childID),
 				preview("p5", `[mrql query='type = group' limit="3"]`, "group", childID),
 				preview("p6", `[mrql saved="anything"]`, "group", childID),
@@ -375,7 +375,7 @@ func TestPrivacyModeHarnessRunNeverSendsEntityValues(t *testing.T) {
 	}
 	mustShow("p1", "PROT_GROUP_NAME", "PROT_OWNER_NAME")
 	mustShow("p2", "PROT_HASH_VALUE", "PROT_LOCATION/x", "PROT_ORIGINAL_NAME", "PROT_RES_NAME")
-	mustShow("p3", "PROTSHARETOKEN0123456789abcdef12", "PROT_NOTE_NAME")
+	mustShow("p3", "PROTSHARETOKEN0123456789abcdef12", "PROT_NOTE_NAME", "PROT_BLOCK_TEXT", "PROT_BLOCK_STATE")
 	mustShow("p4", "PROT_LIST_ITEM_A", "PROT_LIST_ITEM_B")
 	mustShow("r2", "PROT_GROUP_NAME")
 	mustShow("q3", "PROT_OWNER_NAME")

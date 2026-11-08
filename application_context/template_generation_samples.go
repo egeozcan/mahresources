@@ -59,6 +59,7 @@ func ProjectTemplateSampleFor(entity any, full bool, p *TemplatePrivacy, metaSch
 		s["Name"] = p.Text(e.Name)
 		putSampleDescription(s, p, e.Description)
 		s["HasURL"] = e.URL != nil
+		p.keepScalar(e.URL != nil)
 		putSampleOwner(s, p, e.Owner)
 		putSampleTags(s, p, e.Tags)
 		putSampleMeta(s, p, e.Meta, metaSchema)

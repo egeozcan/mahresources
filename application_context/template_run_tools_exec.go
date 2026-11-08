@@ -442,6 +442,13 @@ func ToolResultCap(tool string) int {
 // existing <<<BEGIN/END label>>> markers (defanging markers inside the body).
 // The cut happens before fencing, so the notice sits inside the fence.
 func ShapeToolResult(label, body string, capBytes int) TemplateToolOutput {
+	return ShapeToolResultFor(nil, label, body, capBytes)
+}
+
+// ShapeToolResultFor is ShapeToolResult for a run that may be under Privacy
+// mode: the cut notice the shaping itself generates, and its numbers, are
+// registered as readable. The body is never registered.
+func ShapeToolResultFor(privacy *TemplatePrivacy, label, body string, capBytes int) TemplateToolOutput {
 	full := len(body)
 	truncated := false
 	if capBytes > 0 && full > capBytes {
@@ -449,7 +456,11 @@ func ShapeToolResult(label, body string, capBytes int) TemplateToolOutput {
 		for cut > 0 && !utf8.RuneStart(body[cut]) {
 			cut--
 		}
-		body = body[:cut] + fmt.Sprintf("\n[cut: %d of %d bytes shown]", cut, full)
+		notice := fmt.Sprintf("[cut: %d of %d bytes shown]", cut, full)
+		privacy.Keep(notice)
+		privacy.keepScalar(int64(cut))
+		privacy.keepScalar(int64(full))
+		body = body[:cut] + "\n" + notice
 		truncated = true
 	}
 	text := strings.Join(referenceBlock(label, body), "\n")
