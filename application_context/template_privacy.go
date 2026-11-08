@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -73,9 +74,7 @@ func TemplatePrivacyTag(accountKey, entityType string, carrierID uint) string {
 // browser. The legend is never stored, logged or sent to a provider.
 type TemplatePrivacyLegendEntry struct {
 	Placeholder string `json:"placeholder"`
-	// Alias is the ASCII spelling of a URL Placeholder (P6).
-	Alias string `json:"alias,omitempty"`
-	Value string `json:"value"`
+	Value       string `json:"value"`
 }
 
 type privacyIssued struct {
@@ -108,7 +107,53 @@ type TemplatePrivacy struct {
 
 // NewTemplatePrivacy returns an empty masker whose Placeholders carry tag.
 func NewTemplatePrivacy(tag string) *TemplatePrivacy {
-	return &TemplatePrivacy{tag: tag, byValue: map[string]*privacyIssued{}, guard: newPrivacyGuard()}
+	p := &TemplatePrivacy{tag: tag, byValue: map[string]*privacyIssued{}, guard: newPrivacyGuard()}
+	// The stand-in instant is deliberately sent in every rendered date; a real
+	// date that equals one of its spellings is therefore not a leak.
+	for _, layout := range []string{time.RFC3339, "2006-01-02", "2006-01-02 15:04:05", "2006-01-02T15:04:05", time.RFC1123, time.RFC1123Z, time.RFC822, time.RFC850, time.ANSIC, time.Kitchen, "Jan 2, 2006", "January 2, 2006", "02/01/2006", "01/02/2006", "2006/01/02", "15:04:05"} {
+		p.guard.addCorpus(templatePrivacyStandIn.Format(layout))
+	}
+	return p
+}
+
+// keepScalar registers the text forms of a number or boolean that passes
+// through unmasked, so a protected string equal to it (a Name "734928601" next
+// to a FileSize of 734928601) is not mistaken for a leak.
+func (p *TemplatePrivacy) keepScalar(v any) {
+	if p == nil {
+		return
+	}
+	var forms []string
+	switch x := v.(type) {
+	case json.Number:
+		forms = []string{x.String()}
+		if f, err := x.Float64(); err == nil {
+			forms = append(forms, strconv.FormatFloat(f, 'g', -1, 64), strconv.FormatFloat(f, 'f', -1, 64))
+		}
+	case float64:
+		forms = []string{strconv.FormatFloat(x, 'g', -1, 64), strconv.FormatFloat(x, 'f', -1, 64)}
+	case float32:
+		f := float64(x)
+		forms = []string{strconv.FormatFloat(f, 'g', -1, 32), strconv.FormatFloat(f, 'f', -1, 32)}
+	case bool:
+		forms = []string{strconv.FormatBool(x)}
+	default:
+		switch rv := reflect.ValueOf(v); rv.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			forms = []string{strconv.FormatInt(rv.Int(), 10)}
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			forms = []string{strconv.FormatUint(rv.Uint(), 10)}
+		case reflect.Float32, reflect.Float64:
+			forms = []string{strconv.FormatFloat(rv.Float(), 'g', -1, 64), strconv.FormatFloat(rv.Float(), 'f', -1, 64)}
+		case reflect.Bool:
+			forms = []string{strconv.FormatBool(rv.Bool())}
+		}
+	}
+	p.mu.Lock()
+	for _, f := range forms {
+		p.guard.addCorpus(f)
+	}
+	p.mu.Unlock()
 }
 
 // Err is the sticky error of a masker that hit a limit. Every publisher checks
@@ -266,9 +311,13 @@ func (p *TemplatePrivacy) Legend() []TemplatePrivacyLegendEntry {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	out := make([]TemplatePrivacyLegendEntry, len(p.issued))
-	for i, e := range p.issued {
-		out[i] = TemplatePrivacyLegendEntry{Placeholder: e.placeholder, Alias: e.alias, Value: e.value}
+	out := make([]TemplatePrivacyLegendEntry, 0, len(p.issued))
+	for _, e := range p.issued {
+		out = append(out, TemplatePrivacyLegendEntry{Placeholder: e.placeholder, Value: e.value})
+		// A URL has two spellings (P6), each its own entry with the same value.
+		if e.alias != "" {
+			out = append(out, TemplatePrivacyLegendEntry{Placeholder: e.alias, Value: e.value})
+		}
 	}
 	return out
 }
@@ -455,6 +504,7 @@ func (p *TemplatePrivacy) maskJSON(v any, root map[string]any, nodes []map[strin
 		}
 		return out
 	}
+	p.keepScalar(v)
 	return v
 }
 

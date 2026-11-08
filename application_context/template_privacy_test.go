@@ -179,9 +179,9 @@ func TestTemplatePrivacyContainsIssued(t *testing.T) {
 		t.Fatal("the URL alias spelling is recognised")
 	}
 	legend := p.Legend()
-	last := legend[len(legend)-1]
-	if last.Alias != alias || last.Value != "https://example.com/secret" || !strings.HasPrefix(last.Placeholder, "⟦ci·url ") {
-		t.Fatalf("legend lists both spellings: %+v", last)
+	n := len(legend)
+	if n < 2 || legend[n-1].Placeholder != alias || legend[n-1].Value != "https://example.com/secret" || !strings.HasPrefix(legend[n-2].Placeholder, "⟦ci·url ") || legend[n-2].Value != legend[n-1].Value {
+		t.Fatalf("legend lists both spellings as two entries: %+v", legend)
 	}
 }
 
