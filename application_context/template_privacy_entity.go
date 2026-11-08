@@ -369,3 +369,15 @@ func (p *TemplatePrivacy) queryValue(v any) any {
 	p.keepScalar(v)
 	return v
 }
+
+// privacyContentType keeps a content type that is plain lower-case type/subtype
+// and masks anything else (P5); nil p keeps all.
+func privacyContentType(p *TemplatePrivacy, s string) string {
+	if p == nil || s == "" {
+		return s
+	}
+	if privacyContentTypeRE.MatchString(s) {
+		return p.Keep(s)
+	}
+	return p.Text(s)
+}
