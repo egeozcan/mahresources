@@ -413,13 +413,17 @@ project, then mask, then clip.
 (`WithTemplatePrivacy`, put there by `runHarness` and by classic
 `GenerateTemplate`). It walks every string leaf and looks, with an in-package
 Aho-Corasick automaton, for each masked value of four or more characters in its raw,
-JSON-escaped and HTML-escaped spelling, case-insensitively. A value longer than 64
-bytes is looked for by its first 64 bytes, so a truncated copy is still found, but it
-is exempt only when a spelling of the COMPLETE value occurs in the run's readable
-corpus (a readable prefix never exempts the rest). Exemption is permanent. The corpus
-stores every entry in the same three spellings and is filled by `Keep`: readable Seed sections, the Tool catalogue and the model
+JSON-escaped, HTML-escaped and JSON-of-HTML-escaped spelling, case-insensitively.
+It detects and exempts COMPLETE values only. A value is exempt when a spelling of
+the whole value occurs in the run's readable corpus, and readable text that merely
+equals a prefix of a long value neither triggers nor exempts anything. The guard is
+a backstop for a value that reached a request unmasked: it does not catch a
+truncated or transformed copy of a value (a clipped, upper-cased or reformatted
+one). The protection is masking at the source; the guard checks that nothing
+slipped past it. Exemption is permanent. The corpus
+stores every entry in the same spellings and is filled by `Keep`: readable Seed sections, the Tool catalogue and the model
 identifier, each adapter's protocol strings (`SkeletonStrings`), the model's own
-output, server-authored loop strings, readable Tool results, partial source a
+output, server-authored loop strings, vetted leaves of `get_template`, `get_revision` and `diff_revisions` (template slots, MetaSchema, SectionConfig and names; `AutoDetectRules` is masked, since it carries stored content types and file names), other readable Tool results, partial source a
 preview resolves, preserved numbers and the formatted text made from them
 (`shortcodes.WithScalarFormatObserver`). Every preserved JSON key, number, boolean, pagination cursor and server-authored
 error or refusal text is registered where it is produced. A source nobody registered can only cause a

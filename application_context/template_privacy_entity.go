@@ -345,6 +345,10 @@ func (p *TemplatePrivacy) queryItems(ctx context.Context, w *privacyWalk, items 
 		n.ScopeCategoryName, n.ParentCategoryName, n.RootCategoryName = p.Keep(it.ScopeCategoryName), p.Keep(it.ParentCategoryName), p.Keep(it.RootCategoryName)
 		n.CustomMRQLResult, n.CustomCSS = p.Keep(it.CustomMRQLResult), p.Keep(it.CustomCSS)
 		p.keepScalar(int64(it.EntityID))
+		p.keepScalar(int64(it.ScopeGroupID))
+		p.keepScalar(int64(it.ParentGroupID))
+		p.keepScalar(int64(it.RootGroupID))
+		p.keepScalar(int64(it.CategoryID))
 		out[i] = n
 	}
 	return out, nil

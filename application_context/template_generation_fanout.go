@@ -531,9 +531,7 @@ func (g *defaultTemplateGenerator) generatePair(ctx context.Context, in Template
 	if onlyPlaceholder {
 		// The pair still carries a Placeholder after repair. It is returned empty
 		// and listed in withheldFields, not reported as a failed section.
-		for slot := range result.Slots {
-			result.Slots[slot] = ""
-		}
+		withholdFields(result, []string{base, base + "CSS"}, "")
 		return pairOutcome{base: base, repair: repair, result: result, withheld: true}
 	}
 	_, hasHTML := result.Slots[base]
@@ -594,9 +592,7 @@ func assembleFanOut(in TemplateGenerationInput, fan *templateFanOut, plan templa
 		for slot, content := range outcome.result.Slots {
 			result.Slots[slot] = content
 		}
-		if outcome.withheld {
-			result.WithheldFields = append(result.WithheldFields, outcome.base, outcome.base+"CSS")
-		}
+		result.WithheldFields = append(result.WithheldFields, outcome.result.WithheldFields...)
 		for slot, issues := range outcome.result.SlotIssues {
 			result.SlotIssues[slot] = issues
 		}

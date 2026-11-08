@@ -213,12 +213,12 @@ func (e *templateToolExecutor) Execute(ctx context.Context, call application_con
 		return application_context.ToolErrorResult("too much entity data for Privacy mode"), nil
 	}
 	switch call.Name {
-	case application_context.ToolGetTemplate, application_context.ToolGetRevision, application_context.ToolDiffRevisions,
-		application_context.ToolGetPartial, application_context.ToolLint, application_context.ToolCheckMRQL, application_context.ToolGetShortcodeDocs:
-		// Template source, slot content, documentation and verdicts: readable. Any
-		// Entity value in them (a revision label, a partial description) has
-		// already been masked, so the body carries only its Placeholder.
-		e.cfg.Privacy.Keep(body)
+	case application_context.ToolGetPartial, application_context.ToolLint, application_context.ToolCheckMRQL, application_context.ToolGetShortcodeDocs:
+		// Partial source, documentation and verdicts: readable. Any Entity value
+		// in them (a partial description) has already been masked, so the body
+		// carries only its Placeholder. get_template, get_revision and
+		// diff_revisions mix readable slots with stored values (AutoDetectRules),
+		// so they register only the leaves they have vetted, field by field.
 	}
 	return application_context.ShapeToolResult("tool "+call.Name, body, application_context.ToolResultCap(call.Name)), nil
 }
@@ -411,7 +411,7 @@ func (e *templateToolExecutor) getTemplate(mc *application_context.MahresourcesC
 	fields := map[string]any{}
 	if len(a.Fields) == 0 {
 		for k, v := range snapshot {
-			fields[k] = v
+			fields[k] = e.templateFieldValue(k, v)
 		}
 	} else {
 		for _, name := range a.Fields {
@@ -419,7 +419,7 @@ func (e *templateToolExecutor) getTemplate(mc *application_context.MahresourcesC
 			if !ok {
 				return "", refusef("%s is not a field of a %s; fields: %s", name, a.CarrierType, strings.Join(snapshotNames(snapshot), ", "))
 			}
-			fields[name] = v
+			fields[name] = e.templateFieldValue(name, v)
 		}
 	}
 	return application_context.MarshalToolJSON(map[string]any{
@@ -489,7 +489,9 @@ func (e *templateToolExecutor) getRevision(mc *application_context.MahresourcesC
 		if !ok {
 			return "", refusef("%s is not a field of that revision", a.Field)
 		}
-		return application_context.MarshalToolJSON(map[string]any{"number": detail.Number, "field": a.Field, "value": v}), nil
+		e.cfg.Privacy.KeepScalar(int64(detail.Number))
+		e.cfg.Privacy.Keep(a.Field)
+		return application_context.MarshalToolJSON(map[string]any{"number": detail.Number, "field": a.Field, "value": e.templateFieldValue(a.Field, v)}), nil
 	}
 	var label any = detail.Label
 	var createdAt any = detail.CreatedAt
@@ -497,9 +499,18 @@ func (e *templateToolExecutor) getRevision(mc *application_context.MahresourcesC
 		label, createdAt = privacy.Text(detail.Label), privacy.Date(detail.CreatedAt)
 		privacy.KeepScalar(int64(detail.Number))
 	}
+	fieldValues := make(map[string]any, len(detail.Editor))
+	for name, v := range detail.Editor {
+		e.cfg.Privacy.Keep(name)
+		fieldValues[name] = e.templateFieldValue(name, v)
+	}
+	e.cfg.Privacy.Keep(detail.Source)
+	for _, slot := range detail.ChangedSlots {
+		e.cfg.Privacy.Keep(slot)
+	}
 	return application_context.MarshalToolJSON(map[string]any{
 		"number": detail.Number, "label": label, "source": detail.Source, "createdAt": createdAt,
-		"changedSlots": detail.ChangedSlots, "fields": detail.Editor,
+		"changedSlots": detail.ChangedSlots, "fields": fieldValues,
 	}), nil
 }
 
@@ -526,6 +537,7 @@ func (e *templateToolExecutor) diffRevisions(ctx context.Context, mc *applicatio
 	if err != nil {
 		return "", err
 	}
+	e.vetDiff(diff)
 	return application_context.MarshalToolJSON(diff), nil
 }
 
@@ -871,4 +883,64 @@ func parseToolSchema(schema string) any {
 		return nil
 	}
 	return root
+}
+
+// templateFieldValue is one tracked template field as the model sees it. The
+// slots, MetaSchema and SectionConfig are the author's vocabulary (P5) and are
+// registered as readable, leaf by leaf. AutoDetectRules is not: its rules carry
+// stored content types and file names, so its string leaves are masked like
+// Meta. Nothing here registers a whole response.
+func (e *templateToolExecutor) templateFieldValue(name string, v any) any {
+	privacy := e.cfg.Privacy
+	if privacy == nil {
+		return v
+	}
+	if name == "AutoDetectRules" {
+		if s, ok := v.(string); ok {
+			return string(privacy.Meta([]byte(s), ""))
+		}
+		return privacy.Value(v, nil)
+	}
+	switch x := v.(type) {
+	case string:
+		privacy.Keep(x)
+	case bool:
+		privacy.KeepScalar(x)
+	default:
+		privacy.Keep(application_context.MarshalToolJSON(x))
+	}
+	return v
+}
+
+// vetDiff makes a revision diff safe to send: the diff of AutoDetectRules has
+// its lines masked, every other slot's lines are template source and join the
+// readable corpus, with the slot, field and operation names.
+func (e *templateToolExecutor) vetDiff(diff *contracts.TemplateRevisionDiff) {
+	privacy := e.cfg.Privacy
+	if privacy == nil || diff == nil {
+		return
+	}
+	privacy.KeepScalar(int64(diff.CarrierID))
+	privacy.KeepScalar(int64(diff.FromNumber))
+	if diff.ToNumber != nil {
+		privacy.KeepScalar(int64(*diff.ToNumber))
+	}
+	for si := range diff.Slots {
+		privacy.Keep(diff.Slots[si].Slot)
+		for fi := range diff.Slots[si].Fields {
+			field := &diff.Slots[si].Fields[fi]
+			privacy.Keep(field.Field)
+			for hi := range field.Hunks {
+				hunk := &field.Hunks[hi]
+				privacy.Keep(hunk.Op)
+				for li, line := range hunk.Lines {
+					if field.Field == "AutoDetectRules" {
+						hunk.Lines[li] = privacy.Text(line)
+					} else {
+						privacy.Keep(line)
+					}
+				}
+			}
+		}
+	}
 }

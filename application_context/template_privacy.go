@@ -102,16 +102,18 @@ type TemplatePrivacy struct {
 	next int
 	// byValue is keyed by the real string, or "\x00date:<instant>" for a date.
 	byValue map[string]*privacyIssued
-	issued  []*privacyIssued
-	bytes   int
-	err     error
+	// protected are originals enrolled in the guard without a Placeholder.
+	protected map[string]struct{}
+	issued    []*privacyIssued
+	bytes     int
+	err       error
 
 	guard privacyGuard
 }
 
 // NewTemplatePrivacy returns an empty masker whose Placeholders carry tag.
 func NewTemplatePrivacy(tag string) *TemplatePrivacy {
-	p := &TemplatePrivacy{tag: tag, byValue: map[string]*privacyIssued{}, guard: newPrivacyGuard()}
+	p := &TemplatePrivacy{tag: tag, byValue: map[string]*privacyIssued{}, protected: map[string]struct{}{}, guard: newPrivacyGuard()}
 	// The stand-in instant is deliberately sent in every rendered date; a real
 	// date that equals one of its spellings is therefore not a leak.
 	for _, layout := range []string{time.RFC3339, "2006-01-02", "2006-01-02 15:04:05", "2006-01-02T15:04:05", time.RFC1123, time.RFC1123Z, time.RFC822, time.RFC850, time.ANSIC, time.Kitchen, "Jan 2, 2006", "January 2, 2006", "02/01/2006", "01/02/2006", "2006/01/02", "15:04:05"} {
@@ -313,8 +315,23 @@ func (p *TemplatePrivacy) protect(value string) {
 		return
 	}
 	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, ok := p.protected[value]; ok {
+		return
+	}
+	if _, ok := p.byValue[value]; ok {
+		return // already guarded as an issued value
+	}
+	// The same limits as an issued value (P16), through the sticky error.
+	if len(value) > templatePrivacyMaxValueBytes || p.bytes+len(value) > templatePrivacyMaxLegendBytes || len(p.issued)+len(p.protected) >= templatePrivacyMaxValues {
+		if p.err == nil {
+			p.err = ErrTemplatePrivacyLimit
+		}
+		return
+	}
+	p.protected[value] = struct{}{}
+	p.bytes += len(value)
 	p.guard.addValue(value)
-	p.mu.Unlock()
 }
 
 // protectTime enrolls the wire spellings of an original instant: RFC 3339 with
