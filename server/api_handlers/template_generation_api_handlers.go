@@ -173,6 +173,11 @@ type templateGenerateRequest struct {
 	// are ignored by classic mode.
 	PreviewMRQL    bool `json:"previewMRQL" schema:"previewMRQL"`
 	PreviewPlugins bool `json:"previewPlugins" schema:"previewPlugins"`
+	// PrivacyOff turns Privacy mode off for this request. It is a negative name
+	// so that a client that omits it, whose zero value is false, gets Privacy
+	// mode. The administrator setting ai_template_privacy_mode=always refuses
+	// it. Privacy mode applies in both generation modes.
+	PrivacyOff bool `json:"privacyOff" schema:"privacyOff"`
 }
 
 // TemplateRunAccessFactory returns, for one request, a function that re-checks
@@ -255,6 +260,18 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 		}
 		generator := prep.Generator
 		harness := prep.GenerationMode == application_context.TemplateGenerationModeHarness
+		// Privacy mode is on unless this request turns it off. Both refusals come
+		// before any grounding read, so nothing is loaded for a refused request.
+		privacyLocked := prep.PrivacyMode == application_context.TemplatePrivacyModeAlways
+		privacyOn := !req.PrivacyOff
+		if privacyLocked && req.PrivacyOff {
+			http_utils.HandleError(errors.New("Privacy mode is required on this server"), writer, request, http.StatusBadRequest)
+			return
+		}
+		if privacyOn && req.PreviewPlugins {
+			http_utils.HandleError(errors.New("plugin previews are not available in Privacy mode"), writer, request, http.StatusBadRequest)
+			return
+		}
 		principal := auth.PrincipalFromContext(request.Context())
 		// A run reads live data over many Turns. A group-limited account could
 		// have an entity moved out of its subtree mid-run after earlier Turns put
@@ -318,7 +335,13 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 
 		pluginReferences := serializeTemplateGenerationPluginReferencesForPrompt(ctx)
 		partials, partialCount := templatePartialSummaries(ctx)
-		samples, sampleRefs, samplesArePreview := loadTemplateSamples(ctx, entityType, req.CategoryID, req.EntityID)
+		// The masker exists before the first sample is projected, so every value the
+		// Seed shows is masked in the same order for the dry run and the request.
+		var privacy *application_context.TemplatePrivacy
+		if privacyOn {
+			privacy = application_context.NewTemplatePrivacy(application_context.TemplatePrivacyTag(templateRunAccountKey(request), entityType, req.CategoryID))
+		}
+		samples, sampleRefs, samplesArePreview := loadTemplateSamples(ctx, entityType, req.CategoryID, req.EntityID, privacy, metaSchema)
 		input := application_context.TemplateGenerationInput{
 			Target:                target,
 			Mode:                  req.Mode,
@@ -340,6 +363,8 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			ValidateMRQL:          templateMRQLValidator(ctx.MRQLStaticEnv()),
 			Partials:              partials,
 			PartialCount:          partialCount,
+			Privacy:               privacy,
+			PrivacyLocked:         privacyLocked,
 		}
 		if target == "cluster" || (target == application_context.TemplateTargetSlot && req.Slot != "CustomCSS") {
 			base := strings.TrimSuffix(req.Slot, "CSS")
@@ -425,6 +450,8 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 // text, never the provider's own.
 func classifyTemplateGenerationError(err error) (int, error) {
 	switch {
+	case errors.Is(err, application_context.ErrTemplatePrivacyLeak):
+		return http.StatusInternalServerError, errors.New("Privacy mode stopped a request that contained an entity value. Nothing was sent")
 	case errors.Is(err, application_context.ErrTemplateRunAccessChanged):
 		return http.StatusForbidden, application_context.ErrTemplateRunAccessChanged
 	case errors.Is(err, application_context.ErrTemplateRunLimit):
@@ -520,7 +547,7 @@ func templateSiblingSlots(entityType string, carrier any, unsaved string) (map[s
 // fewer samples. The create form has no category to sample, so there the
 // preview entity the user chose is the only sample, loaded through the same
 // scope, and preview reports it.
-func loadTemplateSamples(ctx TemplateGenerationContext, entityType string, categoryID, entityID uint) (samples []application_context.TemplateSample, refs []application_context.TemplateRef, preview bool) {
+func loadTemplateSamples(ctx TemplateGenerationContext, entityType string, categoryID, entityID uint, privacy *application_context.TemplatePrivacy, metaSchema string) (samples []application_context.TemplateSample, refs []application_context.TemplateRef, preview bool) {
 	if categoryID == 0 {
 		if entityID == 0 {
 			return nil, nil, false
@@ -529,7 +556,7 @@ func loadTemplateSamples(ctx TemplateGenerationContext, entityType string, categ
 		if err != nil {
 			return nil, nil, false
 		}
-		return []application_context.TemplateSample{application_context.ProjectTemplateSample(entity, true)},
+		return []application_context.TemplateSample{application_context.ProjectTemplateSampleFor(entity, true, privacy, metaSchema)},
 			[]application_context.TemplateRef{templateSampleRef(entityType, entity)}, true
 	}
 	var entities []any
@@ -554,7 +581,7 @@ func loadTemplateSamples(ctx TemplateGenerationContext, entityType string, categ
 	}
 	samples = make([]application_context.TemplateSample, 0, len(entities))
 	for i, entity := range entities {
-		samples = append(samples, application_context.ProjectTemplateSample(entity, i == 0))
+		samples = append(samples, application_context.ProjectTemplateSampleFor(entity, i == 0, privacy, metaSchema))
 		refs = append(refs, templateSampleRef(entityType, entity))
 	}
 	return samples, refs, false

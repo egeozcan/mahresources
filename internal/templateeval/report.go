@@ -47,6 +47,10 @@ type RunReport struct {
 	// classic. Settings holds the run limits a harness run was given.
 	Mode     string       `json:"mode,omitempty"`
 	Settings *RunSettings `json:"settings,omitempty"`
+	// Privacy is PrivacyOn or PrivacyOff: whether the run was made with Privacy
+	// mode, which masks Entity values in the Seed and the Tool results. A report
+	// without it predates Privacy mode and was made unmasked.
+	Privacy string `json:"privacy,omitempty"`
 	// Cost is always CostNotComputed: the repository has no pricing source, so
 	// the report carries token counts and leaves money to the reader.
 	Cost string `json:"cost,omitempty"`
@@ -61,6 +65,12 @@ type RunReport struct {
 	Results       []CaseResult `json:"results"`
 	Summary       Summary      `json:"summary"`
 }
+
+// Values of RunReport.Privacy.
+const (
+	PrivacyOn  = "on"
+	PrivacyOff = "off"
+)
 
 // CostNotComputed is the report's cost field.
 const CostNotComputed = "not computed"

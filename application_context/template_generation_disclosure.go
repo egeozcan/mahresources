@@ -43,6 +43,11 @@ type TemplateDisclosure struct {
 	Caps     *TemplateDisclosedCaps   `json:"caps,omitempty"`
 	OptIns   *TemplateDisclosedOptIns `json:"optIns,omitempty"`
 	Envelope string                   `json:"envelope,omitempty"`
+	// Privacy is present in both modes and hashed: whether Entity values are
+	// masked, and whether an administrator forbids turning that off. Legend is
+	// shown to the user so the Placeholders can be read, and never hashed.
+	Privacy *TemplateDisclosedPrivacy    `json:"privacy,omitempty"`
+	Legend  []TemplatePrivacyLegendEntry `json:"legend,omitempty"`
 	// scopeIdentity (user ID, role, scope group ID, superuser) is hashed and
 	// never shown.
 	scopeIdentity string
@@ -50,6 +55,27 @@ type TemplateDisclosure struct {
 	// exactEndpoint is the URL the provider posts to, query and escaped path
 	// as sent. It is hashed but not shown: query values can be secrets.
 	exactEndpoint string
+}
+
+// TemplateDisclosedPrivacy is the Privacy mode state of a request.
+type TemplateDisclosedPrivacy struct {
+	On     bool `json:"on"`
+	Locked bool `json:"locked"`
+}
+
+// templatePrivacySentence is stated in the Envelope and in the classic
+// continuation rule when Privacy mode is on.
+const templatePrivacySentence = "Entity values are replaced by Placeholders before anything is sent; template source, field names, the schema and your request are sent as written."
+
+// applyPrivacyDisclosure records the request's Privacy mode state and legend on
+// d, adds the classic continuation sentence, and rehashes.
+func applyPrivacyDisclosure(d *TemplateDisclosure, in TemplateGenerationInput) {
+	d.Privacy = &TemplateDisclosedPrivacy{On: in.Privacy != nil, Locked: in.PrivacyLocked}
+	d.Legend = in.Privacy.Legend()
+	if in.Privacy != nil && d.Mode == TemplateGenerationModeClassic {
+		d.ContinuationRule.Text += " " + templatePrivacySentence
+	}
+	d.GroundingHash = templateGroundingHash(d)
 }
 
 // TemplateDisclosedTool is one Tool the model can call: name, description and
@@ -192,18 +218,19 @@ func (g *defaultTemplateGenerator) newDisclosure(profiles []TemplateDisclosedPro
 // fixed, so unchanged data always hashes the same.
 func templateGroundingHash(d *TemplateDisclosure) string {
 	canonical, err := json.Marshal(struct {
-		ExactEndpoint    string                   `json:"exactEndpoint"`
-		Destination      TemplateDestination      `json:"destination"`
-		Transport        TemplateTransport        `json:"transport"`
-		ContinuationRule TemplateContinuationRule `json:"continuationRule"`
-		Sections         []PromptSection          `json:"sections"`
-		Mode             string                   `json:"mode"`
-		Tools            []TemplateDisclosedTool  `json:"tools"`
-		Caps             *TemplateDisclosedCaps   `json:"caps"`
-		OptIns           *TemplateDisclosedOptIns `json:"optIns"`
-		Envelope         string                   `json:"envelope"`
-		ScopeIdentity    string                   `json:"scopeIdentity"`
-	}{d.exactEndpoint, d.Destination, d.Transport, d.ContinuationRule, d.Sections, d.Mode, d.Tools, d.Caps, d.OptIns, d.Envelope, d.scopeIdentity})
+		ExactEndpoint    string                    `json:"exactEndpoint"`
+		Destination      TemplateDestination       `json:"destination"`
+		Transport        TemplateTransport         `json:"transport"`
+		ContinuationRule TemplateContinuationRule  `json:"continuationRule"`
+		Sections         []PromptSection           `json:"sections"`
+		Mode             string                    `json:"mode"`
+		Tools            []TemplateDisclosedTool   `json:"tools"`
+		Caps             *TemplateDisclosedCaps    `json:"caps"`
+		OptIns           *TemplateDisclosedOptIns  `json:"optIns"`
+		Envelope         string                    `json:"envelope"`
+		ScopeIdentity    string                    `json:"scopeIdentity"`
+		Privacy          *TemplateDisclosedPrivacy `json:"privacy"`
+	}{d.exactEndpoint, d.Destination, d.Transport, d.ContinuationRule, d.Sections, d.Mode, d.Tools, d.Caps, d.OptIns, d.Envelope, d.scopeIdentity, d.Privacy})
 	if err != nil {
 		// Only fixed structs of strings, ints and bools are marshalled here.
 		panic(err)
@@ -250,7 +277,7 @@ func harnessResultCaps() []TemplateDisclosedResultCap {
 // harnessEnvelope is the sentence the user approves (ADR 0009): what the Tools
 // can reach and what each opt-in adds. It is fixed per opt-in state, plus the
 // account label.
-func harnessEnvelope(account TemplateRunAccount, optIns TemplateRunOptIns) string {
+func harnessEnvelope(account TemplateRunAccount, optIns TemplateRunOptIns, privacyOn bool) string {
 	label := strings.TrimSpace(account.Label)
 	if label == "" {
 		label = "everything"
@@ -267,6 +294,9 @@ func harnessEnvelope(account TemplateRunAccount, optIns TemplateRunOptIns) strin
 		parts = append(parts, "Previews run plugin shortcodes read-only. Plugin shortcodes run the installed plugin's code with its own resource use; the preview limits do not apply inside it.")
 	} else {
 		parts = append(parts, "Previews do not run plugin shortcodes; each renders a placeholder.")
+	}
+	if privacyOn {
+		parts = append(parts, templatePrivacySentence)
 	}
 	return strings.Join(parts, " ")
 }
@@ -322,8 +352,8 @@ func (g *defaultTemplateGenerator) newHarnessDisclosure(in TemplateGenerationInp
 	}
 	run := in.Run
 	d.OptIns = &TemplateDisclosedOptIns{PreviewMRQL: run.OptIns.PreviewMRQL, PreviewPlugins: run.OptIns.PreviewPlugins}
-	d.Envelope = harnessEnvelope(run.Account, run.OptIns)
+	d.Envelope = harnessEnvelope(run.Account, run.OptIns, in.Privacy != nil)
 	d.scopeIdentity = scopeIdentityOf(run.Account)
-	d.GroundingHash = templateGroundingHash(d)
+	applyPrivacyDisclosure(d, in)
 	return d
 }

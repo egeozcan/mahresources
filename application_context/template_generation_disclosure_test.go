@@ -47,6 +47,8 @@ var templateInputDisclosure = map[string]struct {
 	"PartialExists":  {reason: "validates the reply only"},
 	"StartingPoints": {section: "starting-points", harness: true},
 	"GenerationMode": {reason: "chooses the harness or classic path; hashed as the Disclosure's Mode"},
+	"PrivacyLocked":  {reason: "disclosed and hashed as privacy.locked; its value is not sent"},
+	"Privacy":        {reason: "masks entity values in the sections above and adds the privacy section; the Disclosure hashes its on/off state"},
 }
 
 func sectionText(sections []PromptSection, key string) string {

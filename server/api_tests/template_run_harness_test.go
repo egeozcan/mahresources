@@ -151,7 +151,7 @@ func installObserved(tc *TestContext, conv application_context.TemplateConversat
 
 // harnessSlotBody is a standalone CustomCSS request on the category route.
 func harnessSlotBody() map[string]any {
-	return map[string]any{"target": "slot", "slot": "CustomCSS", "mode": "css", "prompt": "make it blue"}
+	return map[string]any{"target": "slot", "slot": "CustomCSS", "mode": "css", "prompt": "make it blue", "privacyOff": true}
 }
 
 // disclose runs the dry run and returns the groundingHash.

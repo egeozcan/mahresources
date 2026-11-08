@@ -8,6 +8,11 @@ import (
 
 // Chat Completions with tools: DeepSeek and OpenRouter.
 
+// chatSkeleton is every string the Chat Completions adapter writes outside the
+// message content, the Tool catalogue and the model identifier: roles, type
+// values and option values. Privacy mode registers them as readable.
+var chatSkeleton = []string{"system", "user", "assistant", "tool", "function", "auto", "disabled", "enabled", "ephemeral"}
+
 func (p *generationConversationProvider) converseChat(ctx context.Context, req ConversationRequest) (ConversationResponse, error) {
 	provider := p.transport.provider
 	splice := newRawSplicer()

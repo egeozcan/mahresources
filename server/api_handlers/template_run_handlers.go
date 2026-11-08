@@ -74,6 +74,7 @@ func (p harnessPreparation) env(in *application_context.TemplateGenerationInput)
 		Input:      *in,
 		Validate:   application_context.ValidateTemplateRunField,
 		Known:      in.Known, DisplayTypes: in.DisplayTypes, DisplayTypesTruncated: in.DisplayTypesTruncated,
+		Privacy: in.Privacy,
 	}
 	if p.carrier != nil {
 		cfg.CarrierID = p.carrierID
@@ -255,12 +256,16 @@ func terminalFrame(result *application_context.TemplateGenerationResult, genErr 
 	}
 	status, shown := classifyTemplateGenerationError(genErr)
 	payload := map[string]any{"error": shown.Error(), "status": status}
-	if transcript, stop := failureTranscript(genErr); status != http.StatusForbidden {
+	if transcript, stop, legend := failureTranscript(genErr); status != http.StatusForbidden {
 		if stop != "" {
 			payload["stopReason"] = stop
 		}
 		if len(transcript) > 0 {
 			payload["transcript"] = transcript
+			// The legend is dropped exactly when the transcript is.
+			if len(legend) > 0 {
+				payload["legend"] = legend
+			}
 		}
 	}
 	return templateRunFrame("error", payload)
@@ -268,12 +273,12 @@ func terminalFrame(result *application_context.TemplateGenerationResult, genErr 
 
 // failureTranscript is the transcript and stop reason a failed run kept, from
 // its TemplateRunError and never from progress events.
-func failureTranscript(err error) ([]application_context.TemplateTranscriptRecord, string) {
+func failureTranscript(err error) ([]application_context.TemplateTranscriptRecord, string, []application_context.TemplatePrivacyLegendEntry) {
 	var runErr *application_context.TemplateRunError
 	if !errors.As(err, &runErr) {
-		return nil, ""
+		return nil, "", nil
 	}
-	return runErr.Transcript, enumOrEmpty(runErr.StopReason, stopReasonSet)
+	return runErr.Transcript, enumOrEmpty(runErr.StopReason, stopReasonSet), runErr.Legend
 }
 
 // writeHarnessJSONError answers a failed run that has no stream. Status codes
@@ -281,14 +286,18 @@ func failureTranscript(err error) ([]application_context.TemplateTranscriptRecor
 // body so the caller sees what was sent.
 func writeHarnessJSONError(w http.ResponseWriter, r *http.Request, err error) {
 	status, shown := classifyTemplateGenerationError(err)
-	transcript, stop := failureTranscript(err)
+	transcript, stop, legend := failureTranscript(err)
 	if status == http.StatusForbidden || len(transcript) == 0 || http_utils.RequestAcceptsHTML(r) {
 		writeTemplateGenerationError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", constants.JSON)
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{"error": shown.Error(), "stopReason": stop, "transcript": transcript})
+	body := map[string]any{"error": shown.Error(), "stopReason": stop, "transcript": transcript}
+	if len(legend) > 0 {
+		body["legend"] = legend
+	}
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 // TemplateRunFinishRequest is the body of the finish route.

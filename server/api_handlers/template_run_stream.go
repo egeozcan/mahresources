@@ -305,6 +305,7 @@ var stopReasonSet = map[string]bool{
 	application_context.TemplateStopFinishNow: true, application_context.TemplateStopDeadline: true,
 	application_context.TemplateStopBudget: true, application_context.TemplateStopLengthRepeated: true,
 	application_context.TemplateStopNoToolCall: true, application_context.TemplateStopProviderError: true,
+	application_context.TemplateStopPrivacyGuard: true,
 }
 
 func enumOrEmpty(v string, set map[string]bool) string {

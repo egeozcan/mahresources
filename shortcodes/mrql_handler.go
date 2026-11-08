@@ -140,7 +140,7 @@ func RenderMRQLShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 
 	if inline {
 		scalar := extractScalarFromResult(result, value)
-		return html.EscapeString(formatScalarValue(scalar, sc.Attrs["format"], sc.Attrs["layout"]))
+		return html.EscapeString(formatJSONScalarObserved(ctx, scalar, sc.Attrs["format"], sc.Attrs["layout"]))
 	}
 
 	// Per-item template (block body minus slots). Non-empty content overrides

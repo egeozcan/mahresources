@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -137,6 +138,16 @@ type TemplateGenerationInput struct {
 	PartialExists  func(ctx context.Context, name string) (bool, error)
 	StartingPoints TemplateStartingPoints
 	GenerationMode string
+
+	// PrivacyLocked reports that the administrator requires Privacy mode
+	// (ai_template_privacy_mode=always). The Disclosure shows and hashes it.
+	PrivacyLocked bool
+
+	// Privacy is the request's masker (nil when Privacy mode is off). The handler
+	// builds it before loading samples; the generator masks identity, starting
+	// points and partial descriptions with it and puts it on the request context
+	// for the transport guard.
+	Privacy *TemplatePrivacy
 }
 
 // TemplateRef names an entity by type, ID and name.
@@ -173,9 +184,14 @@ type TemplateGenerationResult struct {
 	// Harness runs only. StopReason is why the run ended, Transcript every
 	// message sent and received, Submitted the fields the model explicitly
 	// submitted (an empty submitted value is still a submission).
-	StopReason string                     `json:"stopReason,omitempty"`
-	Transcript []TemplateTranscriptRecord `json:"transcript,omitempty"`
-	Submitted  []string                   `json:"submitted,omitempty"`
+	StopReason string `json:"stopReason,omitempty"`
+	// Legend maps the Placeholders of a Privacy mode request to their values, for
+	// the browser only. WithheldFields names the fields whose content was dropped
+	// because it carried a Placeholder; each also has an error issue.
+	Legend         []TemplatePrivacyLegendEntry `json:"legend,omitempty"`
+	WithheldFields []string                     `json:"withheldFields,omitempty"`
+	Transcript     []TemplateTranscriptRecord   `json:"transcript,omitempty"`
+	Submitted      []string                     `json:"submitted,omitempty"`
 	// ContentSubmitted marks a standalone harness field the model explicitly
 	// submitted, so an empty Content serializes as "content":"" instead of
 	// disappearing. Classic never sets it.
@@ -229,6 +245,9 @@ type TemplateGenerator interface {
 type TemplateGenerationPrep struct {
 	GenerationMode string // TemplateGenerationModeHarness | TemplateGenerationModeClassic
 	Generator      TemplateGenerator
+	// PrivacyMode is the ai_template_privacy_mode setting of the same snapshot:
+	// TemplatePrivacyModePerRun (also the zero value) or TemplatePrivacyModeAlways.
+	PrivacyMode string
 }
 
 // templateGenerationPreparer is implemented by every generator that can report
@@ -415,11 +434,14 @@ func (g *defaultTemplateGenerator) disclose(in TemplateGenerationInput, prompt s
 	sections := buildTemplatePromptSections(in, prompt)
 	kind := templateCallKind(in)
 	profile := g.config.profileFor(kind)
+	in.Privacy.Keep(profile.Model)
+	registerSkeletonOf(in.Privacy, g.provider)
 	maxCalls := 1
 	if !g.config.RepairDisabled {
 		// The possible repair call is part of what the user approves.
 		maxCalls = 2
 		sections = append(sections, templateRepairSections()...)
+		registerReadableSections(in, templateRepairSections())
 	}
 	disclosure := g.newDisclosure([]TemplateDisclosedProfile{{
 		Kind:      kind,
@@ -428,6 +450,7 @@ func (g *defaultTemplateGenerator) disclose(in TemplateGenerationInput, prompt s
 		MaxTokens: profile.MaxTokens,
 		MaxCalls:  maxCalls,
 	}}, sections)
+	applyPrivacyDisclosure(disclosure, in)
 	return templateRequest{in: in, prompt: prompt, disclosure: disclosure}, nil
 }
 
@@ -435,6 +458,16 @@ func (g *defaultTemplateGenerator) GenerateTemplate(ctx context.Context, in Temp
 	if g.harness {
 		return g.generateHarness(ctx, in, prompt, groundingHash)
 	}
+	// The transport guard reads the masker from the context the calls run on.
+	result, err := g.generateClassic(WithTemplatePrivacy(ctx, in.Privacy), in, prompt, groundingHash)
+	if result != nil && in.Privacy != nil {
+		withholdPlaceholders(result, in)
+		result.Legend = in.Privacy.Legend()
+	}
+	return result, err
+}
+
+func (g *defaultTemplateGenerator) generateClassic(ctx context.Context, in TemplateGenerationInput, prompt, groundingHash string) (*TemplateGenerationResult, error) {
 	request, err := g.disclose(in, prompt)
 	if err != nil {
 		return nil, err
@@ -468,7 +501,10 @@ func (g *defaultTemplateGenerator) GenerateTemplate(ctx context.Context, in Temp
 	if err != nil {
 		return nil, err
 	}
-	draft, repair := g.repair(ctx, in, profile, first, resp, draft, promptMessage(disclosure.Sections, 1, promptRoleUser), started)
+	draft, repair, err := g.repair(ctx, in, profile, first, resp, draft, promptMessage(disclosure.Sections, 1, promptRoleUser), started)
+	if err != nil {
+		return nil, err
+	}
 	result, err := finalizeDraft(draft)
 	if err != nil {
 		if repair != nil {
@@ -511,6 +547,11 @@ func (g *defaultTemplateGenerator) callProvider(ctx context.Context, profile Tem
 
 // templateCallError sorts a failed call into the generator's two errors.
 func templateCallError(callCtx context.Context, err error) error {
+	// The privacy guard's refusal is fatal and keeps its identity (%w all the
+	// way up), so no caller can absorb it as an ordinary provider failure.
+	if errors.Is(err, ErrTemplatePrivacyLeak) {
+		return err
+	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(callCtx.Err(), context.DeadlineExceeded) {
 		return ErrTemplateGenerationTimeout
 	}
@@ -771,21 +812,99 @@ func singleSlotIsCSS(in TemplateGenerationInput) bool {
 // wrapper of its own, so nothing in the text says so, and finishBundle shares
 // one input across every slot it validates.
 func validateTemplateContent(target string, in TemplateGenerationInput, content string, cssMode bool) []shortcodes.LintIssue {
+	var issues []shortcodes.LintIssue
+	// A Placeholder in a Draft is an error (P11), so repair runs and a draft
+	// that still has one comes back invalid and withheld.
+	if placeholder, bad := in.Privacy.ContainsIssued(content); bad {
+		issues = append(issues, shortcodes.LintIssue{Severity: shortcodes.SeverityError, Message: "The draft contains the Placeholder " + placeholder + ", which can never be applied; reference the field with [meta]/[property] instead."})
+	}
 	if target == TemplateTargetMetaSchema {
-		return validateMetaSchemaJSON(content, shortcodes.MetaSchemaLintOptions{
+		return append(issues, validateMetaSchemaJSON(content, shortcodes.MetaSchemaLintOptions{
 			DisplayTypes:          in.DisplayTypes,
 			DisplayTypesTruncated: in.DisplayTypesTruncated,
-		})
+		})...)
 	}
-	issues := shortcodes.Lint(content, shortcodes.LintOptions{
+	linted := shortcodes.Lint(content, shortcodes.LintOptions{
 		Known:        in.Known,
 		ValidateMRQL: in.ValidateMRQL,
 		CSSMode:      cssMode,
 	})
+	issues = append(issues, linted...)
 	if issues == nil {
 		return []shortcodes.LintIssue{}
 	}
 	return issues
+}
+
+// withholdPlaceholders is the final pass of P11 for classic mode, over the
+// result as assembled (so it covers planner CSS appended into CustomCSS): any
+// field that carries an issued Placeholder is emptied and listed in
+// WithheldFields with an error issue; a pair is withheld whole.
+func withholdPlaceholders(result *TemplateGenerationResult, in TemplateGenerationInput) {
+	var bad []string
+	check := func(field, content string) {
+		if _, found := in.Privacy.ContainsIssued(content); found {
+			bad = append(bad, field)
+		}
+	}
+	if result.Target == TemplateTargetMetaSchema {
+		check("MetaSchema", result.Content)
+	} else if result.Target != TemplateTargetBundle {
+		check(in.Slot, result.Content)
+	}
+	for slot, content := range result.Slots {
+		check(slot, content)
+	}
+	withholdFields(result, bad, in.Slot)
+}
+
+// withholdFields empties the named fields and their pair partners, lists them in
+// WithheldFields (sorted, once) and adds an error issue for each.
+func withholdFields(result *TemplateGenerationResult, fields []string, standaloneField string) {
+	set := map[string]bool{}
+	for _, f := range result.WithheldFields {
+		set[f] = true
+	}
+	add := func(f string) { set[f] = true }
+	for _, f := range fields {
+		add(f)
+		if strings.HasSuffix(f, "CSS") && f != "CustomCSS" {
+			if _, ok := result.Slots[strings.TrimSuffix(f, "CSS")]; ok {
+				add(strings.TrimSuffix(f, "CSS"))
+			}
+		} else if _, ok := result.Slots[f+"CSS"]; ok {
+			add(f + "CSS")
+		}
+	}
+	names := make([]string, 0, len(set))
+	for f := range set {
+		names = append(names, f)
+	}
+	sort.Strings(names)
+	for _, f := range names {
+		already := false
+		for _, w := range result.WithheldFields {
+			already = already || w == f
+		}
+		if already {
+			continue
+		}
+		issue := shortcodes.LintIssue{Severity: shortcodes.SeverityError, Message: f + " was withheld: it contains a Placeholder, which can never be applied."}
+		if result.Target == TemplateTargetBundle {
+			if _, ok := result.Slots[f]; ok {
+				result.Slots[f] = ""
+				if result.SlotIssues == nil {
+					result.SlotIssues = map[string][]shortcodes.LintIssue{}
+				}
+				result.SlotIssues[f] = append(result.SlotIssues[f], issue)
+			}
+		} else {
+			result.Content = ""
+		}
+		result.Issues = append(result.Issues, issue)
+	}
+	result.WithheldFields = names
+	result.Valid = result.Valid && len(names) == 0
 }
 
 // validateMetaSchemaJSON reports a draft that is not JSON or does not compile

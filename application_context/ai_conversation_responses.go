@@ -10,6 +10,9 @@ import (
 // API, not Chat Completions. Stateless (store:false), so every request carries
 // the whole conversation, with the previous output items replayed as input.
 
+// responsesSkeleton is the fixed protocol strings of the Responses adapter.
+var responsesSkeleton = []string{"user", "assistant", "function_call", "function_call_output", "function", "auto", "reasoning.encrypted_content"}
+
 func (p *generationConversationProvider) converseResponses(ctx context.Context, req ConversationRequest) (ConversationResponse, error) {
 	splice := newRawSplicer()
 	input := make([]any, 0, len(req.Messages)+2)

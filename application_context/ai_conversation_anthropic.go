@@ -10,6 +10,9 @@ import (
 // instruction are text blocks, and one user message holds every tool_result of
 // a Turn (tool_result blocks first, then a trailing instruction text block).
 
+// anthropicSkeleton is the fixed protocol strings of the Messages adapter.
+var anthropicSkeleton = []string{"user", "assistant", "text", "tool_use", "tool_result", "auto", "ephemeral"}
+
 func (p *generationConversationProvider) converseAnthropic(ctx context.Context, req ConversationRequest) (ConversationResponse, error) {
 	splice := newRawSplicer()
 	var messages []map[string]any

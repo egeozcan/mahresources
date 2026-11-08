@@ -146,36 +146,47 @@ func finalizeDraft(d templateDraft) (*TemplateGenerationResult, error) {
 // repair makes at most one more call when the draft has errors, and keeps the
 // answer only when it is better and still has the draft's content. It never
 // fails the request: whatever goes wrong, the original draft is returned.
-func (g *defaultTemplateGenerator) repair(ctx context.Context, in TemplateGenerationInput, profile TemplateCallProfile, first TemplateDraftRequest, reply TemplateDraftResponse, draft templateDraft, continuation string, started time.Time) (templateDraft, *TemplateRepair) {
+func (g *defaultTemplateGenerator) repair(ctx context.Context, in TemplateGenerationInput, profile TemplateCallProfile, first TemplateDraftRequest, reply TemplateDraftResponse, draft templateDraft, continuation string, started time.Time) (templateDraft, *TemplateRepair, error) {
 	if !draft.repairable() {
-		return draft, nil
+		return draft, nil, nil
 	}
 	if g.config.RepairDisabled || continuation == "" {
-		return draft, &TemplateRepair{Reason: templateRepairDisabled}
+		return draft, &TemplateRepair{Reason: templateRepairDisabled}, nil
 	}
 	// The whole request, repair included, gets twice one call's timeout.
 	left := 2*profile.Timeout - g.now().Sub(started)
 	if left < max(templateRepairMinWindow, profile.Timeout/4) {
-		return draft, &TemplateRepair{Reason: templateRepairBudget}
+		return draft, &TemplateRepair{Reason: templateRepairBudget}, nil
 	}
 	callProfile := profile
 	callProfile.Timeout = min(profile.Timeout, left)
 
 	req := first
-	req.User = first.User + "\n" + fillTemplateRepair(continuation, reply.Content, repairIssueLines(draft))
+	issueLines := repairIssueLines(draft)
+	// The previous draft is the model's own output and the issue lines are the
+	// server's validation messages: both are readable (the guard's corpus).
+	in.Privacy.Keep(reply.Content)
+	for _, line := range issueLines {
+		in.Privacy.Keep(line)
+	}
+	req.User = first.User + "\n" + fillTemplateRepair(continuation, reply.Content, issueLines)
 	resp, err := g.callProvider(ctx, callProfile, req, "repair", in)
 	if err != nil {
+		// The guard's refusal is fatal: repair never absorbs it.
+		if errors.Is(err, ErrTemplatePrivacyLeak) {
+			return draft, nil, err
+		}
 		reason := templateRepairProviderError
 		if errors.Is(err, ErrTemplateGenerationTimeout) {
 			reason = templateRepairTimeout
 		}
-		return draft, &TemplateRepair{Attempted: true, Reason: reason}
+		return draft, &TemplateRepair{Attempted: true, Reason: reason}, nil
 	}
 	repaired, err := parseTemplateDraft(in, resp)
 	if err != nil || !repaired.parsed || repaired.truncated || !repairIsBetter(draft, repaired, singleSlotIsCSS(in)) {
-		return draft, &TemplateRepair{Attempted: true, Reason: templateRepairNotBetter}
+		return draft, &TemplateRepair{Attempted: true, Reason: templateRepairNotBetter}, nil
 	}
-	return repaired, &TemplateRepair{Attempted: true, Applied: true}
+	return repaired, &TemplateRepair{Attempted: true, Applied: true}, nil
 }
 
 // fillTemplateRepair fills the two placeholders in one pass, so a placeholder

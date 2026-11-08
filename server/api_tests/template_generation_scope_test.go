@@ -59,7 +59,7 @@ func TestTemplateGenerateAndPreviewAreScopedToTheCaller(t *testing.T) {
 	}
 	generate := func(appCtx *application_context.MahresourcesContext, entityID uint) string {
 		code, body := run(appCtx, api_handlers.GetGenerateTemplateHandler(appCtx, "note", nil),
-			fmt.Sprintf(`{"target":"cluster","slot":"CustomHeader","prompt":"a header","categoryId":%d,"entityId":%d,"dryRun":true}`, noteType.ID, entityID))
+			fmt.Sprintf(`{"target":"cluster","slot":"CustomHeader","prompt":"a header","categoryId":%d,"entityId":%d,"dryRun":true,"privacyOff":true}`, noteType.ID, entityID))
 		if code != http.StatusOK {
 			t.Fatalf("generate: want 200, got %d (%s)", code, body)
 		}
@@ -74,7 +74,7 @@ func TestTemplateGenerateAndPreviewAreScopedToTheCaller(t *testing.T) {
 	// the same scope.
 	createForm := func(appCtx *application_context.MahresourcesContext, entityID uint) string {
 		code, body := run(appCtx, api_handlers.GetGenerateTemplateHandler(appCtx, "note", nil),
-			fmt.Sprintf(`{"target":"metaschema","prompt":"x","entityId":%d,"dryRun":true}`, entityID))
+			fmt.Sprintf(`{"target":"metaschema","prompt":"x","entityId":%d,"dryRun":true,"privacyOff":true}`, entityID))
 		if code != http.StatusOK {
 			t.Fatalf("generate: want 200, got %d (%s)", code, body)
 		}
@@ -124,7 +124,7 @@ func TestTemplateGenerateDefaultRateLimitHoldsPerIP(t *testing.T) {
 	tc := SetupTestEnv(t)
 	fake := &fakeAPITemplateGenerator{result: slotResult()}
 	tc.AppCtx.SetTemplateGenerator(fake)
-	body := map[string]any{"target": "cluster", "slot": "CustomHeader", "prompt": "a header"}
+	body := map[string]any{"target": "cluster", "slot": "CustomHeader", "prompt": "a header", "privacyOff": true}
 	for i := 1; i <= 10; i++ {
 		if resp := tc.generateTemplate("/v1/category/generateTemplate", body); resp.Code != http.StatusOK {
 			t.Fatalf("request %d: want 200, got %d (%s)", i, resp.Code, resp.Body.String())
@@ -174,7 +174,7 @@ func TestTemplateSamplesConfineRelatedNames(t *testing.T) {
 	principal := &auth.Principal{UserID: 1, Username: "confined", Role: models.RoleEditor, ScopeGroupID: &inside.ID}
 	scoped := tc.AppCtx.WithPrincipal(principal)
 	sample := func(appCtx *application_context.MahresourcesContext, entityType string, categoryID uint) string {
-		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(fmt.Sprintf(`{"target":"cluster","slot":"CustomHeader","prompt":"x","categoryId":%d,"dryRun":true}`, categoryID)))
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(fmt.Sprintf(`{"target":"cluster","slot":"CustomHeader","prompt":"x","categoryId":%d,"dryRun":true,"privacyOff":true}`, categoryID)))
 		req.Header.Set("Content-Type", "application/json")
 		req = req.WithContext(auth.WithPrincipal(req.Context(), principal))
 		rr := httptest.NewRecorder()
