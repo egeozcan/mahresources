@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"strings"
@@ -23,18 +24,18 @@ import (
 // behind a capturing http.RoundTripper, a real database, and the whole handler.
 
 type privacyFixture struct {
-	tc                  *TestContext
-	cat                 *models.Category
-	root, child, target *models.Group
-	resource            *models.Resource
-	note                *models.Note
-	protected, readable []string
-	bodies              [][]byte
-	mu                  sync.Mutex
-	script              func(n int, req map[string]any) map[string]any
-	calls               int
-	repair              bool
-	inject              func(n int) string // text appended to the n-th request's last message, to model a leak below the masker
+	tc                        *TestContext
+	cat                       *models.Category
+	root, child, target, html *models.Group
+	resource                  *models.Resource
+	note                      *models.Note
+	protected, readable       []string
+	bodies                    [][]byte
+	mu                        sync.Mutex
+	script                    func(n int, req map[string]any) map[string]any
+	calls                     int
+	repair                    bool
+	inject                    func(n int) string // text appended to the n-th request's last message, to model a leak below the masker
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -115,11 +116,13 @@ func newPrivacyFixture(t *testing.T) *privacyFixture {
 		create(&models.TemplateRevision{CarrierType: models.TemplateCarrierCategory, CarrierID: f.cat.ID, Number: uint(i + 1), Source: "form",
 			Snapshot: fmt.Sprintf(`{"CustomHeader":"READABLE_REV_SOURCE_%d"}`, i+1), Applied: `[]`, ChangedSlots: `["CustomHeader"]`, Label: label})
 	}
+	f.html = &models.Group{Name: `PROT_HTML <i>&"q"</i>`, OwnerId: &f.root.ID, CategoryId: &f.cat.ID}
+	create(f.html)
 	f.protected = []string{
 		"PROT_OWNER_NAME", "PROT_OWNER_DESC", "PROT_RELATION_TARGET", "PROT_GROUP_NAME", "PROT_GROUP_DESC", "PROT_URL_PATH", "prot-host.example",
 		"PROT_META_VALUE", "PROT_LIST_ITEM_A", "PROT_LIST_ITEM_B", "PROT_TAG_NAME", "PROT_RES_NAME", "PROT_ORIGINAL_NAME", "PROT_HASH_VALUE",
 		"PROT_LOCATION", "PROT_CT_PARAM", "PROT_RES_DESC", "PROTSHARETOKEN", "PROT_NOTE_NAME", "PROT_BLOCK_TEXT", "PROT_PARTIAL_DESC",
-		"PROT_REV_LABEL", "PROT_CATEGORY_DESC",
+		"PROT_REV_LABEL", "PROT_CATEGORY_DESC", "PROT_HTML",
 	}
 	f.readable = []string{"READABLE_CATEGORY_NAME", "READABLE_META_KEY", "READABLE_TEMPLATE_SOURCE", "READABLE_RELTYPE", "READABLE_partial", "READABLE_PARTIAL_SOURCE", "READABLE_INNER_SOURCE", "READABLE_REV_SOURCE_1", "READABLE_USER_REQUEST"}
 	return f
@@ -257,6 +260,7 @@ func harnessScript(f *privacyFixture) func(n int, req map[string]any) map[string
 			return chatToolCalls(
 				call("r1", "preview", map[string]any{"field": "CustomHeader", "content": both, "css": both, "entityType": "group", "entityId": childID}),
 				call("r2", "preview", map[string]any{"field": "CustomHeader", "content": `[mrql query='type = group']`, "entityType": "group", "entityId": childID}),
+				call("r3", "preview", map[string]any{"field": "CustomHeader", "content": `<h2>[property path="Name"]</h2>`, "entityType": "group", "entityId": f.html.ID}),
 			)
 		default:
 			return chatToolCalls(call("s1", "submit", map[string]any{"fields": map[string]string{"CustomCSS": ".a{color:blue}"}, "done": true}))
@@ -290,7 +294,7 @@ func TestPrivacyModeHarnessRunNeverSendsEntityValues(t *testing.T) {
 		}
 	}
 	results := f.toolResults()
-	for _, id := range []string{"t1", "t2", "t3", "t4", "t5", "t6", "u1", "u2", "u3", "u4", "u5", "u6", "p1", "p2", "p3", "p4", "p5", "p6", "q1", "q2", "q3", "q4", "r1", "r2"} {
+	for _, id := range []string{"t1", "t2", "t3", "t4", "t5", "t6", "u1", "u2", "u3", "u4", "u5", "u6", "p1", "p2", "p3", "p4", "p5", "p6", "q1", "q2", "q3", "q4", "r1", "r2", "r3"} {
 		text, ok := results[id]
 		if !ok {
 			t.Errorf("no result for call %s", id)
@@ -375,6 +379,14 @@ func TestPrivacyModeHarnessRunNeverSendsEntityValues(t *testing.T) {
 	mustShow("p4", "PROT_LIST_ITEM_A", "PROT_LIST_ITEM_B")
 	mustShow("r2", "PROT_GROUP_NAME")
 	mustShow("q3", "PROT_OWNER_NAME")
+	mustShow("r3", `PROT_HTML <i>&"q"</i>`)
+	// A protected Name with HTML-sensitive characters, rendered through a
+	// preview: neither the raw nor the HTML-escaped real value may be sent.
+	for _, form := range []string{`PROT_HTML <i>&"q"</i>`, html.EscapeString(`PROT_HTML <i>&"q"</i>`), `PROT_HTML &lt;i&gt;`} {
+		if strings.Contains(bodies, form) {
+			t.Errorf("the transformed protected value %q reached the provider", form)
+		}
+	}
 	for _, id := range []string{"p1", "p2", "p3", "p4", "p5", "q2", "q3", "r1", "r2"} {
 		if strings.Contains(results[id], "mrql-error") || strings.Contains(results[id], "shortcode-error") {
 			t.Errorf("render %s shows an error where it must succeed: %s", id, results[id])
@@ -484,9 +496,10 @@ func TestPrivacyModeHarnessGuardStopsALeakBelowTheMasker(t *testing.T) {
 		Error      string `json:"error"`
 		StopReason string `json:"stopReason"`
 		Transcript []struct {
-			Turn int    `json:"turn"`
-			Kind string `json:"kind"`
-			Sent bool   `json:"sent"`
+			Turn   int    `json:"turn"`
+			Kind   string `json:"kind"`
+			CallID string `json:"callId"`
+			Sent   bool   `json:"sent"`
 		} `json:"transcript"`
 		Legend []struct{ Value string } `json:"legend"`
 	}
@@ -497,10 +510,24 @@ func TestPrivacyModeHarnessGuardStopsALeakBelowTheMasker(t *testing.T) {
 	if strings.Contains(f.allBodies(), "ünï") || f.calls != 1 {
 		t.Fatalf("the leak was sent (calls=%d)", f.calls)
 	}
+	// The Tool result the blocked request would have carried was made in Turn 1;
+	// find it by its call ID, not by Turn.
+	foundResult := false
 	for _, rec := range out.Transcript {
-		if rec.Turn == 2 && rec.Sent {
+		switch {
+		case rec.Kind == "tool_result" && rec.CallID == "t1":
+			foundResult = true
+			if rec.Sent {
+				t.Errorf("the result carried by the blocked request claims it was sent: %+v", rec)
+			}
+		case rec.Turn == 2 && rec.Sent:
 			t.Errorf("a refused Turn's record claims it was sent: %+v", rec)
+		case rec.Turn == 1 && (rec.Kind == "seed" || rec.Kind == "assistant") && !rec.Sent:
+			t.Errorf("an earlier record that really was sent must stay sent: %+v", rec)
 		}
+	}
+	if !foundResult {
+		t.Error("the transcript has no result for call t1")
 	}
 	found := false
 	for _, e := range out.Legend {
