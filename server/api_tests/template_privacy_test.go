@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/c2h5oh/datasize"
+
 	"mahresources/application_context"
 	"mahresources/models"
 	"mahresources/models/types"
@@ -83,10 +85,14 @@ func newPrivacyFixture(t *testing.T) *privacyFixture {
 		Meta: types.JSON(`{"READABLE_META_KEY":"PROT_META_VALUE","status":"open","num":734928601,"list":["PROT_LIST_ITEM_A","PROT_LIST_ITEM_B"]}`),
 	}
 	create(f.child)
-	tag := &models.Tag{Name: "PROT_TAG_NAME"}
-	create(tag)
-	if err := tc.DB.Model(f.child).Association("Tags").Append(tag); err != nil {
-		t.Fatal(err)
+	// Protected names that equal text a render makes from a preserved number: the
+	// FileSize itself and its humanised form.
+	for _, name := range []string{"PROT_TAG_NAME", "734928601", datasize.ByteSize(734928601).HumanReadable()} {
+		tag := &models.Tag{Name: name}
+		create(tag)
+		if err := tc.DB.Model(f.child).Association("Tags").Append(tag); err != nil {
+			t.Fatal(err)
+		}
 	}
 	relType := &models.GroupRelationType{Name: "READABLE_RELTYPE"}
 	create(relType)
@@ -294,7 +300,7 @@ func TestPrivacyModeHarnessRunNeverSendsEntityValues(t *testing.T) {
 	}
 	// Per-render positive assertions.
 	assertContains("p1", "⟦", "<h1>⟦")
-	assertContains("p2", "⟦")
+	assertContains("p2", "⟦", datasize.ByteSize(734928601).HumanReadable())
 	assertContains("p3", "⟦")
 	assertContains("p4", "⟦", "READABLE_YES")
 	assertContains("p5", "mrql-results")
