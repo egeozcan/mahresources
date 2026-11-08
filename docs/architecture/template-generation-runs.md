@@ -28,6 +28,7 @@ decision to approve an Envelope instead of every message is
 | Handler, delivery order, finish route | `server/api_handlers/template_run_handlers.go` |
 | Event stream | `server/api_handlers/template_run_stream.go` |
 | Access re-check | `server/template_run_access.go`: `templateRunAccessFactory` |
+| Privacy mode | `application_context/template_privacy*.go`: the masker, the guard, `Entity` and `QueryResult`; `server/api_handlers/template_run_tools.go` masks Tool results and previews |
 | Browser | `src/components/templateRun.js`, `templates/partials/form/templateRunProgress.tpl` |
 
 ## One request, start to finish
@@ -156,7 +157,8 @@ and `previewPlugins`):
   resource use apply; the preview limits do not apply inside it.
 
 Both flags are in the Disclosure and its hash (`TemplateDisclosedOptIns`), and
-classic mode ignores them.
+classic mode ignores them. Plugin previews are refused while Privacy mode is on
+(see "Privacy mode" below), so ticking `previewPlugins` needs `privacyOff`.
 
 ## Envelope and Disclosure
 
@@ -221,6 +223,7 @@ or on an override.
 | `length_repeated` | Two consecutive replies were cut at the output limit with no complete call |
 | `no_tool_call` | The model answered with plain text twice, or on the final Turn |
 | `provider_error` | The provider call failed |
+| `privacy_guard` | The request about to be sent carried an Entity value. It was not sent; the run has no Draft |
 
 A reply cut at the output limit (`finish: length`) gets an error result on the cut
 call, `cut off at the output limit; send it again in smaller parts`, and the run
@@ -348,7 +351,7 @@ address is `X-Forwarded-For` (leftmost), then `X-Real-IP`, then the peer address
 
 ## Settings
 
-Four runtime settings in the `ai` group (`addAIHarnessSettingSpecs`); a request
+Five runtime settings in the `ai` group (`addAIHarnessSettingSpecs`); a request
 reads them once (`templateGenerator`), so changing one never alters a run in
 progress:
 
@@ -358,6 +361,7 @@ progress:
 | `ai_template_max_turns` | 10 | 1 to 20 (`MaxTemplateRunTurns`) |
 | `ai_template_run_deadline` | 5 minutes | 30 seconds to 15 minutes |
 | `ai_template_run_token_budget` | 400000 | 100000 to 2000000 |
+| `ai_template_privacy_mode` | `per-run` | `per-run` or `always` |
 
 Model, thinking, `max_tokens` and per-call timeout per Turn come from the same
 call profile classic mode uses for the request's kind (`slot`, `pair`, `bundle` or
@@ -367,6 +371,81 @@ call profile classic mode uses for the request's kind (`slot`, `pair`, `bundle` 
 single-call flow, repair and fan-out unchanged, and the opt-ins, Tools, run panel
 and finish route do not apply. The mode is read per request, and the Disclosure
 reports it (`Mode`).
+
+## Privacy mode
+
+Terms are in `GLOSSARY.md`; the decision is
+`docs/adr/0010-privacy-mode-masks-entity-values-at-the-source.md`; the plan with
+every design decision (P1 to P16) is `docs/plans/2026-11-08-template-privacy-mode.md`.
+Privacy mode works in both generation modes. With it on, no Entity value read from
+the database leaves the server in a request to a provider. It is on unless the
+request sends `privacyOff` (a negative name, so an omitted field means on), and an
+administrator can require it with `ai_template_privacy_mode=always`: the handler then
+answers 400 "Privacy mode is required on this server" to `privacyOff`, a dry run
+included, and the Disclosure reports `privacy.locked`. Privacy mode with
+`previewPlugins` is a 400 too, because plugin Lua returns arbitrary text that cannot
+be masked at the source. Both refusals come before any library read. The Disclosure
+carries `privacy: {on, locked}` in both modes and hashes it, so approving with it on
+and sending with it off is a 409. Its `legend` is shown and never hashed.
+
+**Masking at the source.** `TemplatePrivacy` (one per request, nil means off) replaces
+a value with a Placeholder `⟦tag·kind n · lines · ~len chars⟧`; a date is
+`⟦tag·date n⟧`. The tag is an HMAC of the account, entity type and carrier under a
+per-process key, so a dry run and the request after it build the same Seed bytes.
+Equal values share a Placeholder. Numbers, booleans and IDs pass through. Masked
+places: the Seed (identity description, starting-point names, sample projection,
+partial descriptions), every Tool result (`get_entity`, lists, revision labels and
+dates, partial descriptions), and the entity a `preview` renders against (a deep
+copy, `TemplatePrivacy.Entity`, whose dates become the stand-in
+`2001-02-03T04:05:06Z`, whose `[]byte` fields are dropped and whose URL becomes
+`https://placeholder.invalid/<tag>-url-<n>`). `[mrql]` results are masked into new
+containers (`QueryResult` never mutates the cached result); saved queries render the
+fixed text "saved queries are not available in Privacy mode" and an inline query's
+error becomes fixed text. Readable vocabulary is an allow-list
+(`privacyFieldKept`): taxonomy names and `Custom*`, MetaSchema and SectionConfig of
+the three carriers, relation type names, note block types, Meta keys, partial names,
+and a Resource ContentType that is plain `type/subtype`. A Meta string equal to an
+`enum` or `const` of its own field stays readable. The sample projection is
+project, then mask, then clip.
+
+**The guard.** `generationProviderClient.postPayload` hands every body to
+`CheckOutbound(ctx, payload)` when the request context carries a masker
+(`WithTemplatePrivacy`, put there by `runHarness` and by classic
+`GenerateTemplate`). It walks every string leaf and looks, with an in-package
+Aho-Corasick automaton, for each masked value of four or more characters in its raw,
+JSON-escaped and HTML-escaped spelling, case-insensitively. Only the first 64 bytes
+of a value are matched, so a truncated copy of a long value is still found. A value
+that also occurs in the run's readable corpus is exempt, permanently. The corpus is
+filled by `Keep`: readable Seed sections, the Tool catalogue and the model
+identifier, each adapter's protocol strings (`SkeletonStrings`), the model's own
+output, server-authored loop strings, readable Tool results, partial source a
+preview resolves, preserved numbers and the formatted text made from them
+(`shortcodes.WithScalarFormatObserver`). A source nobody registered can only cause a
+false positive, never a missed leak. All reconciliation happens inside
+`CheckOutbound`, under the call's context. The masker stops at 20,000 values, 4 MiB
+of legend bytes or one value over 256 KiB: past a limit it returns the fixed
+`⟦tag·withheld⟧`, keeps a sticky error, every publisher discards its partial output,
+and the guard refuses outright.
+
+**A refusal.** Every wrap between the transport and the handler uses `%w`. Harness:
+the run stops with `privacy_guard`, returns no Draft even when it has submissions,
+and marks the refused Turn's transcript records `sent:false` and reverts a stub
+first written that Turn (`rollbackCommit`). Classic: the error is fatal, repair never
+absorbs it and a fan-out cancels its sibling sections. The answer is HTTP 500 with
+the fixed text "Privacy mode stopped a request that contained an entity value.
+Nothing was sent".
+
+**A Placeholder in a Draft.** Nothing maps a Placeholder back. In harness mode
+`submit` refuses a field that contains one, in either spelling (an error result, the
+call's `done` ignored, other fields commit), `buildResult` re-checks, and classic
+raises a validator error so that repair runs. A final pass over every result
+(`withholdPlaceholders`, after fan-out assembly) empties a field that still has one,
+lists it in `withheldFields` and withholds an HTML/CSS pair whole.
+
+**The legend.** `legend` (`[{placeholder, value}]`, one entry per spelling) is on the
+dry-run Disclosure, the result, and any error payload that carries the transcript, and
+it is dropped exactly when the transcript is dropped on an access change. It is never
+stored, logged or sent to a provider.
 
 ## Eval
 
@@ -396,3 +475,8 @@ source.
 - `server/api_handlers/template_run_stream_test.go`: frame shapes and the writer.
 - `internal/templateeval/*_test.go`: the recorder, the adapter fixtures and the
   scorer.
+- `application_context/template_privacy*_test.go`, `server/api_tests/template_privacy_test.go`:
+  the masker, the guard (thresholds, case, escapes, corpus exemption, paths,
+  benchmarks), `Entity` field coverage, the Seed in both modes, the loop's
+  `privacy_guard` and rollback, and a scripted run through every Tool behind the
+  real wire adapters that asserts no protected marker reaches the provider.
