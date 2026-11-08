@@ -127,8 +127,15 @@ listed so a reviewer can contest them.
   Every other string is masked, Descriptions of taxonomy types included. Masking a
   field by mistake only lowers quality. Keeping one by mistake would be a leak, so
   the list is an allow-list.
-- **P6. URL fields.** A `*types.URL` becomes `https://placeholder.invalid/<Placeholder>`.
-  It is masked as one value rather than field by field.
+- **P6. URL fields.**
+  - **The form.** A `*types.URL` becomes `https://placeholder.invalid/<tag>-url-<n>`.
+    It is masked as one value rather than field by field, and it is an ASCII
+    *alias* of the issued Placeholder `⟦<tag>·url <n>⟧`. `[property path="URL"]`
+    goes through `net/url`'s `String()`, which would percent-encode the brackets.
+  - **Recognition.** The legend lists both spellings for the same value.
+    `ContainsIssued` and the browser's segmentation recognise both.
+  - **A test.** It renders `[property path="URL"]` through a preview, then submits
+    the exact URL text the provider saw, which must be refused (P11).
 - **P7. The guard's readable corpus.**
   - **What goes in.** Each run keeps a corpus of text it knows is readable:
     - every string passed through `Keep`;
@@ -140,7 +147,20 @@ listed so a reviewer can contest them.
     - the model's own output. That is assistant text, plus every decoded string
       leaf of the call arguments and of Replay. The live Replay bytes are never
       changed.
-    - the run's fixed instructions;
+    - every server-authored string inserted into the conversation, at the point it
+      is built:
+      - the final-Turn and nudge instructions;
+      - the stub text (`<label> result, N bytes, superseded`);
+      - the cut-off and `not run: final Turn` errors;
+      - `runTool`'s fixed failure texts;
+      - `ToolErrorResult`/`refusef` text. Lane A audits every `refusef` site. A
+        refusal that formats a database value passes that value through `Text`
+        first.
+    - partial source that a preview resolves. The preview's `PartialResolver` is
+      wrapped so each resolved partial's source passes through `Keep` before it is
+      expanded, nested partials included. The rendered output is not registered.
+    - classic mode's planning reply, as forwarded to the pair calls (`planText`),
+      and its previous Draft and issue lines before a repair call;
     - the trusted request skeleton: the model identifier from the profile, every
       string in the Tool catalogue (names, descriptions, parameter schemas), and
       each wire adapter's fixed protocol strings (`roleUser`-style constants,
@@ -157,12 +177,23 @@ listed so a reviewer can contest them.
     in three spellings in every string leaf: raw, JSON-string-escaped, and
     JSON-escaped with HTML escaping (`<` etc.). Corpus entries are stored in the
     same three spellings. All matching is on `strings.ToLower` forms.
-  - **The algorithm.** One Aho-Corasick automaton over the lower-cased spellings of
-    every masked value of 4 or more runes. It is rebuilt only when a value has been
-    added since the last check, and it scans each string leaf once. Each candidate
-    hit is then checked against the corpus. The automaton is written in the package
-    (about 150 lines, tested), not added as a dependency. A benchmark with 20,000
-    values against a 2 MB payload must stay under 50 ms.
+  - **The algorithm.** Exemption is settled per value, not per hit.
+    - **Corpus scan.** Each new corpus text is scanned once, when it is registered,
+      with an Aho-Corasick automaton over the spellings of the values that are not
+      yet exempt. A value found there becomes exempt permanently, since the corpus
+      only grows. Values added later are checked against the stored corpus once,
+      when they are added.
+    - **Payload scan.** The outbound check scans the payload's string leaves with an
+      automaton over the remaining non-exempt values only, rebuilt when that set
+      changes, and stops at the first hit. A hit is a leak, so exempt values never
+      cause hit enumeration.
+    - **Implementation.** The automaton is written in the package (about 150 lines,
+      tested), not added as a dependency.
+    - **Benchmarks.**
+      - 20,000 random values against a 2 MB payload: under 50 ms.
+      - An adversarial set of overlapping values (runs of one character, nested
+        prefixes) with a 2 MB repetitive corpus and payload: under 200 ms.
+    - **Cancellation.** Building the automaton and scanning check the context.
 - **P8. Where the guard runs.** In `generationProviderClient.postPayload`, reached
   through the request context (`WithTemplatePrivacy`).
   - **What it checks.** It decodes the payload and walks every string leaf.
@@ -204,10 +235,23 @@ listed so a reviewer can contest them.
     transcript.
   - **Where not.** It is dropped exactly when the transcript is dropped on an access
     change. It is never stored, logged or sent to a provider.
-- **P11. A Placeholder in a Draft.** It is an error issue in
-  `ValidateTemplateRunContent`'s caller: `submit`, the final Draft, and the classic
-  validator that feeds repair. The message is
-  `contains the Placeholder ⟦…⟧; reference the field with [meta]/[property] instead`.
+- **P11. A Placeholder in a Draft is refused, not linted.** An error issue alone
+  would not stop it: invalid submissions are committed
+  (`template_run.go`, `validateSubmit`/`handleReply`), the final Draft is built
+  from them, and the slot UI lets an invalid Draft be applied. So:
+  - **`submit`.** A field containing an issued Placeholder, in either spelling, is
+    not committed, and the call's `done` is ignored. The result is an error:
+    `refused: contains the Placeholder ⟦…⟧; reference the field with
+    [meta]/[property] instead`. Other fields of the same call commit normally.
+  - **The final Draft.** It is built only from committed values, so it can never
+    hold one. As a backstop, `buildResult` rechecks: a field that would carry an
+    issued Placeholder is withheld. Its content is empty, `withheld: true`, and it
+    carries an error issue.
+  - **Classic mode.** The validator raises the issue so that repair runs. If the
+    repaired draft still has one, that field is withheld in the same way.
+  - **Never applicable.** The UI disables Apply for a withheld field, in the slot
+    and the bundle host alike. Tests prove refusal and the absence of an Apply path
+    in both modes.
 - **P12. Enum and const exemption.** Meta is walked alongside the schema's
   `properties` and `items`, the branches of `allOf`, `anyOf` and `oneOf`, and local
   `#/$defs` or `#/definitions` references, one level deep. A value matching an
@@ -221,11 +265,18 @@ listed so a reviewer can contest them.
 - **P13. Concurrency.** Tools of a Turn run in parallel, so the masker is protected
   by a mutex. Numbering order inside a Turn may then vary between runs. Only the
   Seed needs to be deterministic.
-- **P14. Idempotence.** `Text` on an exact Placeholder this masker issued returns it
-  unchanged and records nothing. Text that merely looks like a Placeholder is
-  ordinary text, so the rule never weakens masking. This lets a masked entity pass
-  through `BuildMetaContextForEntity`, whose presentation names derive from the
-  entity graph, and then through `MetaContext` without double-masking.
+- **P14. No second pass, and no idempotence by string equality.**
+  - **`Text` always treats its input as raw.** A database string that happens to
+    equal a Placeholder this run issued gets its own new Placeholder and its own
+    legend entry. A test covers exactly that case.
+  - **No second pass is needed.** `BuildMetaContextForEntity` takes its
+    presentation names (`ScopeGroupName` and the rest) only from the preloaded
+    graph of the entity it is given (`populatePresentationNames`,
+    `template_filters/shortcode_tag.go`, "never performs a lookup"), and it resolves
+    only IDs from the database. So building the context from the masked copy
+    already masks those names, and there is no `MetaContext` method.
+  - **A pin.** A test fails if `populatePresentationNames` ever starts reading the
+    database.
 - **P15. MRQL in previews under Privacy mode.**
   - **Saved queries are refused.** `[mrql saved=…]` (and the `saved` forms of
     `[using]`, `[conditional]` and `[each]`) renders the fixed text "saved queries
@@ -244,16 +295,29 @@ listed so a reviewer can contest them.
       through `Date`, numbers passed through;
     - bucket `Key` values: the same rules as rows;
     - `EffectiveQuery`: the model's own inline text, kept.
-- **P16. Bounds.**
+- **P16. Bounds, and how failures propagate.**
   - **The masked copy.** It sets every `[]byte` field that is not `types.JSON` to
     nil (preview thumbnails, for example). A render never needs them, and copying
     them is wasted work.
   - **The masker's limits.** At most 20,000 distinct masked values, and at most
-    4 MiB of real value bytes in the legend. Past either limit, the next `Text`
-    returns an error sentinel. The calling Tool turns that into an error result
-    ("too much entity data for Privacy mode"), and the Seed builder turns it into
-    a 400 at the dry run. Masking is never skipped.
-  - **Cancellation.** The deep copy checks the context every 1,000 nodes.
+    4 MiB of real value bytes in the legend. A single value over 256 KiB counts as
+    an overflow.
+  - **The error contract is a sticky error.** Past a limit, `Text` returns the
+    fixed `⟦<tag>·withheld⟧` (never the value), and `p.Err()` stays set from then
+    on.
+    - `Entity(ctx, e) (any, error)` and `QueryResult(ctx, r) (*QueryResult, error)`
+      take a context, check it every 1,000 nodes, and return the sticky error or
+      `ctx.Err()`.
+    - Every publisher checks `p.Err()` before its output leaves:
+      - The Tool executor does so after building a result, and on failure throws
+        the result away and returns the error result "too much entity data for
+        Privacy mode".
+      - The preview does so after rendering, nested `[mrql]` masking included.
+      - The Seed builder does so at the end, and the dry run answers 400.
+      - `CheckOutbound` refuses outright while `p.Err()` is set.
+    - Partial output is never published.
+  - **Tests.** The 20,001st value, one oversized value, exhaustion inside a nested
+    `[mrql]` preview, and cancellation.
 
 ## Architecture
 
@@ -270,7 +334,6 @@ func (p *TemplatePrivacy) Keep(s string) string          // readable; adds to th
 func (p *TemplatePrivacy) Meta(raw []byte, schema string) []byte   // string leaves masked (P12), keys kept
 func (p *TemplatePrivacy) Value(v any, schema any) any   // the same, over a decoded JSON value
 func (p *TemplatePrivacy) Entity(e any) any               // deep copy with P2, P5, P6 applied (reflection)
-func (p *TemplatePrivacy) MetaContext(c *shortcodes.MetaShortcodeContext) // masks group names, keeps category names
 func (p *TemplatePrivacy) QueryResult(r *shortcodes.QueryResult) *shortcodes.QueryResult
 func (p *TemplatePrivacy) ContainsIssued(s string) (string, bool)  // P11
 func (p *TemplatePrivacy) Legend() []TemplatePrivacyLegendEntry    // [{placeholder, value}] in issue order
@@ -347,7 +410,7 @@ The executor config carries the privacy.
 | `list_revisions` | Labels go through `Text`. Everything else is IDs, times and enums. createdAt goes through `Date`. |
 | `get_revision`, `diff_revisions`, `get_template` | Slot content and source are readable, and only that text is added to the corpus. The revision label goes through `Text`, and `createdAt`, in both the full-detail and the field form, goes through `Date`. |
 | `get_partial` | The name and source are readable and are added to the corpus. The description goes through `Text`. |
-| `preview` | Load the entity, then build the MetaContext from `privacy.Entity(entity)`, then apply `privacy.MetaContext`, which P14 makes idempotent. The `[mrql]` executor is wrapped as P15 describes. The carrier-mode preview masks a copy of the carrier, so the P5 vocabulary stays and its Description is masked. Plugins are refused earlier, at the request. |
+| `preview` | Load the entity, then build the MetaContext from `privacy.Entity(entity)`, with no second pass (P14). The `[mrql]` executor is wrapped as P15 describes. The carrier-mode preview masks a copy of the carrier, so the P5 vocabulary stays and its Description is masked. Plugins are refused earlier, at the request. |
 | `lint`, `check_mrql`, `get_shortcode_docs`, `submit` | Readable, and added to the corpus. `submit` adds P11. |
 
 ### Run loop (`template_run.go`)
@@ -410,6 +473,10 @@ the `harness` checks), and the opt-ins live inside the harness-only subtree of
   (`templateGeneration.js`, `templateBundle.js`).
 - The host checks that the server's echoed `privacy.on` matches the box before it
   enables Send.
+
+**Shared status.** The redisclosure "updating" announcement, its failure alert and
+the busy state also move outside the harness-only subtree. Classic mode then
+explains a disabled Send after a failed privacy toggle.
 
 **Cleanup of real values in the browser.**
 
@@ -498,7 +565,15 @@ B starts after A merges, because B's E2E needs A's API.
    - focus kept across a redisclosure;
    - the locked and plugin-disabled explanations exposed through
      `aria-describedby`.
-5. `docs-site/docs/features/custom-templates.md`: a "Privacy mode" subsection
+5. A lifecycle matrix, parameterized over both hosts:
+   - privacy off and reveal on, then Cancel, Escape or Send; the next run is back
+     on with reveal off;
+   - a response superseded while its body is still decoding (a delayed routed
+     body), whose legend is never adopted;
+   - JSON and SSE 403, which clear an earlier legend and transcript;
+   - classic mode with a delayed redisclosure and a failed one, then a successful
+     retry, with the announcements and the Send state checked.
+6. `docs-site/docs/features/custom-templates.md`: a "Privacy mode" subsection
    stating precisely what is and isn't masked, the stand-in date, the lock, and the
    plugin preview restriction.
 
