@@ -13,7 +13,11 @@ import (
 // it never reaches a prompt. A new field fails
 // TestTemplateGenerationInputFieldsAreClassified until it is listed here, so
 // nothing reaches the provider without appearing in the disclosure.
-var templateInputDisclosure = map[string]struct{ section, reason string }{
+var templateInputDisclosure = map[string]struct {
+	section, reason string
+	// harness marks a field only the harness Seed carries.
+	harness bool
+}{
 	"Target":                {reason: "chooses which builder runs; its value is not sent"},
 	"Mode":                  {reason: "chooses the mode rule line; its value is not sent"},
 	"Slot":                  {section: "task"},
@@ -37,6 +41,12 @@ var templateInputDisclosure = map[string]struct{ section, reason string }{
 	"Postgres":              {reason: "chooses the dialect lines of the constant MRQL reference; the generator sets it from its configuration"},
 	"Known":                 {reason: "validates the reply only"},
 	"ValidateMRQL":          {reason: "validates the reply only"},
+	// Harness fields. StartingPoints reaches the harness Seed's
+	// "starting-points" section; the others never reach a prompt.
+	"Run":            {reason: "harness run environment: executor, sink and opt-ins; the Disclosure lists its Tools, caps and opt-ins itself"},
+	"PartialExists":  {reason: "validates the reply only"},
+	"StartingPoints": {section: "starting-points", harness: true},
+	"GenerationMode": {reason: "chooses the harness or classic path; hashed as the Disclosure's Mode"},
 }
 
 func sectionText(sections []PromptSection, key string) string {
@@ -97,6 +107,7 @@ func TestTemplateGenerationInputFieldsAreClassified(t *testing.T) {
 		"BundleSlots":         {bundle, "CustomPreview, CustomPreviewCSS"},
 		"SlotsSelected":       {selected, "set fill to true for every one of them"},
 		"DisplayTypes":        {metaschema, "plugin:sentinel:grid"},
+		"StartingPoints":      {harnessStartingInput(bundle), "SENTINEL-carrier-name"},
 	}
 	for name, c := range templateInputDisclosure {
 		if c.section == "" {
@@ -111,6 +122,10 @@ func TestTemplateGenerationInputFieldsAreClassified(t *testing.T) {
 			continue
 		}
 		sections := buildTemplatePromptSections(v.in, "a request")
+		if c.harness {
+			fields, required, css := templateRunFieldsOf(v.in)
+			sections = buildTemplateRunSections(v.in, "a request", fields, required, css, TemplateHarnessSettings{}.withDefaults())
+		}
 		if !strings.Contains(sectionText(sections, c.section), v.value) {
 			t.Errorf("%s's value %q is not in the %q section", name, v.value, c.section)
 		}
@@ -147,7 +162,7 @@ func TestDisclosedSectionsAreTheProviderRequest(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			provider := &fakeTemplateDraftProvider{response: `{"content":"{}","explanation":"x"}`}
 			gen := NewTemplateGenerator(provider, templateGenConfig())
-			disclosure, err := gen.DiscloseTemplate(in, "make it")
+			disclosure, err := gen.DiscloseTemplate(context.Background(), in, "make it")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -194,7 +209,7 @@ func TestDisclosedSectionsAreTheProviderRequest(t *testing.T) {
 func TestGroundingHashCoversDestinationAndIsStable(t *testing.T) {
 	in := disclosureKinds()["pair"]
 	disclose := func(cfg TemplateGenerationConfig, endpoint string) *TemplateDisclosure {
-		d, err := NewTemplateGenerator(&fakeTemplateDraftProvider{endpoint: endpoint}, cfg).DiscloseTemplate(in, "make it")
+		d, err := NewTemplateGenerator(&fakeTemplateDraftProvider{endpoint: endpoint}, cfg).DiscloseTemplate(context.Background(), in, "make it")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -250,7 +265,7 @@ func TestGroundingHashCoversDestinationAndIsStable(t *testing.T) {
 	}
 	changed := in
 	changed.Samples = []TemplateSample{{"Name": "a", "Meta": map[string]any{"rating": 5}}}
-	c, _ := NewTemplateGenerator(&fakeTemplateDraftProvider{endpoint: deepseek}, base).DiscloseTemplate(changed, "make it")
+	c, _ := NewTemplateGenerator(&fakeTemplateDraftProvider{endpoint: deepseek}, base).DiscloseTemplate(context.Background(), changed, "make it")
 	if c.GroundingHash == hash(base, deepseek) {
 		t.Error("changing a sample did not change the hash")
 	}
@@ -269,7 +284,7 @@ func TestGenerateRefusesAMissingOrStaleGroundingHash(t *testing.T) {
 	in := disclosureKinds()["pair"]
 	provider := &countingTemplateProvider{}
 	gen := NewTemplateGenerator(provider, templateGenConfig())
-	disclosure, err := gen.DiscloseTemplate(in, "make it")
+	disclosure, err := gen.DiscloseTemplate(context.Background(), in, "make it")
 	if err != nil || provider.calls != 0 {
 		t.Fatalf("a dry run must call no provider: err %v, calls %d", err, provider.calls)
 	}
@@ -287,4 +302,12 @@ func TestGenerateRefusesAMissingOrStaleGroundingHash(t *testing.T) {
 	if _, err := gen.GenerateTemplate(context.Background(), in, "make it", disclosure.GroundingHash); err != nil || provider.calls != 1 {
 		t.Fatalf("matching hash: err %v, calls %d", err, provider.calls)
 	}
+}
+
+func harnessStartingInput(in TemplateGenerationInput) TemplateGenerationInput {
+	in.StartingPoints = TemplateStartingPoints{
+		Carrier: TemplateRef{Type: "category", ID: 4, Name: "SENTINEL-carrier-name"},
+		Samples: []TemplateRef{{Type: "resource", ID: 9, Name: "SENTINEL-sample-name"}},
+	}
+	return in
 }

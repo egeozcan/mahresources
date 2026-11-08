@@ -81,7 +81,9 @@ func traversePropertyPath(entity any, path string) (reflect.Value, bool) {
 			return reflect.Value{}, false
 		}
 		f := v.FieldByName(seg)
-		if !f.IsValid() {
+		// An unexported field cannot be read back through Interface(); reaching
+		// one (CreatedAt.wall) used to panic the render.
+		if !f.IsValid() || !f.CanInterface() {
 			return reflect.Value{}, false
 		}
 		v = f

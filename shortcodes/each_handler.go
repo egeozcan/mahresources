@@ -19,6 +19,16 @@ const defaultEachLimit = 100
 // the output by some other handler cannot forge a placeholder.
 var itemSentinelPrefix = "\x00mahitem" + rand.Text() + ":"
 
+// decimalDigits is len(strconv.Itoa(n)) without the allocation.
+func decimalDigits(n int) int {
+	d := 1
+	for n >= 10 {
+		n /= 10
+		d++
+	}
+	return d
+}
+
 func itemSentinel(i int) string { return itemSentinelPrefix + strconv.Itoa(i) + "\x00" }
 
 // RenderEachShortcode expands an [each] block by iterating an array value at the
@@ -38,7 +48,7 @@ func RenderEachShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 		return ""
 	}
 
-	itemBranch, elseBranch := SplitElse(sc.InnerContent)
+	itemBranch, elseBranch := splitElseM(meterFrom(reqCtx), sc.InnerContent)
 
 	renderElse := func() string {
 		if strings.TrimSpace(elseBranch) == "" {
@@ -54,22 +64,33 @@ func RenderEachShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 
 	limit := parseIntAttr(sc.Attrs["limit"], defaultEachLimit)
 
-	marked, items := markItems(itemBranch)
+	m := meterFrom(reqCtx)
+	marked, items := markItems(m, itemBranch)
 
 	var b strings.Builder
 	for i, elem := range arr {
 		if i >= limit {
 			break
 		}
-		values := make([]string, len(items))
-		for j, item := range items {
-			values[j] = stripNUL(renderItemValue(item, elem, i+1))
+		if !m.alive() {
+			return ""
 		}
 		// Once per element, as before: an [mrql] or a plugin shortcode inside
 		// the branch is invoked for every element, and the page query budget
 		// counts it that way.
 		rendered := processWithDepth(reqCtx, marked, ctx, renderer, executor, depth+1)
-		b.WriteString(spliceItems(rendered, values))
+		if m.Err() != nil {
+			return ""
+		}
+		// Values are formatted at their sentinel, one at a time, so a budget
+		// stop precedes the next formatting instead of following a slice of all.
+		spliced, ok := spliceLazy(m, rendered, len(items), func(idx int) string {
+			return stripNUL(renderItemValue(items[idx], elem, i+1))
+		})
+		if !ok {
+			return ""
+		}
+		b.WriteString(spliced)
 	}
 	return b.String()
 }
@@ -91,16 +112,30 @@ func RenderEachShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 // the prefix being per-process, could not be consumed even in principle.
 // Widening this means classifying every block by whether its body is rendered in
 // this pass, which belongs with those handlers rather than here.
-func markItems(branch string) (string, []Shortcode) {
+func markItems(m *renderMeter, branch string) (string, []Shortcode) {
 	// A branch that already contains NUL could otherwise carry sentinel bytes
 	// of its own. Replacing it byte-for-byte keeps every parsed offset valid.
 	if strings.IndexByte(branch, 0) >= 0 {
 		branch = strings.ReplaceAll(branch, "\x00", " ")
 	}
 
-	scs := ParseWithBlocks(branch)
+	scs := parseWithBlocksM(m, branch)
 	if len(scs) == 0 {
 		return branch, nil
+	}
+
+	// The marked source is longer than the branch (a sentinel is longer than
+	// most [item] tokens), so its size is admitted before it is built, and the
+	// item records are reserved with it.
+	size, count := int64(len(branch)), 0
+	for _, sc := range scs {
+		if sc.Name == "item" {
+			size += int64(len(itemSentinelPrefix)+decimalDigits(count)+1) - int64(sc.End-sc.Start)
+			count++
+		}
+	}
+	if m.Err() != nil || !m.admitParsed(size) || !m.chargeScratch(int64(count)*160) {
+		return "", nil
 	}
 
 	var items []Shortcode
@@ -109,6 +144,9 @@ func markItems(branch string) (string, []Shortcode) {
 	for _, sc := range scs {
 		if sc.Name != "item" {
 			continue
+		}
+		if !m.tick() {
+			return "", nil
 		}
 		b.WriteString(branch[lastEnd:sc.Start])
 		b.WriteString(itemSentinel(len(items)))
@@ -128,14 +166,32 @@ func spliceItems(rendered string, values []string) string {
 	if len(values) == 0 {
 		return rendered
 	}
+	out, _ := spliceLazy(nil, rendered, len(values), func(i int) string { return values[i] })
+	return out
+}
+
+// spliceLazy is spliceItems with the value produced on demand by value(idx) for
+// idx < n. Before each value is produced the meter is consulted, and its bytes
+// are reserved before they are appended, so a stop leaves at most one value
+// built. ok is false when the meter stopped the render.
+func spliceLazy(m *renderMeter, rendered string, n int, value func(idx int) string) (string, bool) {
+	if n == 0 {
+		return rendered, true
+	}
 
 	var b strings.Builder
 	b.Grow(len(rendered))
 	for {
 		at := strings.Index(rendered, itemSentinelPrefix)
 		if at < 0 {
+			if !m.chargeOut(int64(len(rendered))) {
+				return "", false
+			}
 			b.WriteString(rendered)
-			return b.String()
+			return b.String(), true
+		}
+		if !m.tick() || !m.chargeOut(int64(at)) {
+			return "", false
 		}
 		b.WriteString(rendered[:at])
 
@@ -144,11 +200,18 @@ func spliceItems(rendered string, values []string) string {
 		if end < 0 {
 			// An opener with no terminator is not a sentinel this pass wrote;
 			// drop the marker bytes and keep what follows verbatim.
+			if !m.chargeOut(int64(len(rest))) {
+				return "", false
+			}
 			b.WriteString(rest)
-			return b.String()
+			return b.String(), true
 		}
-		if idx, err := strconv.Atoi(rest[:end]); err == nil && idx >= 0 && idx < len(values) {
-			b.WriteString(values[idx])
+		if idx, err := strconv.Atoi(rest[:end]); err == nil && idx >= 0 && idx < n {
+			v := value(idx)
+			if !m.chargeOut(int64(len(v))) {
+				return "", false
+			}
+			b.WriteString(v)
 		}
 		rendered = rest[end+1:]
 	}

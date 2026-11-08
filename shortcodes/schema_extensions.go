@@ -1,8 +1,10 @@
 package shortcodes
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -117,6 +119,10 @@ func quoteJoin(values []string, sep string) string {
 
 // MetaSchemaLintOptions carries the per-request facts the lint needs.
 type MetaSchemaLintOptions struct {
+	// Context, when set, cancels the lint. A lint that is cancelled, or whose
+	// schema expands past the work budget, reports one error issue instead of
+	// its warnings.
+	Context context.Context
 	// DisplayTypes are the enabled plugins' x-display values.
 	DisplayTypes []string
 	// DisplayTypesTruncated is true when DisplayTypes is a cut-off list, so
@@ -143,6 +149,11 @@ var (
 // already compile; text that is not a JSON document gives no issues, because
 // the compile step reports that.
 func LintMetaSchema(schema string, opts MetaSchemaLintOptions) []LintIssue {
+	// The cap comes first: TrimSpace on an oversized whitespace-only text would
+	// otherwise be the one linear pass over it.
+	if len(schema) > MaxLintSourceBytes {
+		return lintTooLarge("schema")
+	}
 	if strings.TrimSpace(schema) == "" {
 		return nil
 	}
@@ -150,16 +161,27 @@ func LintMetaSchema(schema string, opts MetaSchemaLintOptions) []LintIssue {
 	if err := json.Unmarshal([]byte(schema), &root); err != nil {
 		return nil
 	}
-	l := &schemaLinter{opts: opts, root: root, refSiblings: refSiblingSemantics(root)}
-	l.walk(root, "#", true)
+	l := &schemaLinter{opts: opts, root: root, refSiblings: refSiblingSemantics(root), w: newSchemaWork(opts.Context)}
+	if l.w.poll() {
+		l.walk(root, "#", true, 0)
+	}
+	if !l.w.poll() {
+		return []LintIssue{{Severity: SeverityError, Message: "The schema is too complex to check: it expands past the lint's work or size allowance, or was cancelled. Simplify the $ref and composition structure."}}
+	}
 	return l.issues
 }
+
+// maxLintWalkDepth bounds the recursion of the ordinary tree walk. Real schemas
+// nest a few levels; the cap only stops a document built to exhaust the stack.
+const maxLintWalkDepth = 128
 
 type schemaLinter struct {
 	opts        MetaSchemaLintOptions
 	root        any
 	refSiblings refSiblingMode
 	issues      []LintIssue
+	w           *schemaWork
+	displaySet  map[string]bool // opts.DisplayTypes as a set, built once
 }
 
 // refSiblingMode says whether keywords next to a $ref apply: not up to
@@ -200,10 +222,38 @@ func composesOthers(obj map[string]any) bool {
 }
 
 func (l *schemaLinter) warn(format string, args ...any) {
+	// Reserve the message's bytes before formatting it: its arguments carry
+	// schema-controlled names and paths, and %q can lengthen them.
+	n := len(format)
+	for _, a := range args {
+		if str, ok := a.(string); ok {
+			n += 4 * len(str)
+		} else {
+			n += 16
+		}
+	}
+	if !l.w.chargeBytes(n) {
+		return
+	}
 	l.issues = append(l.issues, LintIssue{Severity: SeverityWarning, Message: fmt.Sprintf(format, args...)})
 }
 
-func sortedKeys(m map[string]any) []string {
+// childPath builds path+sep+key after reserving its bytes, so a schema-controlled
+// name cannot make the lint allocate paths past the allowance. ok is false once
+// the work is spent.
+func (l *schemaLinter) childPath(path, sep, key string) (string, bool) {
+	if !l.w.chargeBytes(len(path) + len(sep) + len(key)) {
+		return "", false
+	}
+	return path + sep + key, true
+}
+
+// sortedKeys returns m's keys in order, or nil once the work is spent. The
+// count is charged before the slice is allocated.
+func (l *schemaLinter) sortedKeys(m map[string]any) []string {
+	if !l.w.charge(len(m)) {
+		return nil
+	}
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -215,9 +265,16 @@ func sortedKeys(m map[string]any) []string {
 // walk visits a schema node. local is true while the node's effective schema is
 // decided by the path from the root alone: no enclosing composition, reference
 // or definition can add to it.
-func (l *schemaLinter) walk(node any, path string, local bool) {
+func (l *schemaLinter) walk(node any, path string, local bool, depth int) {
 	obj, ok := node.(map[string]any)
 	if !ok {
+		return
+	}
+	if depth > maxLintWalkDepth {
+		l.w.fail()
+		return
+	}
+	if !l.w.charge(1 + len(obj)) {
 		return
 	}
 	if ref, ok := obj["$ref"].(string); ok && !strings.HasPrefix(ref, "#") {
@@ -229,27 +286,61 @@ func (l *schemaLinter) walk(node any, path string, local bool) {
 	}
 	l.lintLabeledEnum(obj, path)
 
-	childLocal := local && !composesOthers(obj) && onlyModelledKeywords(obj)
+	childLocal := local && !composesOthers(obj) && onlyModelledKeywords(l.w, obj)
 	if props, ok := obj["properties"].(map[string]any); ok {
-		for _, key := range sortedKeys(props) {
+		for _, key := range l.sortedKeys(props) {
+			child, ok := l.childPath(path, "/properties/", key)
+			if !ok {
+				return
+			}
 			l.lintPropertyKey(key, path)
-			l.walk(props[key], path+"/properties/"+key, childLocal)
+			l.walk(props[key], child, childLocal, depth+1)
+			if !l.w.ok() {
+				return
+			}
 		}
 	}
 	for _, name := range schemaSchemaMaps {
 		if m, ok := obj[name].(map[string]any); ok {
-			for _, key := range sortedKeys(m) {
-				l.walk(m[key], path+"/"+name+"/"+key, false)
+			for _, key := range l.sortedKeys(m) {
+				child, ok := l.childPath(path, "/"+name+"/", key)
+				if !ok {
+					return
+				}
+				l.walk(m[key], child, false, depth+1)
+				if !l.w.ok() {
+					return
+				}
 			}
 		}
 	}
 	for _, name := range schemaSubschemaKeys {
-		l.walk(obj[name], path+"/"+name, childLocal && !compositionKeys[name])
+		if _, present := obj[name]; !present {
+			continue // no child, no path
+		}
+		child, ok := l.childPath(path, "/", name)
+		if !ok {
+			return
+		}
+		l.walk(obj[name], child, childLocal && !compositionKeys[name], depth+1)
+		if !l.w.ok() {
+			return
+		}
 	}
 	for _, name := range schemaSchemaLists {
 		if list, ok := obj[name].([]any); ok {
+			if !l.w.charge(len(list)) {
+				return
+			}
 			for i, entry := range list {
-				l.walk(entry, path+"/"+name+"/"+strconv.Itoa(i), childLocal && !compositionKeys[name])
+				child, ok := l.childPath(path, "/"+name+"/", strconv.Itoa(i))
+				if !ok {
+					return
+				}
+				l.walk(entry, child, childLocal && !compositionKeys[name], depth+1)
+				if !l.w.ok() {
+					return
+				}
 			}
 		}
 	}
@@ -286,6 +377,9 @@ func (l *schemaLinter) lintPropertyKey(key, path string) {
 func (l *schemaLinter) lintLabeledEnum(obj map[string]any, path string) {
 	entries, ok := obj["oneOf"].([]any)
 	if !ok || len(entries) == 0 {
+		return
+	}
+	if !l.w.charge(len(entries)) {
 		return
 	}
 	complexAt, complexKey := -1, ""
@@ -334,12 +428,26 @@ func (l *schemaLinter) lintDisplay(obj map[string]any, value any, path string, l
 		switch {
 		case !pluginDisplayValue.MatchString(name):
 			l.warn("%s: x-display %q is not of the form plugin:<plugin>:<type>; the value is drawn without it.", path, name)
-		case !l.opts.DisplayTypesTruncated && !containsString(l.opts.DisplayTypes, name):
+		case !l.opts.DisplayTypesTruncated && !l.hasDisplayType(name):
 			l.warn("%s: no enabled plugin provides x-display %q, so the value is drawn without it.", path, name)
 		}
 		return
 	}
 	l.warn("%s: unknown x-display %q suppresses shape detection and applies no renderer, so an object value is drawn as a plain object; use %s, %s or an enabled plugin value.", path, name, builtinNames(), quoteJoin(DisplayOptOutValues, " or "))
+}
+
+// hasDisplayType is a membership test on the enabled plugins' x-display values,
+// over a set built once per lint (and charged when built) instead of a scan of
+// the list for every plugin-valued property.
+func (l *schemaLinter) hasDisplayType(name string) bool {
+	if l.displaySet == nil {
+		l.w.charge(len(l.opts.DisplayTypes))
+		l.displaySet = make(map[string]bool, len(l.opts.DisplayTypes))
+		for _, t := range l.opts.DisplayTypes {
+			l.displaySet[t] = true
+		}
+	}
+	return l.displaySet[name]
 }
 
 func builtinNames() string {
@@ -422,6 +530,9 @@ func (l *schemaLinter) fieldTypeFits(eff *effectiveSchema, key, kind string) boo
 		acceptable = []string{"number", "integer"}
 	}
 	for _, sub := range eff.props[key] {
+		if !l.w.charge(1) {
+			return true // out of work: the walk reports it; do not guess a mismatch
+		}
 		e, ok := l.effective(sub, 0, map[string]bool{})
 		if !ok {
 			return true
@@ -443,28 +554,73 @@ func (l *schemaLinter) fieldTypeFits(eff *effectiveSchema, key, kind string) boo
 
 // effectiveSchema is what the editors' resolveSchema makes of a node for the
 // facts the lint needs: its allOf entries and local $ref targets merged in.
+// Merged declarations are deduplicated (a type list by its text, a property
+// subschema by identity), so repeated references add nothing.
 type effectiveSchema struct {
 	typeLists [][]string // one list per declaration; the value must satisfy each
 	props     map[string][]any
 	required  map[string]bool
+	seenTypes map[string]bool
+	seenProps map[string]map[uintptr]bool
+}
+
+func newEffective() *effectiveSchema {
+	return &effectiveSchema{props: map[string][]any{}, required: map[string]bool{},
+		seenTypes: map[string]bool{}, seenProps: map[string]map[uintptr]bool{}}
+}
+
+func (e *effectiveSchema) addTypes(w *schemaWork, types []string) {
+	if !w.charge(1 + len(types)) {
+		return
+	}
+	key := strings.Join(types, "\x00")
+	if e.seenTypes[key] {
+		return
+	}
+	e.seenTypes[key] = true
+	e.typeLists = append(e.typeLists, types)
+}
+
+func (e *effectiveSchema) addProp(w *schemaWork, k string, v any) {
+	if !w.charge(1) {
+		return
+	}
+	if m, ok := v.(map[string]any); ok {
+		id := reflect.ValueOf(m).Pointer()
+		if e.seenProps[k] == nil {
+			e.seenProps[k] = map[uintptr]bool{}
+		}
+		if e.seenProps[k][id] {
+			return
+		}
+		e.seenProps[k][id] = true
+	}
+	e.props[k] = append(e.props[k], v)
 }
 
 // effective resolves obj through local $ref and allOf. It reports false when
 // the answer is not one schema: anyOf/oneOf alternatives, a ref that is not
-// local or does not resolve, a cycle, or too deep a chain.
+// local or does not resolve, a cycle, too deep a chain, or work spent.
 func (l *schemaLinter) effective(node any, depth int, active map[string]bool) (*effectiveSchema, bool) {
 	obj, ok := node.(map[string]any)
-	if !ok || depth > 12 {
+	if !ok || depth > 12 || !l.w.charge(1+len(obj)) {
 		return nil, false
 	}
-	if !onlyModelledKeywords(obj) {
+	if !onlyModelledKeywords(l.w, obj) {
 		return nil, false
 	}
-	eff := &effectiveSchema{props: map[string][]any{}, required: map[string]bool{}}
+	eff := newEffective()
 	merge := func(sub *effectiveSchema) {
-		eff.typeLists = append(eff.typeLists, sub.typeLists...)
+		for _, t := range sub.typeLists {
+			eff.addTypes(l.w, t)
+		}
 		for k, v := range sub.props {
-			eff.props[k] = append(eff.props[k], v...)
+			for _, e := range v {
+				eff.addProp(l.w, k, e)
+			}
+		}
+		if !l.w.charge(len(sub.required)) {
+			return
 		}
 		for k := range sub.required {
 			eff.required[k] = true
@@ -475,7 +631,7 @@ func (l *schemaLinter) effective(node any, depth int, active map[string]bool) (*
 		if !isString || active[pointer] {
 			return nil, false
 		}
-		target, ok := localRef(l.root, pointer)
+		target, ok := l.localRef(pointer)
 		if !ok {
 			return nil, false
 		}
@@ -489,13 +645,16 @@ func (l *schemaLinter) effective(node any, depth int, active map[string]bool) (*
 		if hasAnyKey(obj, "type", "properties", "required", "allOf") {
 			switch l.refSiblings {
 			case refSiblingsIgnored:
-				return eff, true // up to draft-07 the siblings of $ref do not apply
+				return eff, l.w.ok() // up to draft-07 the siblings of $ref do not apply
 			case refSiblingsUnknown:
 				return nil, false
 			}
 		}
 	}
 	if list, has := obj["allOf"].([]any); has {
+		if !l.w.charge(len(list)) {
+			return nil, false
+		}
 		for _, entry := range list {
 			sub, ok := l.effective(entry, depth+1, active)
 			if !ok {
@@ -506,8 +665,11 @@ func (l *schemaLinter) effective(node any, depth int, active map[string]bool) (*
 	}
 	switch t := obj["type"].(type) {
 	case string:
-		eff.typeLists = append(eff.typeLists, []string{t})
+		eff.addTypes(l.w, []string{t})
 	case []any:
+		if !l.w.charge(len(t)) {
+			return nil, false
+		}
 		var types []string
 		for _, e := range t {
 			if s, ok := e.(string); ok {
@@ -515,22 +677,28 @@ func (l *schemaLinter) effective(node any, depth int, active map[string]bool) (*
 			}
 		}
 		if len(types) > 0 {
-			eff.typeLists = append(eff.typeLists, types)
+			eff.addTypes(l.w, types)
 		}
 	}
 	if props, ok := obj["properties"].(map[string]any); ok {
+		if !l.w.charge(len(props)) {
+			return nil, false
+		}
 		for k, v := range props {
-			eff.props[k] = append(eff.props[k], v)
+			eff.addProp(l.w, k, v)
 		}
 	}
 	if req, ok := obj["required"].([]any); ok {
+		if !l.w.charge(len(req)) {
+			return nil, false
+		}
 		for _, k := range req {
 			if s, ok := k.(string); ok {
 				eff.required[s] = true
 			}
 		}
 	}
-	return eff, true
+	return eff, l.w.ok()
 }
 
 // modelledKeywords are the keywords that cannot change which object shape a
@@ -549,7 +717,10 @@ var modelledKeywords = map[string]bool{
 	"contentMediaType": true, "contentEncoding": true, "minProperties": true, "maxProperties": true,
 }
 
-func onlyModelledKeywords(obj map[string]any) bool {
+func onlyModelledKeywords(w *schemaWork, obj map[string]any) bool {
+	if !w.charge(len(obj)) {
+		return false
+	}
 	for k, v := range obj {
 		switch {
 		case modelledKeywords[k], strings.HasPrefix(k, "x-"):
@@ -564,12 +735,20 @@ func onlyModelledKeywords(obj map[string]any) bool {
 	return true
 }
 
-// localRef follows a "#" or "#/a/b" JSON pointer inside the document.
-func localRef(root any, ref string) (any, bool) {
+// localRef follows a "#" or "#/a/b" JSON pointer inside the document, charging
+// its segments and bytes before they are split and decoded.
+func (l *schemaLinter) localRef(ref string) (any, bool) {
+	return localRef(l.w, l.root, ref)
+}
+
+func localRef(w *schemaWork, root any, ref string) (any, bool) {
 	if ref == "#" {
 		return root, true
 	}
 	if !strings.HasPrefix(ref, "#/") {
+		return nil, false
+	}
+	if !w.charge(1+strings.Count(ref, "/")) || !w.chargeBytes(len(ref)) {
 		return nil, false
 	}
 	node := root

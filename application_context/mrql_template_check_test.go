@@ -1,6 +1,10 @@
 package application_context
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -100,5 +104,44 @@ func TestPluginQueryAttributesKeepTheParseOnlyCheck(t *testing.T) {
 	// The built-in sources keep the full check.
 	if issues := lint(`[mrql query='type = note LIMIT 10001' limit="10001"]`); len(issues) != 1 {
 		t.Errorf("the built-in [mrql] lost its execution check: %+v", issues)
+	}
+}
+
+func TestCheckTemplateMRQLContextBounds(t *testing.T) {
+	env := MRQLStaticEnv{}
+	refs := strings.Repeat("$p, ", 499) + "$p"
+	query := "type = resource AND name IN (" + refs + ")"
+
+	// A 1 MiB parameter used 500 times is checked without 500 decodes.
+	big := `"` + strings.Repeat("x", 1<<20) + `"`
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	_ = CheckTemplateMRQLContext(context.Background(), query, shortcodes.MRQLCheckOptions{Params: map[string]string{"p": big}}, env)
+	runtime.ReadMemStats(&after)
+	if grown := after.TotalAlloc - before.TotalAlloc; grown > 64<<20 {
+		t.Errorf("check allocated %d bytes for one distinct parameter", grown)
+	}
+
+	// Excess parameters give a bounded diagnostic.
+	extra := map[string]string{"p": "x"}
+	for i := 0; i < 300; i++ {
+		extra[fmt.Sprintf("e%d", i)] = "x"
+	}
+	err := CheckTemplateMRQLContext(context.Background(), "type = resource AND name = $p", shortcodes.MRQLCheckOptions{Params: extra}, env)
+	if err == nil || len(err.Error()) > 512 {
+		t.Errorf("excess-parameter error = %v", err)
+	}
+
+	// Cancellation stops it.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := CheckTemplateMRQLContext(ctx, "type = resource AND name = $p", shortcodes.MRQLCheckOptions{Params: map[string]string{"p": "x"}}, env); !errors.Is(err, context.Canceled) {
+		t.Errorf("cancelled check = %v", err)
+	}
+
+	// The old entry point keeps its verdicts.
+	if err := CheckTemplateMRQL("type = resource AND name = $p", shortcodes.MRQLCheckOptions{Params: map[string]string{"p": "x"}}, env); err != nil {
+		t.Errorf("ordinary query refused: %v", err)
 	}
 }

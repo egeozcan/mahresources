@@ -2,12 +2,14 @@ import { blockingModal, refuseOverModal } from '../utils/modality.js';
 import { containFocus, focusFirstAvailable } from '../utils/containFocus.js';
 
 /**
- * The template generation disclosure (decision 11 of
- * docs/plans/2026-10-24-template-generation-quality.md): before a generation
- * request is sent, this dialog lists exactly what goes to the provider, from a
- * dry run of the same request. Send resolves true and the caller sends the
- * request with the disclosure's groundingHash; Cancel and Escape resolve false
- * and nothing is sent.
+ * The template generation disclosure, shown before a generation request is sent,
+ * from a dry run of the same request. A classic disclosure lists exactly what goes
+ * to the provider (decision 11 of docs/plans/2026-10-24-template-generation-quality.md).
+ * A harness disclosure approves the Seed messages, the Tools, the caps, the opt-ins
+ * and the Envelope (everything the account can read); what the Tools return is read
+ * live and shown in the transcript afterwards (docs/adr/0009-generation-runs-approve-an-envelope.md).
+ * Send resolves the approval tuple the caller sends with the
+ * request; Cancel and Escape resolve null and nothing is sent.
  *
  * It follows the confirm dialog's pattern (templates/partials/confirmDialog.tpl):
  * `.overlays`, the confirm overlay's z-index, the rest of the page made inert,
@@ -23,6 +25,15 @@ export function registerGenerationDisclosureStore(Alpine) {
     isOpen: false,
     disclosure: null,
     _resolve: null,
+    _owner: null,
+    _redisclose: null,
+    _seq: 0,
+    _controller: null,
+    _confirmed: { previewMRQL: false, previewPlugins: false },
+    previewMRQL: false,
+    previewPlugins: false,
+    redisclosing: false,
+    redisclosureError: '',
     // Where focus goes back on Cancel: the first of these that can take it.
     _returnTo: [],
     _containment: null,
@@ -59,6 +70,7 @@ export function registerGenerationDisclosureStore(Alpine) {
         `stream: ${t.stream ? 'true' : 'false'}, ${t.responseFormat === 'prompt_json' ? 'JSON requested in prompt' : `response_format: ${t.responseFormat}`}`,
       ];
       if (t.apiVersion) lines.push(`Anthropic-Version: ${t.apiVersion}`);
+      if (t.options) lines.push(`Options: ${t.options}`);
       const deadline = this.disclosure?.destination?.bundleDeadline;
       if (deadline) lines.push(`Whole-template deadline: ${deadline}`);
       return lines;
@@ -72,34 +84,142 @@ export function registerGenerationDisclosureStore(Alpine) {
       return this.disclosure?.sections || [];
     },
 
+    // Send is allowed only when no re-disclosure is in flight or failed: the shown
+    // hash must belong to the opt-ins ticked.
+    get canSend() {
+      return this.isOpen && !this.redisclosing && !this.redisclosureError;
+    },
+
+    // Harness disclosures carry the opt-ins; classic ones render as before.
+    get harness() {
+      return !!this.disclosure?.optIns;
+    },
+
+    get tools() {
+      return this.disclosure?.tools || [];
+    },
+
+    get caps() {
+      return this.disclosure?.caps || null;
+    },
+
+    get envelope() {
+      return this.disclosure?.envelope || '';
+    },
+
+    // Each Tool as the model sees it: name, description and parameter schema, as text.
+    get toolRows() {
+      return this.tools.map((t) => ({
+        name: t.name,
+        description: t.description || '',
+        parameters: t.parameters === undefined ? '' : JSON.stringify(t.parameters, null, 2),
+      }));
+    },
+
+    // The run's limits, one line each, with what the token budget counts.
+    get capLines() {
+      const c = this.caps;
+      if (!c) return [];
+      const lines = [
+        `Turns: up to ${c.maxTurns}`,
+        `Run deadline: ${c.deadline}`,
+        `Token budget: ${c.tokenBudget}${c.budgetNote ? `. ${c.budgetNote}` : ''}`,
+        `Tool calls per Turn: up to ${c.callsPerTurn}`,
+        `Tool timeout: ${c.toolTimeout}; preview timeout: ${c.previewTimeout}`,
+      ];
+      for (const r of c.resultCaps || []) {
+        lines.push(`${r.tool} result: at most ${r.bytes} bytes${r.entries ? `, ${r.entries} entries` : ''}`);
+      }
+      return lines;
+    },
+
     /**
-     * Show `disclosure` and resolve true only if the reader presses Send.
-     * On Cancel focus goes to the first of `returnTo` that can take it (the
-     * Generate button, else its status region, else its prompt); on Send the
-     * caller moves focus, since its Generate button is disabled while the
-     * request runs.
+     * Show `disclosure`. Resolves an immutable { groundingHash, previewMRQL,
+     * previewPlugins } when the reader presses Send, else null (Cancel, Escape,
+     * cancel(owner)). `owner` is the token cancel(owner) matches; `redisclose`
+     * (requested, signal) => Promise<disclosure> repeats the dry run with the
+     * frozen request body when an opt-in is toggled. On Cancel focus goes to the
+     * first of `returnTo` that can take it; on Send the caller moves focus.
      */
-    open(disclosure, returnTo = []) {
-      if (this.isOpen) return Promise.resolve(false);
+    open(disclosure, returnTo = [], { owner = null, redisclose = null } = {}) {
+      if (this.isOpen) return Promise.resolve(null);
       const blocker = blockingModal();
       if (blocker) {
         refuseOverModal(blocker, DISCLOSURE_REFUSED_OVER_DIALOG);
-        return Promise.resolve(false);
+        return Promise.resolve(null);
       }
       this.disclosure = disclosure;
       this._returnTo = Array.isArray(returnTo) ? returnTo : [returnTo];
+      this._owner = owner;
+      this._redisclose = redisclose;
+      this.previewMRQL = !!disclosure?.optIns?.previewMRQL;
+      this.previewPlugins = !!disclosure?.optIns?.previewPlugins;
+      this._confirmed = { previewMRQL: this.previewMRQL, previewPlugins: this.previewPlugins };
+      this.redisclosing = false;
+      this.redisclosureError = '';
       this.isOpen = true;
       return new Promise((resolve) => {
         this._resolve = resolve;
       });
     },
 
-    send() {
-      this._settle(true);
+    // Toggle an opt-in and repeat the dry run. Only the newest request may change
+    // the shown disclosure; older ones are aborted and their answers ignored.
+    setOptIn(name, value) {
+      if (!this.isOpen || !this._redisclose) return;
+      if (name !== 'previewMRQL' && name !== 'previewPlugins') return;
+      this[name] = !!value;
+      const seq = ++this._seq;
+      this._controller?.abort();
+      const controller = new AbortController();
+      this._controller = controller;
+      const requested = { previewMRQL: this.previewMRQL, previewPlugins: this.previewPlugins };
+      this.redisclosing = true;
+      this.redisclosureError = '';
+      const stale = () => seq !== this._seq || !this.isOpen;
+      let request;
+      try {
+        request = Promise.resolve(this._redisclose(requested, controller.signal));
+      } catch (err) {
+        request = Promise.reject(err);
+      }
+      request
+        .then((next) => {
+          if (stale()) return;
+          if (!next?.groundingHash) throw new Error('The server returned no disclosure.');
+          const echoed = next.optIns;
+          if (echoed && (!!echoed.previewMRQL !== requested.previewMRQL || !!echoed.previewPlugins !== requested.previewPlugins)) {
+            throw new Error('The server did not apply the options you chose.');
+          }
+          this.disclosure = next;
+          this._confirmed = requested;
+          this.redisclosing = false;
+        })
+        .catch((err) => {
+          if (stale()) return;
+          this.redisclosing = false;
+          this.redisclosureError = err?.message || 'Could not update what will be sent.';
+        });
     },
 
-    cancel() {
-      this._settle(false);
+    send() {
+      if (!this.canSend) return;
+      this._settle(Object.freeze({
+        groundingHash: this.disclosure.groundingHash,
+        previewMRQL: this._confirmed.previewMRQL,
+        previewPlugins: this._confirmed.previewPlugins,
+      }));
+    },
+
+    // The dialog's own Cancel and Escape.
+    dismiss() {
+      this._settle(null);
+    },
+
+    // A host tearing down or superseding its run: settles only the review it opened.
+    cancel(owner) {
+      if (owner == null || owner !== this._owner) return;
+      this._settle(null);
     },
 
     _settle(value) {
@@ -109,6 +229,13 @@ export function registerGenerationDisclosureStore(Alpine) {
       this.isOpen = false;
       this._resolve = null;
       this._returnTo = [];
+      this._owner = null;
+      this._redisclose = null;
+      this._seq++;
+      this._controller?.abort();
+      this._controller = null;
+      this.redisclosing = false;
+      this.redisclosureError = '';
       this._containment?.stop();
       this._containment = null;
       this._releaseInert();
@@ -144,7 +271,14 @@ export function registerGenerationDisclosureStore(Alpine) {
       this._applyInert(dialogRoot);
       this._containment?.stop();
       this._containment = containFocus(dialogRoot);
-      dialogRoot.querySelector('[autofocus]')?.focus();
+      const first = dialogRoot.querySelector('[autofocus]');
+      first?.focus();
+      // On a very short viewport the whole panel scrolls (see the dialog template), and
+      // focus alone does not always bring a button at its end into view.
+      // The panel's own sections render after this runs, so wait for them to lay out.
+      setTimeout(() => {
+        if (this.isOpen && first && document.activeElement === first) first.scrollIntoView?.({ block: 'nearest' });
+      }, 0);
     },
 
     _releaseInert() {
@@ -155,16 +289,21 @@ export function registerGenerationDisclosureStore(Alpine) {
 }
 
 /**
- * Ask the reader to approve a disclosure, from a plain module. Fails closed:
- * without the store nothing is sent.
+ * Ask the reader to approve a disclosure, from a plain module. Resolves the
+ * approval tuple or null. Fails closed: without the store nothing is sent.
  */
-export function reviewDisclosure(disclosure, returnTo) {
+export function reviewDisclosure(disclosure, returnTo, options = {}) {
   const store = globalThis.Alpine?.store('generationDisclosure');
   if (!store) {
     console.error('generationDisclosure store is not registered; refusing to send');
-    return Promise.resolve(false);
+    return Promise.resolve(null);
   }
-  return store.open(disclosure, returnTo);
+  return store.open(disclosure, returnTo, options);
+}
+
+/** Settle the review `owner` opened, if it is still the open one. */
+export function cancelReview(owner) {
+  globalThis.Alpine?.store('generationDisclosure')?.cancel(owner);
 }
 
 /** One macrotask, so a dialog's x-trap has released and its subtree is gone. */

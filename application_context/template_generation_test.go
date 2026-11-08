@@ -927,7 +927,7 @@ func TestTemplateGeneratorOversizeIsInvalidAndUnsliced(t *testing.T) {
 // disclosedGenerate runs a generation the way the handler does: a dry run for
 // the disclosure, then the request carrying its groundingHash.
 func disclosedGenerate(gen TemplateGenerator, in TemplateGenerationInput, prompt string) (*TemplateGenerationResult, error) {
-	disclosure, err := gen.DiscloseTemplate(in, prompt)
+	disclosure, err := gen.DiscloseTemplate(context.Background(), in, prompt)
 	if err != nil {
 		return nil, err
 	}

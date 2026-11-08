@@ -644,7 +644,7 @@ Conditionally renders content based on a metadata value, entity field, or query 
 | `lte` | No | -- | True when numeric value is less than or equal to this |
 | `in` | No | -- | True when value equals one of a comma-separated list (e.g. `in="a,b,c"`) |
 | `contains` | No | -- | True when value contains this substring |
-| `matches` | No | -- | True when value matches this Go regular expression. An invalid pattern evaluates to false |
+| `matches` | No | -- | True when value matches this Go regular expression. An invalid pattern, or one past the regular expression allowance, evaluates to false |
 | `empty` | No | -- | True when value is nil or empty string. Write `empty="true"`; the value is ignored, so `empty="false"` does not negate it |
 | `not-empty` | No | -- | True when value is non-nil and non-empty. Write `not-empty="true"`; the value is ignored. An empty array counts as non-empty, so use `[each]`'s `[else]` for an empty list |
 | `combine` | No | `all` | How to fold multiple operators and numbered-suffix conditions: `all` (AND) or `any` (OR) |
@@ -755,7 +755,7 @@ More operators, one per use:
 [/conditional]
 ```
 
-`matches` takes a Go regular expression. An invalid pattern is false, so a typo quietly hides the block; test the pattern on a real value. The last example uses `combine="any"` to show the block when either condition is true. Without it, both must hold.
+`matches` takes a Go regular expression. An invalid pattern is false, so a typo quietly hides the block; test the pattern on a real value. A pattern is also false when it is past the regular expression allowance: at most 32 KiB of pattern text, 20,000 compiled instructions and 100,000 character-class runes for one pattern (a Unicode class such as `\pL` counts as about 1,300), and 200,000 instructions, 2,000,000 runes and 4 MiB of pattern text for all the patterns of one render together. Each distinct pattern is counted once per render. The editor lint reports such a pattern as an error. The last example uses `combine="any"` to show the block when either condition is true. Without it, both must hold.
 
 ### Conditions from a query
 

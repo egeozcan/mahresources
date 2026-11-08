@@ -231,6 +231,11 @@ type SettingsContext interface {
 type TemplateGenerationContext interface {
 	TemplatePreviewContext
 	TemplateGenerator() application_context.TemplateGenerator
+	PrepareTemplateGeneration() (application_context.TemplateGenerationPrep, error)
+	// WithParentContext rebases the context's queries onto parent, keeping its
+	// scope and acting user, so a harness run's grounding reads end with the
+	// request.
+	WithParentContext(parent context.Context) *application_context.MahresourcesContext
 	TemplateGenerationRateLimiter() *application_context.MRQLGenerationRateLimiter
 	TemplateDisclosureRateLimiter() *application_context.MRQLGenerationRateLimiter
 	GetGroups(offset, maxResults int, query *query_models.GroupQuery) ([]models.Group, error)

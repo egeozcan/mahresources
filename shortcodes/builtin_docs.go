@@ -174,7 +174,7 @@ func BuiltinDocs() []BuiltinDoc {
 				{Name: "lte", Type: "number", Required: false, Description: "Condition: value is less than or equal to this."},
 				{Name: "in", Type: "string", Required: false, Description: `Condition: value equals one of a comma-separated list, e.g. in="a,b,c".`},
 				{Name: "contains", Type: "string", Required: false, Description: "Condition: value contains this substring."},
-				{Name: "matches", Type: "string", Required: false, Description: "Condition: value matches this Go regular expression. An invalid pattern evaluates to false."},
+				{Name: "matches", Type: "string", Required: false, Description: "Condition: value matches this Go regular expression. An invalid pattern, or one past the regular expression allowance, evaluates to false."},
 				{Name: "empty", Type: "boolean", Required: false, Description: `Condition: value is empty or missing. Write empty="true".`, Enum: []string{"true"}},
 				{Name: "not-empty", Type: "boolean", Required: false, Description: `Condition: value is present and non-empty. Write not-empty="true".`, Enum: []string{"true"}},
 				{Name: "combine", Type: "enum", Default: "all", Description: "How to fold multiple operators and numbered-suffix conditions: all (AND) or any (OR).", Enum: []string{"all", "any"}},

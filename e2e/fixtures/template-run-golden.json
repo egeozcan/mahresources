@@ -1,0 +1,619 @@
+{
+  "disclosure": {
+    "caps": {
+      "budgetNote": "No new Turn starts when it could exceed the budget; a Turn's actual use can exceed its estimate.",
+      "callsPerTurn": 6,
+      "deadline": "1m0s",
+      "maxTurns": 5,
+      "previewTimeout": "20s",
+      "resultCaps": [
+        {
+          "bytes": 8192,
+          "tool": "get_entity"
+        },
+        {
+          "bytes": 16384,
+          "entries": 50,
+          "tool": "list_related"
+        },
+        {
+          "bytes": 32768,
+          "tool": "get_template"
+        },
+        {
+          "bytes": 16384,
+          "entries": 50,
+          "tool": "list_carriers"
+        },
+        {
+          "bytes": 16384,
+          "entries": 50,
+          "tool": "list_members"
+        },
+        {
+          "bytes": 16384,
+          "entries": 50,
+          "tool": "list_revisions"
+        },
+        {
+          "bytes": 32768,
+          "tool": "get_revision"
+        },
+        {
+          "bytes": 32768,
+          "tool": "diff_revisions"
+        },
+        {
+          "bytes": 8192,
+          "tool": "lint"
+        },
+        {
+          "bytes": 4096,
+          "tool": "check_mrql"
+        },
+        {
+          "bytes": 16384,
+          "tool": "preview"
+        },
+        {
+          "bytes": 32768,
+          "tool": "get_partial"
+        },
+        {
+          "bytes": 16384,
+          "tool": "get_shortcode_docs"
+        },
+        {
+          "bytes": 8192,
+          "tool": "submit"
+        }
+      ],
+      "tokenBudget": 400000,
+      "toolTimeout": "10s"
+    },
+    "continuationRule": {
+      "text": "Tool results may carry any data your account can read through the Tools and opt-ins shown. Every message sent is listed  [cut for the fixture]",
+      "version": 3
+    },
+    "destination": {
+      "endpoint": "https://api.example.test/v1/chat/completions",
+      "host": "api.example.test",
+      "profiles": [
+        {
+          "kind": "pair",
+          "maxCalls": 5,
+          "maxTokens": 4000,
+          "model": "deepseek-flash",
+          "thinking": false,
+          "timeout": "5s"
+        }
+      ],
+      "provider": "fake"
+    },
+    "envelope": "During this run the Tools read live data as everything, and can reach everything that account can read, no more. Values are read when a Tool runs, not when you approve. Previews do not run [mrql]; each renders an inert placeholder. Previews do not run plugin shortcodes; each renders a placeholder.",
+    "groundingHash": "hash-golden",
+    "mode": "harness",
+    "optIns": {
+      "previewMRQL": false,
+      "previewPlugins": false
+    },
+    "sections": [
+      {
+        "bytes": 142,
+        "call": 0,
+        "constant": true,
+        "key": "system",
+        "label": "System prompt",
+        "role": "system",
+        "text": "You author Mahresources category templates: HTML sections with shortcodes, and their CSS. You work in Turns. In each Tur [cut for the fixture]"
+      },
+      {
+        "bytes": 142,
+        "call": 0,
+        "constant": true,
+        "key": "rules",
+        "label": "Authoring rules",
+        "role": "user",
+        "text": "Reference: everything from here to the \"End of reference\" line is the same for every template request. The shortcode doc [cut for the fixture]"
+      },
+      {
+        "bytes": 142,
+        "call": 0,
+        "constant": true,
+        "key": "shortcodes",
+        "label": "Shortcode reference",
+        "role": "user",
+        "text": "Shortcode reference:\n\u003c\u003c\u003cBEGIN shortcode reference\u003e\u003e\u003e\n- [meta path=\"...\"] (block form: no)\n  Description: Renders a value [cut for the fixture]"
+      },
+      {
+        "bytes": 142,
+        "call": 0,
+        "constant": true,
+        "key": "mrql",
+        "label": "MRQL reference",
+        "role": "user",
+        "text": "MRQL reference, for the queries in [mrql query=\"...\"] and [conditional mrql=\"...\"]:\n\u003c\u003c\u003cBEGIN MRQL reference\u003e\u003e\u003e\nClause or [cut for the fixture]"
+      },
+      {
+        "bytes": 88,
+        "call": 0,
+        "constant": false,
+        "key": "partials",
+        "label": "Template partials",
+        "role": "user",
+        "text": "No template partials were listed; verify a name with get_partial before using [partial]."
+      },
+      {
+        "bytes": 52,
+        "call": 0,
+        "constant": true,
+        "key": "reference-end",
+        "label": "End of reference",
+        "role": "user",
+        "text": "End of reference. The request-specific part follows."
+      },
+      {
+        "bytes": 142,
+        "call": 0,
+        "constant": true,
+        "key": "harness",
+        "label": "How this run works",
+        "role": "user",
+        "text": "How this run works: you have up to 5 Turns, a deadline of 1m0s and a budget of 400000 tokens. Each Turn you may call up  [cut for the fixture]"
+      },
+      {
+        "bytes": 142,
+        "call": 0,
+        "constant": true,
+        "key": "carrier",
+        "label": "Carrier runtime",
+        "role": "user",
+        "text": "This request is for a group template.\nAlpine.js directives and the outer `entity` variable work in these slots: CustomHe [cut for the fixture]"
+      },
+      {
+        "bytes": 142,
+        "call": 0,
+        "constant": false,
+        "key": "layout",
+        "label": "Detail page layout",
+        "role": "user",
+        "text": "Built-in sections of the group detail page, from the category's Section Config:\n\u003c\u003c\u003cBEGIN section layout\u003e\u003e\u003e\nshown: breadc [cut for the fixture]"
+      },
+      {
+        "bytes": 100,
+        "call": 0,
+        "constant": false,
+        "key": "schema",
+        "label": "Metadata schema",
+        "role": "user",
+        "text": "No metadata JSON Schema is defined for this category; avoid [meta] paths unless the user names them."
+      },
+      {
+        "bytes": 142,
+        "call": 0,
+        "constant": false,
+        "key": "starting-points",
+        "label": "Starting points",
+        "role": "user",
+        "text": "Starting points you can open with get_entity or get_template:\n\u003c\u003c\u003cBEGIN starting points\u003e\u003e\u003e\nEdited carrier: none (this is  [cut for the fixture]"
+      },
+      {
+        "bytes": 22,
+        "call": 0,
+        "constant": false,
+        "key": "request",
+        "label": "Your request",
+        "role": "user",
+        "text": "User request: a header"
+      },
+      {
+        "bytes": 142,
+        "call": 0,
+        "constant": true,
+        "key": "task",
+        "label": "Task",
+        "role": "user",
+        "text": "Task: write these fields and submit every one of them (a missing one is reported as a warning): CustomHeader, CustomHead [cut for the fixture]"
+      },
+      {
+        "bytes": 51,
+        "call": 0,
+        "constant": false,
+        "key": "current",
+        "label": "Current content",
+        "role": "user",
+        "text": "This requested slots (JSON map) is currently empty."
+      }
+    ],
+    "tools": [
+      {
+        "description": "Read one group, resource or note as the sample projection with its full Meta, plus the id and name of its carrier (category, resource category or note type).",
+        "name": "get_entity",
+        "parameters": {
+          "properties": {
+            "id": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": {
+              "enum": [
+                "group",
+                "resource",
+                "note"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id"
+          ],
+          "type": "object"
+        }
+      },
+      {
+        "description": "List entities related to one entity: up (owners), down (owned) or across (links). Returns at most 50 entries per page.",
+        "name": "list_related",
+        "parameters": {
+          "properties": {
+            "direction": {
+              "enum": [
+                "up",
+                "down",
+                "across"
+              ],
+              "type": "string"
+            },
+            "id": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "kind": {
+              "description": "Only entries of this entity type.",
+              "enum": [
+                "group",
+                "resource",
+                "note"
+              ],
+              "type": "string"
+            },
+            "offset": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "enum": [
+                "group",
+                "resource",
+                "note"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "direction"
+          ],
+          "type": "object"
+        }
+      },
+      {
+        "description": "Read a carrier's saved template slots, MetaSchema and SectionConfig. Name fields to read only those.",
+        "name": "get_template",
+        "parameters": {
+          "properties": {
+            "carrierType": {
+              "enum": [
+                "category",
+                "resourceCategory",
+                "noteType"
+              ],
+              "type": "string"
+            },
+            "fields": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "id": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "carrierType",
+            "id"
+          ],
+          "type": "object"
+        }
+      },
+      {
+        "description": "Find carriers (categories, resource categories or note types) by name. Returns id, name and description, at most 50 per page.",
+        "name": "list_carriers",
+        "parameters": {
+          "properties": {
+            "carrierType": {
+              "enum": [
+                "category",
+                "resourceCategory",
+                "noteType"
+              ],
+              "type": "string"
+            },
+            "nameQuery": {
+              "type": "string"
+            },
+            "offset": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "carrierType"
+          ],
+          "type": "object"
+        }
+      },
+      {
+        "description": "List the entities that use a carrier, newest first, as type, id and name. At most 50 per page.",
+        "name": "list_members",
+        "parameters": {
+          "properties": {
+            "carrierType": {
+              "enum": [
+                "category",
+                "resourceCategory",
+                "noteType"
+              ],
+              "type": "string"
+            },
+            "id": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "offset": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "carrierType",
+            "id"
+          ],
+          "type": "object"
+        }
+      },
+      {
+        "description": "List a carrier's template revisions, newest first, with more=true when another page exists. Defaults to the carrier being edited. Needs edit rights to that carrier.",
+        "name": "list_revisions",
+        "parameters": {
+          "properties": {
+            "carrierType": {
+              "enum": [
+                "category",
+                "resourceCategory",
+                "noteType"
+              ],
+              "type": "string"
+            },
+            "id": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "offset": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        }
+      },
+      {
+        "description": "Read one template revision by number, optionally one field of it. Defaults to the carrier being edited. Needs edit rights to that carrier.",
+        "name": "get_revision",
+        "parameters": {
+          "properties": {
+            "carrierType": {
+              "enum": [
+                "category",
+                "resourceCategory",
+                "noteType"
+              ],
+              "type": "string"
+            },
+            "field": {
+              "description": "A template field name, e.g. CustomHeader, CustomCSS or MetaSchema.",
+              "type": "string"
+            },
+            "id": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "number": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "number"
+          ],
+          "type": "object"
+        }
+      },
+      {
+        "description": "Diff two template revisions, grouped by slot. 'to' defaults to the newest. Defaults to the carrier being edited. Needs edit rights to that carrier.",
+        "name": "diff_revisions",
+        "parameters": {
+          "properties": {
+            "carrierType": {
+              "enum": [
+                "category",
+                "resourceCategory",
+                "noteType"
+              ],
+              "type": "string"
+            },
+            "from": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "id": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "to": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "from"
+          ],
+          "type": "object"
+        }
+      },
+      {
+        "description": "Lint a template field (or a MetaSchema) and return its issues. Omit content to lint your latest submission, else the editor value.",
+        "name": "lint",
+        "parameters": {
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "field": {
+              "description": "A template field name, e.g. CustomHeader, CustomCSS or MetaSchema.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "field"
+          ],
+          "type": "object"
+        }
+      },
+      {
+        "description": "Check an MRQL query statically without running it, optionally with parameters, a row limit and bucket count.",
+        "name": "check_mrql",
+        "parameters": {
+          "properties": {
+            "buckets": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "limit": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "params": {
+              "type": "object"
+            },
+            "query": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        }
+      },
+      {
+        "description": "Render a template field against a real entity and return the HTML text and CSS text. Omit content or css to use your latest submission, else the editor value.",
+        "name": "preview",
+        "parameters": {
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "css": {
+              "type": "string"
+            },
+            "entityId": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "entityType": {
+              "enum": [
+                "group",
+                "resource",
+                "note"
+              ],
+              "type": "string"
+            },
+            "field": {
+              "description": "A template field name, e.g. CustomHeader, CustomCSS or MetaSchema.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "field"
+          ],
+          "type": "object"
+        }
+      },
+      {
+        "description": "Read a template partial's description and source by name.",
+        "name": "get_partial",
+        "parameters": {
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        }
+      },
+      {
+        "description": "Read the full documentation entry of a built-in or plugin shortcode by name.",
+        "name": "get_shortcode_docs",
+        "parameters": {
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        }
+      },
+      {
+        "description": "Submit a draft: a map of field name to content, with an optional explanation. Each field is linted and the result returned. The last submission of each field is kept. Submit early and in parts. Set done=true when finished.",
+        "name": "submit",
+        "parameters": {
+          "properties": {
+            "done": {
+              "type": "boolean"
+            },
+            "explanation": {
+              "type": "string"
+            },
+            "fields": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "fields"
+          ],
+          "type": "object"
+        }
+      }
+    ],
+    "transport": {
+      "authorization": "Bearer (your API key, not shown)",
+      "contentType": "application/json",
+      "responseFormat": "tools",
+      "stream": false
+    }
+  },
+  "stream": "event: run\ndata: {\"deadline\":\"1m0s\",\"maxTurns\":5,\"runId\":\"run-golden\",\"tokenBudget\":400000}\n\nevent: turn\ndata: {\"finalReason\":\"\",\"maxTurns\":5,\"turn\":1}\n\nevent: usage\ndata: {\"budgetMax\":400000,\"budgetUsed\":1050,\"turn\":1}\n\nevent: tool\ndata: {\"args\":{},\"bytes\":3087,\"isError\":false,\"name\":\"get_shortcode_docs\",\"turn\":1}\n\nevent: tool\ndata: {\"args\":{\"field\":\"CustomHeader\"},\"bytes\":102,\"isError\":false,\"name\":\"lint\",\"turn\":1}\n\nevent: turn\ndata: {\"finalReason\":\"\",\"maxTurns\":5,\"turn\":2}\n\nevent: usage\ndata: {\"budgetMax\":400000,\"budgetUsed\":3100,\"turn\":2}\n\nevent: submission\ndata: {\"errors\":0,\"field\":\"CustomHeader\",\"turn\":2,\"warnings\":0}\n\nevent: submission\ndata: {\"errors\":0,\"field\":\"CustomHeaderCSS\",\"turn\":2,\"warnings\":0}\n\nevent: tool\ndata: {\"args\":{},\"bytes\":267,\"isError\":false,\"name\":\"submit\",\"turn\":2}\n\nevent: result\ndata: {\"explanation\":\"\",\"slots\":{\"CustomHeader\":\"\u003ch1 class=\\\"gold\\\"\u003e[property path=\\\"Name\\\"]\u003c/h1\u003e\",\"CustomHeaderCSS\":\".gold{color:goldenrod}\"},\"stopReason\":\"done\",\"submitted\":[\"CustomHeader\",\"CustomHeaderCSS\"],\"target\":\"bundle\",\"transcript\":[{\"bytes\":142,\"kind\":\"seed\",\"sent\":true,\"text\":\"You author Mahresources category templates: HTML sections with shortcodes, and their CSS. You work in Turns. In each Tur [cut for the fixture]\",\"turn\":1},{\"bytes\":142,\"kind\":\"seed\",\"sent\":true,\"text\":\"Reference: everything from here to the \\\"End of reference\\\" line is the same for every template request. The shortcode doc [cut for the fixture]\",\"turn\":1},{\"calls\":[{\"arguments\":\"{\\\"name\\\":\\\"meta\\\"}\",\"id\":\"c1\",\"name\":\"get_shortcode_docs\"},{\"arguments\":\"{\\\"content\\\":\\\"\\\\u003ch1 class=\\\\\\\"gold\\\\\\\"\\\\u003e[property path=\\\\\\\"Name\\\\\\\"]\\\\u003c/h1\\\\u003e\\\",\\\"field\\\":\\\"CustomHeader\\\"}\",\"id\":\"c2\",\"name\":\"lint\"}],\"kind\":\"assistant\",\"replay\":{\"role\":\"assistant\"},\"replayText\":\"{\\\"role\\\":\\\"assistant\\\"}\",\"sent\":true,\"turn\":1,\"usage\":{\"cacheHit\":0,\"cacheMiss\":1000,\"completion\":50,\"prompt\":1000}},{\"bytes\":142,\"callId\":\"c1\",\"kind\":\"tool_result\",\"sent\":true,\"text\":\"\u003c\u003c\u003cBEGIN tool get_shortcode_docs\u003e\u003e\u003e\\n- [meta path=\\\"...\\\"] (block form: no)\\n  Description: Renders a value from the entity' [cut for the fixture]\",\"turn\":1},{\"bytes\":102,\"callId\":\"c2\",\"kind\":\"tool_result\",\"sent\":true,\"text\":\"\u003c\u003c\u003cBEGIN tool lint\u003e\u003e\u003e\\n{\\\"errors\\\":0,\\\"field\\\":\\\"CustomHeader\\\",\\\"issues\\\":[],\\\"warnings\\\":0}\\n\u003c\u003c\u003cEND tool lint\u003e\u003e\u003e\",\"turn\":1},{\"calls\":[{\"arguments\":\"{\\\"done\\\":true,\\\"fields\\\":{\\\"CustomHeader\\\":\\\"\\\\u003ch1 class=\\\\\\\"gold\\\\\\\"\\\\u003e[property path=\\\\\\\"Name\\\\\\\"]\\\\u003c/h1\\\\u003e\\\",\\\"CustomHeaderCSS\\\":\\\".gold{color:goldenrod}\\\"}}\",\"id\":\"s1\",\"name\":\"submit\"}],\"kind\":\"assistant\",\"replay\":{\"role\":\"assistant\"},\"replayText\":\"{\\\"role\\\":\\\"assistant\\\"}\",\"sent\":true,\"turn\":2,\"usage\":{\"cacheHit\":0,\"cacheMiss\":2000,\"completion\":50,\"prompt\":2000}},{\"bytes\":142,\"callId\":\"s1\",\"kind\":\"tool_result\",\"sent\":false,\"text\":\"\u003c\u003c\u003cBEGIN submit result\u003e\u003e\u003e\\n{\\\"submitted\\\":[\\\"CustomHeader\\\",\\\"CustomHeaderCSS\\\"],\\\"fields\\\":{\\\"CustomHeader\\\":{\\\"errors\\\":0,\\\"warnings [cut for the fixture]\",\"turn\":2}],\"valid\":true}\n\n"
+}

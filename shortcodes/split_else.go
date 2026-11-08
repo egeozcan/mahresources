@@ -2,6 +2,7 @@ package shortcodes
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -27,8 +28,12 @@ type Branch struct {
 // blockInnerSpans returns the [start,end) inner-content byte ranges of every
 // top-level block shortcode in content. Dividers ([else]/[elseif]) that fall
 // inside one of these ranges belong to a nested block and must be skipped.
-func blockInnerSpans(content string) [][2]int {
-	blocks := ParseWithBlocks(content)
+func blockInnerSpans(content string) [][2]int { return blockInnerSpansM(nil, content) }
+
+// blockInnerSpansM is blockInnerSpans under a meter: the body is re-parsed
+// through the same token and attribute admission as the render itself.
+func blockInnerSpansM(m *renderMeter, content string) [][2]int {
+	blocks := parseWithBlocksM(m, content)
 	var spans [][2]int
 	for _, b := range blocks {
 		if !b.IsBlock {
@@ -45,6 +50,14 @@ func blockInnerSpans(content string) [][2]int {
 	return spans
 }
 
+// insideSortedSpans is insideSpans for spans that are sorted and disjoint, as
+// blockInnerSpans returns them (top-level blocks, in order): a binary search
+// instead of a scan, so a divider search over a long body is not spans x bytes.
+func insideSortedSpans(i int, spans [][2]int) bool {
+	k := sort.Search(len(spans), func(k int) bool { return spans[k][1] > i })
+	return k < len(spans) && i >= spans[k][0]
+}
+
 // insideSpans reports whether byte offset i falls within any of the given spans.
 func insideSpans(i int, spans [][2]int) bool {
 	for _, s := range spans {
@@ -58,10 +71,15 @@ func insideSpans(i int, spans [][2]int) bool {
 // SplitElse splits content on the first top-level [else] tag.
 // [else] tags nested inside block shortcodes are ignored.
 // Returns (ifBranch, elseBranch). If no top-level [else] is found, elseBranch is empty.
-func SplitElse(content string) (string, string) {
-	spans := blockInnerSpans(content)
+func SplitElse(content string) (string, string) { return splitElseM(nil, content) }
+
+func splitElseM(m *renderMeter, content string) (string, string) {
+	spans := blockInnerSpansM(m, content)
 	for i := 0; i < len(content); i++ {
-		if content[i] == '[' && strings.HasPrefix(content[i:], elseTag) && !insideSpans(i, spans) {
+		if i&0x3ff == 0 && !m.alive() {
+			return content, ""
+		}
+		if content[i] == '[' && strings.HasPrefix(content[i:], elseTag) && !insideSortedSpans(i, spans) {
 			return content[:i], content[i+len(elseTag):]
 		}
 	}
@@ -73,19 +91,33 @@ func SplitElse(content string) (string, string) {
 // block shortcodes (mirroring SplitElse). The first branch is always the "if"
 // arm (nil Attrs); RenderConditionalShortcode guards it with the opening tag's
 // attributes. First matching branch renders.
-func SplitBranches(content string) []Branch {
-	spans := blockInnerSpans(content)
+func SplitBranches(content string) []Branch { return splitBranchesM(nil, content) }
+
+// splitBranchesM is SplitBranches under a meter. [elseif] is a divider, not a
+// token, so its attribute maps are outside the ordinary token collection: each
+// is parsed with the aggregate attribute reservation, and a stop ends the split.
+func splitBranchesM(m *renderMeter, content string) []Branch {
+	spans := blockInnerSpansM(m, content)
 
 	var branches []Branch
 	current := Branch{}
 	segStart := 0
+	if m.Err() != nil {
+		return nil
+	}
 
 	for i := 0; i < len(content); {
-		if content[i] != '[' || insideSpans(i, spans) {
+		if !m.tick() {
+			return branches
+		}
+		if content[i] != '[' || insideSortedSpans(i, spans) {
 			i++
 			continue
 		}
 		if strings.HasPrefix(content[i:], elseTag) {
+			if !m.reserveDividers(1) {
+				return branches
+			}
 			current.Content = content[segStart:i]
 			branches = append(branches, current)
 			segStart = i + len(elseTag)
@@ -93,15 +125,29 @@ func SplitBranches(content string) []Branch {
 			i = segStart
 			continue
 		}
-		if m := elseifDividerPattern.FindStringSubmatchIndex(content[i:]); m != nil {
+		if loc := elseifDividerPattern.FindStringSubmatchIndex(content[i:]); loc != nil {
+			// The record and its (possibly empty) attribute map count before
+			// they are built.
+			if !m.reserveDividers(1) {
+				return branches
+			}
 			attrStr := ""
-			if m[2] >= 0 {
-				attrStr = content[i+m[2] : i+m[3]]
+			if loc[2] >= 0 {
+				attrStr = content[i+loc[2] : i+loc[3]]
 			}
 			current.Content = content[segStart:i]
 			branches = append(branches, current)
-			segStart = i + m[1]
-			current = Branch{Attrs: parseAttrs(strings.TrimSpace(attrStr))}
+			segStart = i + loc[1]
+			attrCap := -1
+			if m.limited() {
+				attrCap = budgetedAttrCap
+			}
+			attrs, over := parseAttrsReserve(strings.TrimSpace(attrStr), attrCap, m.reserveAttrs)
+			if over {
+				m.fail("more than %d attributes on one [elseif], or past the aggregate allowance", attrCap)
+				return branches
+			}
+			current = Branch{Attrs: attrs}
 			i = segStart
 			continue
 		}
@@ -115,22 +161,36 @@ func SplitBranches(content string) []Branch {
 
 // branchDividerSpans returns the [start,end) offsets of the top-level [else]
 // and [elseif …] dividers SplitBranches splits on.
-func branchDividerSpans(content string) [][2]int {
-	spans := blockInnerSpans(content)
+func branchDividerSpans(content string) [][2]int { return branchDividerSpansM(nil, content) }
+
+func branchDividerSpansM(m *renderMeter, content string) [][2]int {
+	spans := blockInnerSpansM(m, content)
 	var out [][2]int
+	if m.Err() != nil {
+		return nil
+	}
 	for i := 0; i < len(content); {
-		if content[i] != '[' || insideSpans(i, spans) {
+		if i&0x3ff == 0 && !m.alive() {
+			return out
+		}
+		if content[i] != '[' || insideSortedSpans(i, spans) {
 			i++
 			continue
 		}
 		if strings.HasPrefix(content[i:], elseTag) {
+			if !m.reserveDividers(1) {
+				return out
+			}
 			out = append(out, [2]int{i, i + len(elseTag)})
 			i += len(elseTag)
 			continue
 		}
-		if m := elseifDividerPattern.FindStringSubmatchIndex(content[i:]); m != nil {
-			out = append(out, [2]int{i, i + m[1]})
-			i += m[1]
+		if loc := elseifDividerPattern.FindStringSubmatchIndex(content[i:]); loc != nil {
+			if !m.reserveDividers(1) {
+				return out
+			}
+			out = append(out, [2]int{i, i + loc[1]})
+			i += loc[1]
 			continue
 		}
 		i++

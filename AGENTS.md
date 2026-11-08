@@ -150,6 +150,7 @@ Design notes for individual subsystems are in `docs/architecture/`. Each records
 - `root-admin-and-attribution.md`: the root admin invariant, the last-admin guard and `CreatedByUserId` stamping.
 - `configuration.md`: every flag and environment variable, alternative file systems and example invocations.
 - `selector-architecture.md`: the headless selector every entity picker is built from.
+- `template-generation-runs.md`: harness-mode template generation (Generation runs): Turns, Tools, Envelope and Disclosure, opt-ins, caps and budget, stop reasons, the event stream and finish route, access re-checks.
 
 ### Configuration
 

@@ -1,6 +1,8 @@
 package shortcodes
 
 import (
+	"context"
+	"errors"
 	"regexp"
 	"sort"
 	"strconv"
@@ -55,8 +57,14 @@ type MRQLCheckOptions struct {
 // (RenderMRQLShortcode, resolveConditionalValue): suffix is "" for the base
 // source and "2", "3", … for a conditional's numbered sources.
 func mrqlCheckOptions(attrs map[string]string, suffix string) MRQLCheckOptions {
+	return mrqlCheckOptionsWith(attrs, suffix, collectShortcodeParams(attrs))
+}
+
+// mrqlCheckOptionsWith is mrqlCheckOptions over params the caller already
+// collected from attrs, shared read-only across the numbered queries.
+func mrqlCheckOptionsWith(attrs map[string]string, suffix string, params map[string]string) MRQLCheckOptions {
 	return MRQLCheckOptions{
-		Params:  collectShortcodeParams(attrs),
+		Params:  params,
 		Limit:   parseIntAttr(attrs["limit"+suffix], defaultMRQLShortcodeLimit),
 		Buckets: parseIntAttr(attrs["buckets"+suffix], defaultMRQLShortcodeBuckets),
 	}
@@ -92,6 +100,11 @@ type LintOptions struct {
 	// missing. Lint memoizes it, so a template referencing one partial ten times
 	// asks once.
 	PartialExists func(name string) bool
+	// Context, when set, cancels the lint. A lint that is cancelled or runs past
+	// its work allowance reports one error issue instead of its findings.
+	Context context.Context
+
+	work *schemaWork // set by Lint; nil-safe everywhere it is used
 }
 
 // KnownFromBuiltins builds a KnownShortcodes catalogue seeded with the built-in
@@ -131,9 +144,20 @@ var looseBracketPattern = regexp.MustCompile(`\[/?([a-zA-Z][a-zA-Z0-9_:-]*)`)
 // text with them removed: what is inside one is not checked, and what removing
 // one joins together is. Offsets are mapped back to input.
 func Lint(input string, opts LintOptions) []LintIssue {
+	if len(input) > MaxLintSourceBytes {
+		return lintTooLarge("template")
+	}
+	w := newLintWork(opts.Context)
+	opts.work = w
+	if !w.poll() || !w.charge(1+len(input)/64) {
+		return lintTooComplex()
+	}
 	comments := templatecomment.StripMapped(input)
 	toOriginal := comments.ToOriginal
 	issues := lintText(comments.Text, opts)
+	if !w.poll() {
+		return lintTooComplex()
+	}
 	for i := range issues {
 		start := toOriginal(issues[i].Start)
 		end := templatecomment.EndToOriginal(toOriginal, issues[i].End)
@@ -151,6 +175,22 @@ func Lint(input string, opts LintOptions) []LintIssue {
 	return issues
 }
 
+// MaxLintSourceBytes is the largest source Lint and LintMetaSchema read. Every
+// lint allocation is linear in at most this much, whoever the caller is; the
+// harness caps generated content far below it.
+const MaxLintSourceBytes = 1 << 20
+
+// lintTooLarge is the single issue for a source over MaxLintSourceBytes.
+func lintTooLarge(what string) []LintIssue {
+	return []LintIssue{{Severity: SeverityError, Message: "The " + what + " is too large to check: lint reads at most 1 MiB."}}
+}
+
+// lintTooComplex is the single issue a lint reports when it ran past its work
+// allowance or was cancelled; the partial findings are not trustworthy.
+func lintTooComplex() []LintIssue {
+	return []LintIssue{{Severity: SeverityError, Message: "The template is too complex to check: it ran past the lint's work allowance or was cancelled. Split it up or simplify it."}}
+}
+
 func sortLintIssues(issues []LintIssue) {
 	sort.SliceStable(issues, func(i, j int) bool {
 		if issues[i].Start != issues[j].Start {
@@ -163,7 +203,13 @@ func sortLintIssues(issues []LintIssue) {
 // lintText is Lint over text with no template comments left in it.
 func lintText(input string, opts LintOptions) []LintIssue {
 	var issues []LintIssue
+	w := opts.work
+	regexes := NewRegexAllowance(opts.Context) // one compile budget for every matches* of this lint
 	add := func(start, end int, severity, msg string) {
+		// The message is reserved before it is kept.
+		if !w.chargeBytes(len(msg) + 32) {
+			return
+		}
 		issues = append(issues, LintIssue{Start: start, End: end, Severity: severity, Message: msg})
 	}
 
@@ -182,13 +228,28 @@ func lintText(input string, opts LintOptions) []LintIssue {
 		}
 	}
 
-	tokens := matchTokens(input)
+	// Tokens are collected under the parser's caps (a meter forced into its
+	// limited mode): the match collection is bounded before it is retained and
+	// the collection loops consult the context. A source past a cap is "too
+	// complex to check", through the lint's own work object.
+	lm := &renderMeter{ctx: opts.Context, budget: RenderBudget{ParsedSourceBytes: 1 << 62}}
+	tokens := matchTokensM(lm, input)
+	if lm.Err() != nil {
+		w.fail()
+		return nil
+	}
+	if !w.charge(1 + len(tokens)) {
+		return nil
+	}
 
 	// A shortcode inside an HTML comment still runs, and the comment reaches the
 	// browser. A stylesheet has no HTML comments, so CSS is left alone.
 	if htmlComments := htmlCommentSpans(input); !opts.CSSMode && len(htmlComments) > 0 {
 		next := 0
 		for _, tk := range tokens { // sorted by start, like htmlComments
+			if !w.step() {
+				return nil
+			}
 			for next < len(htmlComments) && htmlComments[next].End <= tk.start {
 				next++
 			}
@@ -220,6 +281,9 @@ func lintText(input string, opts LintOptions) []LintIssue {
 
 	// --- Structural checks over the token stream ---
 	for _, tk := range tokens {
+		if !w.step() {
+			return nil
+		}
 		known, isKnown := opts.Known[tk.name]
 
 		if tk.closing {
@@ -256,12 +320,18 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			valueSpans = append(valueSpans, bareValueSpan{start: tk.start, end: tk.end})
 		}
 	}
-	valueContexts, valueContextsOff := attributeContextsFor(input, valueSpans)
+	valueContexts, valueContextsOff := attributeContextsForW(w, input, valueSpans)
+	if !w.ok() {
+		return nil
+	}
 
 	// --- Attribute and semantic checks over opener tokens ---
 	for _, tk := range tokens {
 		if tk.closing {
 			continue
+		}
+		if !w.charge(1 + len(tk.attrs)) {
+			return nil
 		}
 		known, isKnown := opts.Known[tk.name]
 		if !isKnown || !known.Documented {
@@ -339,7 +409,7 @@ func lintText(input string, opts LintOptions) []LintIssue {
 					"[item] inside a [using] block renders nothing: [using] switches to another entity, so the [each] element is not available there")
 			}
 		case "using":
-			lintUsing(tk, add)
+			lintUsing(w, tk, add)
 		case "reload":
 			// A <button> may not contain another button. The renderer refuses the
 			// whole thing rather than emit invalid interactive nesting, so say so
@@ -437,14 +507,26 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			// error at edit time — at render it silently evaluates to false.
 			for attrName, attrVal := range tk.attrs {
 				if stripTrailingDigits(attrName) == "matches" {
-					if _, err := regexp.Compile(attrVal); err != nil {
-						start, end := attrOffset(tk, attrName)
-						add(start, end, SeverityError,
-							"invalid regular expression in "+attrName+": "+err.Error())
+					if !w.step() {
+						return nil
+					}
+					if _, err := regexes.Compile(attrVal); err != nil {
+						start, end := attrOffsetW(w, tk, attrName)
+						var tooBig *RegexTooComplexError
+						if errors.As(err, &tooBig) {
+							add(start, end, SeverityError,
+								"regular expression in "+attrName+" is too complex ("+tooBig.Reason+"), so it is never evaluated and never matches")
+						} else if opts.Context != nil && opts.Context.Err() != nil {
+							w.poll()
+							return nil
+						} else {
+							add(start, end, SeverityError,
+								"invalid regular expression in "+attrName+": "+err.Error())
+						}
 					}
 				}
 			}
-			if inner, ok := condInner[tk.start]; ok && countTopLevelElse(inner) > 1 {
+			if inner, ok := condInner[tk.start]; ok && w.charge(1+len(inner)/8) && countTopLevelElseM(lm, inner) > 1 {
 				add(tk.start, tk.end, SeverityError,
 					"[conditional] has more than one [else] divider")
 			}
@@ -452,6 +534,13 @@ func lintText(input string, opts LintOptions) []LintIssue {
 
 		// MRQL check on every query the runtime executes, with its options.
 		if opts.ValidateMRQL != nil {
+			// The param-* attributes are the same for every numbered query of
+			// one opener, so they are collected once and the map is shared
+			// read-only.
+			sharedParams := collectShortcodeParams(tk.attrs)
+			checkOptions := func(attrs map[string]string, suffix string) MRQLCheckOptions {
+				return mrqlCheckOptionsWith(attrs, suffix, sharedParams)
+			}
 			check := func(query string, checkOpts MRQLCheckOptions, start, end int, label string) {
 				if strings.TrimSpace(query) == "" {
 					return
@@ -464,28 +553,34 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			case "mrql":
 				// The runtime prefers a non-empty inline query over saved=, so a
 				// saved query alone is the only one left unchecked.
-				start, end := attrOffset(tk, "query")
-				check(tk.attrs["query"], mrqlCheckOptions(tk.attrs, ""), start, end, "query")
+				start, end := attrOffsetW(w, tk, "query")
+				check(tk.attrs["query"], checkOptions(tk.attrs, ""), start, end, "query")
 			case "using":
-				start, end := attrOffset(tk, "query")
-				check(tk.attrs["query"], MRQLCheckOptions{Params: collectShortcodeParams(tk.attrs), Limit: 1}, start, end, "query")
+				start, end := attrOffsetW(w, tk, "query")
+				check(tk.attrs["query"], MRQLCheckOptions{Params: sharedParams, Limit: 1}, start, end, "query")
 			case "conditional":
 				forEachConditionalQuery(tk.attrs, func(attr, suffix string) {
-					start, end := attrOffset(tk, attr)
-					check(tk.attrs[attr], mrqlCheckOptions(tk.attrs, suffix), start, end, attr)
+					start, end := attrOffsetW(w, tk, attr)
+					check(tk.attrs[attr], checkOptions(tk.attrs, suffix), start, end, attr)
 				})
 				// [elseif] is a divider, not a token, but its guard runs.
 				if inner, ok := condInner[tk.start]; ok {
-					dividers := SlotTagSpans("conditional", inner)
-					for i, branch := range SplitBranches(inner) {
+					// SlotTagSpans and SplitBranches re-parse the body for every
+					// conditional, nested ones included: charge each.
+					if !w.charge(1 + 2*len(inner)/8) {
+						return nil
+					}
+					dividers := slotTagSpansM(lm, "conditional", inner)
+					for i, branch := range splitBranchesM(lm, inner) {
 						if i == 0 || branch.IsElse {
 							continue
 						}
 						span := dividers[i-1]
 						guard := token{start: tk.end + span[0], end: tk.end + span[1], raw: inner[span[0]:span[1]]}
+						guardParams := collectShortcodeParams(branch.Attrs)
 						forEachConditionalQuery(branch.Attrs, func(attr, suffix string) {
-							start, end := attrOffset(guard, attr)
-							check(branch.Attrs[attr], mrqlCheckOptions(branch.Attrs, suffix), start, end, "[elseif] "+attr)
+							start, end := attrOffsetW(w, guard, attr)
+							check(branch.Attrs[attr], mrqlCheckOptionsWith(branch.Attrs, suffix, guardParams), start, end, "[elseif] "+attr)
 						})
 					}
 				}
@@ -494,7 +589,7 @@ func lintText(input string, opts LintOptions) []LintIssue {
 				// No other built-in runs a query.
 				if strings.HasPrefix(tk.name, "plugin:") {
 					for _, attr := range []string{"query", "mrql"} {
-						start, end := attrOffset(tk, attr)
+						start, end := attrOffsetW(w, tk, attr)
 						check(tk.attrs[attr], MRQLCheckOptions{ParseOnly: true}, start, end, attr)
 					}
 				}
@@ -502,10 +597,22 @@ func lintText(input string, opts LintOptions) []LintIssue {
 		}
 	}
 
-	lintStrayCloseTags(input, tokens, add)
+	lintStrayCloseTags(w, lm, input, tokens, add)
+	if lm.Err() != nil {
+		w.fail()
+		return nil
+	}
 
 	// --- Loose bracket scan for shortcode-looking typos (info) ---
-	for _, m := range looseBracketPattern.FindAllStringSubmatchIndex(input, -1) {
+	looseMatches := looseBracketPattern.FindAllStringSubmatchIndex(input, budgetedTokenCap+1)
+	if len(looseMatches) > budgetedTokenCap {
+		w.fail()
+		return nil
+	}
+	for _, m := range looseMatches {
+		if !w.step() {
+			return nil
+		}
 		pos := m[0]
 		if realStarts[pos] {
 			continue
@@ -538,7 +645,7 @@ func lintText(input string, opts LintOptions) []LintIssue {
 // where the source needs one, and values the handler would refuse. Each error
 // here is a case RenderUsingShortcode renders as an error marker, and each
 // warning one where it silently ignores what the author wrote.
-func lintUsing(tk token, add func(start, end int, severity, msg string)) {
+func lintUsing(w *schemaWork, tk token, add func(start, end int, severity, msg string)) {
 	var sources []string
 	for _, name := range usingSources {
 		if strings.TrimSpace(tk.attrs[name]) != "" {
@@ -570,7 +677,7 @@ func lintUsing(tk token, add func(start, end int, severity, msg string)) {
 			add(tk.start, tk.end, SeverityError,
 				`[using] with `+source+`= needs type="group", "resource" or "note"`)
 		} else if !usingTypes[typ] {
-			start, end := attrOffset(tk, "type")
+			start, end := attrOffsetW(w, tk, "type")
 			add(start, end, SeverityError,
 				`[using] type must be "group", "resource" or "note", not "`+typ+`"`)
 		}
@@ -587,19 +694,19 @@ func lintUsing(tk token, add func(start, end int, severity, msg string)) {
 	switch source {
 	case "id":
 		if _, ok := parseEntityID(strings.TrimSpace(tk.attrs["id"])); !ok {
-			start, end := attrOffset(tk, "id")
+			start, end := attrOffsetW(w, tk, "id")
 			add(start, end, SeverityError, "[using] id must be a positive whole number")
 		}
 	case "id-prop":
 		prop := strings.TrimSpace(tk.attrs["id-prop"])
 		if strings.HasSuffix(prop, "CategoryId") || strings.HasSuffix(prop, "TypeId") {
-			start, end := attrOffset(tk, "id-prop")
+			start, end := attrOffsetW(w, tk, "id-prop")
 			add(start, end, SeverityWarning,
 				"[using] id-prop=\""+prop+"\" holds a category ID, and categories are not a [using] target; this renders the [else] branch or the wrong entity")
 		}
 	case "rel":
 		if rel := strings.TrimSpace(tk.attrs["rel"]); rel != "owner" && rel != "root" {
-			start, end := attrOffset(tk, "rel")
+			start, end := attrOffsetW(w, tk, "rel")
 			add(start, end, SeverityError, `[using] rel must be "owner" or "root", not "`+rel+`"`)
 		}
 	case "query":
@@ -609,7 +716,7 @@ func lintUsing(tk token, add func(start, end int, severity, msg string)) {
 		if err != nil {
 			return
 		}
-		start, end := attrOffset(tk, "query")
+		start, end := attrOffsetW(w, tk, "query")
 		if parsed.GroupBy != nil {
 			add(start, end, SeverityError,
 				"[using] query cannot use GROUP BY: it needs one entity, not buckets")
@@ -682,7 +789,14 @@ func hasAnyOperator(attrs map[string]string) bool {
 // token, falling back to the whole token span. Matches must sit on an attribute
 // boundary (preceded by whitespace) so "query=" does not anchor inside a longer
 // attribute like "param-query=".
-func attrOffset(tk token, attr string) (int, int) {
+func attrOffset(tk token, attr string) (int, int) { return attrOffsetW(nil, tk, attr) }
+
+// attrOffsetW is attrOffset that charges the scan of the opener, which restarts
+// at its beginning for every diagnostic.
+func attrOffsetW(w *schemaWork, tk token, attr string) (int, int) {
+	if !w.charge(1 + len(tk.raw)/8) {
+		return tk.start, tk.end
+	}
 	needle := attr + "="
 	for from := 0; ; {
 		idx := strings.Index(tk.raw[from:], needle)
@@ -831,34 +945,22 @@ func namedBlockSpans(tokens []token, name string) [][2]int {
 
 // countTopLevelElse counts [else] dividers in content that are not nested
 // inside a block shortcode, mirroring SplitElse's skip logic.
-func countTopLevelElse(content string) int {
-	blocks := ParseWithBlocks(content)
+func countTopLevelElse(content string) int { return countTopLevelElseM(nil, content) }
+
+func countTopLevelElseM(m *renderMeter, content string) int {
+	spans := blockInnerSpansM(m, content)
 	count := 0
-	i := 0
-	for i < len(content) {
-		if content[i] == '[' && strings.HasPrefix(content[i:], elseTag) {
-			inside := false
-			for _, b := range blocks {
-				if !b.IsBlock {
-					continue
-				}
-				openEnd := strings.Index(content[b.Start:], "]")
-				if openEnd < 0 {
-					continue
-				}
-				innerStart := b.Start + openEnd + 1
-				closingTag := "[/" + b.Name + "]"
-				innerEnd := b.End - len(closingTag)
-				if i >= innerStart && i < innerEnd {
-					inside = true
-					break
-				}
-			}
-			if !inside {
-				count++
-				i += len(elseTag)
-				continue
-			}
+	if m.Err() != nil {
+		return 0
+	}
+	for i := 0; i < len(content); {
+		if i&0x3ff == 0 && !m.alive() {
+			return count
+		}
+		if content[i] == '[' && strings.HasPrefix(content[i:], elseTag) && !insideSortedSpans(i, spans) {
+			count++
+			i += len(elseTag)
+			continue
 		}
 		i++
 	}
@@ -888,10 +990,14 @@ func forEachConditionalQuery(attrs map[string]string, visit func(attr, suffix st
 // written [/else] is never consumed. [header] and [footer] are real pairs, but
 // only the first complete top-level pair inside an [mrql] block is read
 // (SlotTagSpans), so any other [/header] or [/footer] is literal too.
-func lintStrayCloseTags(input string, tokens []token, add func(start, end int, severity, msg string)) {
+func lintStrayCloseTags(w *schemaWork, lm *renderMeter, input string, tokens []token, add func(start, end int, severity, msg string)) {
 	consumed := map[int]bool{}
 	for _, span := range namedBlockSpans(tokens, "mrql") {
-		for _, s := range SlotTagSpans("mrql", input[span[0]:span[1]]) {
+		// SlotTagSpans copies and re-parses the body, once per nested [mrql].
+		if !w.charge(1 + (span[1]-span[0])/8) {
+			return
+		}
+		for _, s := range slotTagSpansM(lm, "mrql", input[span[0]:span[1]]) {
 			consumed[span[0]+s[0]] = true
 		}
 	}

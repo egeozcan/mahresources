@@ -262,10 +262,14 @@ func TestAggregateKeepsNoFreeText(t *testing.T) {
 		Details:  &Details{ProviderError: secret, SchemaCompileError: secret, UnknownShortcodes: []string{secret}},
 		Draft:    &Draft{Error: secret, Content: secret, Explanation: secret, Slots: map[string]string{secret: secret}, Issues: []shortcodes.LintIssue{{Message: secret}}},
 		Previews: map[string]Preview{secret: {HTML: secret, Error: secret, Issues: []shortcodes.LintIssue{{Message: secret}}}},
-		Calls:    []Call{{Model: "deepseek-flash", ErrorClass: ErrorClassHTTPStatus, FinishReason: "stop", Content: secret}},
-		Probes:   []QueryProbe{{Slot: secret, Query: secret, Snippet: secret}},
+		Calls: []Call{{Mode: ModeHarness, Model: "deepseek-flash", ErrorClass: ErrorClassHTTPStatus, FinishReason: "stop", Content: secret, Replay: []byte(`"` + secret + `"`),
+			ToolCalls: []ToolCall{{Name: "submit", Arguments: `{"fields":{"A":"` + secret + `"}}`}, {Name: UnknownToolName, Arguments: secret}}}},
+		Turns: 2, StopReason: "done", Tokens: Usage{Prompt: 5},
+		Probes: []QueryProbe{{Slot: secret, Query: secret, Snippet: secret}},
 	}
 	report := reportWith(r)
+	report.Mode, report.Cost = ModeHarness, CostNotComputed
+	report.Settings = &RunSettings{MaxTurns: 12, RunDeadline: "10m0s", TokenBudget: 400000, Provider: "deepseek"}
 	report.Commit, report.Model, report.Timeout, report.StartedAt, report.FinishedAt = "abc123+dirty", "deepseek-flash", "20s", "2026-10-24T00:00:00Z", "2026-10-24T00:01:00Z"
 
 	encoded, err := json.Marshal(AggregateOnly(report))
@@ -303,8 +307,15 @@ func TestAggregateKeepsNoFreeText(t *testing.T) {
 		"kind":    func(v string) bool { return enum("slot", "pair", "bundle", "metaschema")[v] },
 		"carrier": func(v string) bool { return enum("group", "resource", "note")[v] },
 		"errorClass": func(v string) bool {
-			return enum(ErrorClassTimeout, ErrorClassHTTPStatus, ErrorClassTransport, ErrorClassDecode)[v]
+			return enum(ErrorClassTimeout, ErrorClassHTTPStatus, ErrorClassTransport, ErrorClassDecode, ErrorClassSize, ErrorClassRefusal)[v]
 		},
+		"mode":                     func(v string) bool { return enum(ModeClassic, ModeHarness)[v] },
+		"name":                     func(v string) bool { return enum("submit", UnknownToolName)[v] },
+		"stopReason":               func(v string) bool { return knownStopReasons[v] },
+		"stopReasons":              func(v string) bool { return knownStopReasons[v] },
+		"cost":                     func(v string) bool { return v == CostNotComputed },
+		"provider":                 func(string) bool { return true },
+		"runDeadline":              func(string) bool { return true },
 		"finishReason":             func(v string) bool { return knownFinishReasons[v] },
 		"missingSlots":             func(v string) bool { return slots[v] },
 		"renderEmptySlots":         func(v string) bool { return slots[v] },

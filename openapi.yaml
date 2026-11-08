@@ -3254,6 +3254,11 @@ components:
                 source:
                     type: string
             type: object
+        TemplateRunFinishRequest:
+            properties:
+                runId:
+                    type: string
+            type: object
         TimelineBucketPartial:
             type: object
         TimelineHasMore:
@@ -4207,36 +4212,93 @@ paths:
                   - dryRun     (boolean) — return the disclosure instead of generating; calls no provider
                   - groundingHash (string) — required unless dryRun: the groundingHash of the
                     disclosure the user approved
+                  - previewMRQL, previewPlugins (boolean) — harness mode only, both off by default,
+                    both part of the disclosure and so of its groundingHash: previews run [mrql]
+                    queries; previews run plugin shortcodes read-only. Classic mode ignores them.
 
-                Generation takes two requests. A dry run returns the disclosure: {"sections":
+                Generation takes two requests. A dry run returns the disclosure: {"mode", "sections":
                 [{"call", "role", "key", "label", "bytes", "text", "constant", "shared"}], "destination":
                 {"endpoint", "host", "profiles": [{"kind", "model", "thinking", "maxTokens", "maxCalls"}]},
                 "transport": {"stream", "responseFormat", "contentType", "authorization"},
-                "continuationRule": {"version", "text"}, "groundingHash"}. "sections" are every
-                provider call's system and user messages, split into labelled parts; the
-                provider request is built only from them. A section with "shared" true belongs to
+                "continuationRule": {"version", "text"}, "groundingHash"}, plus, in harness mode
+                only, "tools", "caps", "optIns" and "envelope" (described below). "mode" is
+                "classic" or "harness". "sections" are the system and user messages of the
+                provider calls, split into labelled parts. In classic mode the provider request
+                is built only from them. In harness mode they are the Seed and instructions
+                only: later requests also carry the Tool results the run produces, which cannot
+                be disclosed beforehand and are bounded by the disclosed "caps". A section with "shared" true belongs to
                 every call of a whole-template request and is listed once. "endpoint" is the URL the provider
                 posts to, with each query value shown as "…". "groundingHash" is the sha256 of
                 the exact URL (escaped path and query included), the destination, the
-                transport, the continuation rule and every section. The real request repeats
+                transport, the continuation rule, every section and the mode. In harness mode it
+                also covers the tools, the caps, the opt-ins, the envelope and the account
+                identity (user ID, role, scope Group and superuser flag, which the disclosure
+                never shows), so a change to any of them between approval and the real request
+                is a changed hash. The real request repeats
                 the same fields with "groundingHash"; the server rebuilds the disclosure and
                 answers 409 "the data to be sent changed; review it again" when the hash no
                 longer matches (for example a new member entity became the sample), and 400
                 when it is missing. Neither calls the provider.
 
-                Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair", "failedSlots"}.
+                Harness mode (ai_template_generation_mode, the default) runs the request as a
+                multi-Turn Generation run: the model reads through Tools, then submits a Draft.
+                Its disclosure adds {"tools": [{"name", "description", "parameters"}], "caps":
+                {"maxTurns", "deadline", "tokenBudget", "callsPerTurn", "toolTimeout",
+                "previewTimeout", "budgetNote", "resultCaps": [{"tool", "bytes", "entries"}]},
+                "optIns": {"previewMRQL", "previewPlugins"}, "envelope"}; "envelope" is the
+                sentence the user approves, saying what the Tools can reach and what each opt-in
+                adds. Its one profile's "maxCalls" is the Turn cap. The repair, planning and
+                per-section calls described below do not exist in harness mode: a whole
+                template is one run that submits all of its fields.
+                A group-limited account (confined to a Group's subtree, or a role that requires
+                one) is refused with 403 "Generation runs are not available to group-limited
+                accounts", a dry run included. An account has at most 2 live runs; a third is a
+                429. Access is re-checked around every Turn and again just before the Draft or
+                transcript is written; an account whose access changed gets a 403 (an "error"
+                event with status 403 on a stream) and nothing the run read.
+
+                A real harness request sent with "Accept: text/event-stream" is answered as a
+                stream of server-sent events once the run reaches its first Turn; any error
+                found earlier keeps its ordinary status code. Without that header the answer is
+                one JSON result at the end, and a failed run's JSON error body adds "stopReason"
+                and "transcript" when the run kept one. Events (the data line of each is one JSON
+                object):
+                  - run: {"runId", "maxTurns", "deadline" (a duration such as "5m0s"), "tokenBudget"}, first. The
+                    caps are omitted when the generator does not report them.
+                  - turn: {"turn", "maxTurns", "finalReason"}; finalReason is empty or the stop
+                    reason that made this the final Turn (turn_cap, finish_now, deadline, budget).
+                  - tool: {"turn", "name", "args", "bytes", "isError", "durationMs"}; "name" is a
+                    Tool name or "unknown". "args" holds only field, type, kind, entityType,
+                    direction and carrierType from fixed sets, and id, entityId, number, from, to,
+                    offset, limit and buckets as decimal text.
+                  - submission: {"turn", "field", "errors", "warnings"}.
+                  - usage: {"turn", "budgetUsed", "budgetMax"}.
+                  - result: the full response described below, plus "stopReason" (done, turn_cap,
+                    finish_now, deadline, budget, length_repeated, no_tool_call or provider_error),
+                    "submitted" (the fields the model submitted) and "transcript". Last.
+                  - error: {"error", "status", "stopReason", "transcript"}. "status" is the code
+                    the same failure has without a stream. "transcript" is every message sent and
+                    received so far; it is absent when access changed. Last.
+                Progress events (turn, tool, submission, usage) carry no free text: only Tool
+                names, values from fixed sets, IDs and counts. They can be dropped when the
+                client reads slowly; run, result and error are not. A comment line ": heartbeat"
+                is sent every 15 seconds. A write that blocks for 10 seconds ends the run.
+                Leaving the stream cancels the run.
+                POST .../generateTemplate/finish asks a live run to make its next Turn the final one.
+
+                Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair", "failedSlots"}; "repair" and "failedSlots" occur in classic mode only.
                 "content" is set for slot/metaschema; "slots" (a field→markup map) for bundle.
                 "valid" is false with "issues" when the draft fails lint / JSON-Schema validation,
                 was cut off at the output limit, or exceeds 20,000 bytes; the draft is still
                 returned for review (HTTP 200). "slotIssues" groups a bundle's issues by slot.
-                When the first draft has error-severity issues (or half an HTML/CSS pair) the
+                In classic mode, when the first draft has error-severity issues (or half an HTML/CSS pair) the
                 server makes one more call, the disclosed repair call, and keeps its answer only
                 if it scores better and still holds the draft's content; "repair" then reports
                 {"attempted", "applied", "reason"}, with reason one of "budget", "disabled",
                 "provider_error", "timeout" or "not_better". A repair takes no rate-limit slot, and neither does a call of a whole-template request. A 502 for a pair that stayed broken after a repair attempt carries the same "repair" object beside "error".
                 A truncated draft is never repaired, and the field is absent when the first
                 draft needed none.
-                A whole template (target=bundle) is generated in several calls. When it names
+                In classic mode a whole template (target=bundle) is generated in several calls. When it names
                 more than one section, or CustomCSS, a planning call first settles one shared
                 design (class prefix, palette, layout, which sections to fill and, if CustomCSS
                 was requested, new shared CSS rules); then one call per section fills an HTML
@@ -4263,8 +4325,35 @@ paths:
                 "200":
                     content:
                         application/json: {}
+                        text/event-stream:
+                            schema:
+                                type: string
                     description: Successful response
+                "403":
+                    description: Generation runs are not available to group-limited accounts, or the account's access changed during the run
+                "429":
+                    description: A rate limit was exceeded, or the account already has 2 live generation runs
             summary: Generate a custom template section from natural language
+            tags:
+                - shortcodes
+    /v1/category/generateTemplate/finish:
+        post:
+            description: 'Finish now: the run''s next Turn is the final one, in which the model is asked to submit and no other Tool runs. Returns {"ok": true}. Only the account that started the run can finish it; an unknown run ID and another account''s both answer 404. Gated like the carrier''s generateTemplate route.'
+            operationId: finishCategoryTemplateRun
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/TemplateRunFinishRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "404":
+                    description: No such live generation run for this account
+            summary: Make a live generation run's next Turn its final one
             tags:
                 - shortcodes
     /v1/category/previewDescription:
@@ -9865,36 +9954,93 @@ paths:
                   - dryRun     (boolean) — return the disclosure instead of generating; calls no provider
                   - groundingHash (string) — required unless dryRun: the groundingHash of the
                     disclosure the user approved
+                  - previewMRQL, previewPlugins (boolean) — harness mode only, both off by default,
+                    both part of the disclosure and so of its groundingHash: previews run [mrql]
+                    queries; previews run plugin shortcodes read-only. Classic mode ignores them.
 
-                Generation takes two requests. A dry run returns the disclosure: {"sections":
+                Generation takes two requests. A dry run returns the disclosure: {"mode", "sections":
                 [{"call", "role", "key", "label", "bytes", "text", "constant", "shared"}], "destination":
                 {"endpoint", "host", "profiles": [{"kind", "model", "thinking", "maxTokens", "maxCalls"}]},
                 "transport": {"stream", "responseFormat", "contentType", "authorization"},
-                "continuationRule": {"version", "text"}, "groundingHash"}. "sections" are every
-                provider call's system and user messages, split into labelled parts; the
-                provider request is built only from them. A section with "shared" true belongs to
+                "continuationRule": {"version", "text"}, "groundingHash"}, plus, in harness mode
+                only, "tools", "caps", "optIns" and "envelope" (described below). "mode" is
+                "classic" or "harness". "sections" are the system and user messages of the
+                provider calls, split into labelled parts. In classic mode the provider request
+                is built only from them. In harness mode they are the Seed and instructions
+                only: later requests also carry the Tool results the run produces, which cannot
+                be disclosed beforehand and are bounded by the disclosed "caps". A section with "shared" true belongs to
                 every call of a whole-template request and is listed once. "endpoint" is the URL the provider
                 posts to, with each query value shown as "…". "groundingHash" is the sha256 of
                 the exact URL (escaped path and query included), the destination, the
-                transport, the continuation rule and every section. The real request repeats
+                transport, the continuation rule, every section and the mode. In harness mode it
+                also covers the tools, the caps, the opt-ins, the envelope and the account
+                identity (user ID, role, scope Group and superuser flag, which the disclosure
+                never shows), so a change to any of them between approval and the real request
+                is a changed hash. The real request repeats
                 the same fields with "groundingHash"; the server rebuilds the disclosure and
                 answers 409 "the data to be sent changed; review it again" when the hash no
                 longer matches (for example a new member entity became the sample), and 400
                 when it is missing. Neither calls the provider.
 
-                Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair", "failedSlots"}.
+                Harness mode (ai_template_generation_mode, the default) runs the request as a
+                multi-Turn Generation run: the model reads through Tools, then submits a Draft.
+                Its disclosure adds {"tools": [{"name", "description", "parameters"}], "caps":
+                {"maxTurns", "deadline", "tokenBudget", "callsPerTurn", "toolTimeout",
+                "previewTimeout", "budgetNote", "resultCaps": [{"tool", "bytes", "entries"}]},
+                "optIns": {"previewMRQL", "previewPlugins"}, "envelope"}; "envelope" is the
+                sentence the user approves, saying what the Tools can reach and what each opt-in
+                adds. Its one profile's "maxCalls" is the Turn cap. The repair, planning and
+                per-section calls described below do not exist in harness mode: a whole
+                template is one run that submits all of its fields.
+                A group-limited account (confined to a Group's subtree, or a role that requires
+                one) is refused with 403 "Generation runs are not available to group-limited
+                accounts", a dry run included. An account has at most 2 live runs; a third is a
+                429. Access is re-checked around every Turn and again just before the Draft or
+                transcript is written; an account whose access changed gets a 403 (an "error"
+                event with status 403 on a stream) and nothing the run read.
+
+                A real harness request sent with "Accept: text/event-stream" is answered as a
+                stream of server-sent events once the run reaches its first Turn; any error
+                found earlier keeps its ordinary status code. Without that header the answer is
+                one JSON result at the end, and a failed run's JSON error body adds "stopReason"
+                and "transcript" when the run kept one. Events (the data line of each is one JSON
+                object):
+                  - run: {"runId", "maxTurns", "deadline" (a duration such as "5m0s"), "tokenBudget"}, first. The
+                    caps are omitted when the generator does not report them.
+                  - turn: {"turn", "maxTurns", "finalReason"}; finalReason is empty or the stop
+                    reason that made this the final Turn (turn_cap, finish_now, deadline, budget).
+                  - tool: {"turn", "name", "args", "bytes", "isError", "durationMs"}; "name" is a
+                    Tool name or "unknown". "args" holds only field, type, kind, entityType,
+                    direction and carrierType from fixed sets, and id, entityId, number, from, to,
+                    offset, limit and buckets as decimal text.
+                  - submission: {"turn", "field", "errors", "warnings"}.
+                  - usage: {"turn", "budgetUsed", "budgetMax"}.
+                  - result: the full response described below, plus "stopReason" (done, turn_cap,
+                    finish_now, deadline, budget, length_repeated, no_tool_call or provider_error),
+                    "submitted" (the fields the model submitted) and "transcript". Last.
+                  - error: {"error", "status", "stopReason", "transcript"}. "status" is the code
+                    the same failure has without a stream. "transcript" is every message sent and
+                    received so far; it is absent when access changed. Last.
+                Progress events (turn, tool, submission, usage) carry no free text: only Tool
+                names, values from fixed sets, IDs and counts. They can be dropped when the
+                client reads slowly; run, result and error are not. A comment line ": heartbeat"
+                is sent every 15 seconds. A write that blocks for 10 seconds ends the run.
+                Leaving the stream cancels the run.
+                POST .../generateTemplate/finish asks a live run to make its next Turn the final one.
+
+                Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair", "failedSlots"}; "repair" and "failedSlots" occur in classic mode only.
                 "content" is set for slot/metaschema; "slots" (a field→markup map) for bundle.
                 "valid" is false with "issues" when the draft fails lint / JSON-Schema validation,
                 was cut off at the output limit, or exceeds 20,000 bytes; the draft is still
                 returned for review (HTTP 200). "slotIssues" groups a bundle's issues by slot.
-                When the first draft has error-severity issues (or half an HTML/CSS pair) the
+                In classic mode, when the first draft has error-severity issues (or half an HTML/CSS pair) the
                 server makes one more call, the disclosed repair call, and keeps its answer only
                 if it scores better and still holds the draft's content; "repair" then reports
                 {"attempted", "applied", "reason"}, with reason one of "budget", "disabled",
                 "provider_error", "timeout" or "not_better". A repair takes no rate-limit slot, and neither does a call of a whole-template request. A 502 for a pair that stayed broken after a repair attempt carries the same "repair" object beside "error".
                 A truncated draft is never repaired, and the field is absent when the first
                 draft needed none.
-                A whole template (target=bundle) is generated in several calls. When it names
+                In classic mode a whole template (target=bundle) is generated in several calls. When it names
                 more than one section, or CustomCSS, a planning call first settles one shared
                 design (class prefix, palette, layout, which sections to fill and, if CustomCSS
                 was requested, new shared CSS rules); then one call per section fills an HTML
@@ -9921,8 +10067,35 @@ paths:
                 "200":
                     content:
                         application/json: {}
+                        text/event-stream:
+                            schema:
+                                type: string
                     description: Successful response
+                "403":
+                    description: Generation runs are not available to group-limited accounts, or the account's access changed during the run
+                "429":
+                    description: A rate limit was exceeded, or the account already has 2 live generation runs
             summary: Generate a custom template section from natural language
+            tags:
+                - shortcodes
+    /v1/noteType/generateTemplate/finish:
+        post:
+            description: 'Finish now: the run''s next Turn is the final one, in which the model is asked to submit and no other Tool runs. Returns {"ok": true}. Only the account that started the run can finish it; an unknown run ID and another account''s both answer 404. Gated like the carrier''s generateTemplate route.'
+            operationId: finishNoteTypeTemplateRun
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/TemplateRunFinishRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "404":
+                    description: No such live generation run for this account
+            summary: Make a live generation run's next Turn its final one
             tags:
                 - shortcodes
     /v1/noteType/previewDescription:
@@ -12581,36 +12754,93 @@ paths:
                   - dryRun     (boolean) — return the disclosure instead of generating; calls no provider
                   - groundingHash (string) — required unless dryRun: the groundingHash of the
                     disclosure the user approved
+                  - previewMRQL, previewPlugins (boolean) — harness mode only, both off by default,
+                    both part of the disclosure and so of its groundingHash: previews run [mrql]
+                    queries; previews run plugin shortcodes read-only. Classic mode ignores them.
 
-                Generation takes two requests. A dry run returns the disclosure: {"sections":
+                Generation takes two requests. A dry run returns the disclosure: {"mode", "sections":
                 [{"call", "role", "key", "label", "bytes", "text", "constant", "shared"}], "destination":
                 {"endpoint", "host", "profiles": [{"kind", "model", "thinking", "maxTokens", "maxCalls"}]},
                 "transport": {"stream", "responseFormat", "contentType", "authorization"},
-                "continuationRule": {"version", "text"}, "groundingHash"}. "sections" are every
-                provider call's system and user messages, split into labelled parts; the
-                provider request is built only from them. A section with "shared" true belongs to
+                "continuationRule": {"version", "text"}, "groundingHash"}, plus, in harness mode
+                only, "tools", "caps", "optIns" and "envelope" (described below). "mode" is
+                "classic" or "harness". "sections" are the system and user messages of the
+                provider calls, split into labelled parts. In classic mode the provider request
+                is built only from them. In harness mode they are the Seed and instructions
+                only: later requests also carry the Tool results the run produces, which cannot
+                be disclosed beforehand and are bounded by the disclosed "caps". A section with "shared" true belongs to
                 every call of a whole-template request and is listed once. "endpoint" is the URL the provider
                 posts to, with each query value shown as "…". "groundingHash" is the sha256 of
                 the exact URL (escaped path and query included), the destination, the
-                transport, the continuation rule and every section. The real request repeats
+                transport, the continuation rule, every section and the mode. In harness mode it
+                also covers the tools, the caps, the opt-ins, the envelope and the account
+                identity (user ID, role, scope Group and superuser flag, which the disclosure
+                never shows), so a change to any of them between approval and the real request
+                is a changed hash. The real request repeats
                 the same fields with "groundingHash"; the server rebuilds the disclosure and
                 answers 409 "the data to be sent changed; review it again" when the hash no
                 longer matches (for example a new member entity became the sample), and 400
                 when it is missing. Neither calls the provider.
 
-                Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair", "failedSlots"}.
+                Harness mode (ai_template_generation_mode, the default) runs the request as a
+                multi-Turn Generation run: the model reads through Tools, then submits a Draft.
+                Its disclosure adds {"tools": [{"name", "description", "parameters"}], "caps":
+                {"maxTurns", "deadline", "tokenBudget", "callsPerTurn", "toolTimeout",
+                "previewTimeout", "budgetNote", "resultCaps": [{"tool", "bytes", "entries"}]},
+                "optIns": {"previewMRQL", "previewPlugins"}, "envelope"}; "envelope" is the
+                sentence the user approves, saying what the Tools can reach and what each opt-in
+                adds. Its one profile's "maxCalls" is the Turn cap. The repair, planning and
+                per-section calls described below do not exist in harness mode: a whole
+                template is one run that submits all of its fields.
+                A group-limited account (confined to a Group's subtree, or a role that requires
+                one) is refused with 403 "Generation runs are not available to group-limited
+                accounts", a dry run included. An account has at most 2 live runs; a third is a
+                429. Access is re-checked around every Turn and again just before the Draft or
+                transcript is written; an account whose access changed gets a 403 (an "error"
+                event with status 403 on a stream) and nothing the run read.
+
+                A real harness request sent with "Accept: text/event-stream" is answered as a
+                stream of server-sent events once the run reaches its first Turn; any error
+                found earlier keeps its ordinary status code. Without that header the answer is
+                one JSON result at the end, and a failed run's JSON error body adds "stopReason"
+                and "transcript" when the run kept one. Events (the data line of each is one JSON
+                object):
+                  - run: {"runId", "maxTurns", "deadline" (a duration such as "5m0s"), "tokenBudget"}, first. The
+                    caps are omitted when the generator does not report them.
+                  - turn: {"turn", "maxTurns", "finalReason"}; finalReason is empty or the stop
+                    reason that made this the final Turn (turn_cap, finish_now, deadline, budget).
+                  - tool: {"turn", "name", "args", "bytes", "isError", "durationMs"}; "name" is a
+                    Tool name or "unknown". "args" holds only field, type, kind, entityType,
+                    direction and carrierType from fixed sets, and id, entityId, number, from, to,
+                    offset, limit and buckets as decimal text.
+                  - submission: {"turn", "field", "errors", "warnings"}.
+                  - usage: {"turn", "budgetUsed", "budgetMax"}.
+                  - result: the full response described below, plus "stopReason" (done, turn_cap,
+                    finish_now, deadline, budget, length_repeated, no_tool_call or provider_error),
+                    "submitted" (the fields the model submitted) and "transcript". Last.
+                  - error: {"error", "status", "stopReason", "transcript"}. "status" is the code
+                    the same failure has without a stream. "transcript" is every message sent and
+                    received so far; it is absent when access changed. Last.
+                Progress events (turn, tool, submission, usage) carry no free text: only Tool
+                names, values from fixed sets, IDs and counts. They can be dropped when the
+                client reads slowly; run, result and error are not. A comment line ": heartbeat"
+                is sent every 15 seconds. A write that blocks for 10 seconds ends the run.
+                Leaving the stream cancels the run.
+                POST .../generateTemplate/finish asks a live run to make its next Turn the final one.
+
+                Response: {"target", "content" | "slots", "explanation", "valid", "issues", "slotIssues", "repair", "failedSlots"}; "repair" and "failedSlots" occur in classic mode only.
                 "content" is set for slot/metaschema; "slots" (a field→markup map) for bundle.
                 "valid" is false with "issues" when the draft fails lint / JSON-Schema validation,
                 was cut off at the output limit, or exceeds 20,000 bytes; the draft is still
                 returned for review (HTTP 200). "slotIssues" groups a bundle's issues by slot.
-                When the first draft has error-severity issues (or half an HTML/CSS pair) the
+                In classic mode, when the first draft has error-severity issues (or half an HTML/CSS pair) the
                 server makes one more call, the disclosed repair call, and keeps its answer only
                 if it scores better and still holds the draft's content; "repair" then reports
                 {"attempted", "applied", "reason"}, with reason one of "budget", "disabled",
                 "provider_error", "timeout" or "not_better". A repair takes no rate-limit slot, and neither does a call of a whole-template request. A 502 for a pair that stayed broken after a repair attempt carries the same "repair" object beside "error".
                 A truncated draft is never repaired, and the field is absent when the first
                 draft needed none.
-                A whole template (target=bundle) is generated in several calls. When it names
+                In classic mode a whole template (target=bundle) is generated in several calls. When it names
                 more than one section, or CustomCSS, a planning call first settles one shared
                 design (class prefix, palette, layout, which sections to fill and, if CustomCSS
                 was requested, new shared CSS rules); then one call per section fills an HTML
@@ -12637,8 +12867,35 @@ paths:
                 "200":
                     content:
                         application/json: {}
+                        text/event-stream:
+                            schema:
+                                type: string
                     description: Successful response
+                "403":
+                    description: Generation runs are not available to group-limited accounts, or the account's access changed during the run
+                "429":
+                    description: A rate limit was exceeded, or the account already has 2 live generation runs
             summary: Generate a custom template section from natural language
+            tags:
+                - shortcodes
+    /v1/resourceCategory/generateTemplate/finish:
+        post:
+            description: 'Finish now: the run''s next Turn is the final one, in which the model is asked to submit and no other Tool runs. Returns {"ok": true}. Only the account that started the run can finish it; an unknown run ID and another account''s both answer 404. Gated like the carrier''s generateTemplate route.'
+            operationId: finishResourceCategoryTemplateRun
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/TemplateRunFinishRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "404":
+                    description: No such live generation run for this account
+            summary: Make a live generation run's next Turn its final one
             tags:
                 - shortcodes
     /v1/resourceCategory/previewDescription:

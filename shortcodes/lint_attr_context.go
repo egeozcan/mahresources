@@ -334,11 +334,23 @@ func unquotedSiblingInjectsOne(substituted string, at, n int, scripting bool) bo
 // in a tag that is never closed — are read from a flat lexical pass over the
 // source, which is a bounded scan of one tag at a time with no nesting.
 func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrContext, map[int]attrContext) {
-	out := make(map[int]attrContext, len(spans))
+	return attributeContextsForW(nil, input, spans)
+}
+
+// attributeContextsForW is attributeContextsFor under a lint work allowance.
+// The substitution phase is admitted before it allocates: the result maps and
+// the sort by the span count, the substituted document by its size, and every
+// probe that rebuilds or reparses that document by the document's size again.
+func attributeContextsForW(w *schemaWork, input string, spans []bareValueSpan) (map[int]attrContext, map[int]attrContext) {
+	out := make(map[int]attrContext, 0)
 	alt := make(map[int]attrContext)
 	if len(spans) == 0 {
 		return out, alt
 	}
+	if !w.charge(len(spans)*4) || !w.chargeBytes(len(input)+len(spans)*len(lintSentinel(len(spans)))) {
+		return out, alt
+	}
+	out = make(map[int]attrContext, len(spans))
 	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
 
 	// A template that already contains the sentinel prefix could otherwise
@@ -355,6 +367,9 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 	sentinelAt := make([]int, len(spans))
 	last := 0
 	for i, sp := range spans {
+		if !w.step() {
+			return out, alt
+		}
 		sentinelAt[i] = -1
 		if sp.start < last || sp.end > len(input) || sp.start > sp.end {
 			out[sp.start] = attrContext{}
@@ -371,7 +386,10 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 
 	// The syntactic layer: quoted, discarded, valueSoFar, and the interpolated
 	// tag/attribute NAME, from a flat pass over the source's tags.
-	lex := lexicalContexts(substituted, len(spans))
+	if !w.chargeBytes(len(substituted)) {
+		return out, alt
+	}
+	lex := lexicalContexts(w, substituted, len(spans))
 	// The oracle for the one danger the parser's placement hides: an unquoted
 	// value the parser dropped (a repeated attribute, or a merge duplicate on
 	// <body>/<html>) still adds a live sibling attribute, because escaping does
@@ -379,18 +397,24 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 	// scripting modes, below — only where the parser dropped the value (kAbsent),
 	// which is the only place the answer is read.
 	injectsOn := func(i int) bool {
-		return lex[i].inValue && !lex[i].quoted &&
+		return lex[i].inValue && !lex[i].quoted && w.chargeBytes(len(substituted)) &&
 			unquotedSiblingInjectsOne(substituted, sentinelAt[i], len(lintSentinel(i)), true)
 	}
 	injectsOff := func(i int) bool {
-		return lex[i].inValue && !lex[i].quoted &&
+		return lex[i].inValue && !lex[i].quoted && w.chargeBytes(len(substituted)) &&
 			unquotedSiblingInjectsOne(substituted, sentinelAt[i], len(lintSentinel(i)), false)
 	}
 	// The tree layer: html.Parse in both scripting modes.
+	if !w.chargeBytes(2 * len(substituted)) {
+		return out, alt
+	}
 	on := classifyByParse(substituted, true, len(spans))
 	off := classifyByParse(substituted, false, len(spans))
 
 	for i, sp := range spans {
+		if !w.step() {
+			return out, alt
+		}
 		if sentinelAt[i] < 0 {
 			continue
 		}
@@ -425,6 +449,9 @@ func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrCont
 		// dropped occurrence, not only attribute values, so frameset TEXT and
 		// end-tag-attribute positions are covered too.
 		if on[i].kind == kAbsent || off[i].kind == kAbsent {
+			if !w.chargeBytes(len(substituted)) {
+				return out, alt
+			}
 			reachOn, reachOff := rawBreakoutReachesLive(substituted, sentinelAt[i], len(lintSentinel(i)))
 			if reachOn || reachOff {
 				primary.rawReachesLive = true
@@ -671,10 +698,13 @@ func couldCompleteEndTag(text string, at int, name string) bool {
 // ignored comment and gets the zero lexFact, and the PARSE, which does place it
 // in a text node (kText), is what answers it. A sentinel in ordinary text is
 // likewise the zero lexFact, answered by the parser.
-func lexicalContexts(src string, nspans int) []lexFact {
+func lexicalContexts(w *schemaWork, src string, nspans int) []lexFact {
 	facts := make([]lexFact, nspans)
 	z := html.NewTokenizer(strings.NewReader(src))
 	for {
+		if !w.step() {
+			return facts
+		}
 		tt := z.Next()
 		// Never let the tokenizer go into raw-text mode: a browser reads the
 		// bodies of <script>, <iframe>, <noscript> and friends as raw text,
@@ -700,7 +730,7 @@ func lexicalContexts(src string, nspans int) []lexFact {
 			}
 			return facts
 		case html.StartTagToken, html.SelfClosingTagToken:
-			for _, h := range sentinelsInTag(string(z.Raw())) {
+			for _, h := range sentinelsInTag(w, string(z.Raw())) {
 				if h.index < 0 || h.index >= nspans || !h.ctx.inValue {
 					continue
 				}
@@ -869,7 +899,7 @@ type sentinelHit struct {
 // attribute value or a tag/attribute name. The tag is already delimited by
 // lexicalContexts, so this is a flat walk over "name=value" pairs — no
 // comments, no raw-text bodies, no nesting.
-func sentinelsInTag(tag string) []sentinelHit {
+func sentinelsInTag(w *schemaWork, tag string) []sentinelHit {
 	var hits []sentinelHit
 	i := 0
 	// Skip "<" and the element name — but not before checking it, since an
@@ -953,6 +983,12 @@ func sentinelsInTag(tag string) []sentinelHit {
 			// Only the URL rules read the prefix, and unescaping a growing
 			// prefix once per occurrence is quadratic in a value holding many.
 			if urlBearingAttrs[name] {
+				// Each unescaped prefix is a fresh copy that is also retained,
+				// so a value holding many sentinels is quadratic: reserve the
+				// copy first and stop collecting once the allowance is spent.
+				if !w.chargeBytes(idx.at) || !w.step() {
+					return hits
+				}
 				// html.UnescapeString so a prefix written as "java&#x73;cript"
 				// is judged as the "javascript" the browser will see.
 				ctx.valueSoFar = html.UnescapeString(value[:idx.at])

@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -234,6 +235,24 @@ func (ctx *MahresourcesContext) GetTemplateRevision(carrierType string, carrierI
 // carrier's current state when to is nil. The server computes the diff and the
 // UI renders it.
 func (ctx *MahresourcesContext) DiffTemplateRevisions(carrierType string, carrierID uint, from uint, to *uint) (*contracts.TemplateRevisionDiff, error) {
+	return ctx.diffTemplateRevisions(carrierType, carrierID, from, to, func(fromSnap, toSnap models.TemplateSnapshot) ([]models.SlotDiff, error) {
+		return models.DiffTemplateSnapshots(carrierType, fromSnap, toSnap), nil
+	})
+}
+
+// DiffTemplateRevisionsContext is DiffTemplateRevisions for a Generation run:
+// the table is bounded (a field past it takes the coarse form) and the diff
+// stops when reqCtx ends.
+func (ctx *MahresourcesContext) DiffTemplateRevisionsContext(reqCtx context.Context, carrierType string, carrierID uint, from uint, to *uint) (*contracts.TemplateRevisionDiff, error) {
+	if err := reqCtx.Err(); err != nil {
+		return nil, err
+	}
+	return ctx.diffTemplateRevisions(carrierType, carrierID, from, to, func(fromSnap, toSnap models.TemplateSnapshot) ([]models.SlotDiff, error) {
+		return models.DiffTemplateSnapshotsBounded(reqCtx, carrierType, fromSnap, toSnap)
+	})
+}
+
+func (ctx *MahresourcesContext) diffTemplateRevisions(carrierType string, carrierID uint, from uint, to *uint, diff func(fromSnap, toSnap models.TemplateSnapshot) ([]models.SlotDiff, error)) (*contracts.TemplateRevisionDiff, error) {
 	if err := ctx.requireTemplateCarrierEdit(carrierType, "diffing template revisions"); err != nil {
 		return nil, err
 	}
@@ -259,12 +278,16 @@ func (ctx *MahresourcesContext) DiffTemplateRevisions(carrierType string, carrie
 			return nil, err
 		}
 	}
+	slots, err := diff(fromSnap, toSnap)
+	if err != nil {
+		return nil, err
+	}
 	return &contracts.TemplateRevisionDiff{
 		CarrierType: carrierType,
 		CarrierID:   carrierID,
 		FromNumber:  from,
 		ToNumber:    to,
-		Slots:       models.DiffTemplateSnapshots(carrierType, fromSnap, toSnap),
+		Slots:       slots,
 	}, nil
 }
 
@@ -384,4 +407,33 @@ func (ctx *MahresourcesContext) RestoreTemplateRevision(carrierType string, carr
 	}
 	summary := summarizeTemplateRevision(recorded)
 	return &summary, nil
+}
+
+// ListTemplateRevisionsPage is ListTemplateRevisions bounded for a Tool: at most
+// limit summaries starting at offset, newest first, fetched with LIMIT limit+1
+// so more reports whether another page exists without counting the table. It
+// keeps the capability gate and the carrier-existence check.
+func (ctx *MahresourcesContext) ListTemplateRevisionsPage(carrierType string, carrierID uint, limit, offset int) ([]contracts.TemplateRevisionSummary, bool, error) {
+	if err := ctx.requireTemplateCarrierEdit(carrierType, "listing template revisions"); err != nil {
+		return nil, false, err
+	}
+	if err := ctx.requireCarrierExists(carrierType, carrierID); err != nil {
+		return nil, false, err
+	}
+	var revs []models.TemplateRevision
+	err := ctx.db.Omit("snapshot").
+		Where("carrier_type = ? AND carrier_id = ?", carrierType, carrierID).
+		Order("number DESC").Limit(limit + 1).Offset(offset).Find(&revs).Error
+	if err != nil {
+		return nil, false, err
+	}
+	more := len(revs) > limit
+	if more {
+		revs = revs[:limit]
+	}
+	out := make([]contracts.TemplateRevisionSummary, len(revs))
+	for i := range revs {
+		out[i] = summarizeTemplateRevision(&revs[i])
+	}
+	return out, more, nil
 }

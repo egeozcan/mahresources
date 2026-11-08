@@ -105,7 +105,7 @@ func TestFanOutRepairMatchesTheDisclosedContinuation(t *testing.T) {
 	in := fanInput(true, map[string]string{"CustomSidebar": "<p>{{model output: previous draft}} {{server: validation issues}}</p>"}, pairSlotNames("CustomHeader", "CustomSidebar")...)
 	in.Samples = []TemplateSample{{"Name": "sample-sentinel {{model output: previous draft}} {{server: validation issues}}"}}
 	gen := NewTemplateGenerator(provider, fanOutConfig())
-	d, err := gen.DiscloseTemplate(in, "x")
+	d, err := gen.DiscloseTemplate(context.Background(), in, "x")
 	if err != nil {
 		t.Fatal(err)
 	}

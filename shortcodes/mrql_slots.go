@@ -3,6 +3,7 @@ package shortcodes
 import (
 	"fmt"
 	"html"
+	"math"
 	"net/url"
 	"sort"
 	"strconv"
@@ -56,13 +57,15 @@ type mrqlSlots struct {
 // per-item template. Occurrences nested inside another block shortcode are
 // skipped so a [header] inside a nested [each]/[conditional]/[mrql] is left
 // untouched.
-func parseMRQLSlots(inner string) mrqlSlots {
-	var s mrqlSlots
-	s.Header, inner, s.HasHeader = extractFirstSlot(inner, mrqlHeaderTag)
-	s.Footer, inner, s.HasFooter = extractFirstSlot(inner, mrqlFooterTag)
+func parseMRQLSlots(inner string) mrqlSlots { return parseMRQLSlotsM(nil, inner) }
 
-	if countTopLevelElse(inner) > 0 {
-		s.Item, s.Else = SplitElse(inner)
+func parseMRQLSlotsM(m *renderMeter, inner string) mrqlSlots {
+	var s mrqlSlots
+	s.Header, inner, s.HasHeader = extractFirstSlotM(m, inner, mrqlHeaderTag)
+	s.Footer, inner, s.HasFooter = extractFirstSlotM(m, inner, mrqlFooterTag)
+
+	if countTopLevelElseM(m, inner) > 0 {
+		s.Item, s.Else = splitElseM(m, inner)
 		s.HasElse = true
 	} else {
 		s.Item = inner
@@ -93,7 +96,11 @@ func MRQLParentBoundSlots(inner string) []string {
 // whether a pair was found. Occurrences nested inside another block shortcode
 // are skipped, mirroring SplitElse's nested-block handling.
 func extractFirstSlot(content, tag string) (slot string, rest string, found bool) {
-	openIdx, innerStart, closeIdx, closeEnd := firstSlotSpan(content, tag)
+	return extractFirstSlotM(nil, content, tag)
+}
+
+func extractFirstSlotM(m *renderMeter, content, tag string) (slot string, rest string, found bool) {
+	openIdx, innerStart, closeIdx, closeEnd := firstSlotSpanM(m, content, tag)
 	if openIdx < 0 {
 		return "", content, false
 	}
@@ -104,13 +111,23 @@ func extractFirstSlot(content, tag string) (slot string, rest string, found bool
 // opening tag, the start of its content, its closing tag, and the end of that.
 // All are -1 when there is no complete top-level pair.
 func firstSlotSpan(content, tag string) (openIdx, innerStart, closeIdx, closeEnd int) {
+	return firstSlotSpanM(nil, content, tag)
+}
+
+func firstSlotSpanM(m *renderMeter, content, tag string) (openIdx, innerStart, closeIdx, closeEnd int) {
 	openTag := "[" + tag + "]"
 	closeTag := "[/" + tag + "]"
-	spans := blockInnerSpans(content)
+	spans := blockInnerSpansM(m, content)
+	if m.Err() != nil {
+		return -1, -1, -1, -1
+	}
 
 	openIdx = -1
 	for i := 0; i+len(openTag) <= len(content); i++ {
-		if content[i] == '[' && strings.HasPrefix(content[i:], openTag) && !insideSpans(i, spans) {
+		if i&0x3ff == 0 && !m.alive() {
+			return -1, -1, -1, -1
+		}
+		if content[i] == '[' && strings.HasPrefix(content[i:], openTag) && !insideSortedSpans(i, spans) {
 			openIdx = i
 			break
 		}
@@ -122,7 +139,10 @@ func firstSlotSpan(content, tag string) (openIdx, innerStart, closeIdx, closeEnd
 	innerStart = openIdx + len(openTag)
 	closeIdx = -1
 	for i := innerStart; i+len(closeTag) <= len(content); i++ {
-		if content[i] == '[' && strings.HasPrefix(content[i:], closeTag) && !insideSpans(i, spans) {
+		if i&0x3ff == 0 && !m.alive() {
+			return -1, -1, -1, -1
+		}
+		if content[i] == '[' && strings.HasPrefix(content[i:], closeTag) && !insideSortedSpans(i, spans) {
 			closeIdx = i
 			break
 		}
@@ -138,24 +158,32 @@ func firstSlotSpan(content, tag string) (openIdx, innerStart, closeIdx, closeEnd
 // [header] and [footer] pair and the top-level [else]; for [conditional] every
 // top-level [else] and [elseif …] divider; for [each] and [using] the first
 // top-level [else]. Any other occurrence of the same tag stays literal text at runtime.
-func SlotTagSpans(parent, inner string) [][2]int {
+func SlotTagSpans(parent, inner string) [][2]int { return slotTagSpansM(nil, parent, inner) }
+
+func slotTagSpansM(m *renderMeter, parent, inner string) [][2]int {
 	switch parent {
 	case "mrql":
-		return mrqlSlotTagSpans(inner)
+		return mrqlSlotTagSpansM(m, inner)
 	case "conditional":
-		return branchDividerSpans(inner)
+		return branchDividerSpansM(m, inner)
 	case "each", "using":
-		if i := firstElseIndex(inner); i >= 0 {
+		if i := firstElseIndexM(m, inner); i >= 0 {
 			return [][2]int{{i, i + len(elseTag)}}
 		}
 	}
 	return nil
 }
 
-func firstElseIndex(content string) int {
-	spans := blockInnerSpans(content)
+func firstElseIndexM(m *renderMeter, content string) int {
+	spans := blockInnerSpansM(m, content)
+	if m.Err() != nil {
+		return -1
+	}
 	for i := 0; i < len(content); i++ {
-		if content[i] == '[' && strings.HasPrefix(content[i:], elseTag) && !insideSpans(i, spans) {
+		if i&0x3ff == 0 && !m.alive() {
+			return -1
+		}
+		if content[i] == '[' && strings.HasPrefix(content[i:], elseTag) && !insideSortedSpans(i, spans) {
 			return i
 		}
 	}
@@ -165,25 +193,33 @@ func firstElseIndex(content string) int {
 // mrqlSlotTagSpans repeats parseMRQLSlots' extraction order (header, then
 // footer from what is left, then [else] from what is left), keeping a map from
 // each remainder back to offsets in inner.
-func mrqlSlotTagSpans(inner string) [][2]int {
+func mrqlSlotTagSpansM(m *renderMeter, inner string) [][2]int {
 	var out [][2]int
-	// origin[i] is the offset in inner of byte i of the current remainder.
+	// origin[i] is the offset in inner of byte i of the current remainder. Its
+	// storage (8 bytes a byte) is reserved before it is allocated, as is each
+	// copy of it and of the remainder below.
+	if !m.chargeScratch(8 * int64(len(inner)+1)) {
+		return nil
+	}
 	origin := make([]int, len(inner)+1)
 	for i := range origin {
 		origin[i] = i
 	}
 	rest := inner
 	for _, tag := range []string{mrqlHeaderTag, mrqlFooterTag} {
-		o, is, ci, ce := firstSlotSpan(rest, tag)
+		o, is, ci, ce := firstSlotSpanM(m, rest, tag)
 		if o < 0 {
 			continue
+		}
+		if m.Err() != nil || !m.chargeScratch(8*int64(len(origin))+int64(len(rest))) {
+			return nil
 		}
 		out = append(out, [2]int{origin[o], origin[o] + (is - o)}, [2]int{origin[ci], origin[ci] + (ce - ci)})
 		rest = rest[:o] + rest[ce:]
 		origin = append(append([]int(nil), origin[:o]...), origin[ce:]...)
 	}
-	if countTopLevelElse(rest) > 0 {
-		if i := firstElseIndex(rest); i >= 0 {
+	if countTopLevelElseM(m, rest) > 0 {
+		if i := firstElseIndexM(m, rest); i >= 0 {
 			out = append(out, [2]int{origin[i], origin[i] + len(elseTag)})
 		}
 	}
@@ -248,20 +284,54 @@ func viewAllURL(result *QueryResult) string {
 // {total} the true total (falling back to {count} when none was computed), and
 // {link-all} the bare view-all URL (escaped for HTML attribute use).
 func substitutePlaceholders(text string, result *QueryResult) string {
+	out, _ := substitutePlaceholdersM(nil, text, result)
+	return out
+}
+
+// substitutePlaceholdersM is substitutePlaceholders under a render meter. The
+// expansion is admitted before it is built: occurrences are counted, the
+// expanded size is computed with overflow checks, and that size must fit the
+// parsed-source budget (the expanded slot is parsed next), so 36,000 {link-all}
+// over a long query is refused instead of allocating about a gigabyte. ok is
+// false when the meter stopped the render.
+func substitutePlaceholdersM(m *renderMeter, text string, result *QueryResult) (string, bool) {
 	if !strings.ContainsRune(text, '{') {
-		return text
+		return text, true
 	}
 	count := resultCount(result)
 	total := strconv.Itoa(count)
 	if result.Total != nil {
 		total = strconv.FormatInt(*result.Total, 10)
 	}
+	values := [3][2]string{
+		{"{count}", strconv.Itoa(count)},
+		{"{total}", total},
+		{"{link-all}", html.EscapeString(viewAllURL(result))},
+	}
+
+	size := int64(len(text))
+	for _, v := range values {
+		n := int64(strings.Count(text, v[0]))
+		if n == 0 {
+			continue
+		}
+		delta := int64(len(v[1])) - int64(len(v[0]))
+		if delta > 0 && n > (math.MaxInt64-size)/delta {
+			m.fail("placeholder expansion overflows")
+			return "", false
+		}
+		size += n * delta
+	}
+	if !m.admitParsed(size) {
+		return "", false
+	}
+
 	repl := strings.NewReplacer(
-		"{count}", strconv.Itoa(count),
-		"{total}", total,
-		"{link-all}", html.EscapeString(viewAllURL(result)),
+		values[0][0], values[0][1],
+		values[1][0], values[1][1],
+		values[2][0], values[2][1],
 	)
-	return repl.Replace(text)
+	return repl.Replace(text), true
 }
 
 // defaultViewAllLinkHTML renders the built-in "View all →" link appended after

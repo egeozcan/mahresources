@@ -177,6 +177,10 @@ func TranslateWithOptions(q *Query, db *gorm.DB, opts TranslateOptions) (*gorm.D
 
 // translateContext holds shared state during AST translation.
 type translateContext struct {
+	// likeMemo holds the escaped LIKE pattern for each distinct operand, so a
+	// parameter used in many comparisons is escaped once.
+	likeMemo   map[string]string
+	lowerMemo  map[string]string
 	db         *gorm.DB
 	entityType EntityType
 	tableName  string
@@ -415,7 +419,7 @@ func (tc *translateContext) wrapChainSubqueries(steps []fkStep, innerWhere strin
 // case-insensitivity and LIKE handling.
 func (tc *translateContext) buildScalarClause(qualifiedCol string, op Token, val interface{}, fd FieldDef) (string, interface{}) {
 	if op.Type == TokenLike || op.Type == TokenNotLike {
-		likePattern := convertMRQLWildcards(fmt.Sprint(val))
+		likePattern := tc.likePattern(val)
 		likeOp := tc.likeOperator()
 		if op.Type == TokenNotLike {
 			likeOp = "NOT " + likeOp
@@ -473,7 +477,7 @@ func (tc *translateContext) translateFKChainTag(db *gorm.DB, steps []fkStep, op 
 	var tagMatchVal interface{}
 
 	if isLike {
-		likePattern := convertMRQLWildcards(fmt.Sprint(val))
+		likePattern := tc.likePattern(val)
 		likeOp := tc.likeOperator()
 		tagMatchClause = "LOWER(t.name) " + likeOp + " LOWER(?) ESCAPE '\\'"
 		tagMatchVal = likePattern
@@ -784,7 +788,7 @@ func (tc *translateContext) buildRecursiveMatchSubquery(expr *ComparisonExpr) (s
 		var tagVal interface{}
 		if posOp.Type == TokenLike {
 			tagClause = "LOWER(t.name) " + tc.likeOperator() + " LOWER(?) ESCAPE '\\'"
-			tagVal = convertMRQLWildcards(fmt.Sprint(val))
+			tagVal = tc.likePattern(val)
 		} else {
 			tagClause = "LOWER(t.name) = LOWER(?)"
 			tagVal = val
@@ -802,7 +806,7 @@ func (tc *translateContext) buildRecursiveMatchSubquery(expr *ComparisonExpr) (s
 // single keys and subpaths.
 func (tc *translateContext) buildMetaClause(comparisonExpr string, textExpr string, op Token, val interface{}, isNumericVal, indexedNumeric bool) (string, []interface{}) {
 	if op.Type == TokenLike || op.Type == TokenNotLike {
-		likePattern := convertMRQLWildcards(fmt.Sprint(val))
+		likePattern := tc.likePattern(val)
 		likeOp := tc.likeOperator()
 		if op.Type == TokenNotLike {
 			likeOp = "NOT " + likeOp
@@ -1252,7 +1256,7 @@ func (tc *translateContext) translateJunctionComparison(db *gorm.DB, rel junctio
 		matchClause = a + ".id = ?"
 		matchVal = val
 	} else if isLike {
-		likePattern := convertMRQLWildcards(fmt.Sprint(val))
+		likePattern := tc.likePattern(val)
 		if tc.isPostgres() {
 			// ILIKE is already case-insensitive; keep the indexed column bare so
 			// PostgreSQL's name trigram index remains eligible.
@@ -1571,7 +1575,7 @@ func (tc *translateContext) translateInExpr(db *gorm.DB, expr *InExpr) (*gorm.DB
 		if hasStrings {
 			lowerValues := make([]interface{}, len(values))
 			for i, v := range values {
-				lowerValues[i] = strings.ToLower(fmt.Sprint(v))
+				lowerValues[i] = tc.lowerText(v)
 			}
 			if expr.Negated {
 				db = db.Where("LOWER("+jsonExpr+") NOT IN (?)", lowerValues)
@@ -1594,7 +1598,7 @@ func (tc *translateContext) translateInExpr(db *gorm.DB, expr *InExpr) (*gorm.DB
 		// Case-insensitive IN for strings
 		lowerValues := make([]interface{}, len(values))
 		for i, v := range values {
-			lowerValues[i] = strings.ToLower(fmt.Sprint(v))
+			lowerValues[i] = tc.lowerText(v)
 		}
 		if expr.Negated {
 			db = db.Where("LOWER("+column+") NOT IN (?)", lowerValues)
@@ -1617,7 +1621,7 @@ func (tc *translateContext) translateRelationIn(db *gorm.DB, fd FieldDef, negate
 	// Lowercase all values for case-insensitive matching
 	lowerValues := make([]interface{}, len(values))
 	for i, v := range values {
-		lowerValues[i] = strings.ToLower(fmt.Sprint(v))
+		lowerValues[i] = tc.lowerText(v)
 	}
 
 	inOrNotIn := "IN"
@@ -2077,7 +2081,7 @@ func (tc *translateContext) rankOrderExpr() (string, error) {
 
 // translateLikeComparison handles ~ and !~ operators with MRQL wildcard conversion.
 func (tc *translateContext) translateLikeComparison(db *gorm.DB, column string, op Token, val interface{}) (*gorm.DB, error) {
-	pattern := convertMRQLWildcards(fmt.Sprint(val))
+	pattern := tc.likePattern(val)
 	escapeClause := " ESCAPE '\\'"
 	if tc.isPostgres() {
 		if op.Type == TokenNotLike {
@@ -2091,6 +2095,47 @@ func (tc *translateContext) translateLikeComparison(db *gorm.DB, column string, 
 		db = db.Where("LOWER("+column+") LIKE LOWER(?)"+escapeClause, pattern)
 	}
 	return db, nil
+}
+
+// lowerText is the lower-cased text of a bound value, memoized per translation
+// for the same reason as likePattern: one parameter repeated across an IN list
+// would otherwise be copied and lower-cased once per occurrence.
+func (tc *translateContext) lowerText(val interface{}) string {
+	text, isString := val.(string)
+	if !isString {
+		text = fmt.Sprint(val)
+	}
+	if p, ok := tc.lowerMemo[text]; ok {
+		return p
+	}
+	p := strings.ToLower(text)
+	if tc.lowerMemo == nil {
+		tc.lowerMemo = map[string]string{}
+	}
+	tc.lowerMemo[text] = p
+	return p
+}
+
+// likePattern is convertMRQLWildcards on val's text, memoized per translation:
+// the escaping makes several copies of the operand, and the same bound
+// parameter can appear in hundreds of comparisons.
+func (tc *translateContext) likePattern(val interface{}) string {
+	text, isString := val.(string)
+	if !isString {
+		text = fmt.Sprint(val) // fmt copies even a string, so only other types go through it
+	}
+	if p, ok := tc.likeMemo[text]; ok {
+		return p
+	}
+	p := convertMRQLWildcards(text)
+	if tc.likeMemo == nil {
+		tc.likeMemo = map[string]string{}
+	}
+	// Every distinct operand is kept: a cap would let an operand used after the
+	// cap is full be copied once per occurrence. The distinct operands are
+	// bounded by the admitted parameter bytes.
+	tc.likeMemo[text] = p
+	return p
 }
 
 // convertMRQLWildcards converts MRQL wildcards (* → %, ? → _) after escaping

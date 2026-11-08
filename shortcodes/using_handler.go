@@ -2,6 +2,7 @@ package shortcodes
 
 import (
 	"context"
+	"errors"
 	"math"
 	"strconv"
 	"strings"
@@ -39,7 +40,7 @@ func RenderUsingShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcod
 		return shortcodeErrorMarker("using", "[using] requires a closing [/using] tag")
 	}
 
-	body, elseBranch := SplitElse(sc.InnerContent)
+	body, elseBranch := splitElseM(meterFrom(reqCtx), sc.InnerContent)
 
 	renderElse := func() string {
 		if strings.TrimSpace(elseBranch) == "" {
@@ -58,7 +59,15 @@ func RenderUsingShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcod
 
 	result, err := executor(reqCtx, query, opts)
 	if err != nil {
+		if errors.Is(err, ErrQueryUnavailable) {
+			// Not "no target": taking [else] would render as if the entity did
+			// not exist.
+			return unavailableComment(err)
+		}
 		return mrqlErrorHTML(err, false)
+	}
+	if !meterFrom(reqCtx).alive() {
+		return ""
 	}
 	if result == nil {
 		return renderElse()

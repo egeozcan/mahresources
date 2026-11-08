@@ -76,6 +76,8 @@ func TestRuntimeAISettings_RouterEnablesIndependentProvidersAfterKeylessStartup(
 	update := map[string]any{"values": map[string]string{
 		"ai_openai_api_key": "openai-test-credential", "ai_mrql_provider": "openai", "ai_mrql_openai_model": "runtime-openai",
 		"ai_anthropic_api_key": "anthropic-test-credential", "ai_template_provider": "anthropic", "ai_template_anthropic_model": "runtime-claude",
+		// This test pins the classic single-call path; harness is the default.
+		"ai_template_generation_mode": "classic",
 	}}
 	if response := request(http.MethodPut, "/v1/admin/settings", update); response.StatusCode != http.StatusOK {
 		t.Fatalf("save status = %d", response.StatusCode)

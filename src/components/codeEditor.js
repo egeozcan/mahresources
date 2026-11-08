@@ -332,6 +332,8 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
     },
 
     destroy() {
+      // This object replaces templateGeneration's destroy, so it ends the run itself.
+      this.stopGeneration();
       if (this._formatErrorTimer) clearTimeout(this._formatErrorTimer);
       if (this.view) {
         this.view.destroy();

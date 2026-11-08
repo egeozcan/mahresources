@@ -26,6 +26,8 @@ function settings() {
     }
   }
   rows.push(setting('ai_mrql_provider', 'deepseek'), setting('ai_template_provider', 'deepseek'));
+  rows.push(setting('ai_template_generation_mode', 'harness'), setting('ai_template_max_turns', 10, 'int'),
+    setting('ai_template_run_deadline', 300e9, 'duration'), setting('ai_template_run_token_budget', 400000, 'int'));
   return rows;
 }
 
@@ -271,5 +273,83 @@ describe('write-only credential actions', () => {
     component.credentials.deepseek.value = 'unsubmitted-key';
     component.destroy();
     expect(component.credentials.deepseek.value).toBe('');
+  });
+});
+
+describe('AI settings generation runs', () => {
+  test('loads the mode, turn cap, deadline and token budget for editing', async () => {
+    const rows = settings();
+    rows.find(row => row.key === 'ai_template_generation_mode').current = 'classic';
+    rows.find(row => row.key === 'ai_template_run_deadline').current = 90e9;
+    serve(rows);
+    const component = aiSettings();
+    await component.init();
+    expect(component.run).toMatchObject({ mode: 'classic', maxTurns: '10', deadline: '90s', tokenBudget: '400000' });
+  });
+
+  test('saves the four settings together, as strings, and nothing else', async () => {
+    const fetcher = serve();
+    const component = aiSettings();
+    await component.init();
+    Object.assign(component.run, { mode: 'classic', maxTurns: '12', deadline: '8m', tokenBudget: '250000', reason: 'trial' });
+    await component.saveRun();
+    const payload = lastPayload(fetcher);
+    expect(payload.values).toEqual({
+      ai_template_generation_mode: 'classic',
+      ai_template_max_turns: '12',
+      ai_template_run_deadline: '8m',
+      ai_template_run_token_budget: '250000',
+    });
+    expect(payload.reset).toEqual([]);
+    expect(payload.reason).toBe('trial');
+    expect(component.run.flash).toContain('Saved');
+  });
+
+  test('refuses values outside the server ranges before submitting', async () => {
+    const fetcher = serve();
+    const component = aiSettings();
+    await component.init();
+    for (const [field, value, text] of [['maxTurns', '21', '1 to 20'], ['maxTurns', '1.5', '1 to 20'], ['tokenBudget', '99999', '100000 to 2000000'], ['deadline', '', 'duration'], ['mode', 'fast', 'harness or classic']]) {
+      const fresh = aiSettings();
+      await fresh.init();
+      (fresh.run as any)[field] = value;
+      await fresh.saveRun();
+      expect(fresh.run.error).toContain(text);
+    }
+    expect(fetcher.mock.calls.filter(([, options]) => options?.method === 'PUT')).toHaveLength(0);
+    void component;
+  });
+
+  test('shows the server message for a deadline it rejects, keeping the draft', async () => {
+    const fetcher = serve();
+    const component = aiSettings();
+    await component.init();
+    fetcher.mockImplementation(async () => Response.json({ errors: [{ message: 'Run deadline must be between 30s and 15m.' }] }, { status: 400 }));
+    component.run.deadline = '20m';
+    await component.saveRun();
+    expect(component.run.error).toBe('Run deadline must be between 30s and 15m.');
+    expect(component.run.deadline).toBe('20m');
+  });
+
+  test('Reset feature on templates resets the run settings too and reloads them', async () => {
+    const rows = settings();
+    const fetcher = serve(rows);
+    const component = aiSettings();
+    await component.init();
+    component.run.maxTurns = '3';
+    await component.resetProfile('template');
+    const payload = lastPayload(fetcher);
+    for (const key of ['ai_template_generation_mode', 'ai_template_max_turns', 'ai_template_run_deadline', 'ai_template_run_token_budget']) {
+      expect(payload.reset).toContain(key);
+    }
+    expect(component.run.maxTurns).toBe('10');
+  });
+
+  test('resetting the MRQL feature leaves the run settings alone', async () => {
+    const fetcher = serve();
+    const component = aiSettings();
+    await component.init();
+    await component.resetProfile('mrql');
+    expect(lastPayload(fetcher).reset.some((key: string) => key.includes('max_turns'))).toBe(false);
   });
 });

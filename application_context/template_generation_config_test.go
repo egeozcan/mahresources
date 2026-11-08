@@ -168,7 +168,7 @@ func TestGeneratorSendsEachKindsProfile(t *testing.T) {
 	} {
 		provider := &fakeTemplateDraftProvider{response: tc.response}
 		gen := NewTemplateGenerator(provider, cfg)
-		disclosure, err := gen.DiscloseTemplate(tc.in, "make it")
+		disclosure, err := gen.DiscloseTemplate(context.Background(), tc.in, "make it")
 		if err != nil {
 			t.Fatalf("%s: %v", tc.kind, err)
 		}
@@ -194,7 +194,7 @@ func TestGroundingHashFollowsTheKindsProfile(t *testing.T) {
 	slot := slotInput()
 	slot.Slot, slot.Mode = "CustomCSS", "css"
 	hashOf := func(cfg TemplateGenerationConfig, in TemplateGenerationInput) string {
-		d, err := NewTemplateGenerator(&fakeTemplateDraftProvider{}, cfg).DiscloseTemplate(in, "make it")
+		d, err := NewTemplateGenerator(&fakeTemplateDraftProvider{}, cfg).DiscloseTemplate(context.Background(), in, "make it")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -279,7 +279,7 @@ func TestProviderSlotsBoundConcurrentCallsAndTimeOutWaiters(t *testing.T) {
 	in.Slot, in.Mode = "CustomCSS", "css"
 	provider := &blockingTemplateProvider{release: make(chan struct{}), started: make(chan struct{}, 8), ignoreContext: true}
 	gen := NewTemplateGenerator(provider, cfg)
-	disclosure, err := gen.DiscloseTemplate(in, "make it")
+	disclosure, err := gen.DiscloseTemplate(context.Background(), in, "make it")
 	if err != nil {
 		t.Fatal(err)
 	}

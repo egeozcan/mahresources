@@ -18,7 +18,7 @@ func TestTemplateGenerationRoutesRunScoped(t *testing.T) {
 			{"generateTemplate", "GetGenerateTemplateHandler"},
 			{"previewTemplate", "GetPreviewTemplateHandler"},
 		} {
-			want := regexp.MustCompile(`Path\("/v1/` + carrier + `/` + route.path + `"\)\.HandlerFunc\(scopedAPI\(appContext, func\([^)]*\) func\(http\.ResponseWriter, \*http\.Request\) \{\s*return api_handlers\.` + route.handler + `\([a-zA-Z]+, "` + entityType + `"\)`)
+			want := regexp.MustCompile(`Path\("/v1/` + carrier + `/` + route.path + `"\)\.HandlerFunc\(scopedAPI\(appContext, func\([^)]*\) func\(http\.ResponseWriter, \*http\.Request\) \{\s*return api_handlers\.` + route.handler + `\([a-zA-Z]+, "` + entityType + `"[,)]`)
 			if !want.MatchString(routes) {
 				t.Errorf("/v1/%s/%s is not mounted through scopedAPI with the %q carrier", carrier, route.path, entityType)
 			}
@@ -27,5 +27,15 @@ func TestTemplateGenerationRoutesRunScoped(t *testing.T) {
 				t.Errorf("/v1/%s/%s is mounted on the unscoped context", carrier, route.path)
 			}
 		}
+	}
+}
+
+// The finish route must sit under each carrier's prefix, so it inherits the
+// generate route's role gate (admin for category and resourceCategory, editor
+// for noteType) instead of falling through to the default branch of the policy.
+func TestTemplateRunFinishRoutesAreMountedUnderTheCarrierPrefix(t *testing.T) {
+	routes := readRepoFile(t, "server/routes.go")
+	if !regexp.MustCompile(`for _, carrier := range \[\]string\{"category", "resourceCategory", "noteType"\} \{\s*router\.Methods\(http\.MethodPost\)\.Path\("/v1/" \+ carrier \+ "/generateTemplate/finish"\)\.HandlerFunc\(api_handlers\.GetFinishTemplateRunHandler\(\)\)`).MatchString(routes) {
+		t.Error("the finish route is not mounted under /v1/{category,resourceCategory,noteType}/generateTemplate/finish")
 	}
 }

@@ -2,6 +2,7 @@ package api_handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"mahresources/application_context"
+	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -165,7 +167,21 @@ type templateGenerateRequest struct {
 	// slot fields, each generated with its CSS companion, and CustomCSS. Omitted
 	// lets the generator choose; a present list is forced.
 	Slots []string `json:"slots" schema:"slots"`
+	// PreviewMRQL and PreviewPlugins are the run's two opt-ins (harness mode):
+	// previews execute [mrql] queries, previews run plugin shortcodes read-only.
+	// Both default to off, are part of the Disclosure and so of its hash, and
+	// are ignored by classic mode.
+	PreviewMRQL    bool `json:"previewMRQL" schema:"previewMRQL"`
+	PreviewPlugins bool `json:"previewPlugins" schema:"previewPlugins"`
 }
+
+// TemplateRunAccessFactory returns, for one request, a function that re-checks
+// the request's credential under the context it is given and returns an
+// application context bound to the same principal. It returns
+// application_context.ErrTemplateRunAccessChanged (possibly wrapped) when the
+// credential is no longer valid or its role or scope changed. It lives in
+// server because credential resolution is private to that package.
+type TemplateRunAccessFactory func(r *http.Request) func(ctx context.Context) (*application_context.MahresourcesContext, error)
 
 // GetGenerateTemplateHandler handles POST /v1/{category|resourceCategory|noteType}/generateTemplate.
 // entityType selects the carrier ("group", "resource", or "note"). It assembles
@@ -174,7 +190,12 @@ type templateGenerateRequest struct {
 // template. Mounted under the taxonomy/editor path prefixes, so it inherits the
 // same capability gate as saving the corresponding template (admin for
 // category/resourceCategory, editor for noteType).
-func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string) func(http.ResponseWriter, *http.Request) {
+//
+// access rebuilds the request's access under a run's own context (see
+// TemplateRunAccessFactory). The harness executor and the handler's final
+// check before releasing a Draft call it. Nil is allowed for callers that never
+// start a harness run; a run then cannot see its access change.
+func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string, access TemplateRunAccessFactory) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var req templateGenerateRequest
 		if err := tryFillStructValuesFromRequest(&req, request); err != nil {
@@ -216,13 +237,31 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			}
 		}
 
-		generator := ctx.TemplateGenerator()
-		if generator == nil {
+		if ctx.TemplateGenerator() == nil {
 			http_utils.HandleError(errors.New("template generation is not configured"), writer, request, http.StatusServiceUnavailable)
 			return
 		}
 		if !req.DryRun && strings.TrimSpace(req.GroundingHash) == "" {
 			http_utils.HandleError(application_context.ErrTemplateGenerationGroundingRequired, writer, request, http.StatusBadRequest)
+			return
+		}
+		// One settings snapshot drives the refusal, the grounding, the Disclosure
+		// and the run, so a mode change while grounding is paused changes none
+		// of them.
+		prep, err := ctx.PrepareTemplateGeneration()
+		if err != nil {
+			writeTemplateGenerationError(writer, request, err)
+			return
+		}
+		generator := prep.Generator
+		harness := prep.GenerationMode == application_context.TemplateGenerationModeHarness
+		principal := auth.PrincipalFromContext(request.Context())
+		// A run reads live data over many Turns. A group-limited account could
+		// have an entity moved out of its subtree mid-run after earlier Turns put
+		// its content in the conversation, so such an account cannot start one.
+		// Refused before any provider call, a dry run included.
+		if harness && (principal.IsScoped() || principal.RequiresScope()) {
+			http_utils.HandleError(errors.New("Generation runs are not available to group-limited accounts"), writer, request, http.StatusForbidden)
 			return
 		}
 		// A dry run calls no provider, so it has its own limiter and reviewing
@@ -236,6 +275,13 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 		} else if !ctx.TemplateGenerationRateLimiter().Allow(key, time.Now()) {
 			http_utils.HandleError(errors.New("template generation rate limit exceeded"), writer, request, http.StatusTooManyRequests)
 			return
+		}
+		// Rebase before the first grounding read, so leaving the editor during
+		// grounding cancels those reads and no provider is called.
+		var runCtx *application_context.MahresourcesContext
+		if harness {
+			runCtx = ctx.WithParentContext(request.Context())
+			ctx = runCtx
 		}
 
 		// The saved carrier, loaded once: the MetaSchema fallback and the pair
@@ -272,7 +318,7 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 
 		pluginReferences := serializeTemplateGenerationPluginReferencesForPrompt(ctx)
 		partials, partialCount := templatePartialSummaries(ctx)
-		samples, samplesArePreview := loadTemplateSamples(ctx, entityType, req.CategoryID, req.EntityID)
+		samples, sampleRefs, samplesArePreview := loadTemplateSamples(ctx, entityType, req.CategoryID, req.EntityID)
 		input := application_context.TemplateGenerationInput{
 			Target:                target,
 			Mode:                  req.Mode,
@@ -329,40 +375,87 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			}
 		}
 
+		if harness {
+			// Grounding degrades to fewer samples when a read fails, so a client
+			// that left during it must be noticed here, before any provider call.
+			if request.Context().Err() != nil {
+				return
+			}
+			prepared := harnessPreparation{
+				ctx: runCtx, r: request, entityType: entityType, carrier: carrier, carrierID: req.CategoryID,
+				carrierName: name, sampleRefs: sampleRefs, request: req, principal: principal,
+				access: access, siblings: siblings, metaSchema: metaSchema, sectionConfig: sectionConfig,
+			}
+			if req.DryRun {
+				input.Run = prepared.env(&input)
+				result, err := generator.DiscloseTemplate(request.Context(), input, req.Prompt)
+				if err != nil {
+					writeTemplateGenerationError(writer, request, err)
+					return
+				}
+				writer.Header().Set("Content-Type", constants.JSON)
+				_ = json.NewEncoder(writer).Encode(result)
+				return
+			}
+			serveHarnessRun(writer, request, harnessServe{
+				generator: generator, input: input, prepared: prepared,
+				prompt: req.Prompt, hash: strings.TrimSpace(req.GroundingHash),
+			})
+			return
+		}
+
 		var result any
 		if req.DryRun {
-			result, err = generator.DiscloseTemplate(input, req.Prompt)
+			result, err = generator.DiscloseTemplate(request.Context(), input, req.Prompt)
 		} else {
 			result, err = generator.GenerateTemplate(request.Context(), input, req.Prompt, strings.TrimSpace(req.GroundingHash))
 		}
 		if err != nil {
-			switch {
-			case errors.Is(err, application_context.ErrTemplateGenerationNotConfigured):
-				http_utils.HandleError(errors.New("template generation is not configured"), writer, request, http.StatusServiceUnavailable)
-			case errors.Is(err, application_context.ErrTemplateGenerationBadRequest), errors.Is(err, application_context.ErrTemplateGenerationGroundingRequired):
-				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
-			case errors.Is(err, application_context.ErrTemplateGenerationGroundingChanged):
-				http_utils.HandleError(err, writer, request, http.StatusConflict)
-			case errors.Is(err, application_context.ErrTemplateGenerationTimeout):
-				http_utils.HandleError(errors.New("template generation timed out"), writer, request, http.StatusGatewayTimeout)
-			default:
-				// A repair that was attempted is reported with the error, so a
-				// failed repair is not mistaken for none.
-				if repair := application_context.TemplateRepairFromError(err); repair != nil && !http_utils.RequestAcceptsHTML(request) {
-					fmt.Printf("\n[ERROR]: %v\n", err)
-					writer.Header().Set("Content-Type", constants.JSON)
-					writer.WriteHeader(http.StatusBadGateway)
-					_ = json.NewEncoder(writer).Encode(map[string]any{"error": "template generation provider error", "repair": repair})
-					return
-				}
-				http_utils.HandleError(errors.New("template generation provider error"), writer, request, http.StatusBadGateway)
-			}
+			writeTemplateGenerationError(writer, request, err)
 			return
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(result)
 	}
+}
+
+// classifyTemplateGenerationError maps a generation failure to the status and
+// the error shown to the caller. Provider failures are reported by a fixed
+// text, never the provider's own.
+func classifyTemplateGenerationError(err error) (int, error) {
+	switch {
+	case errors.Is(err, application_context.ErrTemplateRunAccessChanged):
+		return http.StatusForbidden, application_context.ErrTemplateRunAccessChanged
+	case errors.Is(err, application_context.ErrTemplateRunLimit):
+		return http.StatusTooManyRequests, application_context.ErrTemplateRunLimit
+	case errors.Is(err, application_context.ErrTemplateGenerationNotConfigured):
+		return http.StatusServiceUnavailable, errors.New("template generation is not configured")
+	case errors.Is(err, application_context.ErrTemplateGenerationBadRequest), errors.Is(err, application_context.ErrTemplateGenerationGroundingRequired):
+		return http.StatusBadRequest, err
+	case errors.Is(err, application_context.ErrTemplateGenerationGroundingChanged):
+		return http.StatusConflict, err
+	case errors.Is(err, application_context.ErrTemplateGenerationTimeout):
+		return http.StatusGatewayTimeout, errors.New("template generation timed out")
+	}
+	return http.StatusBadGateway, errors.New("template generation provider error")
+}
+
+// writeTemplateGenerationError answers a failed generation with its status code.
+func writeTemplateGenerationError(writer http.ResponseWriter, request *http.Request, err error) {
+	status, shown := classifyTemplateGenerationError(err)
+	if status == http.StatusBadGateway {
+		// A repair that was attempted is reported with the error, so a
+		// failed repair is not mistaken for none.
+		if repair := application_context.TemplateRepairFromError(err); repair != nil && !http_utils.RequestAcceptsHTML(request) {
+			fmt.Printf("\n[ERROR]: %v\n", err)
+			writer.Header().Set("Content-Type", constants.JSON)
+			writer.WriteHeader(http.StatusBadGateway)
+			_ = json.NewEncoder(writer).Encode(map[string]any{"error": "template generation provider error", "repair": repair})
+			return
+		}
+	}
+	http_utils.HandleError(shown, writer, request, status)
 }
 
 // carrierMetaSchema pulls the MetaSchema string off a loaded carrier.
@@ -427,16 +520,17 @@ func templateSiblingSlots(entityType string, carrier any, unsaved string) (map[s
 // fewer samples. The create form has no category to sample, so there the
 // preview entity the user chose is the only sample, loaded through the same
 // scope, and preview reports it.
-func loadTemplateSamples(ctx TemplateGenerationContext, entityType string, categoryID, entityID uint) (samples []application_context.TemplateSample, preview bool) {
+func loadTemplateSamples(ctx TemplateGenerationContext, entityType string, categoryID, entityID uint) (samples []application_context.TemplateSample, refs []application_context.TemplateRef, preview bool) {
 	if categoryID == 0 {
 		if entityID == 0 {
-			return nil, false
+			return nil, nil, false
 		}
 		entity, _, err := loadPreviewEntity(ctx, entityType, entityID)
 		if err != nil {
-			return nil, false
+			return nil, nil, false
 		}
-		return []application_context.TemplateSample{application_context.ProjectTemplateSample(entity, true)}, true
+		return []application_context.TemplateSample{application_context.ProjectTemplateSample(entity, true)},
+			[]application_context.TemplateRef{templateSampleRef(entityType, entity)}, true
 	}
 	var entities []any
 	seen := map[uint]bool{}
@@ -461,8 +555,23 @@ func loadTemplateSamples(ctx TemplateGenerationContext, entityType string, categ
 	samples = make([]application_context.TemplateSample, 0, len(entities))
 	for i, entity := range entities {
 		samples = append(samples, application_context.ProjectTemplateSample(entity, i == 0))
+		refs = append(refs, templateSampleRef(entityType, entity))
 	}
-	return samples, false
+	return samples, refs, false
+}
+
+// templateSampleRef names a loaded sample by type, ID and name, for the harness
+// Seed's starting points: the IDs the model opens it by with get_entity.
+func templateSampleRef(entityType string, entity any) application_context.TemplateRef {
+	switch e := entity.(type) {
+	case *models.Group:
+		return application_context.TemplateRef{Type: entityType, ID: e.ID, Name: e.Name}
+	case *models.Resource:
+		return application_context.TemplateRef{Type: entityType, ID: e.ID, Name: e.Name}
+	case *models.Note:
+		return application_context.TemplateRef{Type: entityType, ID: e.ID, Name: e.Name}
+	}
+	return application_context.TemplateRef{Type: entityType}
 }
 
 // templateSampleOrder orders sample candidates canonically: newest first, the

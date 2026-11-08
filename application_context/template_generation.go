@@ -67,6 +67,9 @@ type TemplateGenerationConfig struct {
 	// pair call together (DefaultTemplateBundleDeadline when 0). Each call keeps
 	// its own profile timeout inside it.
 	BundleDeadline time.Duration
+	// Harness holds the run limits of harness mode; NewTemplateHarnessGenerator
+	// fills the shipped defaults for what it leaves zero. Classic ignores it.
+	Harness *TemplateHarnessSettings
 }
 
 // TemplateGenerationInput is the pure, DB-free grounding assembled by the
@@ -122,6 +125,32 @@ type TemplateGenerationInput struct {
 	// Validation seams (keep the generator plugin-agnostic and DB-free).
 	Known        shortcodes.KnownShortcodes
 	ValidateMRQL func(query string, opts shortcodes.MRQLCheckOptions) error
+
+	// Harness-mode fields; classic generation ignores them.
+	//
+	// Run is the harness run environment (nil for classic). PartialExists
+	// answers whether a partial exists, under the caller's context, for the one
+	// harness validator. StartingPoints names the carrier and samples the
+	// model can open first with get_entity. GenerationMode is harness or
+	// classic, kept apart from Mode above.
+	Run            *TemplateRunEnv
+	PartialExists  func(ctx context.Context, name string) (bool, error)
+	StartingPoints TemplateStartingPoints
+	GenerationMode string
+}
+
+// TemplateRef names an entity by type, ID and name.
+type TemplateRef struct {
+	Type string `json:"type"`
+	ID   uint   `json:"id"`
+	Name string `json:"name"`
+}
+
+// TemplateStartingPoints are the harness Seed's starting references: the edited
+// carrier (zero value on the create form) and the loaded samples.
+type TemplateStartingPoints struct {
+	Carrier TemplateRef
+	Samples []TemplateRef
 }
 
 type TemplateGenerationResult struct {
@@ -141,6 +170,29 @@ type TemplateGenerationResult struct {
 	// FailedSlots names the HTML sections of a fan-out whose pair could not be
 	// generated; they are absent from Slots and each has a warning in Issues.
 	FailedSlots []string `json:"failedSlots,omitempty"`
+	// Harness runs only. StopReason is why the run ended, Transcript every
+	// message sent and received, Submitted the fields the model explicitly
+	// submitted (an empty submitted value is still a submission).
+	StopReason string                     `json:"stopReason,omitempty"`
+	Transcript []TemplateTranscriptRecord `json:"transcript,omitempty"`
+	Submitted  []string                   `json:"submitted,omitempty"`
+	// ContentSubmitted marks a standalone harness field the model explicitly
+	// submitted, so an empty Content serializes as "content":"" instead of
+	// disappearing. Classic never sets it.
+	ContentSubmitted bool `json:"-"`
+}
+
+// MarshalJSON keeps Content (omitempty) in the output when the model
+// explicitly submitted an empty standalone field.
+func (r TemplateGenerationResult) MarshalJSON() ([]byte, error) {
+	type plain TemplateGenerationResult
+	if !r.ContentSubmitted || r.Content != "" {
+		return json.Marshal(plain(r))
+	}
+	return json.Marshal(struct {
+		plain
+		Content string `json:"content"`
+	}{plain(r), ""})
 }
 
 // templateTruncationMessage is the issue for a reply cut off at max_tokens.
@@ -168,8 +220,22 @@ func templateOversizeIssue(field string, size int) shortcodes.LintIssue {
 // GenerateTemplate rebuilds it, refuses unless its groundingHash matches the
 // one the user approved, and sends exactly those messages.
 type TemplateGenerator interface {
-	DiscloseTemplate(in TemplateGenerationInput, prompt string) (*TemplateDisclosure, error)
+	DiscloseTemplate(ctx context.Context, in TemplateGenerationInput, prompt string) (*TemplateDisclosure, error)
 	GenerateTemplate(ctx context.Context, in TemplateGenerationInput, prompt, groundingHash string) (*TemplateGenerationResult, error)
+}
+
+// TemplateGenerationPrep is a generation mode and a generator bound to one
+// settings snapshot (plan section 3, "Mode").
+type TemplateGenerationPrep struct {
+	GenerationMode string // TemplateGenerationModeHarness | TemplateGenerationModeClassic
+	Generator      TemplateGenerator
+}
+
+// templateGenerationPreparer is implemented by every generator that can report
+// its mode: the runtime generator binds one settings snapshot, and a fixed
+// generator reports its own mode.
+type templateGenerationPreparer interface {
+	PrepareTemplateGeneration() (TemplateGenerationPrep, error)
 }
 
 // TemplateDraftRequest is one provider call.
@@ -209,6 +275,51 @@ type defaultTemplateGenerator struct {
 	// is created with the generator, which the context copies share.
 	slots chan struct{}
 	now   func() time.Time
+
+	// Harness mode (plan section 3): conversation replaces provider, harness is
+	// true for a generator built by NewTemplateHarnessGenerator. The timeouts
+	// are fields so tests can shorten them.
+	conversation   TemplateConversationProvider
+	harness        bool
+	toolTimeout    time.Duration
+	previewTimeout time.Duration
+}
+
+// NewTemplateHarnessGenerator returns a generator that runs every request as a
+// multi-Turn Generation run over conv. Its settings come from cfg.Harness.
+func NewTemplateHarnessGenerator(conv TemplateConversationProvider, cfg TemplateGenerationConfig) TemplateGenerator {
+	g := NewTemplateGenerator(nil, cfg).(*defaultTemplateGenerator)
+	settings := TemplateHarnessSettings{}
+	if cfg.Harness != nil {
+		settings = *cfg.Harness
+	}
+	settings = settings.withDefaults()
+	g.config.Harness = &settings
+	g.conversation, g.harness = conv, true
+	return g
+}
+
+// PrepareTemplateGeneration reports this generator's own mode.
+func (g *defaultTemplateGenerator) PrepareTemplateGeneration() (TemplateGenerationPrep, error) {
+	mode := TemplateGenerationModeClassic
+	if g.harness {
+		mode = TemplateGenerationModeHarness
+	}
+	return TemplateGenerationPrep{GenerationMode: mode, Generator: g}, nil
+}
+
+func (g *defaultTemplateGenerator) toolTimeoutOrDefault() time.Duration {
+	if g.toolTimeout > 0 {
+		return g.toolTimeout
+	}
+	return defaultTemplateRunToolTimeout
+}
+
+func (g *defaultTemplateGenerator) previewTimeoutOrDefault() time.Duration {
+	if g.previewTimeout > 0 {
+		return g.previewTimeout
+	}
+	return defaultTemplateRunPreviewTimout
 }
 
 func NewTemplateGenerator(provider TemplateDraftProvider, cfg TemplateGenerationConfig) TemplateGenerator {
@@ -227,7 +338,14 @@ func NewTemplateGenerator(provider TemplateDraftProvider, cfg TemplateGeneration
 	return &defaultTemplateGenerator{provider: provider, config: cfg, slots: make(chan struct{}, cfg.ProviderSlots), now: time.Now}
 }
 
-func (g *defaultTemplateGenerator) DiscloseTemplate(in TemplateGenerationInput, prompt string) (*TemplateDisclosure, error) {
+func (g *defaultTemplateGenerator) DiscloseTemplate(ctx context.Context, in TemplateGenerationInput, prompt string) (*TemplateDisclosure, error) {
+	if g.harness {
+		request, err := g.discloseHarness(ctx, in, prompt)
+		if err != nil {
+			return nil, err
+		}
+		return request.disclosure, nil
+	}
 	request, err := g.disclose(in, prompt)
 	if err != nil {
 		return nil, err
@@ -242,6 +360,31 @@ type templateRequest struct {
 	disclosure *TemplateDisclosure
 	// fan is set when the request is a planner fan-out.
 	fan *templateFanOut
+	// run is set in harness mode.
+	run *harnessPlan
+}
+
+// normalizeSlotMode settles "is this slot CSS?" once, so the prompt and the
+// linter cannot answer it differently. The handler validates Slot and does not
+// validate Mode, so a request can arrive contradicting itself; left alone,
+// slot=CustomCSS with mode=html asked the model for HTML and then judged the
+// answer as CSS. in is a value copy, so this rewrite is local to the call.
+//
+// A slot draft is one of exactly two things, so the mode is rewritten to
+// whichever singleSlotIsCSS says rather than passed through. That also
+// canonicalises a mixed-case "CSS", which that predicate accepts and
+// modeRuleLine's exact-match switch does not, and refuses "json", which
+// belongs to the metaschema target and would otherwise have asked for JSON
+// and linted the reply as markup. Other targets keep their own mode.
+func normalizeSlotMode(in TemplateGenerationInput) TemplateGenerationInput {
+	if in.Target == TemplateTargetSlot {
+		if singleSlotIsCSS(in) {
+			in.Mode = "css"
+		} else {
+			in.Mode = "html"
+		}
+	}
+	return in
 }
 
 // disclose validates and normalizes the request, then assembles every call it
@@ -261,25 +404,7 @@ func (g *defaultTemplateGenerator) disclose(in TemplateGenerationInput, prompt s
 	}
 	in.Postgres = g.config.Postgres
 
-	// Settle "is this slot CSS?" once, here, so the prompt and the linter cannot
-	// answer it differently. The handler validates Slot and does not validate
-	// Mode, so a request can arrive contradicting itself; left alone,
-	// slot=CustomCSS with mode=html asked the model for HTML and then judged the
-	// answer as CSS. in is a value copy, so this rewrite is local to the call.
-	//
-	// A slot draft is one of exactly two things, so the mode is rewritten to
-	// whichever singleSlotIsCSS says rather than passed through. That also
-	// canonicalises a mixed-case "CSS", which that predicate accepts and
-	// modeRuleLine's exact-match switch does not, and refuses "json", which
-	// belongs to the metaschema target and would otherwise have asked for JSON
-	// and linted the reply as markup. Other targets keep their own mode.
-	if in.Target == TemplateTargetSlot {
-		if singleSlotIsCSS(in) {
-			in.Mode = "css"
-		} else {
-			in.Mode = "html"
-		}
-	}
+	in = normalizeSlotMode(in)
 
 	if fan, err := templateFanOutFor(in); err != nil {
 		return templateRequest{}, err
@@ -307,6 +432,9 @@ func (g *defaultTemplateGenerator) disclose(in TemplateGenerationInput, prompt s
 }
 
 func (g *defaultTemplateGenerator) GenerateTemplate(ctx context.Context, in TemplateGenerationInput, prompt, groundingHash string) (*TemplateGenerationResult, error) {
+	if g.harness {
+		return g.generateHarness(ctx, in, prompt, groundingHash)
+	}
 	request, err := g.disclose(in, prompt)
 	if err != nil {
 		return nil, err
@@ -664,24 +792,30 @@ func validateTemplateContent(target string, in TemplateGenerationInput, content 
 // as the only issue, and otherwise the app-specific lint of a schema that
 // compiles.
 func validateMetaSchemaJSON(content string, opts shortcodes.MetaSchemaLintOptions) []shortcodes.LintIssue {
+	return validateMetaSchemaJSONContext(context.Background(), content, opts)
+}
+
+// validateMetaSchemaJSONContext is validateMetaSchemaJSON for a caller with a
+// context, a Generation run: the context is checked between the compile's
+// phases and before each regexp compile (the library's own compile cannot be
+// interrupted), and a cancelled check is an error, never a clean verdict.
+func validateMetaSchemaJSONContext(ctx context.Context, content string, opts shortcodes.MetaSchemaLintOptions) []shortcodes.LintIssue {
 	var probe any
 	if err := json.Unmarshal([]byte(content), &probe); err != nil {
 		return []shortcodes.LintIssue{{Severity: shortcodes.SeverityError, Message: "Generated MetaSchema is not valid JSON: " + err.Error()}}
 	}
-	if err := compileGeneratedSchema(content); err != nil {
+	if err := ctx.Err(); err != nil {
+		return []shortcodes.LintIssue{{Severity: shortcodes.SeverityError, Message: "MetaSchema check stopped: " + err.Error()}}
+	}
+	// The write paths' rule (findings 17/93), so a generated schema and an
+	// authored one are held to the same compile.
+	if err := ValidateMetaSchemaContext(ctx, content); err != nil {
 		return []shortcodes.LintIssue{{Severity: shortcodes.SeverityError, Message: "Generated MetaSchema is not a valid JSON Schema: " + err.Error()}}
 	}
 	if issues := shortcodes.LintMetaSchema(content, opts); issues != nil {
 		return issues
 	}
 	return []shortcodes.LintIssue{}
-}
-
-// compileGeneratedSchema verifies the generated MetaSchema compiles as a JSON
-// Schema. It shares ValidateMetaSchema with the write paths (findings 17/93) so
-// a generated schema and an authored one are held to one rule.
-func compileGeneratedSchema(schemaJSON string) error {
-	return ValidateMetaSchema(schemaJSON)
 }
 
 func hasErrorIssue(issues []shortcodes.LintIssue) bool {

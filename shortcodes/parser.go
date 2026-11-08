@@ -87,28 +87,60 @@ type token struct {
 // position, and pairs them inside-out (setting token.matched on both sides of a
 // pair). It is the shared front-end for ParseWithBlocks (which builds a shortcode
 // tree from the result) and Lint (which reports unmatched/misused tokens).
-func matchTokens(input string) []token {
+func matchTokens(input string) []token { return matchTokensM(nil, input) }
+
+// matchTokensM is matchTokens under a render meter (nil: unbounded). A budgeted
+// meter caps the retained tokens and the attributes of one token, and every
+// token loop consults the context.
+func matchTokensM(m *renderMeter, input string) []token {
 	var tokens []token
 
-	for _, m := range shortcodePattern.FindAllStringSubmatchIndex(input, -1) {
-		fullStart, fullEnd := m[0], m[1]
-		name := input[m[2]:m[3]]
+	tokCap := -1
+	attrCap := -1
+	if m.limited() {
+		tokCap, attrCap = budgetedTokenCap+1, budgetedAttrCap
+	}
+
+	opens := shortcodePattern.FindAllStringSubmatchIndex(input, tokCap)
+	closes := closingTagPattern.FindAllStringSubmatchIndex(input, tokCap)
+	if tokCap > 0 && len(opens)+len(closes) > budgetedTokenCap {
+		m.fail("more than %d shortcode tokens", budgetedTokenCap)
+		return nil
+	}
+	if len(opens)+len(closes) > 0 {
+		tokens = make([]token, 0, len(opens)+len(closes))
+	}
+
+	for _, mm := range opens {
+		if !m.tick() {
+			return nil
+		}
+		fullStart, fullEnd := mm[0], mm[1]
+		name := input[mm[2]:mm[3]]
 		attrStr := ""
-		if m[4] >= 0 && m[5] >= 0 {
-			attrStr = input[m[4]:m[5]]
+		if mm[4] >= 0 && mm[5] >= 0 {
+			attrStr = input[mm[4]:mm[5]]
+		}
+		attrs, over := parseAttrsReserve(strings.TrimSpace(attrStr), attrCap, m.reserveAttrs)
+		if over {
+			m.fail("more than %d attributes on one shortcode, or past the aggregate allowance", attrCap)
+			return nil
 		}
 		tokens = append(tokens, token{
 			name:  name,
-			attrs: parseAttrs(strings.TrimSpace(attrStr)),
+			attrs: attrs,
 			raw:   input[fullStart:fullEnd],
 			start: fullStart,
 			end:   fullEnd,
 		})
 	}
 
-	for _, m := range closingTagPattern.FindAllStringSubmatchIndex(input, -1) {
-		fullStart, fullEnd := m[0], m[1]
-		name := input[m[2]:m[3]]
+	for _, mm := range closes {
+		if !m.tick() {
+			return nil
+		}
+		fullStart, fullEnd := mm[0], mm[1]
+		name := input[mm[2]:mm[3]]
 		tokens = append(tokens, token{
 			name:    name,
 			start:   fullStart,
@@ -132,21 +164,26 @@ func matchTokens(input string) []token {
 		return false
 	})
 
-	// Match pairs inside-out.
+	// Pair inside-out. A closer takes the nearest earlier unmatched opener of
+	// its name, which is the top of that name's stack of unmatched openers; the
+	// stack replaces a backward scan that was quadratic on nested same-name tags.
+	stacks := map[string][]int{}
 	for i := range tokens {
+		if !m.tick() {
+			return nil
+		}
 		if !tokens[i].closing {
+			stacks[tokens[i].name] = append(stacks[tokens[i].name], i)
 			continue
 		}
-		for j := i - 1; j >= 0; j-- {
-			if tokens[j].matched || tokens[j].closing {
-				continue
-			}
-			if tokens[j].name == tokens[i].name {
-				tokens[j].matched = true
-				tokens[i].matched = true
-				break
-			}
+		st := stacks[tokens[i].name]
+		if len(st) == 0 {
+			continue
 		}
+		j := st[len(st)-1]
+		stacks[tokens[i].name] = st[:len(st)-1]
+		tokens[j].matched = true
+		tokens[i].matched = true
 	}
 
 	return tokens
@@ -155,8 +192,10 @@ func matchTokens(input string) []token {
 // ParseWithBlocks scans input for shortcode patterns and returns all top-level
 // matches, including block shortcodes ([name]...[/name]). Nested shortcodes
 // inside a block's InnerContent are left as raw text — they are not returned.
-func ParseWithBlocks(input string) []Shortcode {
-	tokens := matchTokens(input)
+func ParseWithBlocks(input string) []Shortcode { return parseWithBlocksM(nil, input) }
+
+func parseWithBlocksM(m *renderMeter, input string) []Shortcode {
+	tokens := matchTokensM(m, input)
 	if len(tokens) == 0 {
 		return nil
 	}
@@ -166,6 +205,9 @@ func ParseWithBlocks(input string) []Shortcode {
 	skipUntil := -1
 
 	for i := range tokens {
+		if !m.tick() {
+			return nil
+		}
 		if tokens[i].start < skipUntil {
 			continue
 		}
@@ -179,6 +221,9 @@ func ParseWithBlocks(input string) []Shortcode {
 			depth := 0
 			closeIdx := -1
 			for j := i + 1; j < len(tokens); j++ {
+				if !m.tick() {
+					return nil
+				}
 				if !tokens[j].closing && tokens[j].name == tokens[i].name {
 					depth++
 				} else if tokens[j].closing && tokens[j].name == tokens[i].name {
@@ -236,16 +281,40 @@ func ParseWithBlocks(input string) []Shortcode {
 // Attribute values may be double-quoted, single-quoted, or unquoted.
 // When a key appears more than once, the last value wins.
 func parseAttrs(s string) map[string]string {
-	attrs := make(map[string]string)
+	attrs, _ := parseAttrsLimit(s, -1)
+	return attrs
+}
+
+// parseAttrsLimit is parseAttrs that stops at limit attributes (limit < 0 means
+// no limit) and reports over=true when more were present, so a budgeted render
+// does not materialize every match of an attribute-heavy token.
+func parseAttrsLimit(s string, limit int) (attrs map[string]string, over bool) {
+	return parseAttrsReserve(s, limit, nil)
+}
+
+// parseAttrsReserve is parseAttrsLimit that asks reserve(n) for the n entries
+// about to be inserted, before the map is filled; false is "over".
+func parseAttrsReserve(s string, limit int, reserve func(n int) bool) (attrs map[string]string, over bool) {
+	attrs = make(map[string]string)
 	if s == "" {
-		return attrs
+		return attrs, false
 	}
 
 	// Unescape HTML entities so shortcodes work after markdown processing.
 	// Markdown converts " to &quot; which breaks attribute parsing.
 	s = html.UnescapeString(s)
 
-	matches := attrPattern.FindAllStringSubmatch(s, -1)
+	n := -1
+	if limit >= 0 {
+		n = limit + 1
+	}
+	matches := attrPattern.FindAllStringSubmatch(s, n)
+	if limit >= 0 && len(matches) > limit {
+		return nil, true
+	}
+	if reserve != nil && !reserve(len(matches)) {
+		return nil, true
+	}
 	for _, m := range matches {
 		key := m[1]
 		val := m[2]
@@ -258,5 +327,5 @@ func parseAttrs(s string) map[string]string {
 		attrs[key] = val
 	}
 
-	return attrs
+	return attrs, false
 }

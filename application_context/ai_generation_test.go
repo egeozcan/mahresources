@@ -27,7 +27,20 @@ func aiTestResponse(content string) *http.Response {
 	return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(body)))}
 }
 
+// newAITestSettings builds settings in classic mode, which the pre-harness
+// tests were written against; newAIHarnessTestSettings keeps the shipped
+// defaults.
 func newAITestSettings(t *testing.T, boot TemplateGenerationConfig) *RuntimeSettings {
+	t.Helper()
+	return newAIModeTestSettings(t, boot, TemplateGenerationModeClassic)
+}
+
+func newAIHarnessTestSettings(t *testing.T, boot TemplateGenerationConfig) *RuntimeSettings {
+	t.Helper()
+	return newAIModeTestSettings(t, boot, "")
+}
+
+func newAIModeTestSettings(t *testing.T, boot TemplateGenerationConfig, mode string) *RuntimeSettings {
 	t.Helper()
 	db := newTestDB(t)
 	sqlDB, _ := db.DB()
@@ -35,6 +48,9 @@ func newAITestSettings(t *testing.T, boot TemplateGenerationConfig) *RuntimeSett
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	values := BuildDefaultsFromConfig(&MahresourcesConfig{})
 	AddAIGenerationDefaults(values, boot, nil)
+	if mode != "" {
+		values["ai_template_generation_mode"] = mode
+	}
 	s := NewRuntimeSettings(db, &stubLogger{}, buildSpecs(), values)
 	if err := s.Load(); err != nil {
 		t.Fatal(err)
@@ -118,21 +134,21 @@ func TestRuntimeAITemplateDisclosureChangesWithRoutingAndBudgets(t *testing.T) {
 		return nil, nil
 	})})
 	in := TemplateGenerationInput{Target: TemplateTargetSlot, Slot: "CustomCSS", EntityType: "group"}
-	old, err := g.DiscloseTemplate(in, "red text")
+	old, err := g.DiscloseTemplate(context.Background(), in, "red text")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Set("ai_deepseek_api_key", "rotated-key", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	rotated, err := g.DiscloseTemplate(in, "red text")
+	rotated, err := g.DiscloseTemplate(context.Background(), in, "red text")
 	if err != nil || rotated.GroundingHash != old.GroundingHash {
 		t.Fatalf("credential changed disclosure: %v", err)
 	}
 	if err := s.Apply(map[string]string{"ai_template_provider": "anthropic", "ai_anthropic_api_key": "key", "ai_template_anthropic_model": "claude-test"}, nil, "", ""); err != nil {
 		t.Fatal(err)
 	}
-	newDisclosure, err := g.DiscloseTemplate(in, "red text")
+	newDisclosure, err := g.DiscloseTemplate(context.Background(), in, "red text")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +161,7 @@ func TestRuntimeAITemplateDisclosureChangesWithRoutingAndBudgets(t *testing.T) {
 	if err := s.Set("ai_template_anthropic_timeout", "90s", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	changed, err := g.DiscloseTemplate(in, "red text")
+	changed, err := g.DiscloseTemplate(context.Background(), in, "red text")
 	if err != nil || changed.GroundingHash == newDisclosure.GroundingHash {
 		t.Fatalf("timeout change not disclosed: %v", err)
 	}
@@ -169,7 +185,7 @@ func TestRuntimeAITemplateSlotsSurviveSettingsChanges(t *testing.T) {
 	})}
 	g := newRuntimeAIGeneration(s, boot, client)
 	in := TemplateGenerationInput{Target: TemplateTargetSlot, Slot: "CustomCSS", EntityType: "group"}
-	d, err := g.DiscloseTemplate(in, "red text")
+	d, err := g.DiscloseTemplate(context.Background(), in, "red text")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +203,7 @@ func TestRuntimeAITemplateSlotsSurviveSettingsChanges(t *testing.T) {
 	if err := s.Set("ai_template_deepseek_model", "new-model", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	d, err = g.DiscloseTemplate(in, "red text")
+	d, err = g.DiscloseTemplate(context.Background(), in, "red text")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +251,7 @@ func TestRuntimeAITemplateFanOutKeepsOriginalSnapshot(t *testing.T) {
 	})}
 	g := newRuntimeAIGeneration(s, boot, client)
 	in := TemplateGenerationInput{Target: TemplateTargetBundle, EntityType: "group", SlotsSelected: true, BundleSlots: []string{"CustomHeader", "CustomHeaderCSS", "CustomSidebar", "CustomSidebarCSS"}}
-	d, err := g.DiscloseTemplate(in, "two sections")
+	d, err := g.DiscloseTemplate(context.Background(), in, "two sections")
 	if err != nil {
 		t.Fatal(err)
 	}

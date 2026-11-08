@@ -22,7 +22,7 @@ type fakeAPITemplateGenerator struct {
 	seen   application_context.TemplateGenerationInput
 }
 
-func (f *fakeAPITemplateGenerator) DiscloseTemplate(in application_context.TemplateGenerationInput, prompt string) (*application_context.TemplateDisclosure, error) {
+func (f *fakeAPITemplateGenerator) DiscloseTemplate(_ context.Context, in application_context.TemplateGenerationInput, prompt string) (*application_context.TemplateDisclosure, error) {
 	f.seen = in
 	if f.err != nil {
 		return nil, f.err

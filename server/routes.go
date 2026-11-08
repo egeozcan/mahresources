@@ -920,15 +920,22 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	// path-prefix authorization applies (category/resourceCategory → admin,
 	// noteType → editor), matching the preview routes above. Request-scoped for
 	// the same reason: the prompt carries sample entity values.
+	runAccess := templateRunAccessFactory(appContext)
 	router.Methods(http.MethodPost).Path("/v1/category/generateTemplate").HandlerFunc(scopedAPI(appContext, func(ctx api_handlers.TemplateGenerationContext) func(http.ResponseWriter, *http.Request) {
-		return api_handlers.GetGenerateTemplateHandler(ctx, "group")
+		return api_handlers.GetGenerateTemplateHandler(ctx, "group", runAccess)
 	}))
 	router.Methods(http.MethodPost).Path("/v1/resourceCategory/generateTemplate").HandlerFunc(scopedAPI(appContext, func(ctx api_handlers.TemplateGenerationContext) func(http.ResponseWriter, *http.Request) {
-		return api_handlers.GetGenerateTemplateHandler(ctx, "resource")
+		return api_handlers.GetGenerateTemplateHandler(ctx, "resource", runAccess)
 	}))
 	router.Methods(http.MethodPost).Path("/v1/noteType/generateTemplate").HandlerFunc(scopedAPI(appContext, func(ctx api_handlers.TemplateGenerationContext) func(http.ResponseWriter, *http.Request) {
-		return api_handlers.GetGenerateTemplateHandler(ctx, "note")
+		return api_handlers.GetGenerateTemplateHandler(ctx, "note", runAccess)
 	}))
+	// Finish now for a live run. Mounted under each carrier's prefix, so the
+	// role gate is the generate route's; it reads no entities, so it takes no
+	// request-scoped context.
+	for _, carrier := range []string{"category", "resourceCategory", "noteType"} {
+		router.Methods(http.MethodPost).Path("/v1/" + carrier + "/generateTemplate/finish").HandlerFunc(api_handlers.GetFinishTemplateRunHandler())
+	}
 
 	// Global Search
 	router.Methods(http.MethodGet).Path("/v1/search").HandlerFunc(scopedAPI(appContext, api_handlers.GetGlobalSearchHandler))

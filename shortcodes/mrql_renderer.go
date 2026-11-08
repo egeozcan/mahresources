@@ -6,15 +6,33 @@ import (
 	"strings"
 )
 
+// charged tracks how much of a builder has been reserved against the output
+// budget, so a layout reserves each row's bytes right after formatting it and
+// stops before formatting the next, holding at most the budget plus one row.
+type charged struct {
+	m *renderMeter
+	n int
+}
+
+func (c *charged) flush(b *strings.Builder) bool {
+	d := b.Len() - c.n
+	c.n = b.Len()
+	return c.m.chargeOut(int64(d))
+}
+
 // renderFlatDefault renders flat result items using the default card layout.
-func renderFlatDefault(items []QueryResultItem) string {
+func renderFlatDefault(m *renderMeter, items []QueryResultItem) string {
 	if len(items) == 0 {
 		return `<p class="text-sm text-stone-500 font-mono py-2 text-center">No results.</p>`
 	}
 
 	var b strings.Builder
+	c := charged{m: m}
 	b.WriteString(`<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">`)
 	for _, item := range items {
+		if !m.tick() {
+			return ""
+		}
 		name := extractEntityName(item)
 		desc := extractEntityDescription(item)
 		b.WriteString(fmt.Sprintf(
@@ -30,18 +48,22 @@ func renderFlatDefault(items []QueryResultItem) string {
 			))
 		}
 		b.WriteString(`</div></a>`)
+		if !c.flush(&b) {
+			return ""
+		}
 	}
 	b.WriteString(`</div>`)
 	return b.String()
 }
 
 // renderFlatTable renders flat result items as an HTML table.
-func renderFlatTable(items []QueryResultItem) string {
+func renderFlatTable(m *renderMeter, items []QueryResultItem) string {
 	if len(items) == 0 {
 		return `<p class="text-sm text-stone-500 font-mono py-2 text-center">No results.</p>`
 	}
 
 	var b strings.Builder
+	c := charged{m: m}
 	b.WriteString(`<div class="overflow-x-auto"><table class="min-w-full text-sm border border-stone-200 rounded-md">`)
 	b.WriteString(`<thead class="bg-stone-100"><tr>`)
 	b.WriteString(`<th class="px-3 py-2 text-left text-xs font-semibold text-stone-600 uppercase border-b border-stone-200">Name</th>`)
@@ -50,6 +72,9 @@ func renderFlatTable(items []QueryResultItem) string {
 	b.WriteString(`</tr></thead><tbody class="divide-y divide-stone-100">`)
 
 	for _, item := range items {
+		if !m.tick() {
+			return ""
+		}
 		name := extractEntityName(item)
 		desc := extractEntityDescription(item)
 		b.WriteString(fmt.Sprintf(
@@ -60,6 +85,9 @@ func renderFlatTable(items []QueryResultItem) string {
 			html.EscapeString(item.EntityType),
 			html.EscapeString(desc),
 		))
+		if !c.flush(&b) {
+			return ""
+		}
 	}
 
 	b.WriteString(`</tbody></table></div>`)
@@ -67,14 +95,18 @@ func renderFlatTable(items []QueryResultItem) string {
 }
 
 // renderFlatList renders flat result items as a vertical list.
-func renderFlatList(items []QueryResultItem) string {
+func renderFlatList(m *renderMeter, items []QueryResultItem) string {
 	if len(items) == 0 {
 		return `<p class="text-sm text-stone-500 font-mono py-2 text-center">No results.</p>`
 	}
 
 	var b strings.Builder
+	c := charged{m: m}
 	b.WriteString(`<ul class="divide-y divide-stone-200 border border-stone-200 rounded-md bg-white">`)
 	for _, item := range items {
+		if !m.tick() {
+			return ""
+		}
 		name := extractEntityName(item)
 		desc := extractEntityDescription(item)
 		b.WriteString(fmt.Sprintf(
@@ -90,32 +122,46 @@ func renderFlatList(items []QueryResultItem) string {
 			))
 		}
 		b.WriteString(`</li>`)
+		if !c.flush(&b) {
+			return ""
+		}
 	}
 	b.WriteString(`</ul>`)
 	return b.String()
 }
 
 // renderFlatCompact renders flat result items as inline comma-separated links.
-func renderFlatCompact(items []QueryResultItem) string {
+func renderFlatCompact(m *renderMeter, items []QueryResultItem) string {
 	if len(items) == 0 {
 		return ""
 	}
 
-	parts := make([]string, len(items))
+	// Streamed into one builder, reserved link by link: no slice of every
+	// formatted link is retained.
+	var b strings.Builder
+	c := charged{m: m}
 	for i, item := range items {
-		name := extractEntityName(item)
-		parts[i] = fmt.Sprintf(
+		if !m.tick() {
+			return ""
+		}
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b,
 			`<a href="/%s?id=%d" class="text-amber-700 hover:text-amber-900 underline">%s</a>`,
 			html.EscapeString(item.EntityType),
 			item.EntityID,
-			html.EscapeString(name),
+			html.EscapeString(extractEntityName(item)),
 		)
+		if !c.flush(&b) {
+			return ""
+		}
 	}
-	return strings.Join(parts, ", ")
+	return b.String()
 }
 
 // renderAggregatedTable renders aggregated GROUP BY rows as an HTML table.
-func renderAggregatedTable(rows []map[string]any) string {
+func renderAggregatedTable(m *renderMeter, rows []map[string]any) string {
 	if len(rows) == 0 {
 		return `<p class="text-sm text-stone-500 font-mono py-2 text-center">No results.</p>`
 	}
@@ -127,6 +173,7 @@ func renderAggregatedTable(rows []map[string]any) string {
 	}
 
 	var b strings.Builder
+	c := charged{m: m}
 	b.WriteString(`<div class="overflow-x-auto"><table class="min-w-full text-sm font-mono border border-stone-200 rounded-md">`)
 	b.WriteString(`<thead class="bg-stone-100"><tr>`)
 	for _, k := range keys {
@@ -136,15 +183,27 @@ func renderAggregatedTable(rows []map[string]any) string {
 		))
 	}
 	b.WriteString(`</tr></thead><tbody class="divide-y divide-stone-100">`)
+	if !c.flush(&b) {
+		return ""
+	}
 
 	for _, row := range rows {
+		if !m.tick() {
+			return ""
+		}
 		b.WriteString(`<tr class="hover:bg-stone-50">`)
 		for _, k := range keys {
+			if !m.tick() {
+				return ""
+			}
 			val := row[k]
 			b.WriteString(fmt.Sprintf(
 				`<td class="px-3 py-2 text-stone-800 whitespace-nowrap">%s</td>`,
 				html.EscapeString(fmt.Sprintf("%v", val)),
 			))
+			if !c.flush(&b) {
+				return ""
+			}
 		}
 		b.WriteString(`</tr>`)
 	}
@@ -153,21 +212,42 @@ func renderAggregatedTable(rows []map[string]any) string {
 	return b.String()
 }
 
-// renderBucketHeader renders the header bar for a bucketed group.
-func renderBucketHeader(key map[string]any, itemCount int) string {
-	var parts []string
+// writeBucketHeader writes the header bar for a bucketed group straight into
+// the caller's builder, reserving each key and value before it is formatted
+// (a key value can be large) and the rest of the bar before it is written. It
+// reports false when the meter stopped the render.
+func writeBucketHeader(m *renderMeter, b *strings.Builder, c *charged, key map[string]any, itemCount int) bool {
+	const open = `<div class="bg-stone-100 px-3 py-2 flex items-center gap-2 text-xs font-mono">`
+	b.WriteString(open)
+	first := true
 	for k, v := range key {
-		parts = append(parts, fmt.Sprintf(
-			`<span class="text-stone-500">%s:</span> <span class="font-semibold text-stone-700">%v</span>`,
+		if !m.tick() {
+			return false
+		}
+		text, isString := v.(string)
+		if !isString {
+			text = fmt.Sprint(v)
+		}
+		// Reserve the raw sizes before escaping copies them.
+		if !m.chargeOut(int64(len(k) + len(text))) {
+			return false
+		}
+		c.n += len(k) + len(text) // already paid; flush below pays the markup and escaping growth
+		if !first {
+			b.WriteString(" ")
+		}
+		first = false
+		fmt.Fprintf(b,
+			`<span class="text-stone-500">%s:</span> <span class="font-semibold text-stone-700">%s</span>`,
 			html.EscapeString(k),
-			html.EscapeString(fmt.Sprintf("%v", v)),
-		))
+			html.EscapeString(text),
+		)
+		if !c.flush(b) {
+			return false
+		}
 	}
-	return fmt.Sprintf(
-		`<div class="bg-stone-100 px-3 py-2 flex items-center gap-2 text-xs font-mono">%s<span class="ml-auto text-stone-400">%d items</span></div>`,
-		strings.Join(parts, " "),
-		itemCount,
-	)
+	fmt.Fprintf(b, `<span class="ml-auto text-stone-400">%d items</span></div>`, itemCount)
+	return c.flush(b)
 }
 
 // extractEntityName gets the Name field from the entity via reflection, falling back to the entity type + ID.

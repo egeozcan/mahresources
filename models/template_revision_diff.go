@@ -1,6 +1,9 @@
 package models
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 // Line diff operations.
 const (
@@ -31,9 +34,26 @@ type SlotDiff struct {
 // reported as one delete followed by one insert instead of a minimal diff.
 const maxDiffCells = 25_000_000
 
+// MaxBoundedDiffCells is the LCS table the bounded variants may build. The
+// generation harness uses it so a model asking for a diff of two large fields
+// cannot hold the 25 million cells (100 MB) the unbounded diff allows.
+const MaxBoundedDiffCells = 1_000_000
+
 // DiffTemplateSnapshots diffs two snapshots under the canonical view. Slots
 // and fields with no change are left out.
 func DiffTemplateSnapshots(carrierType string, from, to TemplateSnapshot) []SlotDiff {
+	out, _ := diffTemplateSnapshots(nil, maxDiffCells, carrierType, from, to)
+	return out
+}
+
+// DiffTemplateSnapshotsBounded is DiffTemplateSnapshots with a
+// MaxBoundedDiffCells table per field and the context checked while the table
+// fills. A field past the budget takes the coarse delete-then-insert form.
+func DiffTemplateSnapshotsBounded(ctx context.Context, carrierType string, from, to TemplateSnapshot) ([]SlotDiff, error) {
+	return diffTemplateSnapshots(ctx, MaxBoundedDiffCells, carrierType, from, to)
+}
+
+func diffTemplateSnapshots(ctx context.Context, maxCells int, carrierType string, from, to TemplateSnapshot) ([]SlotDiff, error) {
 	out := []SlotDiff{}
 	for _, slot := range TemplateSlots(carrierType) {
 		sd := SlotDiff{Slot: slot.Name, Fields: []FieldDiff{}}
@@ -43,13 +63,17 @@ func DiffTemplateSnapshots(carrierType string, from, to TemplateSnapshot) []Slot
 			if a == b {
 				continue
 			}
-			sd.Fields = append(sd.Fields, FieldDiff{Field: f.Name, Hunks: DiffLines(a, b)})
+			hunks, err := diffLines(ctx, maxCells, a, b)
+			if err != nil {
+				return nil, err
+			}
+			sd.Fields = append(sd.Fields, FieldDiff{Field: f.Name, Hunks: hunks})
 		}
 		if len(sd.Fields) > 0 {
 			out = append(out, sd)
 		}
 	}
-	return out
+	return out, nil
 }
 
 func splitDiffLines(s string) []string {
@@ -61,6 +85,23 @@ func splitDiffLines(s string) []string {
 
 // DiffLines returns a line diff of a against b as hunks.
 func DiffLines(a, b string) []DiffHunk {
+	hunks, _ := diffLines(nil, maxDiffCells, a, b)
+	return hunks
+}
+
+// DiffLinesBounded is DiffLines with a MaxBoundedDiffCells table and the
+// context checked as the table fills (once per row). It returns the context's
+// error when cancelled.
+func DiffLinesBounded(ctx context.Context, a, b string) ([]DiffHunk, error) {
+	return diffLines(ctx, MaxBoundedDiffCells, a, b)
+}
+
+func diffLines(ctx context.Context, maxCells int, a, b string) ([]DiffHunk, error) {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
 	x, y := splitDiffLines(a), splitDiffLines(b)
 
 	prefix := 0
@@ -86,7 +127,12 @@ func DiffLines(a, b string) []DiffHunk {
 
 	add(DiffOpEqual, x[:prefix])
 	mx, my := x[prefix:len(x)-suffix], y[prefix:len(y)-suffix]
-	if len(mx)*len(my) > maxDiffCells {
+	// The table is (len(mx)+1) x (len(my)+1) cells plus one slice header per
+	// row (counted as 6 cells of 4 bytes). A side with nothing in the middle
+	// is a plain insert or delete and needs no table at all.
+	cells := (int64(len(mx)) + 1) * (int64(len(my)) + 1)
+	cells += 6 * (int64(len(mx)) + 1)
+	if len(mx) == 0 || len(my) == 0 || cells > int64(maxCells) {
 		add(DiffOpDelete, mx)
 		add(DiffOpInsert, my)
 	} else {
@@ -96,6 +142,11 @@ func DiffLines(a, b string) []DiffHunk {
 			lcs[i] = make([]int32, len(my)+1)
 		}
 		for i := len(mx) - 1; i >= 0; i-- {
+			if ctx != nil {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+			}
 			for j := len(my) - 1; j >= 0; j-- {
 				switch {
 				case mx[i] == my[j]:
@@ -126,5 +177,5 @@ func DiffLines(a, b string) []DiffHunk {
 		add(DiffOpInsert, my[j:])
 	}
 	add(DiffOpEqual, x[len(x)-suffix:])
-	return hunks
+	return hunks, nil
 }

@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -30,8 +31,20 @@ import (
 // shows the author, so a rejection says where the problem is rather than that
 // there is one.
 func ValidateMetaSchema(schemaJSON string) error {
+	return ValidateMetaSchemaContext(context.Background(), schemaJSON)
+}
+
+// ValidateMetaSchemaContext is ValidateMetaSchema that stops at the context
+// between its phases. The compile itself cannot be interrupted (the library
+// takes no context), so what it is handed is admitted first.
+func ValidateMetaSchemaContext(ctx context.Context, schemaJSON string) error {
 	if strings.TrimSpace(schemaJSON) == "" {
 		return nil
+	}
+
+	// The compiler cannot be interrupted, so what it may see is admitted first.
+	if err := admitMetaSchema(ctx, schemaJSON); err != nil {
+		return err
 	}
 
 	doc, err := jsonschema.UnmarshalJSON(strings.NewReader(schemaJSON))
@@ -39,7 +52,11 @@ func ValidateMetaSchema(schemaJSON string) error {
 		return fmt.Errorf("meta JSON schema is not valid JSON: %w", err)
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	c := jsonschema.NewCompiler()
+	c.UseRegexpEngine(meterRegexpEngine(ctx))
 	c.UseLoader(refuseExternalSchemaLoader{})
 	const id = "mem://meta-schema.json"
 	if err := c.AddResource(id, doc); err != nil {
@@ -48,7 +65,7 @@ func ValidateMetaSchema(schemaJSON string) error {
 	if _, err := c.Compile(id); err != nil {
 		return fmt.Errorf("meta JSON schema is not a valid JSON Schema: %w", err)
 	}
-	return nil
+	return ctx.Err()
 }
 
 // errExternalSchemaRef refuses every URL the compiler would fetch. The default

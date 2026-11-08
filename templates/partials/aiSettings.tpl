@@ -116,6 +116,51 @@
       </template>
     </div>
 
+    <form class="border border-stone-200 rounded-md p-4 min-w-0" novalidate data-testid="ai-template-run" @submit.prevent="saveRun()">
+      <fieldset class="min-w-0 space-y-3" :disabled="busy || loading">
+        <legend class="font-semibold text-stone-800 mb-1">Template generation runs</legend>
+        <p class="text-xs text-stone-600">Harness mode lets the model read your data with Tools over several Turns before it submits a draft. Classic mode makes the single-call draft with repair and fan-out. Saving does not make a provider call. Reset feature on Template generation above also resets these four settings to their defaults (harness, 10 Turns, 5m, 400000 tokens); saving here changes only these four.</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+          <div>
+            <label for="ai-template-run-mode" class="block text-sm font-medium text-stone-800">Mode</label>
+            <select id="ai-template-run-mode" x-model="run.mode"
+                    class="mt-1 w-full border border-stone-300 rounded px-2 py-1 text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500">
+              <option value="harness">Harness (tool-calling run)</option>
+              <option value="classic">Classic (single call)</option>
+            </select>
+          </div>
+          <div>
+            <label for="ai-template-run-turns" class="block text-sm font-medium text-stone-800">Max Turns</label>
+            <input type="number" min="1" max="20" step="1" id="ai-template-run-turns" x-model="run.maxTurns" aria-describedby="ai-template-run-turns-hint"
+                   class="mt-1 w-full border border-stone-300 rounded px-2 py-1 text-sm font-mono focus:outline-hidden focus:ring-2 focus:ring-amber-500" />
+            <p id="ai-template-run-turns-hint" class="text-xs text-stone-500 mt-1">1 to 20. Default 10.</p>
+          </div>
+          <div>
+            <label for="ai-template-run-deadline" class="block text-sm font-medium text-stone-800">Run deadline</label>
+            <input type="text" id="ai-template-run-deadline" x-model="run.deadline" spellcheck="false" aria-describedby="ai-template-run-deadline-hint"
+                   class="mt-1 w-full border border-stone-300 rounded px-2 py-1 text-sm font-mono focus:outline-hidden focus:ring-2 focus:ring-amber-500" />
+            <p id="ai-template-run-deadline-hint" class="text-xs text-stone-500 mt-1">30s to 15m, such as 5m. Default 5m.</p>
+          </div>
+          <div>
+            <label for="ai-template-run-budget" class="block text-sm font-medium text-stone-800">Token budget</label>
+            <input type="number" min="100000" max="2000000" step="1" id="ai-template-run-budget" x-model="run.tokenBudget" aria-describedby="ai-template-run-budget-hint"
+                   class="mt-1 w-full border border-stone-300 rounded px-2 py-1 text-sm font-mono focus:outline-hidden focus:ring-2 focus:ring-amber-500" />
+            <p id="ai-template-run-budget-hint" class="text-xs text-stone-500 mt-1">100000 to 2000000; cached prompt tokens count a quarter. Default 400000.</p>
+          </div>
+        </div>
+        <div>
+          <label for="ai-template-run-reason" class="block text-xs font-medium text-stone-700">Reason (optional)</label>
+          <input type="text" id="ai-template-run-reason" x-model="run.reason"
+                 class="mt-1 w-full border border-stone-300 rounded px-2 py-1 text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500" />
+        </div>
+        <button type="submit" class="inline-flex items-center px-3 py-1 text-sm font-medium text-white bg-amber-700 rounded hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600">Save run settings</button>
+      </fieldset>
+      <div class="text-xs mt-2 min-h-[1.25rem]" role="status" aria-live="polite">
+        <span x-show="run.flash" x-text="run.flash" class="text-green-700"></span>
+        <span x-show="run.error" x-text="run.error" class="text-red-700"></span>
+      </div>
+    </form>
+
     <div class="space-y-3">
       <h3 class="text-sm font-semibold text-stone-800">Provider API keys</h3>
       <p class="text-xs text-stone-600">Saved keys are never sent back to this page. Replace changes a key; Clear disables its environment fallback; Reset restores that fallback. Keys persist unencrypted in the server database.</p>

@@ -58,7 +58,7 @@ func TestTemplateGenerateAndPreviewAreScopedToTheCaller(t *testing.T) {
 		return rr.Code, rr.Body.String()
 	}
 	generate := func(appCtx *application_context.MahresourcesContext, entityID uint) string {
-		code, body := run(appCtx, api_handlers.GetGenerateTemplateHandler(appCtx, "note"),
+		code, body := run(appCtx, api_handlers.GetGenerateTemplateHandler(appCtx, "note", nil),
 			fmt.Sprintf(`{"target":"cluster","slot":"CustomHeader","prompt":"a header","categoryId":%d,"entityId":%d,"dryRun":true}`, noteType.ID, entityID))
 		if code != http.StatusOK {
 			t.Fatalf("generate: want 200, got %d (%s)", code, body)
@@ -73,7 +73,7 @@ func TestTemplateGenerateAndPreviewAreScopedToTheCaller(t *testing.T) {
 	// The create form (no categoryId) samples only the picked entity, through
 	// the same scope.
 	createForm := func(appCtx *application_context.MahresourcesContext, entityID uint) string {
-		code, body := run(appCtx, api_handlers.GetGenerateTemplateHandler(appCtx, "note"),
+		code, body := run(appCtx, api_handlers.GetGenerateTemplateHandler(appCtx, "note", nil),
 			fmt.Sprintf(`{"target":"metaschema","prompt":"x","entityId":%d,"dryRun":true}`, entityID))
 		if code != http.StatusOK {
 			t.Fatalf("generate: want 200, got %d (%s)", code, body)
@@ -178,7 +178,7 @@ func TestTemplateSamplesConfineRelatedNames(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		req = req.WithContext(auth.WithPrincipal(req.Context(), principal))
 		rr := httptest.NewRecorder()
-		api_handlers.GetGenerateTemplateHandler(appCtx, entityType)(rr, req)
+		api_handlers.GetGenerateTemplateHandler(appCtx, entityType, nil)(rr, req)
 		if rr.Code != http.StatusOK {
 			t.Fatalf("%s: %d %s", entityType, rr.Code, rr.Body.String())
 		}

@@ -1,0 +1,679 @@
+# Template generation as a multi-Turn Generation run
+
+Status: planned 2026-11-07 from a grilling session (questions Q1 to Q34), revised after pi review round 1 and the provider research in Appendix A. Terms are defined in `GLOSSARY.md` under "Template generation". The consent decision is `docs/adr/0009-generation-runs-approve-an-envelope.md`.
+
+## Success criteria
+
+1. In harness mode, every template generation request (slot cluster, MetaSchema, whole template) is a Generation run: the model may call read-only Tools over up to `ai_template_max_turns` Turns (default 10, hard maximum 20), then submits a Draft. The Draft reaches the editors only through the existing Apply step.
+2. The run works with all four providers through native tool calling. A model that cannot call Tools is refused with a clear message.
+3. Before a run, the Disclosure states the destination, the Seed messages, the Tools and what they can reach, the caps, and two opt-ins (previews run `[mrql]`; previews run plugin shortcodes), both off by default. The `groundingHash` covers all of that, and the mode.
+4. The browser shows each Turn as it happens, offers Finish now and Cancel, and afterwards shows the full transcript, each message and Tool result expandable to the exact text sent.
+5. A run never reads beyond the account's current access. Group-limited accounts cannot start a run. Access is re-checked around every Turn; a revoked, demoted or newly scoped account ends the run with no Draft.
+6. A model-written preview cannot exhaust memory or run past its deadline, outside the code of an installed plugin (which runs only with the plugin opt-in; section 2).
+7. Classic mode (draft, repair, fan-out) is unchanged in behaviour and Disclosure, and stays selectable until an eval report compares the two. Removing it is the user's decision.
+8. Go unit, Postgres, E2E (browser and CLI) suites pass. Docs describe the feature exactly as built.
+
+## Decisions (from the grilling, condensed)
+
+| # | Decision |
+|---|---|
+| Q1, Q17, Q18′ | The Disclosure approves an Envelope: everything the account can read, plus that run's opt-ins. Values are read live. ADR 0009. |
+| Q2, Q31 | The harness replaces repair and fan-out. The classic path stays behind `ai_template_generation_mode` until the eval report; the user decides removal. |
+| Q3 | Native tool calling through a provider-neutral conversation type. |
+| Q4, Q27 | Server-Sent Events on the generate request. Finish now makes the next Turn the final one. Cancel aborts. Leaving the editor cancels. A new run in the same editor supersedes the old one. |
+| Q5, Q11′, Q11″ | `preview` returns rendered HTML as text. `[mrql]` executes only with the MRQL opt-in, plugin shortcodes only with the plugin opt-in; otherwise each renders an inert placeholder. |
+| Q6, Q15, Q23 | Turn cap 10 (max 20), run deadline 5 minutes, token budget 400k with cached prompt tokens counted at a quarter. One model per run, chosen by target through the existing per-kind settings. |
+| Q7, Q24 | `submit` may be called several times with some fields. Each submit returns its lint result. The last submission of each field wins. |
+| Q8 | Every Tool is read-only. No Tool writes through any app API. |
+| Q9, Q19 | `list_related` walks up (owners), down (owned) and across (links). No hop cap; Turns and budget bound the walk. |
+| Q10 | Entity Tools return the sample allow-list projection, extended with the full Meta. |
+| Q12, Q20 | Tools: `get_entity`, `list_related`, `get_template`, `list_carriers`, `list_revisions`, `get_revision`, `diff_revisions`, `lint`, `check_mrql`, `preview`, `get_partial`, `get_shortcode_docs`, `submit`, plus `list_members` (added during planning, section 2). Revision Tools are gated on edit rights to that carrier. |
+| Q13 | The reference docs stay in the cached shared prefix. Tool definitions are part of the prefix and never change during a run. |
+| Q14 | `submit` accepts only the requested fields. `CustomCSS` in a whole-template run stays append-only. `lint` and `preview` accept any field. |
+| Q16, Q32 | The transcript is shown, not stored. Every message and result expands to the exact text sent. |
+| Q22 | Results are byte-capped and say when they were cut. Results older than 3 Turns are replaced by a one-line stub when the conversation is resent. |
+| Q25 | Up to 6 Tool calls per Turn, run in parallel; still one Turn. |
+| Q26 | The Seed carries today's grounding data. |
+| Q28 | A model without tool support is refused at the dry run where detectable, and on the first Turn otherwise. No fallback to the classic path. |
+| Q29 | One generation limiter slot per run. The provider semaphore is held only during a provider call. At most 2 concurrent runs per account. |
+| Q30 | No `mr` CLI command. |
+| Q33 | One shared progress-panel partial for the slot and whole-template hosts. A polite live region announces Turn starts and the end only. |
+
+Decisions made while planning (recorded here so they are reviewable):
+
+- **No forced Tool choice, anywhere.** The newest Anthropic models reject `tool_choice` `any` and `tool`; DeepSeek rejects `required` and named choices in thinking mode; OpenRouter support varies per endpoint (Appendix A). Narrowing the `tools` list on the last Turn breaks the prompt cache and, on Anthropic, invalidates earlier thinking blocks. So every Turn sends the same `tools` with `auto`, and the final Turn is enforced by the server (section 3), not the provider.
+- **OpenAI runs use the Responses API** (`POST https://api.openai.com/v1/responses`). Chat Completions supports tools on current OpenAI reasoning models only with `reasoning_effort: "none"`, and not at all on the newest ones (Appendix A). Classic mode keeps Chat Completions.
+- **Thinking stays constant for the whole run.** DeepSeek requires `reasoning_content` replay on every request with `tools`, and toggling thinking mid-loop is undocumented or invalidates the cache.
+
+## Design
+
+### 1. Provider conversation layer (`application_context/ai_conversation*.go`)
+
+A new seam beside `TemplateDraftProvider`, which stays for MRQL and classic mode:
+
+```go
+type ConversationRequest struct {
+    System    string                // shared prefix + harness instructions; byte-stable per run
+    Messages  []ConversationMessage
+    Tools     []ToolSpec            // fixed order, identical on every Turn of a run
+    Model     string
+    Thinking  bool
+    MaxTokens int
+}
+type ConversationMessage struct {
+    Role    string         // user | assistant | tool
+    Text    string
+    Calls   []ToolCall     // assistant only
+    Results []ToolResult   // tool only: one message holds every result of a Turn, in call order
+    Replay  json.RawMessage // the provider's own assistant payload, resent verbatim
+}
+type ToolSpec struct{ Name, Description string; Parameters json.RawMessage }
+type ToolCall struct {
+    ID, Name string
+    // Arguments is the exact argument text the model sent, never a
+    // json.RawMessage: a call cut off at the output limit carries text that is
+    // not JSON, and a RawMessage holding it makes every later encoding of the
+    // result, transcript or eval report fail. The loop decodes it only after
+    // validation.
+    Arguments string
+    // Incomplete marks a call cut off by the output limit (Finish "length"):
+    // its arguments did not arrive whole. Malformed marks complete arguments
+    // that are not a JSON object. Neither runs; each gets an error result,
+    // so every call ID is answered and the conversation stays valid.
+    Incomplete, Malformed bool
+}
+type ToolResult struct{ CallID, Text string; IsError bool }
+type ConversationResponse struct {
+    Text   string
+    Calls  []ToolCall
+    Finish string          // stop | length | tool_calls
+    Replay json.RawMessage
+    Usage  ConversationUsage
+}
+type TemplateConversationProvider interface {
+    Converse(ctx context.Context, req ConversationRequest) (ConversationResponse, error)
+    Endpoint() string
+    ProviderName() string
+    Transport() TemplateTransport
+    // SupportsTools answers without a paid call where the provider can tell
+    // (OpenRouter model metadata); otherwise true, and the first Turn's error
+    // says so. An error means "unknown" and does not refuse the run.
+    SupportsTools(ctx context.Context, model string) (bool, error)
+    // HistoryRewritable reports whether earlier messages may be edited
+    // (stubbed) between Turns for this model. True only for DeepSeek, and for
+    // OpenRouter models under the "deepseek/" prefix. False for Anthropic,
+    // whose thinking signatures are bound to every preceding message, for
+    // OpenAI Responses, whose encrypted reasoning items are not documented
+    // either way, and for every other OpenRouter model, which may be a Claude
+    // model replaying signed reasoning through reasoning_details.
+    HistoryRewritable(model string) bool
+}
+// ConversationUsage is the provider's accounting for one Turn. Each field is
+// nil when the provider did not report it, so a missing value is never read
+// as zero. Classic mode keeps TemplateTokenUsage.
+type ConversationUsage struct {
+    Prompt, Completion, Reasoning, CacheHit, CacheMiss *int
+}
+```
+
+`ConversationResponse.Usage` is a `ConversationUsage`. Normalization, per Turn:
+- Missing `Prompt` falls back to the Turn's prompt estimate; missing `Completion` to the Turn's full `max_tokens`.
+- With `Prompt` and `CacheHit` reported, the uncached part is `Prompt − CacheHit` whether or not `CacheMiss` is reported (OpenAI and OpenRouter report no miss counter; the classic adapter already derives it this way, `ai_provider_client.go:198-207`).
+- Anthropic keeps its own normalization: uncached is `input_tokens + cache_creation_input_tokens`, cached is `cache_read_input_tokens`.
+- Only with no cache information at all is the whole prompt counted as uncached.
+
+For example, `Prompt=10000, CacheHit=8000, Completion=1000` with no `CacheMiss` charges 1000 + 2000 + 8000/4 = 5000.
+
+Three wire adapters on the existing `generationProviderClient` (redirect blocking, the 4 MiB response cap and sanitized errors are kept; `post` takes the endpoint per call so one client serves both OpenAI endpoints):
+
+- **Chat Completions with tools** (DeepSeek, OpenRouter): `tools[].function`, `tool_choice: "auto"`, assistant `tool_calls`, one `role: tool` message per result with `tool_call_id`. No `response_format`. `Replay` is the whole assistant message object, which carries DeepSeek's `reasoning_content` and OpenRouter's `reasoning_details`. DeepSeek's `thinking` field keeps its current meaning. OpenRouter requests add `provider: {"require_parameters": true}` so they route only to endpoints that accept `tools`, and, for `anthropic/` models, the top-level `cache_control: {"type": "ephemeral"}`, which OpenRouter requires before it caches a Claude prompt. Both appear in the disclosed transport, so they are hashed.
+- **OpenAI Responses**: `instructions`, `input` items, `tools[]` with `type: "function"` and an explicit `strict: false` (Responses otherwise normalizes schemas to strict mode, which would make every optional argument required and break the omitted-`content` rule and the `submit.fields` map), `store: false`, `include: ["reasoning.encrypted_content"]`, `max_output_tokens`. `Replay` is the response's `output` array, resent as input items; results are `function_call_output` items. `status: "incomplete"` with reason `max_output_tokens` maps to `length`.
+- **Anthropic Messages**: `tools[].input_schema`, `tool_choice: {"type": "auto"}`, `tool_use` blocks, one user message holding every `tool_result` block, a top-level `cache_control: {"type": "ephemeral"}` (automatic caching). `Replay` is the raw `content` array, including thinking blocks and their signatures. `stop_reason: tool_use` maps to `tool_calls`. Headers stay as they are (Bearer and `2026-10-21` are current; Appendix A).
+
+A provider error, a refusal, an unknown finish value, or a structurally invalid reply (a tool call with no ID or name) is an error, as today. A call whose arguments are not a JSON object is returned with `Malformed`. On `length`, a call whose arguments did not arrive whole is returned with `Incomplete`. Neither is an adapter error. Missing usage fields are reported as missing (pointer fields), not as zero, so the loop can fall back to its own estimate (section 3).
+
+`SupportsTools` for OpenRouter reads `GET https://openrouter.ai/api/v1/models?supported_parameters=tools` under the dry run's request context, with a 5 s timeout and a 10-minute process cache. A listed model supports tools. A model the full catalogue lists without `tools` is refused. A model in neither (a rolling alias such as `~anthropic/claude-sonnet-latest`, or a new ID) is unknown and is not refused. A lookup failure is also unknown. DeepSeek, OpenAI Responses and Anthropic answer true. The `anthropic/` cache-control rule above matches `~anthropic/` aliases too.
+
+### 2. Tools
+
+The generator stays DB-free. `application_context/template_run_tools.go` owns the catalogue: names, descriptions, JSON Schema parameters, argument validation, the byte caps, the truncation notice and the `submit` contract. It calls a seam the handler builds per request:
+
+```go
+// TemplateRunEnv is what a harness run needs from the request. The handler
+// builds it; TemplateGenerationInput carries it as Run (nil for classic).
+type TemplateRunEnv struct {
+    Executor TemplateToolExecutor
+    Sink     TemplateRunSink        // nil: no progress events
+    Finish   func() bool            // Finish now requested
+    Account  TemplateRunAccount     // label shown, identity hashed
+    OptIns   TemplateRunOptIns      // previewMRQL, previewPlugins
+}
+type TemplateToolExecutor interface {
+    // CheckAccess re-resolves the original credential under ctx and returns
+    // ErrTemplateRunAccessChanged when it is no longer valid or the account's
+    // role or scope changed since the run started. It rebinds the scoped
+    // context (and so the subtree allow-list) when access is unchanged.
+    CheckAccess(ctx context.Context) error
+    Execute(ctx context.Context, call TemplateToolInvocation) (TemplateToolOutput, error)
+}
+```
+
+The credential check needs `resolvePrincipal` and `sameAccess`, which are private to package `server`. Phase 0 adds `api_handlers.TemplateRunAccessFactory` (`func(r *http.Request) func(ctx context.Context) (*application_context.MahresourcesContext, error)`). `server/routes.go` builds it from the same code `currentJobEventsContext` uses (`server/request_scope.go:22-107`) and passes it to `GetGenerateTemplateHandler`.
+
+`server/api_handlers/template_run_tools.go` implements the executor:
+
+- **Group-limited accounts cannot start a run.** The handler refuses a harness run (403, "Generation runs are not available to group-limited accounts") when the principal `IsScoped()` or `RequiresScope()`. No role that can reach the generation routes is group-limited today (`server/api_tests/template_generation_scope_test.go:19-22`: editors and admins never are), so this removes nothing anyone can do. It closes a class of problems that would otherwise need provenance tracking: an entity or group moved out of a subtree mid-run, whose content earlier Turns already put into the conversation. Classic mode keeps its scoped behaviour.
+- **Live access.** `CheckAccess` re-resolves the credential when auth is enabled and compares `sameAccess` (user, role, superuser, scope root; `server/request_scope.go:112-127`) with the identity the run started with. A disabled account, a changed role or a newly assigned scope group ends the run. A changed identity is never adopted. The loop calls it before each Turn's provider call, again after the provider returns and before any Tool runs, and again before a Draft or transcript is released on any exit path (section 3).
+- **Cancellation reaches the DB.** A new method `WithParentContext(ctx) *MahresourcesContext` returns a copy whose `db` handle is rebased onto `ctx`, keeping the scope filter and acting user, as `WithRequest`'s rebase branch does (`application_context/context.go:1368-1390`). Credential resolution and the principal rebinding in `CheckAccess` run on such a copy under the context they are given. The rebinding uses a new exported `WithPrincipalContext(ctx, p) (*MahresourcesContext, error)`, implemented through the private `withPrincipalWithin` (`application_context/scoping.go:120-131`), not `WithPrincipal`'s `context.Background()`. The check before releasing a result runs under the request context with a 5 s timeout, not the run context, which may already have reached its deadline; client cancellation still cancels it. Each Tool call runs on a copy rebased onto its own context. Cancel, the run deadline and the per-Tool timeout therefore cancel every query.
+- **Panics are contained.** Each Tool call runs under a `recover` that turns a panic into a sanitized error result ("the Tool failed") and logs the stack. A panic never reaches the run or the process.
+- **Scope.** Entity reads use the same `Find`/`Pluck`/`Count` readers as the HTTP routes, never `Scan`. Carriers and partials are global tables readable by every role, as their GET routes are. Revision Tools use a new bounded reader, `ListTemplateRevisionsPage(carrierType, id, limit, offset)`, beside `ListTemplateRevisions`. It keeps that reader's capability gate (`requireTemplateCarrierEdit`, which is private to `application_context`) and carrier-existence check, and applies `LIMIT limit+1` in the query. The existing reader and its HTTP route are unchanged.
+- **Grounding reads cancel too.** In harness mode, the generate handler rebases its context with `WithParentContext(request.Context())` before its first read (carrier, partial catalogue, samples), so leaving the editor during grounding cancels those reads and no provider is called.
+- **Refusals are results, not failures.** A missing or out-of-scope entity is one error text for both cases, so scope cannot be probed. "Not allowed" for a revision read. Neither ends the run.
+- **Fencing.** Every result is fenced with the existing `<<<BEGIN/END label>>>` markers and defanged, as samples are today.
+- **Caps.** Each result has a byte cap. A result over its cap is cut at a UTF-8 boundary, before fencing, and ends with `[cut: N of M bytes shown]`. List Tools also bound the query (`LIMIT entries+1`) before serializing.
+
+| Tool | Arguments | Returns | Cap |
+|---|---|---|---|
+| `get_entity` | `type` (group, resource, note), `id` | the sample projection (`ProjectTemplateSample`) with full Meta, and its carrier's ID and name | 8 KiB |
+| `list_related` | `type`, `id`, `direction` (up, down, across), `kind?`, `offset?` | `{type, id, name, carrier}` entries | 50 entries, 16 KiB |
+| `get_template` | `carrierType`, `id`, `fields?` | saved slots, MetaSchema, SectionConfig | 32 KiB |
+| `list_carriers` | `carrierType`, `nameQuery?`, `offset?` | `{id, name, description}` entries | 50 entries, 16 KiB |
+| `list_members` | `carrierType`, `id`, `offset?` | the carrier's member entities, newest first, as `{type, id, name}` | 50 entries, 16 KiB |
+| `list_revisions` | `carrierType?`, `id?` (default: the carrier being edited), `offset?` | revision summaries, newest first, and `more: true` when another page exists (from the extra fetched row) | 50 entries, 16 KiB |
+| `get_revision` | as above plus `number`, `field?` | revision content | 32 KiB |
+| `diff_revisions` | as above plus `from`, `to?` | slot-grouped diff; computed with a 1-million-cell line-diff budget and `ctx.Err()` checks, falling back to the existing coarse delete/insert form past it (`models/template_revision_diff.go:32,89-99` allows 25 million today); at most one diff of a run computes at a time | 32 KiB |
+| `lint` | `field`, `content?` | lint issues (with `PartialExists`), or MetaSchema issues | 8 KiB |
+| `check_mrql` | `query`, `params?`, `limit?`, `buckets?` | `CheckTemplateMRQL` verdict with those options | 4 KiB |
+| `preview` | `field`, `content?`, `css?`, `entityType?`, `entityId?` | rendered HTML text, and CSS text | 16 KiB |
+| `get_partial` | `name` | description and source | 32 KiB |
+| `get_shortcode_docs` | `name` | the full doc entry of a built-in or plugin shortcode | 16 KiB |
+| `submit` | `fields` (map), `explanation?`, `done?` | lint result per field | 8 KiB |
+
+`content` omitted means the field's value in the Turn-start snapshot (section 3): its latest committed submission, else the editor value from the Seed.
+
+`list_members` (added during planning) exists because `list_carriers` finds carriers but not their members, and the samples are only five of them.
+
+**One validation contract.** `lint`, `submit` and the final Draft all use one harness validator: `validateTemplateContent`'s options plus a partial-existence check. The handler supplies it through a new `TemplateGenerationInput.PartialExists func(ctx context.Context, name string) (bool, error)` seam, built on `WithParentContext(ctx)` per call, so a blocked partial lookup is cancelled by the Tool timeout or the run deadline. Each validation wraps it in the `func(string) bool` the linter takes, closing over that validation's context. A lookup that fails or is cancelled counts as existing for the linter, and the validation adds a warning ("could not check that partial X exists"), so a cancelled check never reports an existing partial as missing. Final validation of the Draft runs under the same request-parent 5 s context as the final access check, not the run context, so a Draft recovered after the run deadline is validated normally. Classic mode keeps its current validator unchanged.
+
+**Preview and lint work is bounded.**
+- `preview` builds the meta context with `BuildMetaContextForEntity` like the preview route, and previews `ListHeader`/`ListFooter` fields against the carrier.
+- Source limits: the `content` and `css` of `lint`, `preview` and `submit` are each at most `MaxTemplateGeneratedContentLength` bytes and 2,000 shortcode tokens; over either is an error result before parsing.
+- Rendering runs with a new render budget on the request context (`shortcodes.WithRenderBudget(ctx, 256 KiB output, 512 KiB parsed source)`). Parsed source counts every partial and plugin output parsed during the render. `processWithDepth`, `[each]` and every other loop that appends output check the budget before appending, and check `ctx.Err()` on every iteration. The parser's token loop checks `ctx.Err()` too. Exhausting any of these ends the render with `shortcodes.ErrRenderBudgetExceeded`, which the Tool reports as an error result.
+- Pages and the preview route set no budget, so they behave as today apart from the cancellation checks.
+- Schema numbers are admitted before compilation. `ValidateMetaSchema` compiles through `jsonschema` (`application_context/meta_schema.go:37-48`), which keeps every numeric constraint as an exact `big.Rat` (`jsonschema/v6@v6.0.2/objcompiler.go:149-162,481-490`). A 15 KB schema of 500 `"minimum": 1e-1000000` constraints retains about 200 MB, and plain `json.Unmarshal` lets it through because the value underflows to zero. Before compiling, a `json.Decoder` with `UseNumber` walks the schema. It refuses a number with an exponent outside ±400 or more than 100 significant digits, and refuses a schema whose numbers sum past 10,000 digits. This applies on every path that validates a MetaSchema: saves, the lint endpoint, classic generation and harness Tools.
+- Conditionals check `ctx.Err()` before each numbered condition, each operator evaluation and each branch (`shortcodes/conditional_handler.go:80-161,214-242`), and a cancellation ends the render with the budget error. Nothing else about their evaluation changes.
+- **Class rule for lane B.** Every loop reachable from `shortcodes.Process`, `shortcodes.Lint`, `LintMetaSchema`, `ValidateMetaSchema` and the schema expansion helpers checks the context, and every loop that builds output or copies data charges the render or schema budget before allocating. Lane B lists each such loop in its commit message with the check it added, or the reason it needs none (bounded by a constant, or by one stored value). Its pi review is asked to hunt for loops the list misses.
+- `[mrql]` placeholder substitution is admitted first. `substitutePlaceholders` (`shortcodes/mrql_slots.go:250-264`) expands `{count}`, `{total}`, `{link-all}` and the rest with `strings.Replacer` before the result is processed (`mrql_handler.go:191-193`), so 36,000 `{link-all}` over a 32 KiB query build about 1 GiB at once. The fix counts occurrences and computes the expanded size (with overflow checks) and reserves it against the render budget before replacing. Over the budget is `ErrRenderBudgetExceeded`, and `ctx.Err()` is checked before the replacement. It applies to the header, footer and else slots and to every page render.
+- `[each]` formats lazily. Today it builds every `[item]` replacement of an iteration into a slice before splicing (`shortcodes/each_handler.go:64-72,191-194`), so 1,000 `[item path="v"]` over one 1 MiB value hold about 5 GB before any append check. The fix formats each replacement during the sentinel splice, checks the budget and `ctx.Err()` before formatting the next, and keeps the existing rule that substituted entity text is never rescanned.
+- What the bound covers: the budget is checked before each append, so a render holds at most the budget plus one replacement value. One replacement (a `[property]` over a slice, a `[meta]` value) costs time and memory linear in data already stored on the entity, the same as a human pressing Preview. What a model can multiply is repetition and nesting, which the budget stops at the first append over the limit. At most 2 previews of a run render at once, so 6 parallel calls do not mean 6 concurrent renders.
+- Schema expansion is bounded. `[meta]` resolves the MetaSchema through `inlineRefsDeep` (`shortcodes/meta_handler.go:345-396`), which follows `$ref` with no cycle detection: a schema whose `$defs.node.child` refers to `node` passes `ValidateMetaSchema` and then overflows the stack, a fatal error no `recover` can catch (reproduced in review round 3). Two more schema paths are exponential without being cyclic (review round 6): `resolveSchemaNodeWithValue` visits every composition branch with only a depth limit (`shortcodes/meta_handler.go:244,411-413,475-484`), and `LintMetaSchema`'s `x-display` check expands effective schemas and appends every merged type and property, duplicates kept (`shortcodes/schema_extensions.go:353-354,455-504`). A schema with 20 references per level over 5 levels fits every source limit and expands to about 64 million entries. The fix is one schema-work budget, `schemaWork`, threaded through `extractSchemaSlice`, `resolveSchemaNodeImpl`, `inlineRefsDeep`, the effective-schema expansion and their merges. It counts branch visits and merged entries before allocating, deduplicates merged type and property entries, tracks the refs on the current path (a repeated ref stops), caps depth at 32 and work at 100,000 units, and checks `ctx.Err()`. It also charges bytes: every scalar copied into an expansion counts its length (and its HTML-escaped length when the expansion is embedded), against a 1 MiB expanded-schema byte budget, before the copy and before marshaling. Repeated large descriptions under many references therefore stop the expansion instead of multiplying (`meta_handler.go:282-286,355-368,92-104`). Exhausting it ends a render with `ErrRenderBudgetExceeded` and ends a lint with one error issue ("the schema is too complex to check"). Pages, the preview route, the lint endpoint and classic generation get the same budget: these are existing crash and exhaustion paths, fixed at the root, not only for the harness.
+- `[property]` refuses unexported struct fields (`shortcodes/property_handler.go:83-87` reaches them through `FieldByName`, and `formatFieldValue` then panics in `Interface()`; reproduced with `[property path="CreatedAt.wall"]`). This is an existing bug in the preview route and pages, fixed at the root.
+- With the MRQL opt-in on, the executor is a model-preview variant of the capped executor: same limits, cache, budget and cancellation, but without the exhaustion callback that writes an application log row (`template_filters/shortcode_query_executor.go:23-55`). Human previews and pages keep the callback.
+- With the MRQL opt-in off, the executor returns a new `shortcodes.ErrQueryUnavailable`. `RenderMRQLShortcode` renders that as an inert comment carrying the static check verdict. This also applies to `[mrql]` reached through partials, conditionals, `[using]`, result templates and CSS, since all of them go through the one executor.
+- `[using]` and MRQL-backed conditionals call the executor directly (`shortcodes/using_handler.go:59-61`, `conditional_handler.go:25-33,224-229`) and render executor errors visibly. They handle `ErrQueryUnavailable` too: `[using]` renders the inert comment, and a conditional renders the inert comment in place of the whole conditional, never treating unavailability as "no match" and taking an `[else]` or `[elseif]` branch.
+- With the plugin opt-in off, the plugin renderer is nil, which renders the existing "plugin unavailable" comment. With it on, it is `previewPluginRenderer`, including its scoped-principal check, behind an enforced read-only invocation that keeps Q8 (every Tool is read-only). A capability allow-list cannot do this. The `read_only`/`can_write` values a plugin sees are advisory (`plugin_system/shortcodes.go:254-285`), and host functions that change state are reachable from capabilities that look harmless: `media` exposes `mah.media.trim`, which replaces a resource's content (`media_api.go:194-214`); `actions` installs the job reporters (`manager.go:1623,1693-1787`); and `render` itself can register shortcodes, block and display types, as `inject` and `pages` can register injections and pages, at any time, not only at load (`manager.go:1229-1492,2340-2357`). The design:
+  - After `registerMahModule` builds the `mah` table (`manager.go:1109-1982`), one post-pass walks it recursively and wraps every host function with a guard that knows the function's dotted name (`db.get_group`, `media.trim`, `page`).
+  - A model-preview render marks its invocation `ModelPreview`. While that mark is set, a wrapped function runs only if its name is on a read-only allow-list kept beside the guard: the `mah.db` readers built on `querierFor`, `json`, `util`, `html_escape`, `doc`, `get_setting`, and the `mah.image` transforms of bytes the plugin already holds. Every other function, including any added later, raises "not allowed in a model preview", which renders as the plugin's error marker.
+  - `mah.log` is a no-op under the mark, as it already is in a docs preview (`manager.go:1256-1258`), because it writes an application log row (`log_context.go:55-85`).
+  - Registration is refused by the same guard. `stateMayRegisterLocked` also refuses while the mark is set, for registrations that bypass the table.
+  - A drift-guard test loads a plugin granted every capability, walks its live `mah` table and fails if any function is neither on the allow-list nor refused under the mark.
+  - The Disclosure's plugin opt-in text says plugin shortcodes run read-only. Human previews and pages are unchanged.
+- Plugin code is outside the bound. A plugin renderer returns its whole output before the budget sees it, and installed plugins are trusted, admin-installed code: a plugin can allocate or block (its DB reads run on the plugin manager's own context, `application_context/plugin_db_adapter.go:48-64`) whatever the budget says. The plugin opt-in's text in the Disclosure says so: "Plugin shortcodes run the installed plugin's code with its own resource use; the preview limits do not apply inside it." Carrying the request context into plugin DB reads is a follow-up for every plugin render path, pages included.
+
+**Submit.**
+- `submit` rejects fields outside the request with an error result: the cluster, MetaSchema, or `BundleSlots`.
+- In a whole-template run, a `CustomCSS` submission is *additions*. The Draft's `CustomCSS` is the Seed's `CustomCSS`, unchanged, plus the latest additions, joined once, as `appendSharedCSS` does today. The additions are linted; the combined size gets the oversize check.
+- Companion CSS fields (`CustomHeaderCSS` and so on) and a single-slot `CustomCSS` request are whole values, as today.
+- The Turn-start snapshot keeps raw submissions and resolved values apart. Validation lints the raw submission (for whole-template `CustomCSS`, the additions). Omitted-`content` reads (`lint`, `preview`) use the resolved value, which for whole-template `CustomCSS` is the Seed's CSS plus the latest additions, the same value Apply would receive.
+- An explicitly submitted empty value of a replacement field is a submission (it clears the field on Apply). Whole-template `CustomCSS` is additions, so empty additions leave the Seed's stylesheet as it is. The result lists the submitted fields in a new `Submitted []string`, and `Content` and `Slots` carry an empty submitted value instead of omitting it. The frontend creates a pending draft for an explicitly submitted empty field in harness results, instead of the current "returned no content" rejection (`templateGeneration.js:218-221`). Classic keeps rejecting empty standalone output, and keeps accepting the empty values of a complete pair or bundle, as today (`template_generation.go:441,588-589`).
+- The half-pair rule applies to the Draft as a whole: a cluster with one half submitted is reported, and the client refuses to apply it, as today.
+
+### 3. The run loop (`application_context/template_run.go`)
+
+**Mode.** A new preparation seam, `PrepareTemplateGeneration() (TemplateGenerationPrep, error)` on the handler's context, returns the generation mode (`harness` or `classic`; named `GenerationMode` to keep it apart from the HTML/CSS/JSON `TemplateGenerationInput.Mode`) together with a generator bound to the same settings snapshot. The handler calls it before any grounding read and uses that one snapshot for the refusal, the grounding rebasing, the Disclosure and the run. `DiscloseTemplate` and `GenerateTemplate` both dispatch on that snapshot. Classic mode is today's code, untouched, and its Disclosure is unchanged except that the hash also covers the mode. A mode change between approval and the real request is a 409. `DiscloseTemplate` gains a `context.Context` parameter (for the OpenRouter lookup); every caller and fake is updated in Phase 0. A harness-mode request whose input has no `Run` is refused as a bad request, so a caller that did not build a run environment cannot start one by accident.
+
+**Seed.** A dedicated builder, `buildTemplateRunSections`, reuses every grounding section `buildTemplatePromptSections` produces for the target, including:
+- identity, section layout, sibling styles, MetaSchema, samples summary, partial and plugin references, current content and the request
+- the carrier runtime facts and the requested slot's role lines (`template_generation_prompt.go:95,307-349`: Alpine versus server-only surfaces, stable property paths, the resource media and lightbox contract)
+- for a MetaSchema run, the schema extension reference and the enabled plugins' display types (`:84-85`), which its validator also uses (`template_generation.go:637-642`)
+
+It adds a harness **task** section naming the requested fields. It says whether they are required, which must all be submitted, or possibilities the model may choose from. Harness preparation computes this itself rather than reading `SlotsSelected` alone: a standalone slot, MetaSchema, cluster or legacy pair request has required fields (the handler rewrites clusters into two-slot bundles without setting `SlotsSelected`, `template_generation_api_handlers.go:298-305`), and only a whole-template request without a selection offers optional candidates (classic fan-out's meaning, `template_generation_fanout.go:266-270`). The section is part of the Disclosure, so the hash distinguishes the two. A Draft missing a selected field gets a warning issue naming it.
+
+It uses its own system prompts. They keep the untrusted-data boundary text and replace both classic output-envelope directives ("JSON only, per the Output format line" and "exactly `content` and `explanation`", `template_generation_prompt.go:15,17`) with the Tool and `submit` contract.
+
+It leaves out classic orchestration:
+- the output-format line, the planner instructions ("a separate call fills each section…", `template_generation_fanout.go:260`), the pair templates and their placeholders, and the repair sections.
+
+It replaces every exclusive statement of the partial catalogue, opening and closing, for complete and truncated catalogues ("use [partial] only with a name listed here", "Only these template partials exist", `template_generation_partials.go:259-265`), with harness wording: a partial must be listed in the Seed or verified with `get_partial`. Classic wording is unchanged. A test covers both catalogue shapes.
+
+It adds a harness-only **starting points** section: the edited carrier as `{carrierType, id, name}` (none on the create form), and each sample as `{type, id, name}`. The handler keeps the IDs it loaded the samples by. Classic projections stay unchanged.
+
+It adds the harness instructions:
+- the Tools, the caps, "submit early, in parts; your last submission of each field is kept", and the `CustomCSS` additions rule for whole-template runs.
+
+Within harness mode, the system prompt, the Tool list and the Seed stay byte-stable across Turns of a run and across runs with unchanged data, so they are cached. The two modes lay their messages out differently and do not share a cache.
+
+**Turns.** Each Turn:
+
+1. `executor.CheckAccess`. On `ErrTemplateRunAccessChanged`, the run ends with an error and no Draft. Access is checked again after the provider returns, before any Tool of the Turn runs, and once more before a Draft, a recovered Draft or a transcript is released, on every exit path. A run whose access changed during its last provider call therefore runs no Tools and releases nothing.
+2. Decide whether this is the **final Turn**, before the outgoing messages are finished. It is when any of these hold:
+   - it is Turn `maxTurns`
+   - Finish now was requested
+   - the remaining deadline is under one Turn timeout plus the Tool timeout
+   - the remaining budget is under one final reserve (below)
+
+   The reason is recorded. A final Turn sends the same tools, plus an **instruction message**: "This is your final Turn. Call submit now with every field you want kept; other Tool calls will not run." An instruction is always its own append-only `ConversationMessage{Role: user, Text}`, after all Tool results of the previous Turn, and never edits the Seed or a `Replay`. Adapters serialize it as follows:
+   - Chat Completions: a `user` message after the `tool` messages.
+   - Responses: a user message input item after the `function_call_output` items.
+   - Anthropic: a trailing text block in the user message that holds the `tool_result` blocks. On Turn 1, it is a second user content block after the Seed's, since Anthropic merges consecutive user turns.
+
+   The corrective messages in step 6 use the same mechanism.
+3. **Budget admission.** The budget is a stopping rule, not a hard ceiling, because no provider bills a prompt before receiving it. The Disclosure says so: "No new Turn starts when it could exceed the budget; a Turn's actual use can exceed its estimate."
+   - The estimated prompt is the whole outgoing request (system, Tool schemas, every message and replay payload) in bytes divided by 2.5, counted uncached. The divisor is deliberately conservative.
+   - `max_tokens = min(profile.MaxTokens, remaining − estimatedPrompt)`. If that is under the final reserve (`min(profile.MaxTokens, 4000)`), the Turn becomes final with what is left: the final-Turn instruction message is appended, the prompt is estimated again with it, and `max_tokens` is clamped again. If what is left is under 1000, the run stops with reason `budget` without calling.
+   - After each Turn, the provider's usage replaces the estimate. If usage is missing, the estimate and the full `max_tokens` are charged.
+   - The dry run refuses a request whose Seed estimate plus one final reserve exceeds the budget. The budget setting's minimum is 100k, above the shared prefix.
+4. Call the provider. The provider semaphore wait is inside the call timeout, as today; the call timeout is `min(profile.Timeout, remaining deadline)`. After the slot is acquired and immediately before `Converse`, `CheckAccess` runs again under the call's context; on failure the slot is released and nothing is sent. The whole run runs under one context with the run deadline.
+5. Count usage: completion + uncached prompt + a quarter of cached prompt.
+6. Handle the reply:
+   - **Tool calls.**
+     - The first 6 run in parallel, each with a per-Tool timeout (10 s, 20 s for `preview`). The 7th and later get "too many calls in one Turn" and do not run.
+     - Every call, `submit` included, reads the **Turn-start snapshot** of submissions. Submissions are validated in parallel and committed in call order after every call of the Turn has finished, so two submits of one field in a Turn resolve to the later call.
+     - `done: true` takes effect at the end of the Turn.
+     - Results go into one tool message, in call order.
+     - On a final Turn, non-`submit` calls get "not run: final Turn" and only submissions are processed.
+   - **`length`:** the complete calls run as above. Each `Incomplete` call gets the error result "cut off at the output limit; send it again in smaller parts", and each `Malformed` call gets "arguments were not a JSON object". With no complete call at all, a second consecutive such Turn ends the run (`length_repeated`). A `length` reply with no call at all gets the same message as a user message.
+   - **Plain text, no tool call:** "call submit to return your draft" is appended once. A second time, or on a final Turn, ends the run (`no_tool_call`).
+7. The run ends after a Turn in which a `done: true` submit committed (`done`), and after every final Turn whatever it returned (`turn_cap`, `finish_now`, `deadline` or `budget`).
+
+**Stubbing.** When `HistoryRewritable(model)` is true (DeepSeek, and OpenRouter `deepseek/` models), Tool results from Turns older than the last 3 are replaced, before each request, by their stub ("preview of CustomHeader against Group #12, 14 KiB, superseded"). A stub is fixed once written, so the history changes once per result and the cache misses only from the oldest newly stubbed message. For every other provider and model, history is never rewritten: Anthropic binds each thinking signature to every preceding message, and an edited prefix fails with HTTP 400. Their runs are bounded by the budget alone. The transcript records the full text and, where it applies, the Turn from which it was stubbed.
+
+**Result.** It is built from the last committed submission of each field, re-linted with `validateTemplateContent`, with the oversize, half-pair and `CustomCSS` merge rules. If nothing was submitted, the run is an error (`ErrTemplateGenerationProvider`, "the model returned no draft"). A provider error or timeout after a submission returns the Draft with a warning issue and reason `provider_error` or `deadline`. With none, it is an error, as today.
+
+`TemplateGenerationResult` gains:
+- `StopReason`: `done`, `turn_cap`, `finish_now`, `deadline`, `budget`, `length_repeated`, `no_tool_call` or `provider_error`.
+- `Transcript`: ordered records `{turn, kind, text, calls, callId, isError, bytes, stubbedFrom, durationMs, usage}`.
+  - `kind` is one of `seed`, `assistant`, `tool_result`, `instruction`.
+  - `text` is the exact transmitted form (after cap and fence) of each message sent and each provider reply.
+  - Provider `Replay` payloads are shown too, as the exact JSON resent, collapsed under "provider payload (N bytes)". Model reasoning can quote entity values, so it is part of what was sent.
+
+Classic mode leaves both empty. A run that fails after starting returns a `*TemplateRunError{Err, StopReason, Transcript}`, which wraps the usual sentinel error so the handler's status mapping is unchanged and carries the transcript so far. An access change returns a `TemplateRunError` with no transcript, and cancellation returns a plain context error.
+
+**Events.** The loop takes an optional `TemplateRunSink` with `TurnStarted`, `ToolFinished`, `Submitted` and `Usage`. Calls from parallel Tools are concurrent, so the sink must be safe for concurrent use; the SSE sink only enqueues (section 5).
+
+**Registry.** A process-wide `templateRunRegistry` maps a random run ID to its account (user ID; the client IP when auth is disabled), its Finish now flag and its cancel function.
+- It admits at most 2 live runs per account.
+- `POST /v1/{carrier}/generateTemplate/finish` with `{runId}` sets the flag when the account matches.
+- A deferred removal on every exit path frees the run's entry.
+
+### 4. Disclosure, harness mode (`template_generation_disclosure.go`)
+
+- Continuation rule version 3, harness text: "Tool results may carry any data your account can read through the Tools and opt-ins shown. Every message sent is listed in the transcript after the run." Classic keeps version 2 and its text.
+- New fields, all hashed:
+  - `Mode`
+  - `Tools`: name, description and parameter schema
+  - `Caps`: max Turns, deadline, budget, per-Turn call limit, result caps
+  - `OptIns`: `previewMRQL` and `previewPlugins`
+  - `Envelope`: a fixed sentence per opt-in state, plus the account label (username and scope group name, or "everything" for an unscoped account)
+  - `ScopeIdentity`: user ID, role, scope group ID and superuser. It is hashed and not shown.
+- One profile, the run's kind, with `MaxCalls` = max Turns. `Destination.Endpoint` is the harness endpoint, which for OpenAI is the Responses URL.
+- `Transport.ResponseFormat` is `tools`.
+- The request DTO gains `previewMRQL` and `previewPlugins`.
+
+### 5. HTTP and SSE (`server/api_handlers/template_generation_api_handlers.go`)
+
+- The real request answers `text/event-stream` when the client sends `Accept: text/event-stream`, and one JSON result at the end otherwise.
+- Errors found before the stream starts keep today's status codes. After the first byte, they arrive as an `error` event.
+- **Events:**
+  - `run`: run ID and caps
+  - `turn`: number, and final reason if any
+  - `tool`: name, the enumerated arguments only (`field`, `type`, `direction`, `kind`, `carrierType`, IDs, numbers), bytes, error flag, duration
+  - `submission`: field, error and warning counts
+  - `usage`: budget used
+  - `result`: the full `TemplateGenerationResult`
+  - `error`: message, plus the transcript so far unless the access changed
+- **Progress events carry no free text.** Every progress payload is built from validated Tool names, enumerated values, IDs and counts. Never content, queries, parameter values, names, explanations or error text; an unrecognized value becomes a fixed label. So a progress frame sent after access changed carries nothing the account could not see before the run, and draining before the terminal access check releases no data.
+- **One writer.** A single goroutine owns every write and flush, reading a bounded channel (64 events) and a 15 s heartbeat ticker, as `job_event_handlers.go:180-296` does. Progress events are droppable: the sink's enqueue gives up when the run context ends or the channel is full. Before every frame and every flush (heartbeats and draining included), the writer sets a 10 s write deadline through `http.ResponseController`, because the server's `WriteTimeout` is 45 minutes (`server/server.go:97-102`). A write or flush error, a timeout included, cancels the run and stops the writer.
+- **Terminal delivery is separate.** The run's result or error is not sent through the progress channel. When the generator returns, the handler stops accepting progress events, drains what is queued, and writes exactly one `result` or `error` event under the request's own lifetime, with the same per-frame write deadline. Immediately before that write (after the drain), and before the JSON response in non-streaming mode, the handler checks access once more under a fresh request-parent 5 s context. If access changed or the check fails, the Draft and transcript are dropped and only a sanitized error is written. The `error` event takes its transcript from `TemplateRunError`, never from progress events. A Draft recovered after the run deadline is therefore delivered while the client is still connected.
+- **Cancel.** A client abort cancels the request context, which is the parent of the run context, so the in-flight provider call and every Tool's DB read are cancelled (section 2).
+- OpenAPI entries for the event stream and the finish route; `go run ./cmd/openapi-gen` regenerated.
+
+### 6. Frontend
+
+- **Dialog markup** (`templates/partials/generationDisclosureDialog.tpl`): harness details (Tools, caps, Envelope) and the opt-ins go inside the scrollable message region, not the fixed summary, so they stay reachable at small viewports and high zoom. Send gets a disabled binding during and after a failed re-disclosure. Classic disclosures render as today.
+- **Approval tuple.** `generationDisclosure.js`'s review resolves to an immutable `{groundingHash, previewMRQL, previewPlugins}` or null. It no longer resolves a boolean.
+  - Toggling an opt-in in the dialog re-requests the dry run with the frozen request body. Send is disabled while that is in flight, and after it fails.
+  - A response older than the latest toggle is ignored.
+  - Both hosts (`templateGeneration.js`, `templateBundle.js`) send the frozen body plus that tuple.
+- **Progress panel.** `templates/partials/form/templateRunProgress.tpl` plus `src/components/templateRun.js` show:
+  - the Turn list, and a Turn and budget meter
+  - Finish now (POSTs the finish route) and Cancel (AbortController)
+  - at the end, a collapse into the transcript, rendered as text only, never as HTML
+
+  The hosts keep their Apply, snapshot and overwrite checks unchanged.
+- The SSE reader is `fetch` with a stream reader, not `EventSource`: the request is a POST with a CSRF token.
+- **Dialog ownership.** Each review the disclosure store opens gets an owner token. `cancel(token)` settles that review as null, aborts its re-disclosure fetch, and releases the modal state (inertness, focus containment) through the store's `_settle()` (`generationDisclosure.js:82-118`). A different host's open review is untouched.
+- **Teardown.** A `stopGeneration()` helper aborts the run and any re-disclosure, cancels its own open review through its token, and invalidates late callbacks. It is called from the real teardown paths:
+  - `codeEditor.destroy()`, which overrides methods spread in from `templateGeneration` (`codeEditor.js:24-25,334-340`)
+  - the cluster host
+  - `templateBundle`'s lifecycle (`templateBundle.js:181-189`)
+
+  A new run in the same editor calls it first.
+- **Live region:** "Turn N started" and the end state only.
+
+### 7. Settings (`application_context/ai_generation.go`, `src/components/aiSettings.js`, `templates/partials/aiSettings.tpl`)
+
+New runtime entries in the "ai" group, each with a control in the AI settings panel. The generic settings page excludes the group (`templates/adminSettings.tpl:17-20`).
+
+| Entry | Default | Range |
+|---|---|---|
+| `ai_template_generation_mode` | `harness` | `harness` or `classic` |
+| `ai_template_max_turns` | 10 | 1 to 20 |
+| `ai_template_run_deadline` | 5m | 30s to 15m |
+| `ai_template_run_token_budget` | 400000 | 100000 to 2000000 |
+
+"Reset feature" for templates resets them too, as it resets every `ai_template_` key today; the panel says so. `pair` and `plan` overrides keep working for classic mode.
+
+### 8. Eval (`internal/templateeval`, `server/api_tests/template_generation_eval_test.go`)
+
+- **Recorder.** It records at the provider-neutral seams, not the wire: `ConversationRequest`/`ConversationResponse` pairs (Turns, Tool calls, usage, stop reason) in harness mode, and `TemplateDraftRequest`/`TemplateDraftResponse` pairs in classic mode, keeping the classic report fields. Today's recorder decodes DeepSeek-shaped wire bytes (`internal/templateeval/recorder.go:91-166`) and loses evidence for OpenAI, OpenRouter and Anthropic in either mode. The HTTP status and error class it reports today come from a new sanitized typed error, `GenerationProviderError{Status int, Class string}` (class one of `http`, `transport`, `decode`, `size`, `refusal`), which `post` and the adapters return wrapped. No body or header is recorded. Diagnostic copies sanitize arguments wherever they appear, standalone and as the `arguments` strings nested inside `Replay`: valid argument JSON is decoded fully (including JSON documents nested in strings), redacted at every string leaf and re-encoded; incomplete or malformed argument text is replaced by a fixed placeholder (`[unparsed arguments: N bytes]`), because literal replacement misses escaped forms such as `\u0053…`. The live `Replay` sent to the provider is never altered. The rest of `Replay` goes through a JSON-aware redaction (decode, redact strings, re-encode) before they are retained, and the aggregate-report stripping covers every new free-text field, not only `Content`. Normal-suite fixtures check captured content, finish reasons, and token and cache totals for every adapter in both modes.
+- **Scorer.** `ScorerVersion` is bumped and the scorer becomes mode-aware:
+  - Draft quality checks score the final Draft.
+  - A `length` reply on an intermediate Turn followed by a complete submission is "recovered", not truncated.
+  - Truncation of the retained Draft is still a failure.
+  - Failure diagnostics read tool submissions in harness mode and classic JSON in classic mode.
+- **Runner.** The live runner constructs both generators from one provider configuration. Each report records mode, model, settings, Turns used, tokens per run and stop reasons.
+  - Cost is reported as "not computed": the repo has no pricing source.
+  - Without a provider key the live run is skipped with a message, not failed.
+  - The fake-transport wiring tests run in the normal suite.
+- **Comparison.** The two-mode report is produced by running both modes and then the existing `Compare`.
+
+## Phases and lanes
+
+Phase 0 (one commit, before any lane) settles every shared interface, with stubs that compile:
+- the section 1 types, `ConversationUsage` and `TemplateConversationProvider`
+- `TemplateRunEnv`, `TemplateToolExecutor`, `TemplateToolInvocation`/`Output`, `TemplateRunSink`, the transcript record, stop reasons, `ErrTemplateRunAccessChanged`, `TemplateRunError`
+- `MahresourcesContext.WithParentContext` and `WithPrincipalContext`, implemented, with the real server-built access factory compiled against them
+- the Tool catalogue's specs (names, descriptions, parameter schemas), which lanes B and C both read
+- the new `TemplateGenerationInput` fields (`Run`, `PartialExists`, starting points) and result fields
+- the `DiscloseTemplate(ctx, …)` signature change with every caller and fake updated
+- `api_handlers.TemplateRunAccessFactory` and its parameter on `GetGenerateTemplateHandler`, wired in `server/routes.go` with a stub
+- Appendix A as the adapter reference
+
+| Lane | Scope | Depends on |
+|---|---|---|
+| A | Section 1: three adapters, `SupportsTools`, `HistoryRewritable`, httptest round trips per provider (parallel calls, replay of thinking and reasoning payloads, `length` with incomplete and mixed calls, malformed calls, missing usage, cache fields) | Phase 0 |
+| B | Section 2: argument validation, caps, the executor (live access through the factory, DB rebasing, panic containment), source limits, render budget and cancellation checks in `shortcodes`, `ErrQueryUnavailable`, the `[property]` fix | Phase 0 |
+| C | Sections 3, 4, 7 (backend): loop with a scripted fake provider and fake executor, Seed builder, Disclosure v3 and mode dispatch, settings, registry | Phase 0 |
+| D | Sections 5, 6, 7 (UI): SSE with terminal delivery, finish route, OpenAPI, frontend, settings panel, E2E and a11y tests | B, C |
+| E1 | Section 8 recorder (both seams, `GenerationProviderError` use), scorer and report schema, with normal-suite fixture tests in a file without the eval build tag; docs-site pages, `docs/architecture/template-generation-runs.md`, runtime settings docs | A, C (recorder, scorer), D (docs) |
+| E2 | Section 8 live runner wiring through the real handler (`template_generation_eval_test.go`), and the two-mode report if a key is available | A, B, D, E1 |
+
+`GenerationProviderError` is part of Phase 0.
+
+A, B and C run in parallel in this worktree with disjoint files, each staging explicit paths. Each lane is test-first: a failing test for each behaviour, then the code. Each lane's batch gets a pi review before the next phase starts.
+
+## Tests (beyond each lane's unit tests)
+
+- **Group-limited refusal** (`server/api_tests`, SQLite and Postgres): a harness run by a group-limited principal (the synthetic scoped editor of `template_generation_scope_test.go`) and by a role that requires a scope but has none is refused with 403 before any provider call, dry run included. Classic mode's existing scope test still passes.
+- **Live access:** with the scripted provider paused between Turns, and separately with it blocked inside the final Turn's call, the run ends with no Draft, no transcript and no Tool executed after the change, when any of these happens:
+  - the account is disabled
+  - the account is demoted
+  - the account is assigned a scope group
+- **Carriers and revisions:** every role that can start a run reads every carrier through `get_template` and `list_carriers`. Revision Tools on another carrier follow `requireTemplateCarrierEdit`; for example, an editor's NoteType run cannot read a Category's revisions.
+- **Generation roles:** the real router refuses the run route to roles without the carrier's edit capability, as today.
+- **Hash:** the hash changes with the mode, each opt-in, the Turn cap, the Tool list and the account. It is stable across two dry runs with unchanged data.
+- **Placeholder:** with the opt-ins off, a previewed `[mrql]` executes no query, asserted through a counting executor. That holds whether the `[mrql]` is direct, inside a partial, a conditional, `[using]`, an `[mrql]` result template or CSS. `[using]` and an MRQL-backed conditional (numbered conditions, `[elseif]`, `[else]`) each render the inert comment and take no branch. A plugin shortcode reaches no plugin.
+- **Seed contents:** sentinels for the schema extension reference, plugin display types, carrier runtime facts and slot role lines appear in the harness Seed. The task section differs between a selected and an unselected bundle with identical `BundleSlots`, and so does the hash.
+- **Bounded revisions:** `list_revisions` issues a query with `LIMIT 51`, asserted on the SQL, not on the returned length; with 60 revisions, `offset: 50` returns the last 10 and `more: false`.
+- **Wide `[each]`:** one iteration with 1,000 `[item]` over a 1 MiB value ends with the budget error in bounded memory.
+- **Schema bytes:** a 16 KiB description under three levels of twenty repeated references stops at the byte budget in a `[meta]` render and in lint.
+- **Progress payloads:** with a secret sentinel in a Tool call's `content` and `query`, no progress frame contains it, including frames drained after access is revoked.
+- **Schema numbers:** a 15 KB schema of 500 `1e-1000000` minimums is refused before compilation, through a save, the lint endpoint and harness `lint`; six parallel validations of it stay bounded.
+- **Budget finality:** with an 8,192-token profile, 60,000 remaining and a 56,500 estimate, the request actually sent carries the final-Turn instruction and the re-clamped `max_tokens`.
+- **Conditional cancel:** a conditional with hundreds of numbered tests over a large Meta value stops evaluating after cancellation.
+- **Recorder nested redaction:** a synthetic credential written as `\u0053…` inside a Chat Completions `Replay`'s `function.arguments`, complete and cut off, is not recoverable from the diagnostic copy.
+- **Required fields:** an ordinary cluster request (today's `SlotsSelected=false`) gets both fields as required in the task section, and a missing one is reported.
+- **MRQL exhaustion log:** with the MRQL opt-in on, exhausting the query budget in a model preview writes no log row; a human preview still does.
+- **Plugin log:** a model-preview `mah.log` with a sentinel writes no log row; a human preview logs as today.
+- **MRQL substitution:** a partial whose `[mrql]` header, footer and else slots repeat `{link-all}` 36,000 times is refused by the budget without building the string (MRQL opt-in on).
+- **Empty CSS:** in a standalone `CustomCSS` run, `{"fields":{"CustomCSS":""},"done":true}` gives a reviewable pending draft that clears the editor only on Apply. In a whole-template run, empty `CustomCSS` additions leave the Seed's stylesheet byte-identical.
+- **Plugin writes:** with the plugin opt-in on, model-preview shortcodes that call `mah.db.delete_note` (db:write), `mah.media.trim` in both modes (render + media only), `mah.job_progress`/`job_complete`/`job_fail` on a plugin-owned job (render + actions only), `mah.inject`, `mah.page` and `mah.shortcode` registration each fail with "not allowed in a model preview", and the note, resource content, versions, job state and every registry are unchanged. The same shortcode calling `mah.db.get_group` renders. The same calls from a human preview behave as today.
+- **Cut-off arguments:** a Turn with an incomplete call (`{"fields":`) followed by a successful submit delivers its result over JSON and SSE, and the eval recorder and report encode it.
+- **Diff budget:** six parallel `diff_revisions` over two 5,000-line fields compute one at a time within the cell budget and fall back to the coarse form; a cancelled context stops the computation.
+- **Instruction wire form:** finalization on Turn 1 and after Tool results delivers the instruction on each adapter, with earlier payloads byte-unchanged.
+- **System prompts:** no harness Seed (slot, bundle, MetaSchema) contains either classic output-envelope directive.
+- **Resolved CSS:** with Seed CSS that changes the preview, an omitted-`content` `preview` of `CustomCSS` after a submission renders the merged stylesheet.
+- **Partial wording:** with a catalogue cut at 200, the harness Seed allows a partial verified through `get_partial`.
+- **Grounding cancel:** a client abort while a sample or partial-catalogue read is blocked ends the handler without a provider call.
+- **Dialog ownership:** teardown and supersession while a review is open settle that review as null and release the modal; another host's open review is unaffected.
+- **OpenRouter Claude:** the wire request for an `anthropic/` model carries the top-level `cache_control`.
+- **Render budget:** five nested `[each]` over a 100-element array returns `ErrRenderBudgetExceeded` within the bound, in bounded memory, with both opt-ins off. A cancelled context stops a long `[each]` and a long parse. An adversarial run of opening and closing tags hits the token limit before parsing.
+- **Panics:** `[property path="CreatedAt.wall"]` renders nothing through the preview route and pages, and a deliberately panicking Tool returns an error result through the parallel executor.
+- **Starting points:** a run with automatically chosen samples and no IDs in the request text can `get_entity` each sample by the IDs in the Seed.
+- **One validator:** a missing `[partial]` gives the same issue from `lint`, from `submit` and in the final Draft.
+- **Adapters to loop:** a `length` reply with only an incomplete call, and one with a complete call followed by an incomplete one; a missing usage block charges the estimate.
+- **Anthropic history:** a run long enough to pass 3 Turns sends every earlier message byte-identical (no stubbing), natively and through OpenRouter with a non-DeepSeek model and `reasoning_details`.
+- **Schema expansion:** a `[meta]` preview over a self-referencing `$ref` schema, and over a large acyclic one, returns within the bounds with both opt-ins off; the same schema on a group page no longer crashes the process.
+- **Access lifetimes:** a run with auth enabled that recovers a Draft after its deadline passes the final access check under the request context; with the account revoked just before that check, nothing is released.
+- **Slow client:** a client that stops reading makes the writer time out within the write deadline, which cancels the run and frees the registry entry.
+- **Failure transcript:** a provider failure after Tool Turns but before any submission delivers the transcript in the `error` event with progress events deliberately dropped.
+- **Partial lookups:** a blocked partial lookup during `lint` and `submit` is cancelled by the Tool timeout and the run deadline. During final validation it is cancelled by client cancellation or its own 5 s finalization timeout, and a recovered Draft after the run deadline is validated normally.
+- **Semaphore wait:** with every provider slot held, a queued Turn whose account is revoked while it waits makes no provider call when a slot frees, and frees the registry entry.
+- **Terminal release:** with delivery paused after the generator's final check, revoking access before the terminal write delivers neither Draft nor transcript, in SSE and JSON modes.
+- **Schema work:** the repeated-reference acyclic fixture ends within the work budget through `lint`, `submit`, final validation, the lint endpoint and a `[meta]` page render; a root composition fan-out ends before leaf expansion.
+- **OpenRouter catalogue:** a listed ID, a listed ID without tools, a rolling alias and a failed lookup give supported, refused, unknown and unknown; the alias gets the Claude cache control.
+- **Mode snapshot:** changing the mode while a grounding read is paused does not change the refusal, the hash or the run's mode.
+- **Recorder redaction:** literal and JSON-escaped credentials in Tool arguments and Replay are redacted; aggregate reports carry none of the new free-text fields.
+- **Responses schemas:** wire fixtures with omitted `content`, omitted revision carrier arguments and a partial `submit.fields` map carry `strict: false`.
+- **Terminal delivery:** over a real stream, a submission followed by run-deadline expiry delivers the recovered Draft as the `result` event.
+- **Dry-run lookup:** a stalled OpenRouter metadata lookup times out to "unknown", a cancelled dry run cancels it, and a second dry run uses the cache.
+- **Loop:**
+  - Each stop reason, including after earlier successful submissions.
+  - Finish now well before the cap.
+  - A final Turn with `done: false`.
+  - Budget admission (a Turn's `max_tokens` clamped; refusal at the dry run).
+  - Same-Turn submits completing in reverse order.
+  - A 7th call in one Turn.
+  - Stubbing: a result older than 3 Turns is a stub in the next request and complete in the transcript.
+- **CSS:** repeated `CustomCSS` additions, a partial bundle, and byte-for-byte preservation of the Seed's `CustomCSS`.
+- **SSE integration** (real HTTP, chunked): with a blocking fake provider, the first `turn` event arrives before the provider is released. Finish now makes the next Turn final. A client disconnect cancels the provider call and a waiting Tool read, and frees the registry entry. Simultaneous Tool completions and a heartbeat interleave without corrupting frames (race detector on).
+- **Frontend unit:** the approval tuple, with re-disclosure responses arriving in reversed order; the exact final POST body. The stream reader, fed by a controllable `ReadableStream`, updates progress on a `turn` frame while the terminal frame is still withheld, and handles an event delimiter and a multibyte character split across chunks, processing exactly one terminal result.
+- **E2E** (stubbed through `page.route` with event-stream bodies): the progress panel, Finish now and Cancel requests, transcript expansion, opt-in re-disclosure, Apply unchanged, editor teardown aborting the request, and accessibility of the panel and dialog.
+- **Classic mode:** the existing generation tests pass unchanged with the mode set to classic.
+
+## Risks
+
+- **Prompt size growth.** Each Turn resends the conversation. Stubbing and the budget bound it; the eval reports tokens per run.
+- **The final Turn is a soft request.** No provider can be forced portably. Submissions from earlier Turns are kept, and the instruction asks the model to submit early.
+- **Injected entity text reaches the model through Tools.** The boundary stays the explicit Apply step (decision 10 of the 2026-10-24 plan). The review panel's highlighting of code-running constructs is unchanged.
+- **Plugin Lua during previews** runs installed code. It is a separate opt-in, off by default, and runs plugin code under an enforced read-only invocation (section 2).
+- **Anthropic keys not scoped to a workspace** need an `anthropic-workspace-id` header that the client does not send. This affects classic mode too. It is a follow-up (a setting), not part of this plan.
+
+## Appendix A: provider facts (researched 2026-11-07 from primary docs; no live calls)
+
+| | DeepSeek | OpenRouter | OpenAI (Responses) | Anthropic |
+|---|---|---|---|---|
+| Endpoint | `api.deepseek.com/chat/completions` | `openrouter.ai/api/v1/chat/completions` | `api.openai.com/v1/responses` | `api.anthropic.com/v1/messages` |
+| Tool spec | `tools[].function{name,description,parameters}` | same | `tools[]{type:function,name,description,parameters}` | `tools[]{name,description,input_schema}` |
+| Choice used | `auto` | `auto` | `auto` | `{type:auto}` |
+| Forced choice | rejected with thinking on | per endpoint (`supports_tool_choice`) | supported | `any`/`tool` rejected on Opus 5.5, Sonnet 5.5, Fable 5.1, Mythos 5.1 |
+| Replay | whole assistant message incl. `reasoning_content` (400 if omitted while `tools` present) | whole assistant message incl. `reasoning_details` | `output` items incl. encrypted reasoning (`store:false`) | raw `content` incl. thinking blocks with signatures, unmodified |
+| Results | one `role:tool` message per call | same | `function_call_output` items | one user message of `tool_result` blocks |
+| Tool stop | `finish_reason: tool_calls` | same | `function_call` items in `output` | `stop_reason: tool_use` |
+| Caching | automatic prefix; `prompt_cache_hit/miss_tokens` | passthrough; `prompt_tokens_details.cached_tokens` | automatic; `input_tokens_details.cached_tokens` | top-level `cache_control` (automatic); `cache_read/creation_input_tokens` |
+| Tool support check | assume yes | `GET /api/v1/models?supported_parameters=tools` | assume yes | assume yes |
+
+Sources:
+- https://api-docs.deepseek.com/guides/thinking_mode
+- https://api-docs.deepseek.com/api/create-chat-completion
+- https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
+- https://openrouter.ai/api/v1/models
+- https://developers.openai.com/api/docs/guides/migrate-to-responses
+- https://developers.openai.com/api/docs/guides/reasoning
+- https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use ("Forcing tool use")
+- https://platform.claude.com/docs/en/build-with-claude/thinking
+- https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+- https://platform.claude.com/docs/en/api/overview (headers)
+
+Lane A re-verifies each row against these pages before writing its fixtures.
+
+Not verified: DeepSeek parallel-call suppression; OpenRouter `reasoning_details` round trip for DeepSeek models; exact cache-write price multipliers.
+
+## Appendix B: class-rule instances found in plan review round 12
+
+Lane B's checklist, in pi's words. Each item is a loop or allocation the class rule (section 2) covers. Lane B's commit message accounts for every one.
+
+### Lane B: shortcode processing and lint Class-rule instances
+
+**Plan section for every finding in this section:** §2, “Preview and lint work is bounded,” particularly the Class rule at `docs/plans/2026-11-07-template-generation-harness.md:205`. These are **P2 implementation inventory**, including mechanisms already explicitly anticipated by the plan:not independent blockers.
+
+| # | Finding and concrete code evidence | Concrete fix |
+|---|---|---|
+| **4 [P2]** | **Processor allocation and literal-copy paths precede admission.** `processWithDepth` strips comments, calls `Builder.Grow(len(input)*2)`, dispatches replacements, and copies literal spans/replacements/suffixes without cancellation or reservation (`shortcodes/processor.go:204-235,329-333`). Nested partials and returned plugin source enter this path too. | Admit parsed-source bytes before comment stripping/parsing; check each dispatch iteration; reserve before growth and every write, including literal spans and the final suffix. Propagate exhaustion through nested handlers. |
+| **5 [P2]** | **Token and attribute extraction eagerly materialize complete match collections.** `matchTokens` uses unrestricted `FindAllStringSubmatchIndex`, and `parseAttrs` uses `FindAllStringSubmatch` before building maps (`shortcodes/parser.go:90-119,238-258`). A shortcode-count cap does not independently cap attributes on one token. | Admit source first, bound match accumulation before retaining complete slices, check cancellation while collecting tokens/attributes, and reserve collection entries before insertion. |
+| **6 [P2]** | **Pair matching and block reconstruction contain uncancellable nested scans.** Closing-token matching searches backward through prior tokens (`shortcodes/parser.go:136-150`); block reconstruction searches forward for a closer (`:168-191`). Nested matching tags produce quadratic pairing work. | Check cancellation/work inside both inner searches and their outer loops; reserve result records. Retaining matching indices or using opener stacks can remove repeated scans without changing semantics. |
+| **7 [P2]** | **The entire `[each]` sentinel pipeline needs admission.** Array iteration eagerly builds replacement values, while `markItems` and `spliceItems` separately copy branches, construct sentinels and accumulate substituted output (`shortcodes/each_handler.go:60-72,101-155`). An outer append check occurs too late. | Implement lazy formatting during splicing; check before each iteration/sentinel/value; reserve helper growth and writes. Preserve the rule that substituted entity text is never rescanned. |
+| **8 [P2]** | **Branch/span membership checks multiply candidate count by span count.** `insideSpans`, `SplitElse`, `SplitBranches` and divider scans repeatedly search block spans (`shortcodes/split_else.go:30-137`). Lint placement uses another span search (`shortcodes/lint.go:334-337,638-647`); `countTopLevelElse` searches parsed blocks per divider (`:834-855`). | Carry context/work accounting into the membership searches themselves, not only callers. Reserve branch/span collections. A sorted-span cursor can avoid the cross-product. |
+| **9 [P2]** | **MRQL slot extraction repeatedly copies and reparses bodies.** `firstSlotSpan` and `firstElseIndex` scan variable-length source; `mrqlSlotTagSpans` allocates origin arrays and copies remainders (`shortcodes/mrql_slots.go:106-194`). Lint repeats this for every nested MRQL body (`shortcodes/lint.go:893-896`). | Check each scan, reserve origin arrays and remainder copies before allocation, and charge repeated body parsing to one shared allowance. Test nested MRQL blocks even when no header/footer slots exist. |
+| **10 [P2]** | **Conditional helpers have dynamic loops below the planned outer checks.** Numbered conditions accumulate a results slice; `in` splits/scans operands; `foldBools` reduces all results; branch selection visits candidates (`shortcodes/conditional_handler.go:84-98,142-185,214-242`). | Thread context into those helpers, check operand/reduction loops, and reserve variable result data. An incremental reduction can avoid the results slice while retaining current evaluation semantics. |
+| **11 [P2]** | **Parameter collection repeatedly rebuilds an attribute-controlled map.** `collectShortcodeParams` scans every attribute and allocates a map (`shortcodes/mrql_handler.go:22-33`). Numbered conditional queries invoke it repeatedly through `mrqlCheckOptions` (`shortcodes/lint.go:57-65,472-475`); runtime conditionals and `[using]` also call it. | Check/admit collection and map entries. Collect parameters once per immutable condition attribute set and reuse the read-only map across its numbered queries. |
+| **12 [P2]** | **Custom MRQL assembly accumulates sibling output internally.** Category CSS, custom cards and buckets are accumulated before returning to the processor (`shortcodes/mrql_handler.go:209-239,296-305,335-346`). Nested processor checks do not cover enclosing wrappers or accumulated sibling results. | Check per item/group and reserve every local append, including CSS wrappers. Propagate nested budget errors rather than converting them into empty successful output. |
+| **13 [P2]** | **Built-in MRQL layouts bypass recursive processor checks.** Default cards, tables, lists, compact links, aggregate columns/rows/cells and bucket keys are formatted by context-free helpers (`shortcodes/mrql_renderer.go:17-33,52-63,77-93,104-114,124-168`). Compact output retains a full parts slice before joining. | Pass context/admission through these helpers; check item/row/cell/key loops; reserve retained output. Stream compact links into a checked builder instead of retaining every formatted link. |
+| **14 [P2]** | **MRQL placeholder multiplication happens before processing.** `substitutePlaceholders` performs the complete `Replacer.Replace` before the next processor entry (`shortcodes/mrql_slots.go:250-264`; caller `shortcodes/mrql_handler.go:191-193`). Repeated `{link-all}` multiplies the escaped query URL. | Implement the plan’s explicit preflight: count occurrences, calculate expansion with overflow checks, reserve before replacement, and check cancellation. Cover header, footer and else slots. |
+| **15 [P2]** | **Reload’s preliminary scan lacks the render context.** `containsReloadShortcode` runs the token matcher and scans tokens before nested processing (`shortcodes/reload_handler.go:76-86,143-145`). Normal dispatch checks do not cover that preliminary pass. | Pass context/admission into the helper and its parser call; stop the search on cancellation and reuse bounded parser machinery. |
+| **16 [P2]** | **Template-comment discovery independently builds tag/span collections.** Opener/closer discovery and `ScanText` gather, sort and reduce variable-sized collections without cancellation (`templatecomment/templatecomment.go:60-114,128-167`). Both Process and Lint reach this before shortcode parsing. | Add context-aware scanning entry points, admit source and tag/span collections, and check variable discovery/reduction loops. The fixed sixteen-pass outer limit need not become a separate limit. |
+| **17 [P2]** | **Comment stripping and offset mapping copy without admission.** `StripMapped` accumulates diagnostics, and `stripOnce` grows a full-size builder, copies surviving regions and builds mapping runs (`templatecomment/templatecomment.go:204-224,237-255`). | Carry the scanning context/budget through stripping; reserve builder and mapping growth before allocation and check each region/diagnostic iteration. Preserve the constant-pass exemption. |
+| **18 [P2]** | **Lint’s HTML-comment tokenizer is a separate uncancellable pass.** `htmlCommentSpans` tokenizes the complete markup and appends spans (`shortcodes/comment.go:38-55`), reached from `shortcodes/lint.go:190`. Shortcode parser checks do not cover it. | Pass lint context/admission into this helper; check token advances and reserve appended spans. |
+| **19 [P2]** | **Dropped-value probes repeatedly allocate and parse the entire document.** Per-occurrence analysis invokes `rawBreakoutReachesLive` and `unquotedSiblingInjectsOne` (`shortcodes/lint_attr_context.go:393-444`). Those helpers construct whole-source variants and parse them in multiple scripting modes (`:237-260,281-317`). Duplicate attributes can trigger occurrence-count × document-size work. | Reserve each constructed document before concatenation, charge every probe, and check cancellation between probes and during parsing. Use a cancellation-aware reader plus admitted parse bounds rather than an unrestricted `strings.Reader`. |
+| **20 [P2]** | **URL-context analysis repeatedly copies growing prefixes.** `sentinelsInTag` unescapes the prefix before each sentinel (`shortcodes/lint_attr_context.go:951-960`); subsequent `stripSentinels` and `urlSchemeBefore` rebuild/scan prefixes again (`:165-185,1217-1218,1248-1269`). The lexical facts retain prefix strings. | Charge prefix copies before allocation and check between occurrences. Reuse a decoded attribute and precomputed prefix facts where practical; account for retained prefixes as well as final diagnostics. |
+| **21 [P2]** | **Nested conditionals cause overlapping-body reparsing in lint.** `conditionalInnerRanges` retains every nested body (`shortcodes/lint.go:777-803`). Each conditional then calls `countTopLevelElse` (`:447,834-835`) and, with MRQL validation, independently calls `SlotTagSpans` and `SplitBranches` (`:479-480`). | Carry cancellation/work accounting through every helper and charge repeated body parsing. Reusing the lint run’s token/block relationships avoids redundant passes. |
+| **22 [P2]** | **Attribute diagnostic anchoring rescans an opener for every diagnostic.** `attrOffset` searches `tk.raw` from the beginning (`shortcodes/lint.go:685-701`); conditional lint repeatedly invokes it for `matches*` and numbered MRQL attributes (`:438-444,472-475`). | Check/charge anchoring scans, or retain attribute offsets during parsing and use direct lookup. Test one large opener with many numbered diagnostic-bearing attributes. |
+| **23 [P2]** | **Lint’s ordinary passes and diagnostic accumulation also need Class-rule coverage.** Token/attribute passes, bare-value collection, loose-bracket matching and issue mapping currently have no context or allocation accounting (`shortcodes/lint.go:133-150,190-283,438-508`). `namedBlockSpans` separately builds a stack and result slice (`:811-827`). | Thread lint context/admission through these passes, reserve retained spans/issues/maps before growth, and bound sorting by admitted collection size. Do not cover only the pathological nested helpers. |
+| **24 [P2]** | **HTML attribute classification has independent tokenizer and DOM walks.** `lexicalContexts` scans source/tokens (`shortcodes/lint_attr_context.go:674-733`); `classifyByParse` parses a DOM and recursively visits nodes, attributes and sentinel collections (`:738-822`). These run even without the per-occurrence breakout probes. | Admit parse/source structures, use cancellation-aware parsing with bounded work, and check node/attribute/sentinel visits. Bound traversal depth or use an explicit admitted stack; reserve fact/sentinel collections before allocation. |
+
+### Lane B: schema-rendering Class-rule instances
+
+**Plan section for every finding in this section:** §2, Class rule and “Schema expansion is bounded” (`docs/plans/2026-11-07-template-generation-harness.md:205,209`). All are P2 instances of the accepted shared schema-work/byte budget.
+
+| # | Finding and concrete code evidence | Concrete fix |
+|---|---|---|
+| **25 [P2]** | **Schema-path traversal repeatedly resolves without accounting.** `extractSchemaSlice` resolves for every path segment and marshals the final result without context/work state (`shortcodes/meta_handler.go:227-282`, loop `:243`). | Share context and `schemaWork` through the traversal and every resolver; charge each resolution and admit final serialization before marshaling. |
+| **26 [P2]** | **Direct leaf-reference recursion bypasses an `inlineRefsDeep`-only guard.** `resolveLeafSchema` follows a direct `$ref`, merges and recursively calls itself before reaching deep inlining (`shortcodes/meta_handler.go:292-305`). | Put current-path reference tracking, depth admission, cancellation and visit charging at `resolveLeafSchema` entry and its direct-reference branch. Test a direct leaf-reference cycle separately. |
+| **27 [P2]** | **Leaf conditional resolution copies and restarts recursively.** It copies a node into `base`, merges branches and resolves again (`shortcodes/meta_handler.go:311-338`). | Charge entries/bytes before the map copy and merge; check the recursive visit against the same depth/work allowance. Do not reset the budget when selecting another branch. |
+| **28 [P2]** | **Deep inlining has multiple pre-append allocation sites.** Reference merges, node-map copies, composition slices, property maps, items and conditional recursion allocate/descend independently (`shortcodes/meta_handler.go:345-398`). | Charge every descent and reserve maps/slices/scalar bytes before allocation. Apply reference-path and depth checks to each descent; check every variable collection iteration. |
+| **29 [P2]** | **Intermediate-node resolution needs accounting on copies, not just branches.** Reference recursion, conditional/base copies and composition merging occur at `shortcodes/meta_handler.go:425-484`. The existing depth limit does not bound total branch work. | Share one allowance across extraction; charge both base-map copies, every branch and every merge. Propagate exhaustion rather than treating it as an unresolved schema. |
+| **30 [P2]** | **Schema-condition keyword/property/enum scans are uncancellable.** `tryEvaluateCondition` scans keywords, properties, constraint keys and enum candidates (`shortcodes/meta_handler.go:511-616`). Enum candidates repeatedly invoke `reflect.DeepEqual`. | Pass context/work state into the evaluator; check and charge each candidate/property/key. Retain the allowed linear comparison of one stored value, but stop schema-controlled repetition between comparisons. |
+| **31 [P2]** | **Type-list construction and matching accept variable-sized arrays.** `normalizeTypeList` allocates from the supplied list, and `jsonValueMatchesAnyType` scans it (`shortcodes/meta_handler.go:651-674`). Rendering does not guarantee the input schema was previously compiled as valid. | Reserve entries before allocation and check conversion/matching loops, or establish a fixed admitted type-list limit before these helpers. |
+| **32 [P2]** | **Renderer reference lookup has unchecked pointer-segment work.** `followRef` splits and decodes every pointer segment on each invocation (`shortcodes/meta_handler.go:679-699`). Repeated expansion revisits it. | Check/charge pointer segments and decoded-string bytes against the shared schema budget before allocating replacements. |
+| **33 [P2]** | **Property merging recurses independently of resolver depth.** `shallowMergeSchema` allocates/copies maps and recursively merges overlapping property trees (`shortcodes/meta_handler.go:708-739`, recursive merge `:729`). | Thread context, depth and `schemaWork` into the merge itself; reserve destination entries before allocation and charge every copy/recursive visit. |
+
+### Lane B: schema-lint Class-rule instances
+
+**Plan section for every finding in this section:** §2, Class rule and shared schema-expansion budget (`docs/plans/2026-11-07-template-generation-harness.md:205,209`).
+
+| # | Finding and concrete code evidence | Concrete fix |
+|---|---|---|
+| **34 [P2]** | **The ordinary schema-lint tree walk is separate from effective-schema expansion.** `schemaLinter.walk` recursively visits property maps, schema maps and lists and constructs paths (`shortcodes/schema_extensions.go:218-255`). | Put context, depth, node/byte accounting and exhaustion state on the linter. Charge before each child visit/path allocation and terminate with the single planned complexity issue. |
+| **35 [P2]** | **Key collection allocates and sorts before traversal can stop.** `sortedKeys` allocates a map-sized slice, copies all keys and sorts it (`shortcodes/schema_extensions.go:206-212`). | Admit the key count/slice first, check collection, and constrain sorting by admitted work. A check in the later walk is too late. |
+| **36 [P2]** | **Warning messages are fully formatted before result truncation.** `warn` formats and appends every issue (`shortcodes/schema_extensions.go:202-203`), including schema-controlled names and accumulated paths. | Reserve diagnostic/message bytes before formatting and appending. Stop traversal and emit one bounded complexity issue on exhaustion; account for quoted/path expansion. |
+| **37 [P2]** | **Labeled-enum detection scans all alternatives.** `lintLabeledEnum` inspects every entry (`shortcodes/schema_extensions.go:286-311`, loop `:292`) independently of effective-schema expansion. | Check context and charge each entry before inspection. The fixed complex-key vocabulary can retain its constant-bound exemption. |
+| **38 [P2]** | **Plugin display-type membership is a host-side variable scan.** Each plugin-valued `x-display` can scan `DisplayTypes` through `containsString` (`shortcodes/schema_extensions.go:337-339,616-622`). This is not execution inside a trusted plugin. | Build an admitted lookup set once per lint, checking/charging its construction, or check/charge every membership scan. |
+| **39 [P2]** | **Built-in display checking consumes expanded type declarations without checks.** `lintBuiltinDisplay` scans effective type lists and may join them into warnings (`shortcodes/schema_extensions.go:353-364`). | Deduplicate as planned, check/charge consumption, and reserve joined warning bytes. Keep the expansion allowance shared through its consumers. |
+| **40 [P2]** | **Field-type checking can restart expansion for every merged definition.** `fieldTypeFits` loops over definitions, their effective type lists and individual types (`shortcodes/schema_extensions.go:419-440`). | Share one linter work allowance across every `effective` invocation and all three loops. Path-local reference state may be fresh; the total work allowance must not be. |
+| **41 [P2]** | **Effective-schema merges append entire collections before admission.** Type-list append, property append and required-key merging occur at `shortcodes/schema_extensions.go:463-472`. Duplicates remain retained. | Deduplicate retained declarations and reserve entries/bytes before appending or inserting; check each variable map iteration. |
+| **42 [P2]** | **Effective-schema traversal has additional input-sized loops.** `allOf`, type arrays, properties and required keys are traversed at `shortcodes/schema_extensions.go:498-533`. A depth limit and active-reference set do not bound total visits. | Charge/check every iteration and retained declaration using the same allowance across references, compositions and direct declarations. |
+| **43 [P2]** | **Modeled-keyword inspection repeats over every node key.** `onlyModelledKeywords` scans the whole node (`shortcodes/schema_extensions.go:552-565`) during both ordinary walking and effective-schema visits. | Check/charge inspected keys, or cache the result per node within a lint while accounting for cache construction. |
+| **44 [P2]** | **Lint reference lookup has its own pointer walker.** `localRef` splits/decodes pointer components, including array indexes (`shortcodes/schema_extensions.go:568-595`). Fixing renderer `followRef` does not fix this path. | Carry lint context/work state into `localRef`; charge/check segments and decoded-string allocations before retaining them. |
+
+### Lane B: `ValidateMetaSchema` and reachable compiler Class-rule instances
+
+**Plan section for every finding in this section:** §2, numeric admission and the Class rule (`docs/plans/2026-11-07-template-generation-harness.md:203,205`).
+
+For the following file citations, **`J/` means**:
+
+```text
+/Users/egecan/go/pkg/mod/github.com/santhosh-tekuri/jsonschema/v6@v6.0.2/
+```
+
+These are all reached through `application_context/meta_schema.go:37-48`. The current application validator and the library compiler/metaschema validator have no context/work-budget parameter. Lane B needs a genuinely cancellable/budgeted compilation boundary. Checking before and after `Compile`, or timing out a goroutine while it continues allocating, does not implement the Class rule. Under the supplied review instruction, these remain **P2 Class-rule instances**, not additional blockers.
+
+| # | Finding and concrete code evidence | Concrete fix |
+|---|---|---|
+| **45 [P2]** | **Compilation queue processing and publication have unchecked loops.** `J/compiler.go:190-213` processes every queued schema and publishes every result. | Check/charge each processed schema and publication; reserve queue/schema entries before insertion. |
+| **46 [P2]** | **Queue deduplication repeatedly performs linear search.** `enqueue` calls `queue.get`; that uses `slices.IndexFunc` across accumulated schemas (`J/compiler.go:153-163,297-302`). Wide schema collections cause quadratic membership work. | Use an admitted `urlPtr` lookup map, reserve entries and check enqueue/processing boundaries. |
+| **47 [P2]** | **Dynamic-anchor compilation scans one collection inside another.** Every anchor uses `slices.Contains` on dynamic anchors and can enqueue/retain a result (`J/compiler.go:226-235`). | Charge/check anchor traversal, use admitted set membership and reserve compiled-anchor entries. |
+| **48 [P2]** | **Resource discovery repeatedly scans accumulated resources.** Duplicate/base-resource lookup and reference resolution scan resources by ID (`J/roots.go:128-137,151-156`; `J/root.go:64-70`). Nested `$id` schemas exercise these repeatedly. | Maintain an admitted ID index, or check/charge retained scans; budget index/resource entries. |
+| **49 [P2]** | **Resource collection copies and recursively traverses subschemas.** Input-sized maps are copied and recursively consumed (`J/roots.go:168-188`). The outer draft-keyword catalogue being fixed does not bound those collections. | Charge entries, pointer bytes and child visits before allocation/descent; apply depth admission before recursion. |
+| **50 [P2]** | **Schema-position collection builds intermediate maps.** Property/array collection and recursive result copying materialize all matches (`J/position.go:17-42,106-121`). | Reserve each map entry/generated pointer before insertion and check variable traversal loops; streaming entries can avoid intermediate copies. |
+| **51 [P2]** | **Ancestor-resource and JSON-pointer helpers perform repeated unchecked work.** Ancestor stripping, escape decoding, pointer encoding and lookup recur throughout compilation (`J/root.go:20-30`; `J/util.go:65-87,120-126,225-249`). | Check/charge ancestor/component steps and generated string bytes within the compiler allowance, not only compiled-node count. |
+| **52 [P2]** | **Late-discovered reference targets clone accumulated state.** `ensureSubschema` can discover a target outside initially recognized schema positions, cloning processed schemas, resources and anchors (`J/roots.go:193-212`; `J/root.go:137-150,168-179`). | Check before cloning and reserve copied entries/bytes. Include late targets and their repeated state copies in compilation admission. |
+| **53 [P2]** | **Array/map enqueue helpers allocate whole containers first.** `enqueueArr` and `enqueueMap` allocate from input collection sizes, then enqueue every member (`J/objcompiler.go:390-413`). | Reserve containers before `make`, then check/charge every enqueue. |
+| **54 [P2]** | **Pattern/dependency compilation has additional input-sized scans and copies.** Pattern properties, legacy dependencies, dependent-required arrays, string-array copies and enum-type accumulation run at `J/objcompiler.go:119-140,282-287,541-550`; `J/schema.go:237-243`. Pattern entries also invoke regex compilation. | Check/charge each entry and retained copy. Admit regex source/compiled work before invoking compilation, rather than checking only afterward. |
+| **55 [P2]** | **Compilation runs a recursive metaschema-validation pass.** Root addition validates the submitted schema before ordinary compilation finishes (`J/roots.go:237-245`). That pass visits arbitrary properties/property names and schema arrays (`J/validator.go:241-300,357-360,392-395`). | Carry context, depth and shared work/error-byte accounting through metaschema validation itself. Outer application checks cannot interrupt it. |
+| **56 [P2]** | **Metaschema scope/location helpers multiply depth work and copies.** Location construction/cloning, recursive/dynamic-anchor resolution and cycle detection traverse parent scopes (`J/validator.go:733-736,770-787,816-817,884-893`). | Check/charge scope/path steps, reserve cloned locations, and enforce depth admission before entering the validation phase. |
+| **57 [P2]** | **Metaschema uniqueness checks reach recursive equality and hashing.** `uniqueItems` reaches array/object comparisons and object-key collection/sorting (`J/validator.go:343-350`; `J/util.go:292-313,350-385,393-412`). The small-array pairwise threshold does not bound the nested values compared. | Charge/check recursive member visits and reserve hash/key collections. Bound comparison/hash work, not just outer array length. |
+| **58 [P2]** | **Compiler error formatting expands the full error tree before Tool truncation.** Application error wrapping formats compiler errors (`application_context/meta_schema.go:45-48`); `ValidationError.display` recursively traverses causes, indentation and pointer construction (`J/output.go:47-91,110-117`). | Bound diagnostic traversal and bytes before writing/formatting. Avoid eagerly formatting an unrestricted underlying error tree; return one bounded validation/complexity diagnostic on exhaustion. |
+
+## Appendix C: plan review round 13 (clean round), P2 items
+
+Items 1 to 4 extend lane B's class-rule checklist. Item 5 is lane B's (the model-preview mark is carried into actor resolution so a failed actor lookup writes no log row). Item 6 is folded into section 3 (Seed).
+
+### 1. [P2] §2 Tools / Class rule : Static MRQL checking needs admission for downstream parameter work
+
+The parameter-collection item in Appendix B stops before several additional consumers:
+
+- `CheckTemplateMRQL` copies the supplied parameter map without context or allocation accounting (`application_context/mrql_template_check.go:47-54`).
+- `BindParams` coerces a parameter separately for every placeholder occurrence (`mrql/params.go:112-124`). Quoted string parameters are decoded through a fresh lexer each time (`mrql/params.go:220-229`; `mrql/lexer.go:182-220`).
+- LIKE translation can create another escaped string per occurrence (`mrql/translator.go:416-424,2099-2111`).
+- Unknown-parameter diagnostics collect and sort names, construct another slice of prefixed names, and join them into an error (`mrql/params.go:100-108,135-147`).
+
+The query’s 32 KiB/2,048-token limits do not bound separately supplied parameter values. For example, 500 repetitions of `$p` fit the IN-list and token limits (`mrql/limits.go:4-11`; `mrql/parser.go:624-634`); repeatedly decoding a quoted 1 MiB parameter retains approximately 500 MiB before producing the capped verdict.
+
+These functions are reachable through lint’s MRQL callback (`shortcodes/lint.go:453-459`), so the Class rule can cover them. The direct `check_mrql` Tool must use that same bounded path rather than calling an unbudgeted variant.
+
+**Concrete fix:** Add these consumers to Lane B’s checklist. Carry context/work accounting through checking, binding, translation and diagnostics; admit aggregate parameter bytes and expanded allocations before allocating. Decode each distinct parameter once and share its immutable value. Test repeated large parameters, excess-parameter diagnostics and cancellation through both lint and direct `check_mrql`.
+
+### 2. [P2] §2 Class rule : MRQL cache-key construction performs work before query admission
+
+`budgetCacheKey` collects and sorts parameter names, then formats the query, saved name and every parameter into a builder without cancellation or byte accounting (`shortcodes/query_budget.go:177-193`).
+
+`BudgetedExecutor` calls `Lookup` **before** checking query allowance (`:140-148`), and `Lookup` constructs the key before consulting the cache (`:106-109`). Thus cache hits and already-exhausted query budgets still perform this serialization. Appendix B’s parameter-collection item does not inventory this subsequent quoting and key construction.
+
+**Concrete fix:** Thread context/admission into key construction. Reserve key-slice capacity and quoted output bytes before allocation, check parameter iterations, and account for sorting. Ensure cancellation or admission failure propagates as a render-budget error rather than becoming a cache miss. Test large parameter sets on both cache-hit and exhausted-budget paths.
+
+### 3. [P2] §2 Class rule : Attribute-context source substitution precedes the inventoried classifier passes
+
+Before the lexical and DOM passes covered by Appendix B #24, `attributeContextsFor`:
+
+- allocates result maps;
+- sorts the supplied spans;
+- allocates the sentinel-position slice;
+- constructs the complete substituted document.
+
+These operations have no context or allocation accounting (`shortcodes/lint_attr_context.go:336-370`). Budgeting the later tokenizer, DOM traversal and breakout probes does not admit this earlier construction.
+
+**Concrete fix:** Add the substitution phase to Lane B’s inventory. Admit map/slice capacities, sorting work and substituted-document bytes before allocation; check each span iteration and reserve literal and sentinel writes before appending. Test cancellation and budget exhaustion before classification begins.
+
+### 4. [P2] §2 Class rule : Conditional regex compilation has its own expansion boundary
+
+Runtime conditionals compile model-controlled patterns in `evaluateOperator` (`shortcodes/conditional_handler.go:152-157`); lint independently compiles every `matches*` attribute (`shortcodes/lint.go:438-444`).
+
+Checking context before each operator or attribute does not account for work **inside** compilation. Go’s compiler calls `Simplify` and then compiles the expanded expression (`$GOROOT/src/regexp/regexp.go:167-178`); counted repetitions introduce additional loops and retained structures (`$GOROOT/src/regexp/syntax/simplify.go:64-99`). A short admitted source pattern can therefore produce a much larger compiled program before control returns.
+
+Appendix B inventories conditional operand/reduction loops and schema-compiler patterns, but not this separate runtime/lint regex compilation boundary.
+
+**Concrete fix:** Inventory both call sites and use a bounded compilation boundary that admits expanded pattern/program work before compilation. Cache admitted compiled patterns within one render/lint operation, and preserve ordinary matching semantics. Add a counted-repetition fixture that fits the source limit but exceeds the compilation allowance.
+
+### 5. [P2] §2 Plugin read-only enforcement : An allowed reader can indirectly write an application-log row
+
+The proposed allow-list permits `mah.db` readers built on `querierFor`, while suppressing `mah.log` to prevent application-log writes. There is another logging path:
+
+1. `querierFor` invokes `BindInvocation` (`plugin_system/db_api.go:248-268`).
+2. Binding resolves the acting user (`application_context/plugin_db_adapter.go:47-59`).
+3. A user-lookup failure other than not-found calls `ctx.Logger().Warning` (`:127-130`).
+4. That logger attempts an insert into the application log (`application_context/log_context.go:55-85`).
+
+Blocking the Lua `mah.log` function does not intercept this host-side insert. A transient actor-read failure can therefore write a log row through an allow-listed reader. This is distinct from the settled plugin allocation and DB-cancellation exceptions.
+
+**Concrete fix:** Carry the model-preview marker into actor resolution before binding, and suppress persistent logging on that invocation path without weakening fail-closed authorization. Preserve ordinary logging elsewhere. Test a failed actor lookup while log insertion remains operational, asserting that model-preview reads insert no application-log row.
