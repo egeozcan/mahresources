@@ -71,6 +71,8 @@ func newPrivacyFixture(t *testing.T) *privacyFixture {
 		Name: "Projects READABLE_CATEGORY_NAME", Description: "PROT_CATEGORY_DESC",
 		MetaSchema:   `{"type":"object","properties":{"READABLE_META_KEY":{"type":"string"},"status":{"enum":["open","closed"]},"list":{"type":"array"}}}`,
 		CustomHeader: `<h1>[meta path="READABLE_META_KEY"]</h1> READABLE_TEMPLATE_SOURCE`,
+		// A custom per-result template: [mrql] renders each group through it.
+		CustomMRQLResult: `<i class="cm">[property path="Name"]</i>`,
 	}
 	create(f.cat)
 	f.root = &models.Group{Name: "PROT_OWNER_NAME", Description: "PROT_OWNER_DESC"}
@@ -248,6 +250,14 @@ func harnessScript(f *privacyFixture) func(n int, req map[string]any) map[string
 				preview("q3", `[using type="group" id="`+fmt.Sprint(f.root.ID)+`"][property path="Name"][/using]`, "group", childID),
 				call("q4", "get_revision", map[string]any{"number": 1, "field": "CustomHeader"}),
 			)
+		case 5:
+			// The same aggregate and bucketed queries twice, in HTML and in CSS, so
+			// the second render of each reads the query cache's shared containers.
+			both := `[mrql query='type = group GROUP BY name COUNT()'][mrql query='type = group GROUP BY name'][mrql query='type = group GROUP BY name COUNT()'][mrql query='type = group GROUP BY name']`
+			return chatToolCalls(
+				call("r1", "preview", map[string]any{"field": "CustomHeader", "content": both, "css": both, "entityType": "group", "entityId": childID}),
+				call("r2", "preview", map[string]any{"field": "CustomHeader", "content": `[mrql query='type = group']`, "entityType": "group", "entityId": childID}),
+			)
 		default:
 			return chatToolCalls(call("s1", "submit", map[string]any{"fields": map[string]string{"CustomCSS": ".a{color:blue}"}, "done": true}))
 		}
@@ -280,7 +290,7 @@ func TestPrivacyModeHarnessRunNeverSendsEntityValues(t *testing.T) {
 		}
 	}
 	results := f.toolResults()
-	for _, id := range []string{"t1", "t2", "t3", "t4", "t5", "t6", "u1", "u2", "u3", "u4", "u5", "u6", "p1", "p2", "p3", "p4", "p5", "p6", "q1", "q2", "q3", "q4"} {
+	for _, id := range []string{"t1", "t2", "t3", "t4", "t5", "t6", "u1", "u2", "u3", "u4", "u5", "u6", "p1", "p2", "p3", "p4", "p5", "p6", "q1", "q2", "q3", "q4", "r1", "r2"} {
 		text, ok := results[id]
 		if !ok {
 			t.Errorf("no result for call %s", id)
@@ -304,6 +314,7 @@ func TestPrivacyModeHarnessRunNeverSendsEntityValues(t *testing.T) {
 	assertContains("p3", "⟦")
 	assertContains("p4", "⟦", "READABLE_YES")
 	assertContains("p5", "mrql-results")
+	assertContains("r2", "mrql-results", `class=\"cm\"`)
 	assertContains("p6", "saved queries are not available in Privacy mode")
 	assertContains("q1", "the query failed; details are hidden in Privacy mode; use check_mrql to check its syntax")
 	assertContains("q2", "READABLE_PARTIAL_SOURCE", "READABLE_INNER_SOURCE", "⟦")
@@ -342,6 +353,38 @@ func TestPrivacyModeHarnessRunNeverSendsEntityValues(t *testing.T) {
 		if _, ok := values[want]; !ok {
 			t.Errorf("the legend lacks %q", want)
 		}
+	}
+	// Positive controls: each render names the intended entity's own Placeholders,
+	// not just any Placeholder.
+	mustShow := func(id string, wants ...string) {
+		t.Helper()
+		for _, want := range wants {
+			ph, ok := values[want]
+			if !ok {
+				t.Errorf("render %s: the legend has no entry for %q", id, want)
+				continue
+			}
+			if !strings.Contains(results[id], ph) {
+				t.Errorf("render %s does not show the Placeholder of %q (%s): %s", id, want, ph, results[id])
+			}
+		}
+	}
+	mustShow("p1", "PROT_GROUP_NAME", "PROT_OWNER_NAME")
+	mustShow("p2", "PROT_HASH_VALUE", "PROT_LOCATION/x", "PROT_ORIGINAL_NAME", "PROT_RES_NAME")
+	mustShow("p3", "PROTSHARETOKEN0123456789abcdef12", "PROT_NOTE_NAME")
+	mustShow("p4", "PROT_LIST_ITEM_A", "PROT_LIST_ITEM_B")
+	mustShow("r2", "PROT_GROUP_NAME")
+	mustShow("q3", "PROT_OWNER_NAME")
+	for _, id := range []string{"p1", "p2", "p3", "p4", "p5", "q2", "q3", "r1", "r2"} {
+		if strings.Contains(results[id], "mrql-error") || strings.Contains(results[id], "shortcode-error") {
+			t.Errorf("render %s shows an error where it must succeed: %s", id, results[id])
+		}
+	}
+	// The aggregate and the bucketed query, twice in HTML and twice in CSS: stable
+	// Placeholders for the bucket keys, and nothing raw.
+	r1 := results["r1"]
+	if phName, ok := values["PROT_GROUP_NAME"]; !ok || strings.Count(r1, phName) < 4 {
+		t.Errorf("r1: the bucket and row keys must repeat as the same Placeholder in HTML and CSS: %s", r1)
 	}
 }
 
