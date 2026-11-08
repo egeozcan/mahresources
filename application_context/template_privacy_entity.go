@@ -381,3 +381,20 @@ func privacyContentType(p *TemplatePrivacy, s string) string {
 	}
 	return p.Text(s)
 }
+
+// TemplateEntityMetaSchema is the saved MetaSchema of the category an entity
+// carries (empty when none is loaded): the schema whose enum and const values
+// stay readable in the entity's Meta.
+func TemplateEntityMetaSchema(entity any) string {
+	v := reflect.ValueOf(entity)
+	for v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return ""
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return ""
+	}
+	return metaSchemaOf(v)
+}

@@ -347,6 +347,14 @@ func (p *generationProviderClient) post(ctx context.Context, endpoint string, bo
 
 // postPayload sends an already-encoded body (see rawSplicer).
 func (p *generationProviderClient) postPayload(ctx context.Context, endpoint string, payload []byte, out any) error {
+	// Privacy mode's guard: a body that carries an Entity value is never sent.
+	// Every wrap between here and the handler uses %w, so the error keeps its
+	// identity.
+	if privacy := TemplatePrivacyFrom(ctx); privacy != nil {
+		if err := privacy.CheckOutbound(ctx, payload); err != nil {
+			return err
+		}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return newGenerationFailure("provider request is invalid", GenerationErrorClassTransport, 0)

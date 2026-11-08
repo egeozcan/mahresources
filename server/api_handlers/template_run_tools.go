@@ -15,6 +15,7 @@ import (
 
 	"mahresources/application_context"
 	"mahresources/auth"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/plugin_system"
 	"mahresources/server/template_handlers/template_filters"
@@ -70,6 +71,9 @@ type TemplateRunToolsConfig struct {
 	Known                 shortcodes.KnownShortcodes
 	DisplayTypes          []string
 	DisplayTypesTruncated bool
+	// Privacy is the run's masker (nil when Privacy mode is off). Every Entity
+	// value a Tool returns passes through it; readable results join its corpus.
+	Privacy *application_context.TemplatePrivacy
 }
 
 // NewTemplateToolExecutor builds the executor for one run.
@@ -194,6 +198,19 @@ func (e *templateToolExecutor) Execute(ctx context.Context, call application_con
 	if cerr := ctx.Err(); cerr != nil {
 		return application_context.TemplateToolOutput{}, cerr
 	}
+	// Under Privacy mode a masker that hit a limit has masked only part of what
+	// this result would show, so the whole result is thrown away.
+	if perr := e.cfg.Privacy.Err(); perr != nil {
+		return application_context.ToolErrorResult("too much entity data for Privacy mode"), nil
+	}
+	switch call.Name {
+	case application_context.ToolGetTemplate, application_context.ToolGetRevision, application_context.ToolDiffRevisions,
+		application_context.ToolGetPartial, application_context.ToolLint, application_context.ToolCheckMRQL, application_context.ToolGetShortcodeDocs:
+		// Template source, slot content, documentation and verdicts: readable. Any
+		// Entity value in them (a revision label, a partial description) has
+		// already been masked, so the body carries only its Placeholder.
+		e.cfg.Privacy.Keep(body)
+	}
 	return application_context.ShapeToolResult("tool "+call.Name, body, application_context.ToolResultCap(call.Name)), nil
 }
 
@@ -300,14 +317,25 @@ func (e *templateToolExecutor) getEntity(mc *application_context.MahresourcesCon
 	if err != nil {
 		return "", err
 	}
-	sample := application_context.ProjectTemplateSample(entity, true)
-	if meta := fullSampleMeta(entity); meta != nil {
-		sample["Meta"] = meta
+	privacy := e.cfg.Privacy
+	schema := application_context.TemplateEntityMetaSchema(entity)
+	if carrierID != 0 && schema == "" {
+		if carrier, cerr := loadPreviewCarrier(mc, a.Type, carrierID); cerr == nil {
+			schema = carrierMetaSchema(carrier)
+		}
 	}
+	sample := application_context.ProjectTemplateSampleFor(entity, true, privacy, schema)
+	if meta := fullSampleMeta(entity); meta != nil {
+		// The whole Meta, not the clipped sample: masked with the entity's own
+		// category schema, so an enum value stays readable.
+		sample["Meta"] = privacy.Value(meta, parseToolSchema(schema))
+	}
+	privacy.KeepScalar(int64(a.ID))
 	result := map[string]any{"type": a.Type, "id": a.ID, "entity": sample}
 	if carrierID != 0 {
 		if carrier, cerr := loadPreviewCarrier(mc, a.Type, carrierID); cerr == nil {
-			result["carrier"] = toolCarrierRef{ID: carrierID, Name: carrierNameOf(carrier)}
+			privacy.KeepScalar(int64(carrierID))
+			result["carrier"] = toolCarrierRef{ID: carrierID, Name: privacy.Keep(carrierNameOf(carrier))}
 		}
 	}
 	return application_context.MarshalToolJSON(result), nil
@@ -320,12 +348,14 @@ type toolEntry struct {
 	Carrier *toolCarrierRef `json:"carrier,omitempty"`
 }
 
-func toolEntries(in []application_context.TemplateRelatedEntry) []toolEntry {
+func toolEntries(privacy *application_context.TemplatePrivacy, in []application_context.TemplateRelatedEntry) []toolEntry {
 	out := make([]toolEntry, len(in))
 	for i, e := range in {
-		out[i] = toolEntry{Type: e.Type, ID: e.ID, Name: e.Name}
+		privacy.KeepScalar(int64(e.ID))
+		out[i] = toolEntry{Type: e.Type, ID: e.ID, Name: privacy.Text(e.Name)}
 		if e.CarrierID != 0 {
-			out[i].Carrier = &toolCarrierRef{ID: e.CarrierID, Name: e.CarrierName}
+			privacy.KeepScalar(int64(e.CarrierID))
+			out[i].Carrier = &toolCarrierRef{ID: e.CarrierID, Name: privacy.Keep(e.CarrierName)}
 		}
 	}
 	return out
@@ -344,7 +374,8 @@ func (e *templateToolExecutor) listRelated(mc *application_context.MahresourcesC
 	if err != nil {
 		return "", err
 	}
-	return pagedJSON("entries", toolEntries(entries), more, a.Offset, len(entries)), nil
+	e.cfg.Privacy.KeepScalar(int64(a.Offset + len(entries)))
+	return pagedJSON("entries", toolEntries(e.cfg.Privacy, entries), more, a.Offset, len(entries)), nil
 }
 
 func (e *templateToolExecutor) listMembers(mc *application_context.MahresourcesContext, a application_context.ListMembersArgs) (string, error) {
@@ -352,7 +383,8 @@ func (e *templateToolExecutor) listMembers(mc *application_context.MahresourcesC
 	if err != nil {
 		return "", err
 	}
-	out := toolEntries(entries)
+	out := toolEntries(e.cfg.Privacy, entries)
+	e.cfg.Privacy.KeepScalar(int64(a.Offset + len(entries)))
 	for i := range out {
 		out[i].Carrier = nil // the carrier is the one asked about
 	}
@@ -380,7 +412,7 @@ func (e *templateToolExecutor) getTemplate(mc *application_context.MahresourcesC
 		}
 	}
 	return application_context.MarshalToolJSON(map[string]any{
-		"carrierType": a.CarrierType, "id": a.ID, "name": carrierNameOf(carrier), "fields": fields,
+		"carrierType": a.CarrierType, "id": a.ID, "name": e.cfg.Privacy.Keep(carrierNameOf(carrier)), "fields": fields,
 	}), nil
 }
 
@@ -406,7 +438,8 @@ func (e *templateToolExecutor) listCarriers(mc *application_context.Mahresources
 	}
 	entries := make([]toolCarrierEntry, len(rows))
 	for i, r := range rows {
-		entries[i] = toolCarrierEntry{r.ID, r.Name, r.Description}
+		e.cfg.Privacy.KeepScalar(int64(r.ID))
+		entries[i] = toolCarrierEntry{r.ID, e.cfg.Privacy.Keep(r.Name), e.cfg.Privacy.Text(r.Description)}
 	}
 	return pagedJSON("entries", entries, more, a.Offset, len(entries)), nil
 }
@@ -420,7 +453,15 @@ func (e *templateToolExecutor) listRevisions(mc *application_context.Mahresource
 	if err != nil {
 		return "", err
 	}
-	return pagedJSON("revisions", revs, more, a.Offset, len(revs)), nil
+	if e.cfg.Privacy == nil {
+		return pagedJSON("revisions", revs, more, a.Offset, len(revs)), nil
+	}
+	masked := make([]map[string]any, len(revs))
+	for i, r := range revs {
+		masked[i] = e.maskRevisionSummary(r)
+	}
+	e.cfg.Privacy.KeepScalar(int64(a.Offset + len(revs)))
+	return pagedJSON("revisions", masked, more, a.Offset, len(revs)), nil
 }
 
 func (e *templateToolExecutor) getRevision(mc *application_context.MahresourcesContext, a application_context.RevisionArgs) (string, error) {
@@ -439,8 +480,14 @@ func (e *templateToolExecutor) getRevision(mc *application_context.MahresourcesC
 		}
 		return application_context.MarshalToolJSON(map[string]any{"number": detail.Number, "field": a.Field, "value": v}), nil
 	}
+	var label any = detail.Label
+	var createdAt any = detail.CreatedAt
+	if privacy := e.cfg.Privacy; privacy != nil {
+		label, createdAt = privacy.Text(detail.Label), privacy.Date(detail.CreatedAt)
+		privacy.KeepScalar(int64(detail.Number))
+	}
 	return application_context.MarshalToolJSON(map[string]any{
-		"number": detail.Number, "label": detail.Label, "source": detail.Source, "createdAt": detail.CreatedAt,
+		"number": detail.Number, "label": label, "source": detail.Source, "createdAt": createdAt,
 		"changedSlots": detail.ChangedSlots, "fields": detail.Editor,
 	}), nil
 }
@@ -575,7 +622,7 @@ func (e *templateToolExecutor) getPartial(mc *application_context.MahresourcesCo
 		}
 		return "", err
 	}
-	return application_context.MarshalToolJSON(map[string]any{"name": p.Name, "description": p.Description, "source": p.Content}), nil
+	return application_context.MarshalToolJSON(map[string]any{"name": e.cfg.Privacy.Keep(p.Name), "description": e.cfg.Privacy.Text(p.Description), "source": p.Content}), nil
 }
 
 func (e *templateToolExecutor) getShortcodeDocs(mc *application_context.MahresourcesContext, a application_context.NameArgs) (string, error) {
@@ -650,6 +697,21 @@ func (e *templateToolExecutor) preview(ctx context.Context, mc *application_cont
 	if err != nil {
 		return "", err
 	}
+	// Under Privacy mode the preview renders against a masked copy of the entity
+	// and everything loaded with it. The meta context is built from the copy, so
+	// the presentation names it reads (parent and root group names) are masked
+	// too; only IDs are resolved from the database (P14).
+	privacy := e.cfg.Privacy
+	if privacy != nil {
+		masked, merr := privacy.Entity(ctx, entity)
+		if merr != nil {
+			if errors.Is(merr, application_context.ErrTemplatePrivacyLimit) {
+				return "", refusef("too much entity data for Privacy mode")
+			}
+			return "", merr
+		}
+		entity = masked
+	}
 	metaCtx := template_filters.BuildMetaContextForEntity(entity, mc)
 	if metaCtx == nil {
 		return "", errors.New("could not build the preview context")
@@ -663,13 +725,30 @@ func (e *templateToolExecutor) preview(ctx context.Context, mc *application_cont
 	renderCtx = shortcodes.WithRenderBudget(renderCtx, shortcodes.RenderBudget{
 		OutputBytes: templateRunRenderOutputBytes, ParsedSourceBytes: templateRunRenderParsedBytes,
 	})
+	if privacy != nil {
+		// Partial source is the author's template, readable; it joins the corpus
+		// before it is expanded. The rendered output is never registered.
+		inner := template_filters.BuildPartialResolver(mc)
+		renderCtx = shortcodes.WithPartialResolver(renderCtx, func(name string) (string, bool) {
+			content, found := inner(name)
+			if found {
+				privacy.Keep(content)
+			}
+			return content, found
+		})
+		// Text made from a preserved number or the stand-in time is readable.
+		renderCtx = shortcodes.WithScalarFormatObserver(renderCtx, func(s string) { privacy.Keep(s) })
+	}
 
 	var executor shortcodes.QueryExecutor = template_filters.UnavailableQueryExecutor()
 	if e.cfg.OptIns.PreviewMRQL {
 		executor = cappedQueryExecutor(template_filters.BuildModelPreviewQueryExecutor(mc), previewMRQLLimitCap)
+		if privacy != nil {
+			executor = privacyQueryExecutor(privacy, executor)
+		}
 	}
 	var renderer shortcodes.PluginRenderer
-	if e.cfg.OptIns.PreviewPlugins {
+	if e.cfg.OptIns.PreviewPlugins && privacy == nil {
 		renderCtx = plugin_system.WithModelPreview(renderCtx)
 		renderer = previewPluginRenderer(renderCtx, mc)
 	}
@@ -695,5 +774,73 @@ func (e *templateToolExecutor) preview(ctx context.Context, mc *application_cont
 			result["css"] = cssOut
 		}
 	}
+	if perr := privacy.Err(); perr != nil {
+		return "", refusef("too much entity data for Privacy mode")
+	}
 	return application_context.MarshalToolJSON(result), nil
+}
+
+// The fixed texts a Privacy mode preview shows in place of a saved query and of
+// a failed inline query: a saved query's text, scope and errors can carry stored
+// values.
+const (
+	privacySavedQueryText  = "saved queries are not available in Privacy mode"
+	privacyQueryFailedText = "the query failed; details are hidden in Privacy mode; use check_mrql to check its syntax"
+)
+
+// privacyQueryExecutor wraps a preview's [mrql] executor for Privacy mode
+// (P15): saved queries are refused, an inline query's error becomes fixed text
+// (ErrQueryUnavailable keeps its inert rendering), and every result is masked
+// field by field into new containers.
+func privacyQueryExecutor(privacy *application_context.TemplatePrivacy, inner shortcodes.QueryExecutor) shortcodes.QueryExecutor {
+	return func(reqCtx context.Context, query string, opts shortcodes.QueryOptions) (*shortcodes.QueryResult, error) {
+		if opts.SavedName != "" {
+			return nil, errors.New(privacySavedQueryText)
+		}
+		result, err := inner(reqCtx, query, opts)
+		if err != nil {
+			if errors.Is(err, shortcodes.ErrQueryUnavailable) {
+				return nil, err
+			}
+			return nil, errors.New(privacyQueryFailedText)
+		}
+		masked, err := privacy.QueryResult(reqCtx, result)
+		if err != nil {
+			return nil, errors.New(privacyQueryFailedText)
+		}
+		return masked, nil
+	}
+}
+
+// maskRevisionSummary is a revision's list entry with its Entity values masked:
+// the label and the applied entries through Text, the instant through Date. The
+// rest is IDs, numbers, slot names and the source enum.
+func (e *templateToolExecutor) maskRevisionSummary(r contracts.TemplateRevisionSummary) map[string]any {
+	privacy := e.cfg.Privacy
+	raw, _ := json.Marshal(r)
+	var out map[string]any
+	_ = json.Unmarshal(raw, &out)
+	out["label"] = privacy.Text(r.Label)
+	out["createdAt"] = privacy.Date(r.CreatedAt)
+	applied := make([]string, len(r.Applied))
+	for i, entry := range r.Applied {
+		applied[i] = privacy.Text(entry)
+	}
+	out["applied"] = applied
+	privacy.KeepScalar(int64(r.ID))
+	privacy.KeepScalar(int64(r.Number))
+	privacy.KeepScalar(int64(r.CarrierID))
+	return out
+}
+
+// parseToolSchema decodes a MetaSchema for masking; nil when there is none.
+func parseToolSchema(schema string) any {
+	if strings.TrimSpace(schema) == "" {
+		return nil
+	}
+	var root map[string]any
+	if json.Unmarshal([]byte(schema), &root) != nil {
+		return nil
+	}
+	return root
 }

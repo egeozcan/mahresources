@@ -116,6 +116,10 @@ func NewTemplatePrivacy(tag string) *TemplatePrivacy {
 	return p
 }
 
+// KeepScalar registers the text forms of a number or boolean that a Tool result
+// passes through unmasked (IDs, counts, sizes).
+func (p *TemplatePrivacy) KeepScalar(v any) { p.keepScalar(v) }
+
 // keepScalar registers the text forms of a number or boolean that passes
 // through unmasked, so a protected string equal to it (a Name "734928601" next
 // to a FileSize of 734928601) is not mistaken for a leak.

@@ -337,6 +337,7 @@ func (g *defaultTemplateGenerator) discloseFanOut(in TemplateGenerationInput, pr
 		{Kind: TemplateKindPlan, Model: plan.Model, Thinking: plan.Thinking, MaxTokens: plan.MaxTokens, MaxCalls: 1},
 		{Kind: TemplateKindPair, Model: pair.Model, Thinking: pair.Thinking, MaxTokens: pair.MaxTokens, MaxCalls: maxPairCalls},
 	}, sections)
+	applyPrivacyDisclosure(disclosure, in)
 	return templateRequest{in: in, prompt: prompt, disclosure: disclosure, fan: fan}
 }
 

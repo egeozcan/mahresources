@@ -139,6 +139,10 @@ type TemplateGenerationInput struct {
 	StartingPoints TemplateStartingPoints
 	GenerationMode string
 
+	// PrivacyLocked reports that the administrator requires Privacy mode
+	// (ai_template_privacy_mode=always). The Disclosure shows and hashes it.
+	PrivacyLocked bool
+
 	// Privacy is the request's masker (nil when Privacy mode is off). The handler
 	// builds it before loading samples; the generator masks identity, starting
 	// points and partial descriptions with it and puts it on the request context
@@ -241,6 +245,9 @@ type TemplateGenerator interface {
 type TemplateGenerationPrep struct {
 	GenerationMode string // TemplateGenerationModeHarness | TemplateGenerationModeClassic
 	Generator      TemplateGenerator
+	// PrivacyMode is the ai_template_privacy_mode setting of the same snapshot:
+	// TemplatePrivacyModePerRun (also the zero value) or TemplatePrivacyModeAlways.
+	PrivacyMode string
 }
 
 // templateGenerationPreparer is implemented by every generator that can report
@@ -443,6 +450,7 @@ func (g *defaultTemplateGenerator) disclose(in TemplateGenerationInput, prompt s
 		MaxTokens: profile.MaxTokens,
 		MaxCalls:  maxCalls,
 	}}, sections)
+	applyPrivacyDisclosure(disclosure, in)
 	return templateRequest{in: in, prompt: prompt, disclosure: disclosure}, nil
 }
 
