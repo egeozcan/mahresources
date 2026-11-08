@@ -442,6 +442,14 @@ func ToolResultCap(tool string) int {
 // existing <<<BEGIN/END label>>> markers (defanging markers inside the body).
 // The cut happens before fencing, so the notice sits inside the fence.
 func ShapeToolResult(label, body string, capBytes int) TemplateToolOutput {
+	return ShapeToolResultFor(nil, label, body, capBytes)
+}
+
+// ShapeToolResultFor is ShapeToolResult for a run that may be under Privacy
+// mode: the cut notice the shaping itself generates, and its numbers, are
+// registered as readable. The body is never registered.
+func ShapeToolResultFor(privacy *TemplatePrivacy, label, body string, capBytes int) TemplateToolOutput {
+	privacy.keepJSONKeys(body)
 	full := len(body)
 	truncated := false
 	if capBytes > 0 && full > capBytes {
@@ -449,7 +457,11 @@ func ShapeToolResult(label, body string, capBytes int) TemplateToolOutput {
 		for cut > 0 && !utf8.RuneStart(body[cut]) {
 			cut--
 		}
-		body = body[:cut] + fmt.Sprintf("\n[cut: %d of %d bytes shown]", cut, full)
+		notice := fmt.Sprintf("[cut: %d of %d bytes shown]", cut, full)
+		privacy.Keep(notice)
+		privacy.keepScalar(int64(cut))
+		privacy.keepScalar(int64(full))
+		body = body[:cut] + "\n" + notice
 		truncated = true
 	}
 	text := strings.Join(referenceBlock(label, body), "\n")
@@ -580,4 +592,33 @@ func noteUnchecked(list *[]string, seen map[string]bool, name string) bool {
 		*list = append(*list, name)
 	}
 	return true
+}
+
+// keepJSONKeys registers every object key of a JSON Tool result as readable.
+// Keys are the Tool's own vocabulary (P5): "warnings", "nextOffset", a Meta
+// key. Their values are not registered here. Text that is not JSON has no keys.
+func (p *TemplatePrivacy) keepJSONKeys(body string) {
+	if p == nil {
+		return
+	}
+	var doc any
+	dec := json.NewDecoder(strings.NewReader(body))
+	if err := dec.Decode(&doc); err != nil {
+		return
+	}
+	var walk func(v any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			for k, e := range x {
+				p.Keep(k)
+				walk(e)
+			}
+		case []any:
+			for _, e := range x {
+				walk(e)
+			}
+		}
+	}
+	walk(doc)
 }

@@ -126,20 +126,20 @@ func buildTemplateRunSections(in TemplateGenerationInput, userPrompt string, fie
 		p.add(promptRoleUser, "harness", "How this run works", true, harnessInstructionLines(limits, false)...)
 		p.add(promptRoleUser, "extensions", "Schema extensions", true, strings.TrimRight(shortcodes.SchemaExtensionReference(), "\n"))
 		p.add(promptRoleUser, "display-types", "Plugin display types", false, displayTypeLines(in.DisplayTypes)...)
-		p.add(promptRoleUser, "identity", "Category", false, identityLines(in.CategoryName, in.CategoryDescription)...)
+		p.add(promptRoleUser, "identity", "Category", false, identityLinesFor(in)...)
 		p.add(promptRoleUser, "schema", "Metadata schema", false, schemaLines(in.MetaSchema)...)
-		p.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamples(in.Samples, in.Target, in.SamplesArePreview)...)
+		p.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamplesFor(in.Samples, in.Target, in.SamplesArePreview, in.Privacy)...)
 	default:
 		p.add(promptRoleSystem, "system", "System prompt", true, templateHarnessAuthoringSystemPrompt)
 		addTemplateReferencePrefixFor(&p, in, true)
 		p.add(promptRoleUser, "harness", "How this run works", true, harnessInstructionLines(limits, cssAdditions)...)
 		p.add(promptRoleUser, "carrier", "Carrier runtime", true, carrierRuntimeLines(in.EntityType)...)
-		p.add(promptRoleUser, "identity", "Category", false, identityLines(in.CategoryName, in.CategoryDescription)...)
+		p.add(promptRoleUser, "identity", "Category", false, identityLinesFor(in)...)
 		p.add(promptRoleUser, "layout", "Detail page layout", false, DescribeSectionConfig(in.EntityType, in.SectionConfig, schemaShowsFields(in.MetaSchema))...)
 		p.add(promptRoleUser, "schema", "Metadata schema", false, schemaLines(in.MetaSchema)...)
-		p.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamples(in.Samples, in.Target, in.SamplesArePreview)...)
+		p.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamplesFor(in.Samples, in.Target, in.SamplesArePreview, in.Privacy)...)
 	}
-	p.add(promptRoleUser, "starting-points", "Starting points", false, startingPointLines(in.StartingPoints)...)
+	p.add(promptRoleUser, "starting-points", "Starting points", false, startingPointLines(in.StartingPoints, in.Privacy)...)
 	p.add(promptRoleUser, "request", "Your request", false, "User request: "+userPrompt)
 	p.add(promptRoleUser, "task", "Task", true, harnessTaskLines(in, fields, required, cssAdditions)...)
 	if in.Target != TemplateTargetMetaSchema {
@@ -149,7 +149,7 @@ func buildTemplateRunSections(in TemplateGenerationInput, userPrompt string, fie
 	} else {
 		p.add(promptRoleUser, "current", "Current content", false, currentContentLines(in.CurrentContent, "schema")...)
 	}
-	return p
+	return finishPrivacySections(in, p)
 }
 
 func currentContentKind(in TemplateGenerationInput) string {
@@ -179,7 +179,7 @@ func harnessInstructionLines(limits TemplateHarnessSettings, cssAdditions bool) 
 // startingPointLines list the carrier being edited and the loaded samples, by
 // type, ID and name, so a Tool can open any of them. Names are user data, so
 // they sit in a fence.
-func startingPointLines(sp TemplateStartingPoints) []string {
+func startingPointLines(sp TemplateStartingPoints, privacy *TemplatePrivacy) []string {
 	type carrierRef struct {
 		CarrierType string `json:"carrierType"`
 		ID          uint   `json:"id"`
@@ -191,14 +191,16 @@ func startingPointLines(sp TemplateStartingPoints) []string {
 		Name string `json:"name"`
 	}
 	var body []string
+	privacy.keepScalar(int64(sp.Carrier.ID))
 	if sp.Carrier.ID != 0 {
-		raw, _ := json.Marshal(carrierRef{CarrierType: sp.Carrier.Type, ID: sp.Carrier.ID, Name: sp.Carrier.Name})
+		raw, _ := json.Marshal(carrierRef{CarrierType: sp.Carrier.Type, ID: sp.Carrier.ID, Name: privacy.Keep(sp.Carrier.Name)})
 		body = append(body, "Edited carrier: "+string(raw))
 	} else {
 		body = append(body, "Edited carrier: none (this is the create form).")
 	}
 	for _, s := range sp.Samples {
-		raw, _ := json.Marshal(sampleRef{Type: s.Type, ID: s.ID, Name: s.Name})
+		raw, _ := json.Marshal(sampleRef{Type: s.Type, ID: s.ID, Name: privacy.Text(s.Name)})
+		privacy.keepScalar(int64(s.ID))
 		body = append(body, "Sample: "+string(raw))
 	}
 	return append([]string{"Starting points you can open with get_entity or get_template:"}, referenceBlock("starting points", strings.Join(body, "\n"))...)

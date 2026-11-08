@@ -148,9 +148,9 @@ func evalUploadResource(t *testing.T, tc *TestContext, fields map[string]string,
 // evalGenerate generates the way the editor does: a dry run for the
 // disclosure, then the request carrying its groundingHash. It returns the draft
 // and the disclosure's size in bytes (its sections' text).
-func evalGenerate(tc *TestContext, c templateeval.Case, categoryID, entityID uint) (templateeval.Draft, int) {
+func evalGenerate(tc *TestContext, c templateeval.Case, categoryID, entityID uint, opts templateeval.RequestOptions) (templateeval.Draft, int) {
 	path := "/v1/" + templateeval.CarrierRoute(c.Carrier) + "/generateTemplate"
-	body := c.Request(categoryID, entityID)
+	body := c.RequestWith(categoryID, entityID, opts)
 	body["dryRun"] = true
 	rr := evalRequest(tc, path, body)
 	if rr.Code != http.StatusOK {
@@ -292,6 +292,9 @@ type evalRunConfig struct {
 	Cases     []templateeval.Case
 	Repeats   int
 	Commit    string
+	// PrivacyOff runs without Privacy mode. The zero value runs masked, as
+	// production does; the report records which.
+	PrivacyOff bool
 }
 
 // evalTwoModeResult holds both modes' reports and their comparison, classic as
@@ -368,7 +371,7 @@ func runTemplateEvalBothModes(t *testing.T, cfg evalRunConfig) evalTwoModeResult
 			FixtureChecksum: templateeval.FixtureChecksum(), Commit: cfg.Commit,
 			StartedAt: time.Now().UTC().Format(time.RFC3339),
 			Model:     cfg.Model, Timeout: cfg.Timeout.String(), Repeats: cfg.Repeats,
-			Mode: mode, Cost: templateeval.CostNotComputed,
+			Mode: mode, Cost: templateeval.CostNotComputed, Privacy: evalPrivacyLabel(cfg.PrivacyOff),
 			Settings:      &templateeval.RunSettings{Provider: cfg.Provider},
 			ScorerVersion: templateeval.ScorerVersion, ScoringEnvironment: env.Fingerprint(),
 		}
@@ -382,7 +385,7 @@ func runTemplateEvalBothModes(t *testing.T, cfg evalRunConfig) evalTwoModeResult
 			for repeat := 1; repeat <= cfg.Repeats; repeat++ {
 				_ = recorder.Take()
 				start := time.Now()
-				draft, disclosureBytes := evalGenerate(tc, c, ids.category, ids.sample)
+				draft, disclosureBytes := evalGenerate(tc, c, ids.category, ids.sample, templateeval.RequestOptions{PrivacyOff: cfg.PrivacyOff})
 				calls := recorder.Take()
 				previews := evalPreviews(tc, c, draft, ids.category, ids.sample)
 				probes := evalQueryProbes(tc, c, draft, ids.category, ids.sample)
@@ -431,4 +434,11 @@ func writeEvalTwoModeReports(out string, r evalTwoModeResult, secrets ...string)
 	}
 	text := templateeval.Redact(templateeval.FormatComparison(r.Comparison), secrets...)
 	return paths, os.WriteFile(paths.Comparison, []byte(text+"\n"), 0o644)
+}
+
+func evalPrivacyLabel(off bool) string {
+	if off {
+		return templateeval.PrivacyOff
+	}
+	return templateeval.PrivacyOn
 }

@@ -424,7 +424,7 @@ func TestTemplateGenerateSamplesFiveMembersOfThisCategory(t *testing.T) {
 		t.Fatal(err)
 	}
 	names := func(entityID uint) []string {
-		resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": "cluster", "slot": "CustomHeader", "prompt": "x", "categoryId": cat.ID, "entityId": entityID})
+		resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": "cluster", "slot": "CustomHeader", "prompt": "x", "privacyOff": true, "categoryId": cat.ID, "entityId": entityID})
 		if resp.Code != http.StatusOK {
 			t.Fatalf("%d %s", resp.Code, resp.Body.String())
 		}
@@ -465,7 +465,7 @@ func TestTemplateGenerateUnsavedCategoryContextWins(t *testing.T) {
 		t.Fatal(err)
 	}
 	generate := func(extra map[string]any) application_context.TemplateGenerationInput {
-		body := map[string]any{"target": "cluster", "slot": "CustomHeader", "prompt": "x", "categoryId": cat.ID}
+		body := map[string]any{"target": "cluster", "slot": "CustomHeader", "prompt": "x", "privacyOff": true, "categoryId": cat.ID}
 		for k, v := range extra {
 			body[k] = v
 		}
@@ -528,7 +528,7 @@ func TestTemplateGenerateSampleOrderBreaksTiesByDescendingID(t *testing.T) {
 		}
 		ids = append(ids, g.ID)
 	}
-	if resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": "cluster", "slot": "CustomHeader", "prompt": "x", "categoryId": cat.ID}); resp.Code != http.StatusOK {
+	if resp := tc.generateTemplate("/v1/category/generateTemplate", map[string]any{"target": "cluster", "slot": "CustomHeader", "prompt": "x", "categoryId": cat.ID, "privacyOff": true}); resp.Code != http.StatusOK {
 		t.Fatalf("%d %s", resp.Code, resp.Body.String())
 	}
 	var got []string
@@ -585,7 +585,7 @@ func TestTemplateGenerateClipsOversizedIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	identity := func(extra map[string]any) string {
-		body := map[string]any{"target": "cluster", "slot": "CustomHeader", "prompt": "x", "categoryId": cat.ID, "dryRun": true}
+		body := map[string]any{"target": "cluster", "slot": "CustomHeader", "prompt": "x", "privacyOff": true, "categoryId": cat.ID, "dryRun": true}
 		for k, v := range extra {
 			body[k] = v
 		}

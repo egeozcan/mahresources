@@ -252,6 +252,9 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 	if m != nil {
 		ctx.meter = m
 	}
+	if ctx.scalarObserver == nil {
+		ctx.scalarObserver = scalarFormatObserverFrom(reqCtx)
+	}
 
 	var b strings.Builder
 	b.Grow(len(input) * 2)

@@ -1,4 +1,5 @@
 import { cancelReview } from './generationDisclosure.js';
+import { cleanLegend, legendSegments } from './privacyLegend.js';
 
 /**
  * The client side of a harness Generation run (docs/plans/2026-11-07-template-generation-harness.md
@@ -98,6 +99,10 @@ export function newRun() {
     transcript: [],
     // The transcript as plain strings, built once when the run ends.
     records: [],
+    // Privacy mode: the real values behind the transcript's Placeholders. Kept exactly as
+    // long as the transcript is, and shown only while `reveal` is on.
+    legend: [],
+    reveal: false,
     error: '',
   };
 }
@@ -162,10 +167,13 @@ const END_ANNOUNCEMENT = {
 };
 
 /** End the run in `status`; the transcript and stop reason come from the terminal frame. */
-export function finishRunState(run, status, { transcript = [], stopReason = '', error = '' } = {}) {
+export function finishRunState(run, status, { transcript = [], stopReason = '', error = '', legend = [] } = {}) {
   run.status = status;
   run.transcript = Array.isArray(transcript) ? transcript : [];
   run.records = run.transcript.map(recordView);
+  // The legend goes exactly when the transcript does (an access change drops both).
+  run.legend = run.transcript.length ? cleanLegend(legend) : [];
+  run.reveal = false;
   run.stopReason = stopReason || '';
   run.error = error || '';
   run.announcement = END_ANNOUNCEMENT[status] || '';
@@ -285,6 +293,13 @@ export function runHost() {
     },
 
     recordView,
+    // Transcript text split into Placeholder and plain pieces (x-text only).
+    runSegments(text) {
+      return legendSegments(text, this.run?.legend, !!this.run?.reveal);
+    },
+    toggleRunReveal() {
+      if (this.run) this.run.reveal = !this.run.reveal;
+    },
     runVisible() {
       return !!this.run;
     },
@@ -324,7 +339,7 @@ export function runHost() {
       if (resp?.ok) {
         if (!Array.isArray(data.transcript) && !data.stopReason) return;
         this.run = newRun();
-        finishRunState(this.run, 'done', { transcript: data.transcript, stopReason: data.stopReason });
+        finishRunState(this.run, 'done', { transcript: data.transcript, stopReason: data.stopReason, legend: data.legend });
         return;
       }
       if (!resp || !Array.isArray(data.transcript)) return;
@@ -332,6 +347,7 @@ export function runHost() {
       finishRunState(this.run, 'error', {
         transcript: data.transcript,
         stopReason: data.stopReason,
+        legend: data.legend,
         error: data.error || data.Error || `Generation failed (${resp.status}).`,
       });
     },

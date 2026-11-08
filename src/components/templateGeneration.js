@@ -1,7 +1,8 @@
 import { askToConfirm } from './confirmDialog.js';
 import { announceApplied } from './revisionApplied.js';
-import { afterDialogTeardown, returnFocusToGenerate, reviewDisclosure } from './generationDisclosure.js';
+import { afterDialogTeardown, returnFocusToGenerate, makeRedisclose, approvedFields, reviewDisclosure } from './generationDisclosure.js';
 import { runHost } from './templateRun.js';
+import { withheldFields } from './privacyLegend.js';
 import { changedSince, draftSegments, draftWarnings } from './templateDraftReview.js';
 
 // The CodeMirror view behind a field's editor container, or a promise of it: the editor
@@ -50,6 +51,11 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
     // arrived) is shown for review but cannot be applied.
     draftBlocked() {
       return this.generatedFields.some((field) => field.blocked);
+    },
+
+    // Fields Privacy mode withheld; the draft (a pair applies whole) cannot be applied.
+    draftWithheld() {
+      return this.generatedFields.filter((field) => field.withheld).map((field) => field.name);
     },
 
     // Pair controls resolve the HTML editor by name; standalone controls use
@@ -188,12 +194,7 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
         this._reviewOwner = owner;
         const approval = await reviewDisclosure(disclosure, [generateButton, generateStatus, generatePrompt], {
           owner,
-          redisclose: harness ? async (requested, signal) => {
-            const resp = await post({ dryRun: true, ...requested }, { signal });
-            const next = await resp.json().catch(() => null);
-            if (!resp.ok || !next?.groundingHash) throw new Error((next && (next.error || next.Error)) || `Could not update what will be sent (${resp.status}).`);
-            return next;
-          } : null,
+          redisclose: makeRedisclose(post, () => requestId === this._generationRequestId, harness),
         });
         if (this._reviewOwner === owner) this._reviewOwner = null;
         if (requestId !== this._generationRequestId || !approval) return;
@@ -206,8 +207,7 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
         afterDialogTeardown().then(() => {
           if (requestId === this._generationRequestId && this.generating) generateStatus?.focus();
         });
-        const sent = { groundingHash: approval.groundingHash };
-        if (harness) Object.assign(sent, { previewMRQL: approval.previewMRQL, previewPlugins: approval.previewPlugins });
+        const sent = approvedFields(approval, harness);
         let resp;
         let data;
         if (harness) {
@@ -216,16 +216,18 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
           if (outcome.kind === 'json') {
             resp = outcome.resp;
             data = await resp.json().catch(() => null);
+            // A body that was still decoding when this request was superseded is not adopted.
+            if (requestId !== this._generationRequestId) return;
             this.adoptJsonResult(resp, data);
           } else if (outcome.kind === 'result') {
             resp = { ok: true, status: 200 };
             data = outcome.data;
-            this.endRun('done', { transcript: data?.transcript, stopReason: data?.stopReason });
+            this.endRun('done', { transcript: data?.transcript, stopReason: data?.stopReason, legend: data?.legend });
           } else {
             const message = outcome.kind === 'error'
               ? (outcome.data?.error || outcome.data?.Error || 'Generation failed.')
               : 'The connection closed before the run finished.';
-            this.endRun(outcome.kind === 'error' ? 'error' : 'closed', { transcript: outcome.data?.transcript, stopReason: outcome.data?.stopReason, error: message });
+            this.endRun(outcome.kind === 'error' ? 'error' : 'closed', { transcript: outcome.data?.transcript, stopReason: outcome.data?.stopReason, legend: outcome.data?.legend, error: message });
             this.generationError = message;
             this.generationStatus = '';
             return;
@@ -247,6 +249,7 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
           return;
         }
 
+        const withheld = withheldFields(data);
         // Issues are read first: a truncated reply can arrive with half a pair or
         // nothing at all, and its diagnostic is what the reader needs to see.
         this.generatedIssues = data && Array.isArray(data.issues) ? data.issues : [];
@@ -276,7 +279,7 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
         // output with no content is still a failure.
         const submittedEmpty = harness && target !== 'cluster' && !this.generatedContent
           && typeof data?.content === 'string' && Array.isArray(data.submitted) && data.submitted.includes(fieldName);
-        if (!this.generatedContent && !this.generatedSlots && !submittedEmpty) {
+        if (!this.generatedContent && !this.generatedSlots && !submittedEmpty && !withheld.size) {
           this.generationError = issueText || 'The model returned no content.';
           this.generationStatus = '';
           return;
@@ -288,6 +291,9 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
           name,
           text: this.generatedSlots ? this.generatedSlots[name] : this.generatedContent,
           css: name.endsWith('CSS') || this.mode === 'css',
+          // Privacy mode withheld it (it carried a Placeholder): never applicable.
+          withheld: withheld.has(name),
+          blocked: fields.some((f) => withheld.has(f)),
         }));
         // Display only: the repaired note is for the reader, and Apply depends on
         // the pending draft, never on this text.

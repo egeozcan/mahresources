@@ -97,6 +97,10 @@
       "previewMRQL": false,
       "previewPlugins": false
     },
+    "privacy": {
+      "locked": false,
+      "on": false
+    },
     "sections": [
       {
         "bytes": 142,

@@ -95,6 +95,7 @@ with `mrql` or `template`, and `<kind>` with `slot`, `pair`, `plan`, `bundle` or
 | `ai_template_<provider>_<kind>_model` | Optional kind-specific model; empty inherits the template default |
 | `ai_template_<provider>_<kind>_max_tokens` | Optional kind-specific token cap; `0` inherits |
 | `ai_template_<provider>_<kind>_timeout` | Optional kind-specific timeout; `0s` inherits |
+| `ai_template_privacy_mode` | `per-run` (default) or `always` |
 | `ai_template_generation_mode` | `harness` (default) or `classic` |
 | `ai_template_max_turns` | Integer 1–20; default `10` |
 | `ai_template_run_deadline` | Go duration 30s–15m; default `5m` |
@@ -111,6 +112,14 @@ next request and never alters a run in progress. The **Reset** button of Templat
 generation resets all four with the other `ai_template_*` keys; resetting a
 single key through the API or CLI resets only that key. The key and bounds are
 defined in `application_context/ai_generation.go` (`addAIHarnessSettingSpecs`).
+
+`ai_template_privacy_mode` controls [Privacy mode](../features/custom-templates.md#privacy-mode),
+which replaces Entity values with Placeholders before template generation sends
+anything to the provider. With `per-run` the Disclosure offers it as a checkbox
+that is ticked for every new run. With `always` the checkbox is ticked and
+disabled, and the server refuses any template generation request, dry run
+included, that turns it off. It applies in both generation modes and does not
+affect MRQL generation.
 
 The advanced controls show the effective inherited profiles. An explicit kind
 setting wins over a feature/provider setting, which wins over shipped defaults

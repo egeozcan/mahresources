@@ -83,20 +83,20 @@ func buildTemplatePromptSections(in TemplateGenerationInput, userPrompt string) 
 		)
 		p.add(promptRoleUser, "extensions", "Schema extensions", true, strings.TrimRight(shortcodes.SchemaExtensionReference(), "\n"))
 		p.add(promptRoleUser, "display-types", "Plugin display types", false, displayTypeLines(in.DisplayTypes)...)
-		p.add(promptRoleUser, "identity", "Category", false, identityLines(in.CategoryName, in.CategoryDescription)...)
+		p.add(promptRoleUser, "identity", "Category", false, identityLinesFor(in)...)
 		p.add(promptRoleUser, "schema", "Metadata schema", false, schemaLines(in.MetaSchema)...)
-		p.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamples(in.Samples, in.Target, in.SamplesArePreview)...)
+		p.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamplesFor(in.Samples, in.Target, in.SamplesArePreview, in.Privacy)...)
 		p.add(promptRoleUser, "output", "Output format", true, "Return the JSON Schema document as the content value (a JSON string).")
 		p.add(promptRoleUser, "request", "Your request", false, "User request: "+userPrompt)
-		return p
+		return finishPrivacySections(in, p)
 	case TemplateTargetBundle:
 		p.add(promptRoleSystem, "system", "System prompt", true, templateAuthoringSystemPrompt)
 		addTemplateReferencePrefix(&p, in)
 		p.add(promptRoleUser, "carrier", "Carrier runtime", true, carrierRuntimeLines(in.EntityType)...)
-		p.add(promptRoleUser, "identity", "Category", false, identityLines(in.CategoryName, in.CategoryDescription)...)
+		p.add(promptRoleUser, "identity", "Category", false, identityLinesFor(in)...)
 		p.add(promptRoleUser, "layout", "Detail page layout", false, DescribeSectionConfig(in.EntityType, in.SectionConfig, schemaShowsFields(in.MetaSchema))...)
 		p.add(promptRoleUser, "schema", "Metadata schema", false, schemaLines(in.MetaSchema)...)
-		p.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamples(in.Samples, in.Target, in.SamplesArePreview)...)
+		p.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamplesFor(in.Samples, in.Target, in.SamplesArePreview, in.Privacy)...)
 		p.add(promptRoleUser, "request", "Your request", false, "User request: "+userPrompt)
 		task := []string{
 			"Task: fill these slot fields, each as a value in the slots object: " + strings.Join(in.BundleSlots, ", ") + ".",
@@ -113,17 +113,17 @@ func buildTemplatePromptSections(in TemplateGenerationInput, userPrompt string) 
 			"Preserve existing content and styles unless the request requires changing them.",
 			`Output format: one JSON object with exactly the keys slots and explanation, like {"slots":{"CustomHeader":"<h1 class=\"tmpl-title\">[property path=\"Name\"]</h1>","CustomHeaderCSS":".tmpl-title{margin:0}"},"explanation":"..."}. slots maps each requested slot field name to its template string; include only the requested slot names. Always return an HTML slot and its companion CSS together, never only one member of a pair, and include an empty CSS value when no styles are needed.`,
 		)
-		return p
+		return finishPrivacySections(in, p)
 	default:
 		// The handler upgrades every HTML slot into a pair, so in practice this
 		// is the CustomCSS slot.
 		p.add(promptRoleSystem, "system", "System prompt", true, templateAuthoringSystemPrompt)
 		addTemplateReferencePrefix(&p, in)
 		p.add(promptRoleUser, "carrier", "Carrier", true, "This request is for a "+in.EntityType+" template.")
-		p.add(promptRoleUser, "identity", "Category", false, identityLines(in.CategoryName, in.CategoryDescription)...)
+		p.add(promptRoleUser, "identity", "Category", false, identityLinesFor(in)...)
 		p.add(promptRoleUser, "layout", "Detail page layout", false, DescribeSectionConfig(in.EntityType, in.SectionConfig, strings.TrimSpace(in.MetaSchema) != "")...)
 		p.add(promptRoleUser, "schema", "Metadata schema", false, schemaLines(in.MetaSchema)...)
-		p.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamples(in.Samples, in.Target, in.SamplesArePreview)...)
+		p.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamplesFor(in.Samples, in.Target, in.SamplesArePreview, in.Privacy)...)
 		p.add(promptRoleUser, "request", "Your request", false, "User request: "+userPrompt)
 		task := []string{
 			"Task: generate the " + in.Slot + " slot of a " + in.EntityType + " template.",
@@ -141,7 +141,7 @@ func buildTemplatePromptSections(in TemplateGenerationInput, userPrompt string) 
 		p.add(promptRoleUser, "current", "Current content", false, currentContentLines(in.CurrentContent, "slot")...)
 		p.add(promptRoleUser, "included-partials", "Partials already included", false, includedPartialLines(in)...)
 		p.add(promptRoleUser, "output", "Output format", true, slotOutputFormatLine(in.Mode))
-		return p
+		return finishPrivacySections(in, p)
 	}
 }
 
@@ -172,7 +172,7 @@ func addTemplateReferencePrefixFor(p *promptSections, in TemplateGenerationInput
 	p.add(promptRoleUser, "shortcodes", "Shortcode reference", true, append([]string{"Shortcode reference:"}, referenceBlock("shortcode reference", in.DocsBlock)...)...)
 	p.add(promptRoleUser, "plugins", "Plugin and note-block reference", true, pluginContextLines(in.PluginContext)...)
 	p.add(promptRoleUser, "mrql", "MRQL reference", true, templateMRQLReferenceLines(in.Postgres)...)
-	p.add(promptRoleUser, "partials", "Template partials", false, partialLinesFor(in.Partials, in.PartialCount, harness)...)
+	p.add(promptRoleUser, "partials", "Template partials", false, partialLinesFor(privacyPartials(in.Privacy, in.Partials), in.PartialCount, harness)...)
 	p.add(promptRoleUser, "reference-end", "End of reference", true, templateReferenceEndLine)
 }
 

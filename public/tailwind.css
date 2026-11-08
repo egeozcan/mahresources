@@ -52,6 +52,9 @@
     --color-teal-700: oklch(51.1% 0.096 186.391);
     --color-teal-800: oklch(43.7% 0.078 188.216);
     --color-teal-900: oklch(38.6% 0.063 188.416);
+    --color-sky-100: oklch(95.1% 0.026 236.824);
+    --color-sky-700: oklch(50% 0.134 242.749);
+    --color-sky-900: oklch(39.1% 0.09 240.876);
     --color-blue-50: oklch(97% 0.014 254.604);
     --color-blue-100: oklch(93.2% 0.032 255.585);
     --color-blue-400: oklch(70.7% 0.165 254.624);
@@ -2557,6 +2560,9 @@
   .bg-rose-100 {
     background-color: var(--color-rose-100);
   }
+  .bg-sky-100 {
+    background-color: var(--color-sky-100);
+  }
   .bg-stone-50 {
     background-color: var(--color-stone-50);
   }
@@ -3058,6 +3064,9 @@
   .text-rose-800 {
     color: var(--color-rose-800);
   }
+  .text-sky-900 {
+    color: var(--color-sky-900);
+  }
   .text-stone-100 {
     color: var(--color-stone-100);
   }
@@ -3280,6 +3289,9 @@
   }
   .outline-amber-700 {
     outline-color: var(--color-amber-700);
+  }
+  .outline-sky-700 {
+    outline-color: var(--color-sky-700);
   }
   .blur {
     --tw-blur: blur(8px);
@@ -4435,9 +4447,19 @@
       border-color: var(--color-amber-600);
     }
   }
+  .aria-pressed\:border-sky-700 {
+    &[aria-pressed="true"] {
+      border-color: var(--color-sky-700);
+    }
+  }
   .aria-pressed\:bg-amber-100 {
     &[aria-pressed="true"] {
       background-color: var(--color-amber-100);
+    }
+  }
+  .aria-pressed\:bg-sky-100 {
+    &[aria-pressed="true"] {
+      background-color: var(--color-sky-100);
     }
   }
   .motion-safe\:animate-pulse {

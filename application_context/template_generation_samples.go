@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,73 +44,89 @@ type TemplateSample map[string]any
 // share token, file locations and the hash among them, cannot reach a prompt.
 // full adds the relations, which only the first sample carries.
 func ProjectTemplateSample(entity any, full bool) TemplateSample {
+	return ProjectTemplateSampleFor(entity, full, nil, "")
+}
+
+// ProjectTemplateSampleFor is ProjectTemplateSample for a request that may run
+// under Privacy mode. It projects, then masks (only when p is non-nil), then
+// clips, so a long value and its clipped copy share one Placeholder. A nil p
+// leaves the output byte for byte what ProjectTemplateSample gave. metaSchema is
+// the schema whose enum and const values stay readable in Meta.
+func ProjectTemplateSampleFor(entity any, full bool, p *TemplatePrivacy, metaSchema string) TemplateSample {
 	s := TemplateSample{}
 	switch e := entity.(type) {
 	case *models.Group:
-		s["Name"] = e.Name
-		putSampleDescription(s, e.Description)
+		s["Name"] = p.Text(e.Name)
+		putSampleDescription(s, p, e.Description)
 		s["HasURL"] = e.URL != nil
-		putSampleOwner(s, e.Owner)
-		putSampleTags(s, e.Tags)
-		putSampleMeta(s, e.Meta)
+		p.keepScalar(e.URL != nil)
+		putSampleOwner(s, p, e.Owner)
+		putSampleTags(s, p, e.Tags)
+		putSampleMeta(s, p, e.Meta, metaSchema)
 		if full {
-			putSampleRelations(s, e.Relationships)
+			putSampleRelations(s, p, e.Relationships)
 		}
 	case *models.Resource:
-		s["Name"] = e.Name
-		s["ContentType"] = e.ContentType
+		s["Name"] = p.Text(e.Name)
+		s["ContentType"] = privacyContentType(p, e.ContentType)
 		s["Width"] = e.Width
 		s["Height"] = e.Height
 		s["FileSize"] = e.FileSize
-		putSampleDescription(s, e.Description)
-		putSampleTags(s, e.Tags)
-		putSampleOwner(s, e.Owner)
-		putSampleMeta(s, e.Meta)
+		p.keepScalar(int64(e.Width))
+		p.keepScalar(int64(e.Height))
+		p.keepScalar(e.FileSize)
+		putSampleDescription(s, p, e.Description)
+		putSampleTags(s, p, e.Tags)
+		putSampleOwner(s, p, e.Owner)
+		putSampleMeta(s, p, e.Meta, metaSchema)
 		if full {
 			names := make([]string, 0, len(e.Groups))
 			for _, g := range sortedSampleGroups(e.Groups) {
-				names = append(names, g.Name)
+				names = append(names, p.Text(g.Name))
 			}
 			s["Groups"] = capSampleNames(names, templateSampleRelations, "groups")
 			s["NoteCount"] = len(e.Notes)
+			p.keepScalar(len(e.Notes))
 		}
 	case *models.Note:
-		s["Name"] = e.Name
-		putSampleDescription(s, e.Description)
-		putSampleDate(s, "StartDate", e.StartDate)
-		putSampleDate(s, "EndDate", e.EndDate)
-		putSampleTags(s, e.Tags)
-		putSampleOwner(s, e.Owner)
-		putSampleMeta(s, e.Meta)
+		s["Name"] = p.Text(e.Name)
+		putSampleDescription(s, p, e.Description)
+		putSampleDate(s, p, "StartDate", e.StartDate)
+		putSampleDate(s, p, "EndDate", e.EndDate)
+		putSampleTags(s, p, e.Tags)
+		putSampleOwner(s, p, e.Owner)
+		putSampleMeta(s, p, e.Meta, metaSchema)
 		if full {
 			s["ResourceCount"] = len(e.Resources)
 			s["GroupCount"] = len(e.Groups)
+			p.keepScalar(len(e.Resources))
+			p.keepScalar(len(e.Groups))
 		}
 	}
 	return s
 }
 
-func putSampleDescription(s TemplateSample, description string) {
+func putSampleDescription(s TemplateSample, p *TemplatePrivacy, description string) {
 	if description != "" {
-		s["Description"] = clipSampleString(description, templateSampleDescriptionBytes)
+		s["Description"] = clipSampleString(p.Text(description), templateSampleDescriptionBytes)
 	}
 }
 
-func putSampleOwner(s TemplateSample, owner *models.Group) {
+func putSampleOwner(s TemplateSample, p *TemplatePrivacy, owner *models.Group) {
 	if owner != nil {
-		s["Owner"] = owner.Name
+		s["Owner"] = p.Text(owner.Name)
 	}
 }
 
-func putSampleDate(s TemplateSample, key string, t *time.Time) {
+func putSampleDate(s TemplateSample, p *TemplatePrivacy, key string, t *time.Time) {
 	if t != nil {
-		s[key] = t.UTC().Format(time.RFC3339)
+		s[key] = p.Date(*t)
 	}
 }
 
 // putSampleTags lists tag names by name, then ID, so the projection does not
 // depend on load order.
-func putSampleTags(s TemplateSample, tags []*models.Tag) {
+func putSampleTags(s TemplateSample, p *TemplatePrivacy, tags []*models.Tag) {
 	if len(tags) == 0 {
 		return
 	}
@@ -122,14 +139,14 @@ func putSampleTags(s TemplateSample, tags []*models.Tag) {
 	})
 	names := make([]string, 0, len(sorted))
 	for _, tag := range sorted {
-		names = append(names, tag.Name)
+		names = append(names, p.Text(tag.Name))
 	}
 	s["Tags"] = capSampleNames(names, templateSampleTags, "tags")
 }
 
 // putSampleRelations lists a group's outgoing relations, by type name, then
 // target name, then ID.
-func putSampleRelations(s TemplateSample, relations []*models.GroupRelation) {
+func putSampleRelations(s TemplateSample, p *TemplatePrivacy, relations []*models.GroupRelation) {
 	type relation struct {
 		Type, Group string
 		id          uint
@@ -162,7 +179,7 @@ func putSampleRelations(s TemplateSample, relations []*models.GroupRelation) {
 		if i == templateSampleRelations {
 			break
 		}
-		out = append(out, map[string]string{"Type": row.Type, "Group": row.Group})
+		out = append(out, map[string]string{"Type": p.Keep(row.Type), "Group": p.Text(row.Group)})
 	}
 	s["Relations"] = out
 	if len(rows) > templateSampleRelations {
@@ -189,7 +206,7 @@ func capSampleNames(names []string, n int, noun string) []string {
 	return append(names[:n:n], fmt.Sprintf("…(%d %s)", len(names), noun))
 }
 
-func putSampleMeta(s TemplateSample, raw []byte) {
+func putSampleMeta(s TemplateSample, p *TemplatePrivacy, raw []byte, metaSchema string) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return
 	}
@@ -200,6 +217,9 @@ func putSampleMeta(s TemplateSample, raw []byte) {
 		return
 	}
 	if object, ok := meta.(map[string]any); ok && len(object) > 0 {
+		if p != nil {
+			object, _ = p.Value(object, parseSchemaRoot(metaSchema)).(map[string]any)
+		}
 		s["Meta"] = clipSampleValue(object, 1)
 	}
 }
@@ -263,6 +283,32 @@ type templateSampleStat struct {
 // samples, fenced together. It iterates in sorted key order, so unchanged
 // samples always give the same bytes.
 func DescribeTemplateSamples(samples []TemplateSample, target string, preview bool) []string {
+	return DescribeTemplateSamplesFor(samples, target, preview, nil)
+}
+
+// sampleCountMarkers match the counts the projection and the summary generate
+// themselves: omission markers, the relation count and the summary's own numbers.
+var sampleCountMarkers = regexp.MustCompile(`…\((\d+) [a-z]+\)|"RelationCount":(\d+)|(\d+) more fields|\((\d+) of (\d+)\)|Summary of (\d+)`)
+
+// DescribeTemplateSamplesFor is DescribeTemplateSamples for a request that may
+// run under Privacy mode: a value that is exactly a Placeholder p issued counts
+// as short whatever its length, and the counts the text generates are registered
+// as preserved numbers. A nil p gives the original output byte for byte.
+func DescribeTemplateSamplesFor(samples []TemplateSample, target string, preview bool, p *TemplatePrivacy) []string {
+	lines := describeTemplateSamples(samples, target, preview, p)
+	if p != nil {
+		for _, m := range sampleCountMarkers.FindAllStringSubmatch(strings.Join(lines, "\n"), -1) {
+			for _, digits := range m[1:] {
+				if n, err := strconv.ParseInt(digits, 10, 64); err == nil && digits != "" {
+					p.keepScalar(n)
+				}
+			}
+		}
+	}
+	return lines
+}
+
+func describeTemplateSamples(samples []TemplateSample, target string, preview bool, p *TemplatePrivacy) []string {
 	if len(samples) == 0 {
 		return nil
 	}
@@ -273,16 +319,16 @@ func DescribeTemplateSamples(samples []TemplateSample, target string, preview bo
 			if key == "Meta" {
 				meta, _ := value.(map[string]any)
 				for metaKey, metaValue := range meta {
-					observeSampleValue(metaPaths, "meta."+metaKey, metaValue)
+					observeSampleValue(p, metaPaths, "meta."+metaKey, metaValue)
 					if nested, ok := metaValue.(map[string]any); ok {
 						for nestedKey, nestedValue := range nested {
-							observeSampleValue(metaPaths, "meta."+metaKey+"."+nestedKey, nestedValue)
+							observeSampleValue(p, metaPaths, "meta."+metaKey+"."+nestedKey, nestedValue)
 						}
 					}
 				}
 				continue
 			}
-			observeSampleValue(fields, key, value)
+			observeSampleValue(p, fields, key, value)
 		}
 	}
 
@@ -337,7 +383,7 @@ func DescribeTemplateSamples(samples []TemplateSample, target string, preview bo
 	return lines
 }
 
-func observeSampleValue(stats map[string]*templateSampleStat, key string, value any) {
+func observeSampleValue(p *TemplatePrivacy, stats map[string]*templateSampleStat, key string, value any) {
 	stat := stats[key]
 	if stat == nil {
 		stat = &templateSampleStat{types: map[string]bool{}, strings: map[string]int{}, enumOK: true}
@@ -345,7 +391,7 @@ func observeSampleValue(stats map[string]*templateSampleStat, key string, value 
 	}
 	stat.present++
 	stat.types[sampleValueType(value)] = true
-	if s, ok := value.(string); ok && len(s) <= 40 {
+	if s, ok := value.(string); ok && (len(s) <= 40 || p.IsIssuedPlaceholder(s)) {
 		stat.strings[s]++
 	} else {
 		stat.enumOK = false
