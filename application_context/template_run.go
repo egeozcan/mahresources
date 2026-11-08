@@ -59,6 +59,9 @@ func (g *defaultTemplateGenerator) discloseHarness(ctx context.Context, in Templ
 	fields, required, cssAdditions := templateRunFieldsOf(in)
 	profile := g.config.profileFor(templateCallKind(in))
 	sections := buildTemplateRunSections(in, prompt, fields, required, cssAdditions, settings)
+	if err := privacySeedError(in); err != nil {
+		return templateRequest{}, err
+	}
 	registerRunSkeleton(in.Privacy, g.conversation, profile.Model, TemplateRunToolSpecs())
 	plan := &harnessPlan{
 		fields: fields, required: required, cssAdditions: cssAdditions,

@@ -93,18 +93,21 @@ func TestEntityMasksEveryUnlistedStringAndLeavesTheOriginalAlone(t *testing.T) {
 
 func TestEntityResourceContentTypeIsStructureOnly(t *testing.T) {
 	p := NewTemplatePrivacy("ct")
-	cases := map[string]bool{
-		"image/png":                      true,
-		"image/svg+xml":                  true,
-		"image/png; name=\"secret.png\"": false,
-		"IMAGE/PNG":                      false,
-		"weird":                          false,
+	cases := map[string]string{
+		"image/png":                      "image/png",
+		"image/svg+xml":                  "image/svg+xml",
+		"image/png; name=\"secret.png\"": "image/png", // parameters are dropped, structure kept
 	}
-	for in, kept := range cases {
+	for in, want := range cases {
 		out, _ := p.Entity(context.Background(), &models.Resource{ContentType: in})
-		got := out.(*models.Resource).ContentType
-		if (got == in) != kept {
-			t.Errorf("%q kept=%v got %q", in, kept, got)
+		if got := out.(*models.Resource).ContentType; got != want {
+			t.Errorf("%q: got %q want %q", in, got, want)
+		}
+	}
+	for _, in := range []string{"IMAGE/PNG", "weird"} {
+		out, _ := p.Entity(context.Background(), &models.Resource{ContentType: in})
+		if got := out.(*models.Resource).ContentType; got == in {
+			t.Errorf("%q must be masked", in)
 		}
 	}
 }

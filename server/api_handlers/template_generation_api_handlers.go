@@ -452,6 +452,8 @@ func classifyTemplateGenerationError(err error) (int, error) {
 	switch {
 	case errors.Is(err, application_context.ErrTemplatePrivacyLeak):
 		return http.StatusInternalServerError, errors.New("Privacy mode stopped a request that contained an entity value. Nothing was sent")
+	case errors.Is(err, application_context.ErrTemplatePrivacyLimit):
+		return http.StatusBadRequest, errors.New("too much entity data for Privacy mode")
 	case errors.Is(err, application_context.ErrTemplateRunAccessChanged):
 		return http.StatusForbidden, application_context.ErrTemplateRunAccessChanged
 	case errors.Is(err, application_context.ErrTemplateRunLimit):

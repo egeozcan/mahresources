@@ -363,23 +363,15 @@ func (p *TemplatePrivacy) ContainsIssued(s string) (string, bool) {
 		}
 		from = at + len(opening)
 	}
-	aliasPrefix := "https://placeholder.invalid/" + p.tag + "-"
-	for from := 0; from < len(s); {
-		at := strings.Index(s[from:], aliasPrefix)
-		if at < 0 {
-			break
+	// An issued alias counts wherever it is contained, even when more URL text
+	// follows it (...-url-1backup).
+	for _, e := range p.issued {
+		if e.alias == "" {
+			continue
 		}
-		at += from
-		end := at + len(aliasPrefix)
-		for end < len(s) && (s[end] == '-' || s[end] >= 'a' && s[end] <= 'z' || s[end] >= '0' && s[end] <= '9') {
-			end++
+		if at := strings.Index(s, e.alias); at >= 0 {
+			consider(e.alias, at)
 		}
-		token := s[at:end]
-		if p.isIssuedAlias(token) {
-			consider(token, at)
-			break
-		}
-		from = at + len(aliasPrefix)
 	}
 	return best, bestAt >= 0
 }
@@ -503,6 +495,7 @@ func (p *TemplatePrivacy) maskJSON(v any, root map[string]any, nodes []map[strin
 		sort.Strings(keys)
 		out := make(map[string]any, len(x))
 		for _, k := range keys {
+			p.Keep(k) // a preserved key is vocabulary, and it travels in the request
 			out[k] = p.maskJSON(x[k], root, schemaChildNodes(root, nodes, k))
 		}
 		return out

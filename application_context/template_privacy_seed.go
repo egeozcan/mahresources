@@ -3,6 +3,7 @@ package application_context
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -232,4 +233,13 @@ func (p *TemplatePrivacy) KeepModelOutput(text string, calls []ToolCall, replay 
 		keepJSONLeaves(p, []byte(c.Arguments))
 	}
 	keepJSONLeaves(p, replay)
+}
+
+// privacySeedError is the answer to a request whose Seed hit a masker limit
+// (P16): the Seed is partial, so no Disclosure is published and the request is a 400.
+func privacySeedError(in TemplateGenerationInput) error {
+	if err := in.Privacy.Err(); err != nil {
+		return fmt.Errorf("%w: %v", ErrTemplateGenerationBadRequest, err)
+	}
+	return nil
 }

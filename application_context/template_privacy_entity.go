@@ -156,7 +156,7 @@ func (c *privacyCopier) copy(src reflect.Value, structName, field string, parent
 		}
 		if privacyFieldKept(structName, field) {
 			c.p.Keep(string(raw))
-			return src
+			return reflect.ValueOf(append(types.JSON(nil), raw...))
 		}
 		schema := ""
 		if parent != nil {
@@ -170,12 +170,7 @@ func (c *privacyCopier) copy(src reflect.Value, structName, field string, parent
 		out := reflect.New(typ).Elem()
 		switch {
 		case structName == "Resource" && field == "ContentType":
-			if privacyContentTypeRE.MatchString(s) {
-				c.p.Keep(s)
-				out.SetString(s)
-			} else {
-				out.SetString(c.p.Text(s))
-			}
+			out.SetString(privacyContentType(c.p, s))
 		case privacyFieldKept(structName, field):
 			out.SetString(c.p.Keep(s))
 		default:
@@ -235,6 +230,9 @@ func (c *privacyCopier) copy(src reflect.Value, structName, field string, parent
 		keys := src.MapKeys()
 		sort.Slice(keys, func(i, j int) bool { return keys[i].String() < keys[j].String() })
 		for _, k := range keys {
+			if k.Kind() == reflect.String {
+				c.p.Keep(k.String())
+			}
 			if inner := c.copy(src.MapIndex(k), structName, field, parent, depth+1); inner.IsValid() {
 				out.SetMapIndex(k, inner)
 			}
@@ -339,6 +337,7 @@ func (p *TemplatePrivacy) queryRow(row map[string]any) map[string]any {
 	sort.Strings(keys)
 	out := make(map[string]any, len(row))
 	for _, k := range keys {
+		p.Keep(k)
 		out[k] = p.queryValue(row[k])
 	}
 	return out
@@ -370,14 +369,18 @@ func (p *TemplatePrivacy) queryValue(v any) any {
 	return v
 }
 
-// privacyContentType keeps a content type that is plain lower-case type/subtype
-// and masks anything else (P5); nil p keeps all.
+// privacyContentType keeps the lower-case type/subtype of a content type and
+// drops its parameters (P5): the model needs image versus video, and a stored
+// value can come straight from an import. Anything that is not plain lower-case
+// type/subtype once the parameters are cut is masked. nil p keeps all.
 func privacyContentType(p *TemplatePrivacy, s string) string {
 	if p == nil || s == "" {
 		return s
 	}
-	if privacyContentTypeRE.MatchString(s) {
-		return p.Keep(s)
+	base, _, _ := strings.Cut(s, ";")
+	base = strings.TrimSpace(base)
+	if privacyContentTypeRE.MatchString(base) {
+		return p.Keep(base)
 	}
 	return p.Text(s)
 }

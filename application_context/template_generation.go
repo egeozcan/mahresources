@@ -202,7 +202,11 @@ type TemplateGenerationResult struct {
 // explicitly submitted an empty standalone field.
 func (r TemplateGenerationResult) MarshalJSON() ([]byte, error) {
 	type plain TemplateGenerationResult
-	if !r.ContentSubmitted || r.Content != "" {
+	// A withheld standalone field is "" and listed in withheldFields; the string
+	// must stay in the response so a legitimately empty field is told apart by
+	// not being listed.
+	forceContent := r.ContentSubmitted || (r.Target != TemplateTargetBundle && len(r.WithheldFields) > 0)
+	if !forceContent || r.Content != "" {
 		return json.Marshal(plain(r))
 	}
 	return json.Marshal(struct {
@@ -428,10 +432,17 @@ func (g *defaultTemplateGenerator) disclose(in TemplateGenerationInput, prompt s
 	if fan, err := templateFanOutFor(in); err != nil {
 		return templateRequest{}, err
 	} else if fan != nil {
-		return g.discloseFanOut(in, prompt, fan), nil
+		request := g.discloseFanOut(in, prompt, fan)
+		if err := privacySeedError(in); err != nil {
+			return templateRequest{}, err
+		}
+		return request, nil
 	}
 
 	sections := buildTemplatePromptSections(in, prompt)
+	if err := privacySeedError(in); err != nil {
+		return templateRequest{}, err
+	}
 	kind := templateCallKind(in)
 	profile := g.config.profileFor(kind)
 	in.Privacy.Keep(profile.Model)

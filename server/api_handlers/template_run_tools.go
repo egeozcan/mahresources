@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"log"
 	"runtime/debug"
 	"sort"
@@ -137,6 +138,14 @@ func refusef(format string, args ...any) error { return toolRefusal(fmt.Sprintf(
 // Execute runs one Tool call. It returns an error only when ctx ended, which
 // the loop turns into the run's stop; every other failure is an error result.
 func (e *templateToolExecutor) Execute(ctx context.Context, call application_context.TemplateToolInvocation) (out application_context.TemplateToolOutput, err error) {
+	// Every error result is a refusal or a failure text the server (or the model's
+	// own argument) wrote, never a stored value, so it joins the readable corpus
+	// at the one place all of them pass.
+	defer func() {
+		if out.IsError {
+			e.cfg.Privacy.Keep(out.Text)
+		}
+	}()
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[template-run] Tool %q panicked: %v\n%s", call.Name, r, debug.Stack())
@@ -361,10 +370,12 @@ func toolEntries(privacy *application_context.TemplatePrivacy, in []application_
 	return out
 }
 
-func pagedJSON(key string, entries any, more bool, offset, n int) string {
+func pagedJSON(privacy *application_context.TemplatePrivacy, key string, entries any, more bool, offset, n int) string {
 	result := map[string]any{key: entries, "more": more}
 	if more {
 		result["nextOffset"] = offset + n
+		// The generated page cursor is a preserved number: readable.
+		privacy.KeepScalar(int64(offset + n))
 	}
 	return application_context.MarshalToolJSON(result)
 }
@@ -375,7 +386,7 @@ func (e *templateToolExecutor) listRelated(mc *application_context.MahresourcesC
 		return "", err
 	}
 	e.cfg.Privacy.KeepScalar(int64(a.Offset + len(entries)))
-	return pagedJSON("entries", toolEntries(e.cfg.Privacy, entries), more, a.Offset, len(entries)), nil
+	return pagedJSON(e.cfg.Privacy, "entries", toolEntries(e.cfg.Privacy, entries), more, a.Offset, len(entries)), nil
 }
 
 func (e *templateToolExecutor) listMembers(mc *application_context.MahresourcesContext, a application_context.ListMembersArgs) (string, error) {
@@ -388,7 +399,7 @@ func (e *templateToolExecutor) listMembers(mc *application_context.MahresourcesC
 	for i := range out {
 		out[i].Carrier = nil // the carrier is the one asked about
 	}
-	return pagedJSON("entries", out, more, a.Offset, len(entries)), nil
+	return pagedJSON(e.cfg.Privacy, "entries", out, more, a.Offset, len(entries)), nil
 }
 
 func (e *templateToolExecutor) getTemplate(mc *application_context.MahresourcesContext, a application_context.GetTemplateArgs) (string, error) {
@@ -441,7 +452,7 @@ func (e *templateToolExecutor) listCarriers(mc *application_context.Mahresources
 		e.cfg.Privacy.KeepScalar(int64(r.ID))
 		entries[i] = toolCarrierEntry{r.ID, e.cfg.Privacy.Keep(r.Name), e.cfg.Privacy.Text(r.Description)}
 	}
-	return pagedJSON("entries", entries, more, a.Offset, len(entries)), nil
+	return pagedJSON(e.cfg.Privacy, "entries", entries, more, a.Offset, len(entries)), nil
 }
 
 func (e *templateToolExecutor) listRevisions(mc *application_context.MahresourcesContext, a application_context.RevisionArgs) (string, error) {
@@ -454,14 +465,14 @@ func (e *templateToolExecutor) listRevisions(mc *application_context.Mahresource
 		return "", err
 	}
 	if e.cfg.Privacy == nil {
-		return pagedJSON("revisions", revs, more, a.Offset, len(revs)), nil
+		return pagedJSON(e.cfg.Privacy, "revisions", revs, more, a.Offset, len(revs)), nil
 	}
 	masked := make([]map[string]any, len(revs))
 	for i, r := range revs {
 		masked[i] = e.maskRevisionSummary(r)
 	}
 	e.cfg.Privacy.KeepScalar(int64(a.Offset + len(revs)))
-	return pagedJSON("revisions", masked, more, a.Offset, len(revs)), nil
+	return pagedJSON(e.cfg.Privacy, "revisions", masked, more, a.Offset, len(revs)), nil
 }
 
 func (e *templateToolExecutor) getRevision(mc *application_context.MahresourcesContext, a application_context.RevisionArgs) (string, error) {
@@ -793,6 +804,12 @@ const (
 // (ErrQueryUnavailable keeps its inert rendering), and every result is masked
 // field by field into new containers.
 func privacyQueryExecutor(privacy *application_context.TemplatePrivacy, inner shortcodes.QueryExecutor) shortcodes.QueryExecutor {
+	// The fixed texts are rendered into the preview (HTML-escaped), so they are
+	// registered when the executor is built.
+	for _, text := range []string{privacySavedQueryText, privacyQueryFailedText} {
+		privacy.Keep(text)
+		privacy.Keep(html.EscapeString(text))
+	}
 	return func(reqCtx context.Context, query string, opts shortcodes.QueryOptions) (*shortcodes.QueryResult, error) {
 		if opts.SavedName != "" {
 			return nil, errors.New(privacySavedQueryText)
