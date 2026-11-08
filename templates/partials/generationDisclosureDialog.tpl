@@ -48,9 +48,9 @@
                     {# Both modes: Privacy mode, and the status of a repeated dry run. Outside the        #}
                     {# harness-only subtree below, so a classic disclosure has them too and Send's     #}
                     {# disabled state is always explained.                                            #}
-                    <div class="space-y-2" data-testid="generation-disclosure-common" :aria-busy="$store.generationDisclosure.redisclosing ? 'true' : 'false'">
+                    <div class="space-y-2" data-testid="generation-disclosure-common">
                         <template x-if="$store.generationDisclosure.hasPrivacy">
-                            <fieldset class="rounded border border-stone-200 px-3 py-2 space-y-2" data-testid="generation-disclosure-privacy">
+                            <fieldset class="rounded border border-stone-200 px-3 py-2 space-y-2" data-testid="generation-disclosure-privacy" :aria-busy="$store.generationDisclosure.redisclosing ? 'true' : 'false'">
                                 <legend class="px-1 text-sm font-mono font-medium text-stone-800">Privacy mode</legend>
                                 <div class="flex items-start gap-2">
                                     <input type="checkbox" id="generation-optin-privacy" data-testid="generation-optin-privacy"
@@ -72,8 +72,9 @@
                                 </div>
                             </fieldset>
                         </template>
-                        <p class="text-xs text-stone-600" role="status" data-testid="generation-disclosure-redisclosing" x-show="$store.generationDisclosure.redisclosing">Updating what will be sent…</p>
-                        <p class="text-xs text-red-700" role="alert" data-testid="generation-disclosure-redisclose-error" x-show="$store.generationDisclosure.redisclosureError" x-text="'Send is disabled: ' + $store.generationDisclosure.redisclosureError"></p>
+                        {# The live regions stay mounted outside the aria-busy content and change their text, so the change is announced. #}
+                        <p class="text-xs text-stone-600 empty:hidden" role="status" data-testid="generation-disclosure-redisclosing" x-text="$store.generationDisclosure.redisclosing ? 'Updating what will be sent…' : ''"></p>
+                        <p class="text-xs text-red-700 empty:hidden" role="alert" data-testid="generation-disclosure-redisclose-error" x-text="$store.generationDisclosure.redisclosureError ? 'Send is disabled: ' + $store.generationDisclosure.redisclosureError : ''"></p>
                     </div>
                     {# Harness runs only: the opt-ins, the Envelope, the Tools and the caps. They live in #}
                     {# this scrolling region, not the fixed summary, so they stay reachable at small   #}

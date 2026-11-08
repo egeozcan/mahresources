@@ -105,7 +105,7 @@
                             </ul>
                             <p x-show="draftWarnings(pendingDraft.slots[field], field.endsWith('CSS')).length" class="text-xs font-mono text-amber-800"
                                x-text="'Runs code once applied: ' + draftWarnings(pendingDraft.slots[field], field.endsWith('CSS')).join(', ') + ' (highlighted).'"></p>
-                            <p x-show="pendingDraft.blocked.includes(field)" :data-testid="'template-bundle-blocked-' + field" class="text-xs font-mono text-red-700" x-text="pendingDraft.withheld.length ? 'Not applied: Privacy mode withheld ' + pendingDraft.withheld.join(', ') + ' because it contained a Placeholder, and a template and its CSS apply together.' : 'Not applied: its companion did not arrive.'"></p>
+                            <p x-show="pendingDraft.blocked.includes(field)" :data-testid="'template-bundle-blocked-' + field" class="text-xs font-mono text-red-700" x-text="blockedReason(field)"></p>
                             <pre tabindex="0" role="region" :aria-label="'Draft text of ' + field" :data-testid="'template-bundle-review-text-' + field" class="mt-1 max-h-40 overflow-auto rounded border border-stone-200 bg-stone-50 p-2 text-xs font-mono whitespace-pre-wrap break-all focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-600"><template x-for="(segment, i) in draftSegments(pendingDraft.slots[field] || '(empty)', field.endsWith('CSS'))" :key="i"><span :class="segment.flagged ? 'bg-amber-200 text-stone-900 outline outline-1 outline-amber-700' : ''" x-text="segment.text"></span></template></pre>
                         </li>
                     </template>

@@ -41,6 +41,7 @@ export function registerGenerationDisclosureStore(Alpine) {
     // Real values behind the Placeholders. Browser-only: cleared when the dialog settles,
     // when a re-disclosure replaces the payload, and on an access-denied answer.
     reveal: false,
+    _legend: [],
     _harness: false,
     redisclosing: false,
     redisclosureError: '',
@@ -94,8 +95,9 @@ export function registerGenerationDisclosureStore(Alpine) {
       return this.disclosure?.sections || [];
     },
 
+    // Normalized once when a Disclosure is adopted, so legendSegments' per-array cache hits.
     get legend() {
-      return cleanLegend(this.disclosure?.legend);
+      return this._legend;
     },
 
     // Text split into Placeholder and plain pieces for x-text rendering; with `reveal`
@@ -192,6 +194,7 @@ export function registerGenerationDisclosureStore(Alpine) {
     // Adopt a disclosure: the payload, the privacy state it echoes, and no reveal.
     _takeDisclosure(disclosure) {
       this.disclosure = disclosure;
+      this._legend = cleanLegend(disclosure?.legend);
       this.reveal = false;
       const privacy = disclosure?.privacy;
       this.hasPrivacy = !!privacy && typeof privacy === 'object';
@@ -245,6 +248,7 @@ export function registerGenerationDisclosureStore(Alpine) {
           // may stay on screen.
           if (err?.status === 403) {
             this.disclosure = null;
+            this._legend = [];
             this.reveal = false;
           }
           this.redisclosureError = err?.message || 'Could not update what will be sent.';
@@ -279,6 +283,7 @@ export function registerGenerationDisclosureStore(Alpine) {
       this.isOpen = false;
       this._resolve = null;
       this.disclosure = null;
+      this._legend = [];
       this.reveal = false;
       this._returnTo = [];
       this._owner = null;

@@ -82,16 +82,35 @@ test.describe('Privacy mode accessibility', () => {
     await checkA11y();
   });
 
-  test('the expanded Transcript with 200+ Placeholders has no violations, legend off and on', async ({ page, checkA11y }) => {
+  test('the expanded Transcript with 200+ visible Placeholders has no violations, legend off and on', async ({ page, checkA11y }) => {
     await route(page);
     await openDialog(page);
     await page.getByTestId('generation-disclosure-send').click();
     await expect(page.getByTestId('run-end-CustomHeader')).toBeVisible();
-    await page.getByTestId('run-transcript-CustomHeader').locator('summary').first().click();
-    await page.getByTestId('run-record-0-CustomHeader').locator('summary').first().click();
+    const summary = page.getByTestId('run-transcript-CustomHeader').locator('summary').first();
+    await summary.click();
+    // The Transcript toggle is the first control inside the opened Transcript: Tab from its summary
+    // reaches it, and Enter and Space operate it with aria-pressed reporting the state.
+    await summary.focus();
+    await page.keyboard.press('Tab');
+    const toggle = page.getByTestId('run-reveal-toggle-CustomHeader');
+    await expect(toggle).toBeFocused();
+    await expect(toggle).toHaveAccessibleName('Show real values');
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await page.keyboard.press('Enter');
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await page.keyboard.press('Space');
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    // Every record open, so the Placeholders are on screen when axe looks.
+    for (let i = 0; i < transcript.length; i++) {
+      await page.getByTestId(`run-record-${i}-CustomHeader`).locator('summary').first().click();
+    }
+    await expect.poll(() => page.getByTestId('run-transcript-CustomHeader').locator('span[title]:visible').count()).toBeGreaterThanOrEqual(200);
     await checkA11y();
-    await page.getByTestId('run-reveal-toggle-CustomHeader').click();
-    await expect(page.getByTestId('run-reveal-toggle-CustomHeader')).toHaveAttribute('aria-pressed', 'true');
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('run-record-text-0-CustomHeader')).toContainText(' = Real value number ');
+    await expect.poll(() => page.getByTestId('run-transcript-CustomHeader').locator('span[title]:visible').count()).toBeGreaterThanOrEqual(200);
     await checkA11y();
   });
 

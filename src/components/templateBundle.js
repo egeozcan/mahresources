@@ -144,6 +144,12 @@ export async function editorsReady(fields) {
 // The slot history dialog dispatches this, synchronously, to write a revision's slot.
 export const REVISION_WRITE_EVENT = 'template-revision-write';
 
+// The other member of a field's HTML/CSS pair; CustomCSS stands alone.
+function pairMembers(field) {
+  if (field === 'CustomCSS') return [];
+  return field.endsWith('CSS') ? [field.slice(0, -3)] : [`${field}CSS`];
+}
+
 export function templateBundle({ carrier } = {}) {
   return {
     ...runHost(),
@@ -826,8 +832,7 @@ export function templateBundle({ carrier } = {}) {
         // Fields Privacy mode withheld never apply, and neither does their pair partner.
         const withheld = [...withheldFields(data)];
         for (const field of withheld) {
-          const base = field.endsWith('CSS') ? field.slice(0, -3) : field;
-          for (const name of [base, `${base}CSS`]) if (!blocked.includes(name)) blocked.push(name);
+          for (const name of [field, ...pairMembers(field)]) if (!blocked.includes(name)) blocked.push(name);
         }
         for (const field of Object.values(SLOT_FIELDS).filter((name) => !name.endsWith('CSS'))) {
           const htmlPresent = Object.prototype.hasOwnProperty.call(slots, field);
@@ -940,6 +945,17 @@ export function templateBundle({ carrier } = {}) {
       this.pendingDraft = null;
       this.notify('Discarded the generated draft.', 'info');
       this._focusAfterPanelCloses();
+    },
+
+    // Why `field` is not applied: the Privacy mode reason only when it, or the companion it
+    // applies with, was withheld; otherwise the reply's own half-pair reason.
+    blockedReason(field) {
+      const withheld = (this.pendingDraft && this.pendingDraft.withheld) || [];
+      const group = [field, ...pairMembers(field)];
+      const hit = group.filter((name) => withheld.includes(name));
+      if (!hit.length) return 'Not applied: its companion did not arrive.';
+      const base = `Not applied: Privacy mode withheld ${hit.join(' and ')} because it contained a Placeholder`;
+      return group.length > 1 ? `${base}, and a template and its CSS apply together.` : `${base}.`;
     },
 
     // Whether Apply has anything to write: half pairs are listed, not applied.

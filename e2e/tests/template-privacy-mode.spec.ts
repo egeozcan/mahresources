@@ -300,184 +300,417 @@ for (const host of hosts) {
   });
 }
 
-test.describe('Withheld Draft fields are never applicable', () => {
-  const withheldSlot = { ...slotResult, slots: { CustomHeader: '', CustomHeaderCSS: 'h1{}' }, valid: false, withheldFields: ['CustomHeader', 'CustomHeaderCSS'], issues: [{ severity: 'error', message: 'contains a Placeholder' }] };
+// ---- Withheld Draft fields are never applicable (P11) -------------------------------------
 
-  test('slot host: the draft is listed, says why, and has no Apply', async ({ page }) => {
-    await stub(page, { harness: true }, sseResult(withheldSlot));
-    await open(page, 'slot');
-    await send(page);
-    await expect(page.getByTestId('generate-review-CustomHeader')).toBeVisible();
-    await expect(page.getByTestId('generate-withheld-CustomHeader')).toContainText('Privacy mode withheld CustomHeader');
-    await expect(page.getByTestId('generate-apply-CustomHeader')).toBeHidden();
-    await expect(page.locator('input[name="CustomHeaderCSS"]')).toHaveValue('');
-  });
+type Delivery = 'sse' | 'json';
+const deliveries: { harness: boolean; delivery: Delivery; label: string }[] = [
+  { harness: true, delivery: 'sse', label: 'harness, event stream' },
+  { harness: true, delivery: 'json', label: 'harness, JSON fallback' },
+  { harness: false, delivery: 'json', label: 'classic' },
+];
+const deliver = (delivery: Delivery, result: object) => (delivery === 'sse' ? sseResult(result) : jsonResult(result));
 
-  test('bundle host: the withheld field and its CSS are not applied, the other slots are', async ({ page }) => {
-    const result = { ...bundleResult, slots: { CustomHeader: '', CustomHeaderCSS: 'h1{}', CustomSidebar: '<p>side</p>', CustomSidebarCSS: 'p{}' }, withheldFields: ['CustomHeader', 'CustomHeaderCSS'] };
-    await stub(page, { harness: true }, sseResult(result));
-    await open(page, 'bundle');
-    await send(page);
-    await expect(page.getByTestId('template-bundle-review')).toBeVisible();
-    await expect(page.getByTestId('template-bundle-blocked-CustomHeader')).toContainText('Privacy mode withheld CustomHeader');
-    await expect(page.getByTestId('template-bundle-blocked-CustomHeaderCSS')).toBeVisible();
-    await page.getByTestId('template-bundle-apply').click();
-    await expect(page.locator('input[name="CustomSidebar"]')).toHaveValue('<p>side</p>');
-    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('');
-    await expect(page.locator('input[name="CustomHeaderCSS"]')).toHaveValue('');
-  });
+for (const { harness, delivery, label } of deliveries) {
+  test.describe(`Withheld fields (${label})`, () => {
+    const issue = [{ severity: 'error', message: 'contains a Placeholder' }];
 
-  test('bundle host: when every field is withheld there is no Apply at all', async ({ page }) => {
-    const result = { ...bundleResult, slots: { CustomHeader: '', CustomHeaderCSS: '' }, withheldFields: ['CustomHeader', 'CustomHeaderCSS'] };
-    await stub(page, { harness: true }, sseResult(result));
-    await open(page, 'bundle');
-    await send(page);
-    await expect(page.getByTestId('template-bundle-review')).toBeVisible();
-    await expect(page.getByTestId('template-bundle-apply')).toBeHidden();
-  });
-});
+    test('slot host, a pair: listed, explained, no Apply, editors untouched', async ({ page }) => {
+      const result = { ...slotResult, slots: { CustomHeader: '', CustomHeaderCSS: '' }, valid: false, withheldFields: ['CustomHeader', 'CustomHeaderCSS'], issues: issue };
+      await stub(page, { harness }, deliver(delivery, result));
+      await page.goto('/category/new');
+      await page.locator('input[name="CustomHeader"]').evaluate((el: HTMLInputElement) => { el.value = '<p>existing</p>'; });
+      await page.getByTestId('generate-prompt-CustomHeader').fill('a header');
+      await page.getByTestId('generate-button-CustomHeader').click();
+      await send(page);
+      await expect(page.getByTestId('generate-review-CustomHeader')).toBeVisible();
+      await expect(page.getByTestId('generate-withheld-CustomHeader')).toContainText('Privacy mode withheld CustomHeader, CustomHeaderCSS');
+      await expect(page.getByTestId('generate-apply-CustomHeader')).toBeHidden();
+      await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<p>existing</p>');
+    });
 
-// The lifecycle of the browser-only legend: it lives exactly as long as the surface that
-// shows it.
-for (const host of hosts) {
-  test.describe(`Legend lifecycle (${host} host)`, () => {
-    for (const how of ['Cancel', 'Escape', 'Send'] as const) {
-      test(`privacy off and reveal on, then ${how}: the next run is back on with reveal off`, async ({ page }) => {
-        await stub(page, { harness: true }, sseResult(host === 'slot' ? slotResult : bundleResult));
-        await open(page, host);
-        await page.getByTestId('generation-reveal-toggle').click();
-        await privacyBox(page).uncheck();
-        await expect(sectionText(page)).toContainText(NAME);
-        if (how === 'Cancel') await page.getByTestId('generation-disclosure-cancel').click();
-        else if (how === 'Escape') await page.keyboard.press('Escape');
-        else await send(page);
-        await expect(dialog(page)).toHaveCount(0);
-        if (how === 'Send') await expect(ui[host].runEnd(page)).toBeVisible();
-        await expect(ui[host].button(page)).toBeEnabled();
-        await ui[host].button(page).click();
-        await expect(dialog(page)).toBeVisible();
-        await expect(privacyBox(page)).toBeChecked();
-        await expect(page.getByTestId('generation-reveal-toggle')).toHaveAttribute('aria-pressed', 'false');
-        await expect(sectionText(page)).toContainText(NAME_PH);
-        await expect(sectionText(page)).not.toContainText(NAME);
+    for (const field of ['CustomCSS', 'MetaSchema']) {
+      test(`slot host, standalone ${field}: withheld, no Apply, the existing content is preserved`, async ({ page }) => {
+        const result = { target: field === 'MetaSchema' ? 'metaschema' : 'slot', valid: false, stopReason: 'done', content: '', withheldFields: [field], issues: issue, transcript, legend };
+        await stub(page, { harness }, deliver(delivery, result));
+        await page.goto('/category/new');
+        await page.locator(`[name="${field}"]`).evaluate((el: HTMLInputElement) => { el.value = 'existing-content'; });
+        await page.getByTestId(`generate-prompt-${field}`).fill('something');
+        await page.getByTestId(`generate-button-${field}`).click();
+        await send(page);
+        await expect(page.getByTestId(`generate-review-${field}`)).toBeVisible();
+        await expect(page.getByTestId(`generate-withheld-${field}`)).toContainText(`Privacy mode withheld ${field}`);
+        await expect(page.getByTestId(`generate-apply-${field}`)).toBeHidden();
+        await expect(page.locator(`[name="${field}"]`)).toHaveValue('existing-content');
       });
     }
 
-    test('a redisclosure resets the reveal state', async ({ page }) => {
-      await stub(page, { harness: true }, async () => {});
-      await open(page, host);
-      const toggle = page.getByTestId('generation-reveal-toggle');
-      await toggle.click();
-      await expect(toggle).toHaveAttribute('aria-pressed', 'true');
-      await page.getByTestId('generation-optin-mrql').check();
-      await expect(page.getByTestId('generation-disclosure-send')).toBeEnabled();
-      await expect(toggle).toHaveAttribute('aria-pressed', 'false');
-      await expect(sectionText(page)).not.toContainText(NAME);
+    test('slot host control: an empty field that is not listed stays applicable', async ({ page }) => {
+      const result = { ...slotResult, slots: { CustomHeader: '', CustomHeaderCSS: 'h1{color:blue}' }, withheldFields: [] };
+      await stub(page, { harness }, deliver(delivery, result));
+      await open(page, 'slot');
+      await send(page);
+      await expect(page.getByTestId('generate-review-CustomHeader')).toBeVisible();
+      await expect(page.getByTestId('generate-withheld-CustomHeader')).toBeHidden();
+      await expect(page.getByTestId('generate-apply-CustomHeader')).toBeVisible();
+      await page.getByTestId('generate-apply-CustomHeader').click();
+      await expect(page.locator('input[name="CustomHeaderCSS"]')).toHaveValue('h1{color:blue}');
     });
 
-    test('a superseded dry run whose body is still decoding never shows its legend', async ({ page }) => {
-      // The headers of the redisclosure answer arrive at once; its body is held until released.
-      await page.addInitScript(() => {
-        const w = window as any;
-        const real = window.fetch.bind(window);
-        window.fetch = async (input: any, init?: any) => {
-          const url = typeof input === 'string' ? input : input.url;
-          if (url.endsWith('/generateTemplate') && init?.body && JSON.parse(init.body).dryRun && JSON.parse(init.body).previewMRQL) {
-            const resp = await real(input, init);
-            const text = await resp.text();
-            const enc = new TextEncoder();
-            let ctrl: ReadableStreamDefaultController<Uint8Array>;
-            const stream = new ReadableStream<Uint8Array>({ start(c) { ctrl = c; } });
-            w.__release = () => { ctrl.enqueue(enc.encode(text)); ctrl.close(); };
-            // Not wired to the signal: the body arrives even though the request was aborted.
-            return new Response(stream, { status: 200, headers: { 'Content-Type': 'application/json' } });
-          }
-          return real(input, init);
-        };
-      });
-      await stub(page, { harness: true }, async () => {});
-      await open(page, host);
-      await page.getByTestId('generation-optin-mrql').check();
-      await expect(page.getByTestId('generation-disclosure-redisclosing')).toBeVisible();
-      // Supersede: Escape settles the review; a fresh Generate starts a new request.
-      await page.keyboard.press('Escape');
-      await expect(dialog(page)).toHaveCount(0);
-      await page.evaluate(() => (window as any).__release());
-      await page.waitForTimeout(300);
-      await expect(dialog(page)).toHaveCount(0);
-      await expect(page.getByText(NAME_PH)).toHaveCount(0);
+    test('bundle host: the withheld pair is not applied and says why per field, the others are', async ({ page }) => {
+      const result = { ...bundleResult, slots: { CustomHeader: '', CustomHeaderCSS: '', CustomSidebar: '<p>side</p>', CustomSidebarCSS: 'p{}' }, withheldFields: ['CustomHeader', 'CustomHeaderCSS'], valid: false, issues: issue };
+      await stub(page, { harness }, deliver(delivery, result));
+      await open(page, 'bundle');
+      await send(page);
+      await expect(page.getByTestId('template-bundle-review')).toBeVisible();
+      await expect(page.getByTestId('template-bundle-blocked-CustomHeader')).toContainText('Privacy mode withheld CustomHeader and CustomHeaderCSS');
+      await expect(page.getByTestId('template-bundle-blocked-CustomHeaderCSS')).toContainText('Privacy mode withheld');
+      // The sidebar pair is not blocked, so it carries no reason at all.
+      await expect(page.getByTestId('template-bundle-blocked-CustomSidebar')).toBeHidden();
+      await page.getByTestId('template-bundle-apply').click();
+      await expect(page.locator('input[name="CustomSidebar"]')).toHaveValue('<p>side</p>');
+      await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('');
+      await expect(page.locator('input[name="CustomHeaderCSS"]')).toHaveValue('');
     });
 
-    for (const kind of ['json', 'sse'] as const) {
-      test(`a ${kind} 403 on Send clears the earlier transcript and legend`, async ({ page }) => {
-        let n = 0;
-        await stub(page, { harness: true }, async (route) => {
-          n += 1;
-          if (n === 1) {
-            await sseResult(host === 'slot' ? slotResult : bundleResult)(route);
-            return;
-          }
-          if (kind === 'json') {
-            await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'access changed' }) });
-          } else {
-            await route.fulfill({ status: 200, contentType: 'text/event-stream', body: frame('error', { error: 'access changed', status: 403, stopReason: 'access_denied' }) });
-          }
-        });
-        await open(page, host);
-        await send(page);
-        await expect(ui[host].runEnd(page)).toContainText('Finished (done)');
-        await ui[host].transcript(page).locator('summary').first().click();
-        await expect(ui[host].revealToggle(page)).toBeVisible();
-        // A second run, denied.
-        await expect(ui[host].button(page)).toBeEnabled();
-        await ui[host].button(page).click();
-        await expect(dialog(page)).toBeVisible();
-        await send(page);
-        await expect(ui[host].transcript(page)).toHaveCount(0);
-        await expect(ui[host].revealToggle(page)).toHaveCount(0);
-        await expect(page.getByText('access changed').first()).toBeVisible();
-      });
-    }
+    test('bundle host: a half pair that merely did not arrive keeps its own reason, not the privacy one', async ({ page }) => {
+      const result = { ...bundleResult, slots: { CustomHeader: '<h1>x</h1>', CustomSidebar: '', CustomSidebarCSS: '' }, withheldFields: ['CustomSidebar', 'CustomSidebarCSS'], valid: false, issues: [{ severity: 'error', message: 'cut off' }] };
+      await stub(page, { harness }, deliver(delivery, result));
+      await open(page, 'bundle');
+      await send(page);
+      await expect(page.getByTestId('template-bundle-review')).toBeVisible();
+      await expect(page.getByTestId('template-bundle-blocked-CustomHeader')).toHaveText('Not applied: its companion did not arrive.');
+      await expect(page.getByTestId('template-bundle-blocked-CustomSidebar')).toContainText('Privacy mode withheld');
+    });
 
-    test('a 403 on a redisclosure clears the Disclosure payload and its legend and keeps Send disabled', async ({ page }) => {
-      await page.route('**/v1/category/generateTemplate', async (route) => {
-        const body = route.request().postDataJSON();
-        if (body?.dryRun && body.previewMRQL) {
-          await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'access changed' }) });
-          return;
-        }
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(disclosureFor(body, { harness: true })) });
-      });
-      await open(page, host);
-      await page.getByTestId('generation-reveal-toggle').click();
-      await expect(sectionText(page)).toContainText(NAME);
-      await page.getByTestId('generation-optin-mrql').check();
-      await expect(page.getByTestId('generation-disclosure-redisclose-error')).toContainText('access changed');
-      await expect(page.getByTestId('generation-disclosure-send')).toBeDisabled();
-      await expect(dialog(page)).not.toContainText(NAME);
-      await expect(dialog(page)).not.toContainText(NAME_PH);
+    test('bundle host: a standalone CustomCSS gets its own wording, and an unlisted empty slot stays applicable', async ({ page }) => {
+      const result = { ...bundleResult, slots: { CustomHeader: '', CustomHeaderCSS: '', CustomCSS: '' }, withheldFields: ['CustomCSS'], valid: false, issues: issue };
+      await stub(page, { harness }, deliver(delivery, result));
+      await open(page, 'bundle');
+      await send(page);
+      await expect(page.getByTestId('template-bundle-review')).toBeVisible();
+      await expect(page.getByTestId('template-bundle-blocked-CustomCSS')).toHaveText('Not applied: Privacy mode withheld CustomCSS because it contained a Placeholder.');
+      await expect(page.getByTestId('template-bundle-blocked-CustomHeader')).toBeHidden();
+      // The unlisted empty pair is still applicable.
+      await expect(page.getByTestId('template-bundle-apply')).toBeVisible();
+    });
+
+    test('bundle host: when every field is withheld there is no Apply at all', async ({ page }) => {
+      const result = { ...bundleResult, slots: { CustomHeader: '', CustomHeaderCSS: '' }, withheldFields: ['CustomHeader', 'CustomHeaderCSS'] };
+      await stub(page, { harness }, deliver(delivery, result));
+      await open(page, 'bundle');
+      await send(page);
+      await expect(page.getByTestId('template-bundle-review')).toBeVisible();
+      await expect(page.getByTestId('template-bundle-apply')).toBeHidden();
     });
   });
 }
 
-test.describe('Classic mode redisclosure status', () => {
-  test('a delayed privacy toggle announces and blocks Send, and a failed one explains it', async ({ page }) => {
-    let release!: () => void;
-    const gate = new Promise<void>((r) => { release = r; });
-    await page.route('**/v1/category/generateTemplate', async (route) => {
-      const body = route.request().postDataJSON();
-      if (body?.dryRun && body.privacyOff) await gate;
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(disclosureFor(body, { harness: false })) });
-    });
-    await open(page, 'slot');
-    await privacyBox(page).uncheck();
-    await expect(page.getByTestId('generation-disclosure-redisclosing')).toBeVisible();
-    await expect(page.getByTestId('generation-disclosure-send')).toBeDisabled();
-    release();
-    await expect(page.getByTestId('generation-disclosure-redisclosing')).toBeHidden();
-    await expect(page.getByTestId('generation-disclosure-send')).toBeEnabled();
-  });
+// ---- The lifecycle of the browser-only legend ------------------------------------------------
+
+const storeState = (page: Page) => page.evaluate(() => {
+  const s = (window as any).Alpine.store('generationDisclosure');
+  return { isOpen: !!s.isOpen, payload: s.disclosure !== null, legend: s.legend.length, reveal: !!s.reveal };
 });
+const hostState = (page: Page, host: Host) => page.evaluate((id) => {
+  const d = (window as any).Alpine.$data(document.querySelector(`[data-testid="${id}"]`));
+  return { run: !!d.run, records: d.run?.records?.length ?? 0, legend: d.run?.legend?.length ?? 0, reveal: !!d.run?.reveal };
+}, host === 'slot' ? 'generate-button-CustomHeader' : 'template-bundle-generate-button');
+const CLOSED = { isOpen: false, payload: false, legend: 0, reveal: false };
+
+for (const host of hosts) {
+  for (const harness of [true, false]) {
+    const result = host === 'slot' ? slotResult : bundleResult;
+    const respond = harness ? sseResult(result) : jsonResult(result);
+    const reviewPanel = (page: Page) => (host === 'slot' ? page.getByTestId('generate-review-CustomHeader') : page.getByTestId('template-bundle-review'));
+    test.describe(`Legend lifecycle (${host} host, ${harness ? 'harness' : 'classic'})`, () => {
+      for (const how of ['Cancel', 'Escape', 'Send'] as const) {
+        for (const revealOn of [false, true]) {
+          test(`${how} with reveal ${revealOn ? 'on' : 'off'} (privacy on): the store is cleared, and the next dialog starts clean`, async ({ page }) => {
+            await stub(page, { harness }, respond);
+            await open(page, host);
+            if (revealOn) {
+              await page.getByTestId('generation-reveal-toggle').click();
+              await expect(sectionText(page)).toContainText(NAME);
+              expect((await storeState(page)).reveal).toBe(true);
+            }
+            if (how === 'Cancel') await page.getByTestId('generation-disclosure-cancel').click();
+            else if (how === 'Escape') await page.keyboard.press('Escape');
+            else await send(page);
+            await expect(dialog(page)).toHaveCount(0);
+            expect(await storeState(page)).toEqual(CLOSED);
+            if (how === 'Send') await expect(reviewPanel(page)).toBeVisible();
+            await expect(ui[host].button(page)).toBeEnabled();
+            await ui[host].button(page).click();
+            await expect(dialog(page)).toBeVisible();
+            await expect(privacyBox(page)).toBeChecked();
+            await expect(page.getByTestId('generation-reveal-toggle')).toHaveAttribute('aria-pressed', 'false');
+            await expect(sectionText(page)).not.toContainText(NAME);
+            expect(await storeState(page)).toMatchObject({ isOpen: true, payload: true, reveal: false });
+          });
+        }
+      }
+
+      test('privacy off, then Cancel, Escape or Send: the next run is back on', async ({ page }) => {
+        await stub(page, { harness }, respond);
+        await open(page, host);
+        await privacyBox(page).uncheck();
+        await expect(sectionText(page)).toContainText(NAME);
+        await page.keyboard.press('Escape');
+        expect(await storeState(page)).toEqual(CLOSED);
+        await ui[host].button(page).click();
+        await expect(dialog(page)).toBeVisible();
+        await expect(privacyBox(page)).toBeChecked();
+        await expect(sectionText(page)).toContainText(NAME_PH);
+      });
+
+      test('a redisclosure resets the reveal state and replaces the legend', async ({ page }) => {
+        await stub(page, { harness }, async () => {});
+        await open(page, host);
+        const toggle = page.getByTestId('generation-reveal-toggle');
+        await toggle.click();
+        await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+        await privacyBox(page).uncheck();
+        await expect(page.getByTestId('generation-disclosure-send')).toBeEnabled();
+        expect(await storeState(page)).toMatchObject({ payload: true, legend: 0, reveal: false });
+        await privacyBox(page).check();
+        await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+        await expect(sectionText(page)).not.toContainText(NAME);
+      });
+
+      for (const kind of ['json', 'sse'] as const) {
+        if (kind === 'sse' && !harness) continue;
+        test(`a ${kind} 403 on Send leaves no transcript or legend, from an earlier run or this one`, async ({ page }) => {
+          let n = 0;
+          await stub(page, { harness }, async (route) => {
+            n += 1;
+            if (n === 1) {
+              await respond(route);
+              return;
+            }
+            if (kind === 'json') {
+              await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'access changed' }) });
+            } else {
+              await route.fulfill({ status: 200, contentType: 'text/event-stream', body: frame('error', { error: 'access changed', status: 403, stopReason: 'access_denied' }) });
+            }
+          });
+          await open(page, host);
+          await send(page);
+          if (harness) {
+            await expect(ui[host].runEnd(page)).toContainText('Finished (done)');
+            expect(await hostState(page, host)).toMatchObject({ run: true, legend: legend.length, records: transcript.length });
+          } else {
+            await expect(reviewPanel(page)).toBeVisible();
+          }
+          await expect(ui[host].button(page)).toBeEnabled();
+          await ui[host].button(page).click();
+          await expect(dialog(page)).toBeVisible();
+          await send(page);
+          await expect(page.getByText('access changed').first()).toBeVisible();
+          // After the terminal outcome: no transcript, legend or reveal anywhere.
+          expect(await storeState(page)).toEqual(CLOSED);
+          expect(await hostState(page, host)).toMatchObject({ records: 0, legend: 0, reveal: false });
+          await expect(ui[host].transcript(page)).toHaveCount(0);
+          await expect(ui[host].revealToggle(page)).toHaveCount(0);
+        });
+      }
+
+      test('a 403 on a redisclosure clears the payload, legend and reveal, and keeps Send disabled', async ({ page }) => {
+        await page.route('**/v1/category/generateTemplate', async (route) => {
+          const body = route.request().postDataJSON();
+          if (body?.dryRun && body.privacyOff) {
+            await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'access changed' }) });
+            return;
+          }
+          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(disclosureFor(body, { harness })) });
+        });
+        await open(page, host);
+        await page.getByTestId('generation-reveal-toggle').click();
+        await expect(sectionText(page)).toContainText(NAME);
+        await privacyBox(page).uncheck();
+        await expect(page.getByTestId('generation-disclosure-redisclose-error')).toContainText('access changed');
+        await expect(page.getByTestId('generation-disclosure-send')).toBeDisabled();
+        expect(await storeState(page)).toMatchObject({ isOpen: true, payload: false, legend: 0, reveal: false });
+        await expect(dialog(page)).not.toContainText(NAME);
+        await expect(dialog(page)).not.toContainText(NAME_PH);
+      });
+
+      test('a delayed redisclosure announces and blocks Send, a failed one explains it, a retry succeeds', async ({ page }) => {
+        let release!: () => void;
+        const gate = new Promise<void>((r) => { release = r; });
+        let fail = false;
+        await page.route('**/v1/category/generateTemplate', async (route) => {
+          const body = route.request().postDataJSON();
+          if (body?.dryRun && body.privacyOff) {
+            if (fail) {
+              await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'provider lookup failed' }) });
+              return;
+            }
+            await gate;
+          }
+          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(disclosureFor(body, { harness })) });
+        });
+        await open(page, host);
+        const status = page.getByTestId('generation-disclosure-redisclosing');
+        const alert = page.getByTestId('generation-disclosure-redisclose-error');
+        await expect(status).toHaveAttribute('role', 'status');
+        await expect(alert).toHaveAttribute('role', 'alert');
+        // The live regions stay mounted; only their text changes.
+        await expect(status).toHaveText('');
+        await privacyBox(page).uncheck();
+        await expect(status).toHaveText('Updating what will be sent…');
+        await expect(page.getByTestId('generation-disclosure-send')).toBeDisabled();
+        release();
+        await expect(status).toHaveText('');
+        await expect(page.getByTestId('generation-disclosure-send')).toBeEnabled();
+        fail = true;
+        await privacyBox(page).check();
+        await privacyBox(page).uncheck();
+        await expect(alert).toHaveText('Send is disabled: provider lookup failed');
+        await expect(page.getByTestId('generation-disclosure-send')).toBeDisabled();
+        fail = false;
+        await privacyBox(page).check();
+        await expect(alert).toHaveText('');
+        await expect(status).toHaveText('');
+        await expect(page.getByTestId('generation-disclosure-send')).toBeEnabled();
+        await expect(privacyBox(page)).toBeFocused();
+      });
+    });
+  }
+}
+
+// ---- A superseded response whose body is still decoding is never adopted ----------------------
+
+// Hold the body of one chosen generate request: its headers arrive, its body stays pending
+// until __release() runs. The held stream ignores the abort signal, so the body arrives even
+// though the request was aborted, which is the case the host guards exist for.
+async function installBodyHold(page: Page) {
+  await page.addInitScript(() => {
+    const w = window as any;
+    w.__holdNext = null;
+    const real = window.fetch.bind(window);
+    window.fetch = async (input: any, init?: any) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (url.endsWith('/generateTemplate') && init?.body) {
+        const kind = JSON.parse(init.body).dryRun ? 'dry' : 'real';
+        if (w.__holdNext === kind) {
+          w.__holdNext = null;
+          // Without the signal: the answer arrives even though the page aborted the request.
+          const resp = await real(input, { ...init, signal: undefined });
+          const text = await resp.text();
+          const enc = new TextEncoder();
+          let ctrl: ReadableStreamDefaultController<Uint8Array>;
+          const stream = new ReadableStream<Uint8Array>({ start(c) { ctrl = c; } });
+          w.__release = () => { ctrl.enqueue(enc.encode(text)); ctrl.close(); };
+          return new Response(stream, { status: resp.status, headers: { 'Content-Type': resp.headers.get('Content-Type') || 'application/json' } });
+        }
+      }
+      return real(input, init);
+    };
+  });
+}
+const holdNext = (page: Page, kind: 'dry' | 'real') => page.evaluate((k) => { (window as any).__holdNext = k; }, kind);
+const release = async (page: Page) => {
+  // The held request's answer has to have reached the page before its body can be released.
+  await page.waitForFunction(() => typeof (window as any).__release === 'function');
+  await page.evaluate(() => (window as any).__release());
+};
+
+// A stub whose every answer carries a different value behind the same Placeholders, so which
+// request's legend is on screen can be told.
+async function stubTagged(page: Page, harness: boolean, onReal: (route: Route, n: number) => Promise<void>) {
+  let n = 0;
+  await page.route('**/v1/category/generateTemplate', async (route) => {
+    const body = route.request().postDataJSON();
+    n += 1;
+    if (body?.dryRun) {
+      const d = disclosureFor(body, { harness });
+      d.legend = d.legend.map((e) => ({ ...e, value: `${e.value} [answer ${n}]` }));
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(d) });
+      return;
+    }
+    await onReal(route, n);
+  });
+}
+
+for (const host of hosts) {
+  for (const harness of [true, false]) {
+    test.describe(`Superseded responses (${host} host, ${harness ? 'harness' : 'classic'})`, () => {
+      test('an initial dry run that is superseded while its body decodes is not adopted', async ({ page }) => {
+        await installBodyHold(page);
+        await stubTagged(page, harness, async () => {});
+        await page.goto('/category/new');
+        await ui[host].prompt(page).fill('a header');
+        await holdNext(page, 'dry');
+        await ui[host].button(page).click();
+        // Request B supersedes A (Cmd+Enter in the prompt), and its dialog opens.
+        await supersede(page, host);
+        await expect(dialog(page)).toBeVisible();
+        await page.getByTestId('generation-reveal-toggle').click();
+        await expect(sectionText(page)).toContainText('[answer 2]');
+        await release(page);
+        await page.waitForTimeout(300);
+        // B is intact and A's legend never replaced it.
+        await expect(dialog(page)).toBeVisible();
+        await expect(sectionText(page)).toContainText('[answer 2]');
+        await expect(sectionText(page)).not.toContainText('[answer 1]');
+        expect((await storeState(page)).reveal).toBe(true);
+      });
+
+      test('a redisclosure answer that arrives after its review was replaced is not adopted', async ({ page }) => {
+        await installBodyHold(page);
+        await stubTagged(page, harness, async () => {});
+        await open(page, host);
+        await holdNext(page, 'dry');
+        await privacyBox(page).uncheck();
+        await expect(page.getByTestId('generation-disclosure-redisclosing')).toHaveText('Updating what will be sent…');
+        // Replace the review: Escape, then a fresh Generate opens request B's dialog.
+        await page.keyboard.press('Escape');
+        await expect(dialog(page)).toHaveCount(0);
+        await ui[host].button(page).click();
+        await expect(dialog(page)).toBeVisible();
+        await expect(privacyBox(page)).toBeChecked();
+        await release(page);
+        await page.waitForTimeout(300);
+        // A would have shown real values with privacy off.
+        await expect(privacyBox(page)).toBeChecked();
+        await expect(sectionText(page)).toContainText(NAME_PH);
+        await expect(sectionText(page)).not.toContainText(NAME);
+        await expect(page.getByTestId('generation-disclosure-redisclosing')).toHaveText('');
+        await expect(page.getByTestId('generation-disclosure-send')).toBeEnabled();
+      });
+
+      test('a result whose body is still decoding when its request is superseded is not adopted', async ({ page }) => {
+        await installBodyHold(page);
+        // The result is JSON in both modes (the harness JSON fallback, and classic), so the host decodes the body itself.
+        await stubTagged(page, harness, async (route, n) => {
+          const stale = { ...(host === 'slot' ? slotResult : bundleResult), legend: legend.map((e) => ({ ...e, value: `STALE-${n}` })) };
+          await jsonResult(stale)(route);
+        });
+        await open(page, host);
+        await holdNext(page, 'real');
+        await send(page);
+        await expect(dialog(page)).toHaveCount(0);
+        // Request B supersedes the run whose body is held.
+        await supersede(page, host);
+        await expect(dialog(page)).toBeVisible();
+        await release(page);
+        await page.waitForTimeout(300);
+        // Nothing of A's transcript, legend or draft was adopted behind B's dialog.
+        expect(await hostState(page, host)).toMatchObject({ run: false, records: 0, legend: 0 });
+        await expect(reviewOf(page, host)).toHaveCount(0);
+        await expect(dialog(page)).toBeVisible();
+      });
+    });
+  }
+}
+
+// Start a new request the way the page's own handler does; the bundle host has no keyboard shortcut for it.
+const supersede = (page: Page, host: Host) => page.evaluate(({ id, method }) => {
+  const d = (window as any).Alpine.$data(document.querySelector(`[data-testid="${id}"]`));
+  void d[method]();
+}, host === 'slot' ? { id: 'generate-button-CustomHeader', method: 'generateFromPrompt' } : { id: 'template-bundle-generate-button', method: 'generateBundle' });
+
+const reviewOf = (page: Page, host: Host) => (host === 'slot' ? page.getByTestId('generate-review-CustomHeader') : page.getByTestId('template-bundle-review'));
 
 // The real server: a real dry run, no provider involved. The E2E server is started with a
 // placeholder provider key so the generator exists; a dry run sends nothing.
@@ -486,6 +719,24 @@ test.describe('Privacy mode against the real server (dry run only)', () => {
     await request.put('/v1/admin/settings', { data: { values: {}, reset: ['ai_template_privacy_mode'] } });
   };
   test.afterEach(async ({ request }) => { await resetPrivacySetting(request); });
+
+  // No browser request to the generate routes may be anything but a dry run: such a request
+  // is refused here and fails the test.
+  let notDryRun: string[] = [];
+  test.beforeEach(async ({ page }) => {
+    notDryRun = [];
+    await page.route(/\/v1\/[A-Za-z]+\/generateTemplate(\/finish)?$/, async (route) => {
+      let body: any = null;
+      try { body = route.request().postDataJSON(); } catch { /* not JSON */ }
+      if (body?.dryRun === true) {
+        await route.continue();
+        return;
+      }
+      notDryRun.push(route.request().url());
+      await route.abort();
+    });
+  });
+  test.afterEach(() => { expect(notDryRun, 'requests that were not a dry run').toEqual([]); });
 
   async function openReal(page: Page, apiClient: any, host: Host, secret: string) {
     const category = await apiClient.createCategory(`Privacy ${Date.now()}`);
