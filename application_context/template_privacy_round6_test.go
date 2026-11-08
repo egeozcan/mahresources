@@ -34,6 +34,11 @@ func TestRereadingAnIssuedDateDoesNotRecharge(t *testing.T) {
 	p := NewTemplatePrivacy("rd")
 	when := time.Date(2024, 5, 6, 7, 8, 9, 0, time.UTC)
 	p.Date(when)
+	// An entity also carries zero instants (UpdatedAt), which are present instants
+	// and enrolled once; the baseline is taken after that first read.
+	if _, err := p.Entity(context.Background(), &models.Group{CreatedAt: when}); err != nil {
+		t.Fatal(err)
+	}
 	bytesAfter, valuesAfter, enrolled := p.bytes, len(p.guard.values), len(p.enrolled)
 	p.Date(when)
 	if _, err := p.Entity(context.Background(), &models.Group{CreatedAt: when}); err != nil {
