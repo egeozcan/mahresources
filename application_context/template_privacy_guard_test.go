@@ -11,13 +11,13 @@ import (
 )
 
 func TestACAutomatonFindsOverlappingPatterns(t *testing.T) {
-	a := newACAutomaton()
+	a := newACAutomaton(context.Background())
 	for i, p := range []string{"he", "she", "his", "hers"} {
-		a.add(p, i)
+		a.add(p, i, false)
 	}
 	a.build()
 	var got []int
-	_, err := a.scan(context.Background(), "ushers", false, func(id int) bool { got = append(got, id); return false })
+	_, err := a.scan("ushers", false, func(id int) bool { got = append(got, id); return false })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,12 +31,12 @@ func TestACAutomatonFindsOverlappingPatterns(t *testing.T) {
 }
 
 func TestACAutomatonDuplicatePatternsKeepEveryID(t *testing.T) {
-	a := newACAutomaton()
-	a.add("same", 1)
-	a.add("same", 2)
+	a := newACAutomaton(context.Background())
+	a.add("same", 1, false)
+	a.add("same", 2, false)
 	a.build()
 	seen := map[int]bool{}
-	_, _ = a.scan(context.Background(), "a same b", true, func(id int) bool { seen[id] = true; return false })
+	_, _ = a.scan("a same b", true, func(id int) bool { seen[id] = true; return false })
 	if !seen[1] || !seen[2] {
 		t.Fatalf("both ids must be reported: %v", seen)
 	}

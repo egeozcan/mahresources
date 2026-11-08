@@ -86,8 +86,13 @@ type privacyIssued struct {
 // privacyGuardValue is one guarded value: its lower-cased spellings, and
 // whether readable text already carries it.
 type privacyGuardValue struct {
-	spellings []string
-	exempt    bool
+	// detect are the spellings the payload scan looks for: of the whole value, or
+	// of its first privacyGuardPrefixBytes when it is longer, so a truncated copy
+	// is still found. full are the spellings of the COMPLETE value, which alone
+	// can exempt it: a readable prefix never exempts the rest of a value.
+	detect, full []string
+	long         bool
+	exempt       bool
 }
 
 // TemplatePrivacy is one request's masker and guard. nil means Privacy mode is
