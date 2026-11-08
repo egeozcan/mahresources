@@ -14,7 +14,8 @@
 import { askToConfirm } from './confirmDialog.js';
 import { announceApplied, REVISION_APPLIED_EVENT } from './revisionApplied.js';
 import { draftSegments, draftWarnings } from './templateDraftReview.js';
-import { afterDialogTeardown, returnFocusToGenerate, reviewDisclosure } from './generationDisclosure.js';
+import { withheldFields } from './privacyLegend.js';
+import { afterDialogTeardown, returnFocusToGenerate, makeRedisclose, approvedFields, reviewDisclosure } from './generationDisclosure.js';
 import { runHost } from './templateRun.js';
 
 // One map for all three carriers, not three. Carrier-specific slots (preview,
@@ -766,12 +767,7 @@ export function templateBundle({ carrier } = {}) {
         this._reviewOwner = owner;
         const approval = await reviewDisclosure(disclosure, [bundleGenerate, bundleStatus, bundlePrompt], {
           owner,
-          redisclose: harness ? async (requested, signal) => {
-            const resp = await post({ dryRun: true, ...requested }, { signal });
-            const next = await resp.json().catch(() => null);
-            if (!resp.ok || !next?.groundingHash) throw new Error((next && (next.error || next.Error)) || `Could not update what will be sent (${resp.status}).`);
-            return next;
-          } : null,
+          redisclose: makeRedisclose(post, () => requestId === this._generationRequestId, harness),
         });
         if (this._reviewOwner === owner) this._reviewOwner = null;
         if (requestId !== this._generationRequestId || !approval) return;
@@ -781,8 +777,7 @@ export function templateBundle({ carrier } = {}) {
         afterDialogTeardown().then(() => {
           if (requestId === this._generationRequestId && this.generating) bundleStatus?.focus();
         });
-        const sent = { groundingHash: approval.groundingHash };
-        if (harness) Object.assign(sent, { previewMRQL: approval.previewMRQL, previewPlugins: approval.previewPlugins });
+        const sent = approvedFields(approval, harness);
         let resp;
         let data;
         if (harness) {
@@ -791,16 +786,18 @@ export function templateBundle({ carrier } = {}) {
           if (outcome.kind === 'json') {
             resp = outcome.resp;
             data = await resp.json().catch(() => null);
+            // A body that was still decoding when this request was superseded is not adopted.
+            if (requestId !== this._generationRequestId) return;
             this.adoptJsonResult(resp, data);
           } else if (outcome.kind === 'result') {
             resp = { ok: true, status: 200 };
             data = outcome.data;
-            this.endRun('done', { transcript: data?.transcript, stopReason: data?.stopReason });
+            this.endRun('done', { transcript: data?.transcript, stopReason: data?.stopReason, legend: data?.legend });
           } else {
             const message = outcome.kind === 'error'
               ? (outcome.data?.error || outcome.data?.Error || 'Generation failed.')
               : 'The connection closed before the run finished.';
-            this.endRun(outcome.kind === 'error' ? 'error' : 'closed', { transcript: outcome.data?.transcript, stopReason: outcome.data?.stopReason, error: message });
+            this.endRun(outcome.kind === 'error' ? 'error' : 'closed', { transcript: outcome.data?.transcript, stopReason: outcome.data?.stopReason, legend: outcome.data?.legend, error: message });
             this.notify(message, 'warn');
             return;
           }
@@ -826,13 +823,20 @@ export function templateBundle({ carrier } = {}) {
         // review but blocked from Apply; from a clean reply it is a broken
         // contract and nothing is offered.
         const blocked = [];
+        // Fields Privacy mode withheld never apply, and neither does their pair partner.
+        const withheld = [...withheldFields(data)];
+        for (const field of withheld) {
+          const base = field.endsWith('CSS') ? field.slice(0, -3) : field;
+          for (const name of [base, `${base}CSS`]) if (!blocked.includes(name)) blocked.push(name);
+        }
         for (const field of Object.values(SLOT_FIELDS).filter((name) => !name.endsWith('CSS'))) {
           const htmlPresent = Object.prototype.hasOwnProperty.call(slots, field);
           const cssPresent = Object.prototype.hasOwnProperty.call(slots, `${field}CSS`);
           const malformed = (htmlPresent && typeof slots[field] !== 'string') || (cssPresent && typeof slots[`${field}CSS`] !== 'string');
           if (htmlPresent === cssPresent && !malformed) continue;
           if (!malformed && issues.length) {
-            blocked.push(htmlPresent ? field : `${field}CSS`);
+            const half = htmlPresent ? field : `${field}CSS`;
+            if (!blocked.includes(half)) blocked.push(half);
             continue;
           }
           this.notify(`The model must return ${field} and ${field}CSS together. No changes applied.`, 'warn');
@@ -861,6 +865,7 @@ export function templateBundle({ carrier } = {}) {
           slotIssues,
           snapshot,
           blocked,
+          withheld,
           failedSlots,
         };
         // Display only: Apply depends on the pending draft, never on this text.

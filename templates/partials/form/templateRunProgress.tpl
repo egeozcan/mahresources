@@ -55,6 +55,11 @@
             <details class="rounded border border-stone-200" data-testid="run-transcript-{{ name }}">
                 <summary class="cursor-pointer px-2 py-1 text-xs font-mono text-stone-800 bg-stone-50" x-text="'Transcript (' + run.records.length + ' messages, as sent and received)'"></summary>
                 <div class="px-2 py-1 space-y-1">
+                    <div x-show="run.legend.length" data-testid="run-reveal-wrap-{{ name }}">
+                        <button type="button" @click="toggleRunReveal()" :aria-pressed="run.reveal ? 'true' : 'false'" data-testid="run-reveal-toggle-{{ name }}"
+                                class="px-2 py-1 text-xs font-mono text-stone-700 bg-white border border-stone-300 rounded-md hover:bg-stone-50 aria-pressed:bg-sky-100 aria-pressed:border-sky-700 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">Show real values</button>
+                        <span class="ml-1 text-xs font-mono text-stone-600">Real values stay in this browser and are never sent.</span>
+                    </div>
                     <template x-for="(rec, i) in run.records" :key="i">
                         <details class="rounded border border-stone-100" :data-testid="'run-record-' + i + '-{{ name }}'">
                             <summary class="cursor-pointer px-2 py-0.5 text-xs font-mono text-stone-800">
@@ -64,13 +69,13 @@
                                 <span x-show="rec.stubbed" class="text-stone-600" x-text="' · ' + rec.stubbed"></span>
                             </summary>
                             <template x-for="call in rec.calls" :key="call.id">
-                                <p class="px-2 text-xs font-mono text-stone-700 break-all" x-text="'call ' + call.name + ' ' + call.arguments"></p>
+                                <p class="px-2 text-xs font-mono text-stone-700 break-all"><template x-for="(segment, j) in runSegments('call ' + call.name + ' ' + call.arguments)" :key="j"><span :class="segment.placeholder ? 'rounded-sm bg-sky-100 text-sky-900 outline outline-1 outline-sky-700' : ''" :title="segment.placeholder ? segment.value : null" x-text="segment.text"></span></template></p>
                             </template>
-                            <pre tabindex="0" role="region" :aria-label="'Exact text of message ' + (i + 1)" class="mx-2 my-1 max-h-48 overflow-auto rounded border border-stone-200 bg-stone-50 p-2 text-xs font-mono whitespace-pre-wrap break-all focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-600" :data-testid="'run-record-text-' + i + '-{{ name }}'" x-text="rec.text"></pre>
+                            <pre tabindex="0" role="region" :aria-label="'Exact text of message ' + (i + 1)" class="mx-2 my-1 max-h-48 overflow-auto rounded border border-stone-200 bg-stone-50 p-2 text-xs font-mono whitespace-pre-wrap break-all focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-600" :data-testid="'run-record-text-' + i + '-{{ name }}'"><template x-for="(segment, j) in runSegments(rec.text)" :key="j"><span :class="segment.placeholder ? 'rounded-sm bg-sky-100 text-sky-900 outline outline-1 outline-sky-700' : ''" :title="segment.placeholder ? segment.value : null" x-text="segment.text"></span></template></pre>
                             <template x-if="rec.replayLabel">
                                 <details class="mx-2 mb-1">
                                     <summary class="cursor-pointer text-xs font-mono text-stone-700" x-text="rec.replayLabel"></summary>
-                                    <pre tabindex="0" role="region" :aria-label="'Provider payload of message ' + (i + 1)" class="max-h-48 overflow-auto rounded border border-stone-200 bg-stone-50 p-2 text-xs font-mono whitespace-pre-wrap break-all focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-600" x-text="rec.replayText"></pre>
+                                    <pre tabindex="0" role="region" :aria-label="'Provider payload of message ' + (i + 1)" class="max-h-48 overflow-auto rounded border border-stone-200 bg-stone-50 p-2 text-xs font-mono whitespace-pre-wrap break-all focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-600"><template x-for="(segment, j) in runSegments(rec.replayText)" :key="j"><span :class="segment.placeholder ? 'rounded-sm bg-sky-100 text-sky-900 outline outline-1 outline-sky-700' : ''" :title="segment.placeholder ? segment.value : null" x-text="segment.text"></span></template></pre>
                                 </details>
                             </template>
                         </details>

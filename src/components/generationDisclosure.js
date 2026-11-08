@@ -1,5 +1,6 @@
 import { blockingModal, refuseOverModal } from '../utils/modality.js';
 import { containFocus, focusFirstAvailable } from '../utils/containFocus.js';
+import { cleanLegend, legendSegments } from './privacyLegend.js';
 
 /**
  * The template generation disclosure, shown before a generation request is sent,
@@ -29,9 +30,18 @@ export function registerGenerationDisclosureStore(Alpine) {
     _redisclose: null,
     _seq: 0,
     _controller: null,
-    _confirmed: { previewMRQL: false, previewPlugins: false },
+    _confirmed: { previewMRQL: false, previewPlugins: false, privacyOn: true },
     previewMRQL: false,
     previewPlugins: false,
+    // Privacy mode: ticked by default on every run; the server may lock it on.
+    privacyOn: true,
+    privacyLocked: false,
+    // Whether the disclosure carries a privacy state at all (a server that predates it does not).
+    hasPrivacy: false,
+    // Real values behind the Placeholders. Browser-only: cleared when the dialog settles,
+    // when a re-disclosure replaces the payload, and on an access-denied answer.
+    reveal: false,
+    _harness: false,
     redisclosing: false,
     redisclosureError: '',
     // Where focus goes back on Cancel: the first of these that can take it.
@@ -84,15 +94,30 @@ export function registerGenerationDisclosureStore(Alpine) {
       return this.disclosure?.sections || [];
     },
 
+    get legend() {
+      return cleanLegend(this.disclosure?.legend);
+    },
+
+    // Text split into Placeholder and plain pieces for x-text rendering; with `reveal`
+    // each Placeholder reads "Placeholder = value".
+    segments(text) {
+      return legendSegments(text, this.legend, this.reveal);
+    },
+
+    toggleReveal() {
+      this.reveal = !this.reveal;
+    },
+
     // Send is allowed only when no re-disclosure is in flight or failed: the shown
     // hash must belong to the opt-ins ticked.
     get canSend() {
-      return this.isOpen && !this.redisclosing && !this.redisclosureError;
+      return this.isOpen && !this.redisclosing && !this.redisclosureError && !!this.disclosure?.groundingHash;
     },
 
-    // Harness disclosures carry the opt-ins; classic ones render as before.
+    // Harness disclosures carry the opt-ins; classic ones render as before. Captured at
+    // open so an access-denied answer that clears the payload keeps the controls.
     get harness() {
-      return !!this.disclosure?.optIns;
+      return this._harness;
     },
 
     get tools() {
@@ -135,7 +160,7 @@ export function registerGenerationDisclosureStore(Alpine) {
 
     /**
      * Show `disclosure`. Resolves an immutable { groundingHash, previewMRQL,
-     * previewPlugins } when the reader presses Send, else null (Cancel, Escape,
+     * previewPlugins, privacyOff } when the reader presses Send, else null (Cancel, Escape,
      * cancel(owner)). `owner` is the token cancel(owner) matches; `redisclose`
      * (requested, signal) => Promise<disclosure> repeats the dry run with the
      * frozen request body when an opt-in is toggled. On Cancel focus goes to the
@@ -148,13 +173,14 @@ export function registerGenerationDisclosureStore(Alpine) {
         refuseOverModal(blocker, DISCLOSURE_REFUSED_OVER_DIALOG);
         return Promise.resolve(null);
       }
-      this.disclosure = disclosure;
+      this._takeDisclosure(disclosure);
+      this._harness = !!disclosure?.optIns;
       this._returnTo = Array.isArray(returnTo) ? returnTo : [returnTo];
       this._owner = owner;
       this._redisclose = redisclose;
       this.previewMRQL = !!disclosure?.optIns?.previewMRQL;
       this.previewPlugins = !!disclosure?.optIns?.previewPlugins;
-      this._confirmed = { previewMRQL: this.previewMRQL, previewPlugins: this.previewPlugins };
+      this._confirmed = { previewMRQL: this.previewMRQL, previewPlugins: this.previewPlugins, privacyOn: this.privacyOn };
       this.redisclosing = false;
       this.redisclosureError = '';
       this.isOpen = true;
@@ -163,17 +189,31 @@ export function registerGenerationDisclosureStore(Alpine) {
       });
     },
 
+    // Adopt a disclosure: the payload, the privacy state it echoes, and no reveal.
+    _takeDisclosure(disclosure) {
+      this.disclosure = disclosure;
+      this.reveal = false;
+      const privacy = disclosure?.privacy;
+      this.hasPrivacy = !!privacy && typeof privacy === 'object';
+      this.privacyLocked = this.hasPrivacy && !!privacy.locked;
+      this.privacyOn = this.hasPrivacy ? (!!privacy.on || this.privacyLocked) : false;
+    },
+
     // Toggle an opt-in and repeat the dry run. Only the newest request may change
     // the shown disclosure; older ones are aborted and their answers ignored.
     setOptIn(name, value) {
       if (!this.isOpen || !this._redisclose) return;
-      if (name !== 'previewMRQL' && name !== 'previewPlugins') return;
+      if (name !== 'previewMRQL' && name !== 'previewPlugins' && name !== 'privacyOn') return;
+      if (name === 'privacyOn' && (!this.hasPrivacy || this.privacyLocked)) return;
+      if (name === 'previewPlugins' && value && this.privacyOn) return;
       this[name] = !!value;
+      // Plugin previews are not available in Privacy mode: turning it on turns them off.
+      if (name === 'privacyOn' && this.privacyOn) this.previewPlugins = false;
       const seq = ++this._seq;
       this._controller?.abort();
       const controller = new AbortController();
       this._controller = controller;
-      const requested = { previewMRQL: this.previewMRQL, previewPlugins: this.previewPlugins };
+      const requested = { previewMRQL: this.previewMRQL, previewPlugins: this.previewPlugins, privacyOff: this.hasPrivacy && !this.privacyOn };
       this.redisclosing = true;
       this.redisclosureError = '';
       const stale = () => seq !== this._seq || !this.isOpen;
@@ -191,13 +231,22 @@ export function registerGenerationDisclosureStore(Alpine) {
           if (echoed && (!!echoed.previewMRQL !== requested.previewMRQL || !!echoed.previewPlugins !== requested.previewPlugins)) {
             throw new Error('The server did not apply the options you chose.');
           }
-          this.disclosure = next;
-          this._confirmed = requested;
+          if (this.hasPrivacy && (!next.privacy || !!next.privacy.on !== !requested.privacyOff)) {
+            throw new Error('The server did not apply the Privacy mode you chose.');
+          }
+          this._takeDisclosure(next);
+          this._confirmed = { previewMRQL: requested.previewMRQL, previewPlugins: requested.previewPlugins, privacyOn: !requested.privacyOff };
           this.redisclosing = false;
         })
         .catch((err) => {
           if (stale()) return;
           this.redisclosing = false;
+          // Access was denied: nothing the earlier payload held, its legend included,
+          // may stay on screen.
+          if (err?.status === 403) {
+            this.disclosure = null;
+            this.reveal = false;
+          }
           this.redisclosureError = err?.message || 'Could not update what will be sent.';
         });
     },
@@ -208,6 +257,7 @@ export function registerGenerationDisclosureStore(Alpine) {
         groundingHash: this.disclosure.groundingHash,
         previewMRQL: this._confirmed.previewMRQL,
         previewPlugins: this._confirmed.previewPlugins,
+        privacyOff: this.hasPrivacy && !this._confirmed.privacyOn,
       }));
     },
 
@@ -228,6 +278,8 @@ export function registerGenerationDisclosureStore(Alpine) {
       const returnTo = this._returnTo;
       this.isOpen = false;
       this._resolve = null;
+      this.disclosure = null;
+      this.reveal = false;
       this._returnTo = [];
       this._owner = null;
       this._redisclose = null;
@@ -299,6 +351,34 @@ export function reviewDisclosure(disclosure, returnTo, options = {}) {
     return Promise.resolve(null);
   }
   return store.open(disclosure, returnTo, options);
+}
+
+/**
+ * The re-disclosure callback both hosts hand to the store: repeat the dry run with the
+ * frozen body plus the requested options (`privacyOff` always, the preview opt-ins in
+ * harness mode only). `current()` is the host's request-identity check; it runs again
+ * after the body is decoded, so a superseded answer's legend is never adopted.
+ */
+export function makeRedisclose(post, current, harness) {
+  return async (requested, signal) => {
+    const extra = harness ? requested : { privacyOff: requested.privacyOff };
+    const resp = await post({ dryRun: true, ...extra }, { signal });
+    const next = await resp.json().catch(() => null);
+    if (!current()) throw new DOMException('Superseded', 'AbortError');
+    if (!resp.ok || !next?.groundingHash) {
+      const err = new Error((next && (next.error || next.Error)) || `Could not update what will be sent (${resp.status}).`);
+      err.status = resp.status;
+      throw err;
+    }
+    return next;
+  };
+}
+
+/** The approval fields the real request carries, for either mode. */
+export function approvedFields(approval, harness) {
+  const sent = { groundingHash: approval.groundingHash, privacyOff: !!approval.privacyOff };
+  if (harness) Object.assign(sent, { previewMRQL: approval.previewMRQL, previewPlugins: approval.previewPlugins });
+  return sent;
 }
 
 /** Settle the review `owner` opened, if it is still the open one. */
