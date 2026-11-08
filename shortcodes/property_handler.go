@@ -1,6 +1,7 @@
 package shortcodes
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -32,6 +33,7 @@ func RenderPropertyShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
 	var text string
 	if ok {
 		text = formatPropertyValue(field, sc.Attrs["format"], sc.Attrs["layout"])
+		observeFormattedProperty(ctx, field, text)
 		// A Description's template comments hide wherever it is shown, here
 		// included (and in the default MRQL cards, which read it through this).
 		if path == "Description" || strings.HasSuffix(path, ".Description") {
@@ -133,6 +135,73 @@ func formatPropertyValue(v reflect.Value, format, layout string) string {
 	}
 
 	return formatFieldValue(v)
+}
+
+type scalarFormatObserverKey struct{}
+
+// WithScalarFormatObserver returns a context whose renders report, to observe,
+// the text that [property], [meta inline], [item] and inline [mrql value=] make
+// from a number or a time.Time (humanised byte sizes, custom date layouts).
+// Strings are never reported. Privacy mode uses it to register that text as
+// readable: in a masked render the only numbers are preserved ones and the only
+// times are the stand-in.
+func WithScalarFormatObserver(ctx context.Context, observe func(string)) context.Context {
+	return context.WithValue(ctx, scalarFormatObserverKey{}, observe)
+}
+
+func scalarFormatObserverFrom(ctx context.Context) func(string) {
+	if ctx == nil {
+		return nil
+	}
+	f, _ := ctx.Value(scalarFormatObserverKey{}).(func(string))
+	return f
+}
+
+// observeFormattedProperty reports text when v is a number or a time.Time.
+func observeFormattedProperty(ctx MetaShortcodeContext, v reflect.Value, text string) {
+	if ctx.scalarObserver == nil || text == "" {
+		return
+	}
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return
+		}
+		v = v.Elem()
+	}
+	if !v.IsValid() {
+		return
+	}
+	switch v.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64, reflect.Bool:
+		ctx.scalarObserver(text)
+		return
+	}
+	if v.CanInterface() {
+		if _, ok := v.Interface().(time.Time); ok {
+			ctx.scalarObserver(text)
+		}
+	}
+}
+
+// formatJSONScalarObserved is formatJSONScalar for a render: it reports the
+// text made from a number, a boolean, or a string parsed as a time.
+func formatJSONScalarObserved(ctx MetaShortcodeContext, v any, format, layout string) string {
+	text := formatJSONScalar(v, format, layout)
+	if ctx.scalarObserver == nil || text == "" || v == nil {
+		return text
+	}
+	if s, ok := v.(string); ok {
+		if format == "date" || format == "datetime" || format == "time" || layout != "" {
+			if _, parsed := parseTimeString(s); parsed {
+				ctx.scalarObserver(text)
+			}
+		}
+		return text
+	}
+	ctx.scalarObserver(text)
+	return text
 }
 
 // formatScalarValue is the formatting entry point for inline [mrql value=]. It

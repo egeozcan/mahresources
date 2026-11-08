@@ -70,13 +70,28 @@ const (
 	settingTemplateMaxTurns       = "ai_template_max_turns"
 	settingTemplateRunDeadline    = "ai_template_run_deadline"
 	settingTemplateRunTokenBudget = "ai_template_run_token_budget"
+	settingTemplatePrivacyMode    = "ai_template_privacy_mode"
+)
+
+// Values of ai_template_privacy_mode.
+const (
+	TemplatePrivacyModePerRun = "per-run"
+	TemplatePrivacyModeAlways = "always"
 )
 
 func addAIHarnessSettingSpecs(specs map[string]SettingSpec) {
 	specs[settingTemplateGenerationMode] = SettingSpec{Key: settingTemplateGenerationMode, Label: "template generation mode", Description: "harness runs a tool-calling Generation run; classic keeps the single-call draft with repair and fan-out.", Group: GroupAI, Type: SettingTypeString, StringValidator: validateTemplateGenerationMode}
+	specs[settingTemplatePrivacyMode] = SettingSpec{Key: settingTemplatePrivacyMode, Label: "template privacy mode", Description: "per-run lets each generation choose Privacy mode in its Disclosure (on by default); always requires it and refuses a request that turns it off.", Group: GroupAI, Type: SettingTypeString, StringValidator: validateTemplatePrivacyMode}
 	specs[settingTemplateMaxTurns] = SettingSpec{Key: settingTemplateMaxTurns, Label: "template run max turns", Description: "Turns a Generation run may take, 1 to 20.", Group: GroupAI, Type: SettingTypeInt, MinNumeric: 1, MaxNumeric: 20}
 	specs[settingTemplateRunDeadline] = SettingSpec{Key: settingTemplateRunDeadline, Label: "template run deadline", Description: "Wall-clock limit of a Generation run, 30s to 15m.", Group: GroupAI, Type: SettingTypeDuration, MinNumeric: int64(30 * time.Second), MaxNumeric: int64(15 * time.Minute)}
 	specs[settingTemplateRunTokenBudget] = SettingSpec{Key: settingTemplateRunTokenBudget, Label: "template run token budget", Description: "Token budget of a Generation run, 100000 to 2000000; cached prompt tokens count a quarter.", Group: GroupAI, Type: SettingTypeInt, MinNumeric: 100000, MaxNumeric: 2000000}
+}
+
+func validateTemplatePrivacyMode(value string) error {
+	if value == TemplatePrivacyModePerRun || value == TemplatePrivacyModeAlways {
+		return nil
+	}
+	return fmt.Errorf("privacy mode must be per-run or always")
 }
 
 func validateTemplateGenerationMode(value string) error {
@@ -116,6 +131,7 @@ func AddAIGenerationDefaults(values map[string]any, boot TemplateGenerationConfi
 		boot.Model = DefaultDeepSeekMRQLGenerationModel
 	}
 	values[settingTemplateGenerationMode] = TemplateGenerationModeHarness
+	values[settingTemplatePrivacyMode] = TemplatePrivacyModePerRun
 	values[settingTemplateMaxTurns] = DefaultTemplateMaxTurns
 	values[settingTemplateRunDeadline] = DefaultTemplateRunDeadline
 	values[settingTemplateRunTokenBudget] = DefaultTemplateRunTokenBudget
@@ -320,6 +336,7 @@ func (g *runtimeAIGeneration) templateGenerator() (TemplateGenerationPrep, error
 		return TemplateGenerationPrep{}, ErrTemplateGenerationNotConfigured
 	}
 	mode, _ := values[settingTemplateGenerationMode].(string)
+	privacyMode, _ := values[settingTemplatePrivacyMode].(string)
 	if mode != TemplateGenerationModeClassic {
 		if newTemplateConversationProvider == nil {
 			return TemplateGenerationPrep{}, ErrTemplateGenerationNotConfigured
@@ -335,7 +352,7 @@ func (g *runtimeAIGeneration) templateGenerator() (TemplateGenerationPrep, error
 		}
 		gen := NewTemplateHarnessGenerator(conv, cfg).(*defaultTemplateGenerator)
 		gen.slots = g.slots
-		return TemplateGenerationPrep{GenerationMode: TemplateGenerationModeHarness, Generator: gen}, nil
+		return TemplateGenerationPrep{GenerationMode: TemplateGenerationModeHarness, Generator: gen, PrivacyMode: privacyMode}, nil
 	}
 	provider := NewGenerationTemplateDraftProvider(p.provider, p.key, p.model, g.client)
 	if g.wrapDraft != nil {
@@ -343,7 +360,7 @@ func (g *runtimeAIGeneration) templateGenerator() (TemplateGenerationPrep, error
 	}
 	gen := NewTemplateGenerator(provider, p.template).(*defaultTemplateGenerator)
 	gen.slots = g.slots
-	return TemplateGenerationPrep{GenerationMode: TemplateGenerationModeClassic, Generator: gen}, nil
+	return TemplateGenerationPrep{GenerationMode: TemplateGenerationModeClassic, Generator: gen, PrivacyMode: privacyMode}, nil
 }
 
 // templateConversationProvider builds the harness-mode (tool-calling) provider

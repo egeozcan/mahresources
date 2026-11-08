@@ -59,6 +59,7 @@ func (g *defaultTemplateGenerator) discloseHarness(ctx context.Context, in Templ
 	fields, required, cssAdditions := templateRunFieldsOf(in)
 	profile := g.config.profileFor(templateCallKind(in))
 	sections := buildTemplateRunSections(in, prompt, fields, required, cssAdditions, settings)
+	registerRunSkeleton(in.Privacy, g.conversation, profile.Model, TemplateRunToolSpecs())
 	plan := &harnessPlan{
 		fields: fields, required: required, cssAdditions: cssAdditions,
 		sections: sections,
@@ -133,6 +134,8 @@ type harnessRun struct {
 	pendingRecords []TemplateTranscriptRecord
 	// unsentResults are transcript indexes of Tool results not yet sent.
 	unsentResults []int
+	privacy       *TemplatePrivacy
+	undo          *commitUndo
 	turn          int
 	used          int
 	plainTexts    int
@@ -142,12 +145,15 @@ type harnessRun struct {
 
 func (g *defaultTemplateGenerator) runHarness(ctx context.Context, request templateRequest) (*TemplateGenerationResult, error) {
 	plan := request.run
+	// The transport guard reads the masker from the context the provider call runs on.
+	ctx = WithTemplatePrivacy(ctx, request.in.Privacy)
 	runCtx, cancel := context.WithTimeout(ctx, plan.settings.Deadline)
 	defer cancel()
 	r := &harnessRun{
 		g: g, reqCtx: ctx, runCtx: runCtx, in: request.in, plan: plan, env: request.in.Run, sink: request.in.Run.Sink,
 		subs:       newTemplateRunSubmissions(request.in, plan.cssAdditions),
 		fieldNames: map[string]bool{},
+		privacy:    request.in.Privacy,
 	}
 	r.deadlineAt, _ = runCtx.Deadline()
 	for _, f := range plan.fields {
@@ -274,6 +280,7 @@ func (r *harnessRun) admit(turn int, reason *string) (ConversationRequest, int, 
 // attempted (commitPending), so a Turn that budget admission refuses leaves no
 // instruction in a transcript that claims to list what was sent.
 func (r *harnessRun) appendInstruction(turn int, text string) {
+	r.privacy.Keep(text)
 	r.msgs = append(r.msgs, runMessage{msg: ConversationMessage{Role: "user", Text: text}, turn: turn})
 	r.pendingRecords = append(r.pendingRecords, TemplateTranscriptRecord{Turn: turn, Kind: TemplateTranscriptInstruction, Text: text, Bytes: len(text)})
 }
@@ -294,6 +301,8 @@ type stubCommit struct {
 // instruction records, and the stubs with the Turn they started in. Building a
 // tentative request touches none of it.
 func (r *harnessRun) commitPending(turn int, stubs []stubCommit) {
+	undo := &commitUndo{recStart: len(r.transcript), results: append([]int(nil), r.unsentResults...)}
+	r.undo = undo
 	for _, rec := range r.pendingRecords {
 		rec.Sent = true
 		r.record(rec)
@@ -309,7 +318,37 @@ func (r *harnessRun) commitPending(turn int, stubs []stubCommit) {
 		if meta.stub == "" {
 			meta.stub = s.text
 			r.transcript[meta.transcriptIdx].StubbedFrom = turn
+			undo.stubs = append(undo.stubs, s)
 		}
+	}
+}
+
+// commitUndo remembers what commitPending marked as sent, so a request the
+// privacy guard refused can be taken back: the Transcript must never claim a
+// blocked request was sent.
+type commitUndo struct {
+	recStart int
+	results  []int
+	stubs    []stubCommit
+}
+
+// rollbackCommit marks the refused Turn's records sent:false and reverts a stub
+// first written in that Turn.
+func (r *harnessRun) rollbackCommit() {
+	u := r.undo
+	if u == nil {
+		return
+	}
+	for i := u.recStart; i < len(r.transcript); i++ {
+		r.transcript[i].Sent = false
+	}
+	for _, idx := range u.results {
+		r.transcript[idx].Sent = false
+	}
+	for _, s := range u.stubs {
+		meta := &r.msgs[s.msg].results[s.result]
+		r.transcript[meta.transcriptIdx].StubbedFrom = 0
+		meta.stub = ""
 	}
 }
 
@@ -330,7 +369,7 @@ func (r *harnessRun) outgoing(turn int) ([]ConversationMessage, []stubCommit) {
 				meta := r.msgs[i].results[j]
 				text := meta.stub
 				if text == "" && meta.turn < turn-templateRunStubRetention {
-					text = fmt.Sprintf("%s result, %d bytes, superseded", meta.label, len(results[j].Text))
+					text = r.privacy.Keep(fmt.Sprintf("%s result, %d bytes, superseded", meta.label, len(results[j].Text)))
 					stubs = append(stubs, stubCommit{msg: i, result: j, text: text})
 				}
 				if text != "" {
@@ -409,6 +448,27 @@ func (r *harnessRun) callProvider(req ConversationRequest, commit func()) (Conve
 	return resp, nil
 }
 
+// failPrivacy ends a run whose request the guard refused. The request was not
+// sent, so its records go back to sent:false. Nothing is released as a Draft,
+// even when the run already has submissions: a Draft built before the leak
+// would be safe, but it would hide a bug, so the run fails loudly. The
+// transcript and legend are released only if access still stands.
+func (r *harnessRun) failPrivacy(cause error) (*TemplateGenerationResult, error) {
+	r.rollbackCommit()
+	if err := r.reqCtx.Err(); err != nil {
+		return nil, err
+	}
+	finalCtx, cancel := context.WithTimeout(r.reqCtx, templateRunFinalCheckTimeout)
+	defer cancel()
+	if err := r.checkAccess(finalCtx); err != nil {
+		if r.reqCtx.Err() != nil {
+			return nil, r.reqCtx.Err()
+		}
+		return nil, &TemplateRunError{Err: ErrTemplateRunAccessChanged}
+	}
+	return nil, &TemplateRunError{Err: cause, StopReason: TemplateStopPrivacyGuard, Transcript: r.transcript, Legend: r.privacy.Legend()}
+}
+
 // callError remembers which call context a provider failure happened under.
 type callError struct {
 	ctx context.Context
@@ -421,6 +481,9 @@ func (e callError) Unwrap() error { return e.err }
 func (r *harnessRun) exitOnCallError(err error) (*TemplateGenerationResult, error) {
 	if errors.Is(err, ErrTemplateRunAccessChanged) {
 		return nil, &TemplateRunError{Err: ErrTemplateRunAccessChanged}
+	}
+	if errors.Is(err, ErrTemplatePrivacyLeak) {
+		return r.failPrivacy(err)
 	}
 	if r.reqCtx.Err() != nil {
 		return nil, r.reqCtx.Err()
@@ -455,6 +518,7 @@ func (r *harnessRun) recordAssistant(turn int, resp ConversationResponse, took t
 		rec.Calls = append(rec.Calls, TemplateTranscriptCall{ID: c.ID, Name: c.Name, Arguments: c.Arguments})
 	}
 	r.record(rec)
+	r.privacy.KeepModelOutput(resp.Text, calls, resp.Replay)
 	r.msgs = append(r.msgs, runMessage{msg: ConversationMessage{Role: "assistant", Text: resp.Text, Calls: calls, Replay: resp.Replay}, turn: turn})
 }
 
@@ -464,6 +528,9 @@ type callOutcome struct {
 	isError bool
 	took    time.Duration
 	submit  *pendingSubmit
+	// readable marks a text the loop itself wrote (a fixed failure text, a
+	// submit result): it carries no entity data and joins the guard's corpus.
+	readable bool
 }
 
 // pendingSubmit is a validated submit call, committed in call order after
@@ -489,15 +556,15 @@ func (r *harnessRun) handleReply(turn int, final bool, resp ConversationResponse
 	for i, call := range resp.Calls {
 		switch {
 		case i >= TemplateRunMaxCallsPerTurn:
-			outcomes[i] = callOutcome{text: templateRunTooManyText, isError: true}
+			outcomes[i] = callOutcome{text: templateRunTooManyText, isError: true, readable: true}
 		case call.Incomplete:
-			outcomes[i] = callOutcome{text: templateRunCutOffText, isError: true}
+			outcomes[i] = callOutcome{text: templateRunCutOffText, isError: true, readable: true}
 		case call.Malformed:
-			outcomes[i] = callOutcome{text: templateRunMalformedText, isError: true}
+			outcomes[i] = callOutcome{text: templateRunMalformedText, isError: true, readable: true}
 		case !isCatalogueTool(call.Name):
-			outcomes[i] = callOutcome{text: "unknown Tool; the Tools are listed in the request", isError: true}
+			outcomes[i] = callOutcome{text: "unknown Tool; the Tools are listed in the request", isError: true, readable: true}
 		case final && call.Name != ToolSubmit:
-			outcomes[i] = callOutcome{text: templateRunNotRunFinalText, isError: true}
+			outcomes[i] = callOutcome{text: templateRunNotRunFinalText, isError: true, readable: true}
 		case call.Name == ToolSubmit:
 			wg.Add(1)
 			go func(i int, call ToolCall) {
@@ -539,6 +606,9 @@ func (r *harnessRun) handleReply(turn int, final bool, resp ConversationResponse
 	completeCall := false
 	for i, o := range outcomes {
 		call := resp.Calls[i]
+		if o.readable {
+			r.privacy.Keep(o.text)
+		}
 		results[i] = ToolResult{CallID: call.ID, Text: o.text, IsError: o.isError}
 		idx := r.record(TemplateTranscriptRecord{
 			Turn: turn, Kind: TemplateTranscriptToolResult, Text: o.text, CallID: call.ID, IsError: o.isError,
@@ -598,7 +668,7 @@ func (r *harnessRun) runTool(turn int, call ToolCall, snapshot map[string]string
 		out.took = time.Since(start)
 		if p := recover(); p != nil {
 			r.g.config.Logf("template generation: Tool %s panicked: %v", call.Name, p)
-			out.text, out.isError = "the Tool failed", true
+			out.text, out.isError, out.readable = "the Tool failed", true, true
 		}
 	}()
 	timeout := r.g.toolTimeoutOrDefault()
@@ -612,9 +682,9 @@ func (r *harnessRun) runTool(turn int, call ToolCall, snapshot map[string]string
 	})
 	switch {
 	case errors.Is(err, context.DeadlineExceeded) || (err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded)):
-		return callOutcome{text: "the Tool timed out", isError: true}
+		return callOutcome{text: "the Tool timed out", isError: true, readable: true}
 	case err != nil:
-		return callOutcome{text: "the Tool failed", isError: true}
+		return callOutcome{text: "the Tool failed", isError: true, readable: true}
 	}
 	return callOutcome{text: result.Text, isError: result.IsError}
 }
@@ -627,25 +697,39 @@ func (r *harnessRun) validateSubmit(call ToolCall) (out callOutcome) {
 		out.took = time.Since(start)
 		if p := recover(); p != nil {
 			r.g.config.Logf("template generation: submit panicked: %v", p)
-			out = callOutcome{text: "the Tool failed", isError: true, took: time.Since(start)}
+			out = callOutcome{text: "the Tool failed", isError: true, took: time.Since(start), readable: true}
 		}
 	}()
 	args, err := parseSubmitArgs(call.Arguments, r.fieldNames, r.plan.fields)
 	if err != nil {
-		return callOutcome{text: submitErrorText(err.Error()), isError: true}
+		return callOutcome{text: submitErrorText(err.Error()), isError: true, readable: true}
 	}
 	ctx, cancel := context.WithTimeout(r.runCtx, r.g.toolTimeoutOrDefault())
 	defer cancel()
 	pending := &pendingSubmit{fields: args.fields, issues: map[string][]shortcodes.LintIssue{}, explanation: args.explanation, done: args.done}
+	var refusals []string
 	for _, field := range r.plan.fields {
 		value, ok := args.fields[field]
 		if !ok {
 			continue
 		}
+		// A Placeholder in a Draft is refused, not linted (P11): an invalid
+		// submission is still committed, and a Placeholder must never reach one.
+		if placeholder, bad := r.privacy.ContainsIssued(value); bad {
+			refusals = append(refusals, fmt.Sprintf("%s refused: contains the Placeholder %s; reference the field with [meta]/[property] instead", field, placeholder))
+			continue
+		}
 		pending.order = append(pending.order, field)
 		pending.issues[field] = r.subs.validateSubmission(ctx, field, value)
 	}
-	return callOutcome{text: submitResultText(pending.order, pending.issues, args.explanation), submit: pending}
+	text := submitResultText(pending.order, pending.issues, args.explanation)
+	if len(refusals) > 0 {
+		// The call's done is ignored; its other fields commit normally.
+		pending.done = false
+		text += "\n" + strings.Join(refusals, "\n")
+		return callOutcome{text: text, isError: true, submit: pending, readable: true}
+	}
+	return callOutcome{text: text, submit: pending, readable: true}
 }
 
 // conclude ends the run. Before anything is released (a Draft, a recovered
@@ -669,7 +753,7 @@ func (r *harnessRun) conclude(stop string, cause error) (*TemplateGenerationResu
 		if cause == nil {
 			cause = fmt.Errorf("%w: the model returned no draft", ErrTemplateGenerationProvider)
 		}
-		return nil, &TemplateRunError{Err: cause, StopReason: stop, Transcript: r.transcript}
+		return nil, &TemplateRunError{Err: cause, StopReason: stop, Transcript: r.transcript, Legend: r.privacy.Legend()}
 	}
 	result := r.buildResult(finalCtx, stop, cause)
 	// A cancelled lookup counts as existing for the linter, so the Draft built
@@ -684,7 +768,7 @@ func (r *harnessRun) conclude(stop string, cause error) (*TemplateGenerationResu
 // field, re-linted with the one validator.
 func (r *harnessRun) buildResult(ctx context.Context, stop string, cause error) *TemplateGenerationResult {
 	in := r.in
-	result := &TemplateGenerationResult{Target: in.Target, StopReason: stop, Transcript: r.transcript}
+	result := &TemplateGenerationResult{Target: in.Target, StopReason: stop, Transcript: r.transcript, Legend: r.privacy.Legend()}
 	var issues []shortcodes.LintIssue
 	issuesByField := map[string][]shortcodes.LintIssue{}
 	submitted := map[string]bool{}
@@ -731,6 +815,18 @@ func (r *harnessRun) buildResult(ctx context.Context, stop string, cause error) 
 			result.Content = r.subs.resolved(field)
 			issues = append(issues, issuesByField[field]...)
 		}
+	}
+
+	// Backstop for P11: submit refuses a Placeholder, so this should never fire.
+	var bad []string
+	for _, field := range result.Submitted {
+		if _, found := r.privacy.ContainsIssued(r.subs.resolved(field)); found {
+			bad = append(bad, field)
+		}
+	}
+	if len(bad) > 0 {
+		withholdFields(result, bad, "")
+		issues = append(issues, result.Issues...)
 	}
 
 	if r.plan.required {

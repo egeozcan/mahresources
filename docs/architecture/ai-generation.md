@@ -129,6 +129,20 @@ A provider/model/options change between review and generation requires another
 review; credential rotation adds no secret material to the hash. A single
 generation's later calls keep the reviewed snapshot.
 
+## Privacy mode in classic mode
+
+Classic mode gets the same masking as harness mode (see "Privacy mode" in
+`template-generation-runs.md`). The handler builds the masker before sampling, so the
+samples, the category description, the starting names and the partial descriptions
+reach the provider as Placeholders, and `postPayload` guards every classic call. The
+planning reply, the previous draft and the repair issue lines are the model's own
+output and the server's messages, so they join the readable corpus before a repair
+call. A guard refusal in the first call, the repair call or one fan-out section is
+fatal: repair does not fall back to the original draft, a fan-out cancels its sibling
+sections, and the answer is HTTP 500 with no Draft. A draft containing a Placeholder
+fails validation (so repair runs), and a field that still has one is returned empty
+and listed in `withheldFields`.
+
 ## Verification
 
 `ai_provider_client_test.go` pins destinations, auth, options, text blocks,

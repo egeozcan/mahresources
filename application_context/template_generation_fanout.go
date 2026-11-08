@@ -218,11 +218,12 @@ func buildFanOutPromptSections(in TemplateGenerationInput, userPrompt string, fa
 	shared.add(promptRoleSystem, "system", "System prompt", true, templateAuthoringSystemPrompt)
 	addTemplateReferencePrefix(&shared, in)
 	shared.add(promptRoleUser, "carrier", "Carrier runtime", true, carrierRuntimeLines(in.EntityType)...)
-	shared.add(promptRoleUser, "identity", "Category", false, identityLines(in.CategoryName, in.CategoryDescription)...)
+	shared.add(promptRoleUser, "identity", "Category", false, identityLinesFor(in)...)
 	shared.add(promptRoleUser, "layout", "Detail page layout", false, DescribeSectionConfig(in.EntityType, in.SectionConfig, schemaShowsFields(in.MetaSchema))...)
 	shared.add(promptRoleUser, "schema", "Metadata schema", false, schemaLines(in.MetaSchema)...)
 	shared.add(promptRoleUser, "samples", "Sample values", false, DescribeTemplateSamples(in.Samples, in.Target, in.SamplesArePreview)...)
 	shared.add(promptRoleUser, "request", "Your request", false, "User request: "+userPrompt)
+	shared = insertPrivacySection(in, shared)
 	for i := range shared {
 		shared[i].Shared = true
 	}
@@ -252,6 +253,7 @@ func buildFanOutPromptSections(in TemplateGenerationInput, userPrompt string, fa
 			p[j].Call = i + 1
 		}
 	}
+	registerReadableSections(in, p)
 	return p
 }
 
@@ -325,10 +327,17 @@ func (g *defaultTemplateGenerator) discloseFanOut(in TemplateGenerationInput, pr
 		sections = append(sections, templateRepairSectionsAt(len(fan.bases)+1)...)
 	}
 	plan, pair := g.config.profileFor(TemplateKindPlan), g.config.profileFor(TemplateKindPair)
+	in.Privacy.Keep(plan.Model)
+	in.Privacy.Keep(pair.Model)
+	registerSkeletonOf(in.Privacy, g.provider)
+	if !g.config.RepairDisabled {
+		registerReadableSections(in, templateRepairSectionsAt(len(fan.bases)+1))
+	}
 	disclosure := g.newDisclosure([]TemplateDisclosedProfile{
 		{Kind: TemplateKindPlan, Model: plan.Model, Thinking: plan.Thinking, MaxTokens: plan.MaxTokens, MaxCalls: 1},
 		{Kind: TemplateKindPair, Model: pair.Model, Thinking: pair.Thinking, MaxTokens: pair.MaxTokens, MaxCalls: maxPairCalls},
 	}, sections)
+	applyPrivacyDisclosure(disclosure, in)
 	return templateRequest{in: in, prompt: prompt, disclosure: disclosure, fan: fan}
 }
 
@@ -389,6 +398,7 @@ func (g *defaultTemplateGenerator) generateFanOut(ctx context.Context, request t
 	if planResp.FinishReason == "length" {
 		return nil, fmt.Errorf("%w: the design plan was cut off", ErrTemplateGenerationProvider)
 	}
+	in.Privacy.Keep(planResp.Content)
 	plan, err := parseTemplateDesignPlan(planResp.Content, in)
 	if err != nil {
 		return nil, err
@@ -407,6 +417,10 @@ func (g *defaultTemplateGenerator) generateFanOut(ctx context.Context, request t
 	}
 	continuation := strings.Join(continuationParts, "\n")
 	planText := plan.planJSON()
+	in.Privacy.Keep(planText)
+	// A guard refusal in one section cancels its siblings and returns no Draft.
+	ctx, cancelPairs := context.WithCancel(ctx)
+	defer cancelPairs()
 	outcomes := make([]pairOutcome, len(fill))
 	inFlight := make(chan struct{}, templateFanOutInFlight)
 	var wg sync.WaitGroup
@@ -434,9 +448,17 @@ func (g *defaultTemplateGenerator) generateFanOut(ctx context.Context, request t
 				return
 			}
 			outcomes[i] = g.generatePair(ctx, in, fan, sections, base, planText, pairProfile, continuation)
+			if errors.Is(outcomes[i].err, ErrTemplatePrivacyLeak) {
+				cancelPairs()
+			}
 		}(i, base)
 	}
 	wg.Wait()
+	for _, outcome := range outcomes {
+		if errors.Is(outcome.err, ErrTemplatePrivacyLeak) {
+			return nil, outcome.err
+		}
+	}
 
 	result, err := assembleFanOut(in, fan, plan, outcomes)
 	g.logFanOut(in, tally, len(fill), result, err, g.now().Sub(started))
@@ -478,7 +500,10 @@ func (g *defaultTemplateGenerator) generatePair(ctx context.Context, in Template
 	if err != nil {
 		return pairOutcome{base: base, err: err}
 	}
-	draft, repair := g.repair(ctx, pair, profile, req, resp, draft, continuation, started)
+	draft, repair, err := g.repair(ctx, pair, profile, req, resp, draft, continuation, started)
+	if err != nil {
+		return pairOutcome{base: base, err: err}
+	}
 	if draft.truncated {
 		return pairOutcome{base: base, repair: repair, failure: templateTruncationMessage, err: fmt.Errorf("%w: the reply was cut off", ErrTemplateGenerationProvider)}
 	}

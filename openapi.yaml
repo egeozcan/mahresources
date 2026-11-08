@@ -4215,13 +4215,27 @@ paths:
                   - previewMRQL, previewPlugins (boolean) — harness mode only, both off by default,
                     both part of the disclosure and so of its groundingHash: previews run [mrql]
                     queries; previews run plugin shortcodes read-only. Classic mode ignores them.
+                  - privacyOff (boolean) — Privacy mode is on unless this is true, in both modes. With
+                    it on, every Entity value read from the library (names, descriptions, Meta values,
+                    tags, owners, URLs, file names and hashes, locations, share tokens, note blocks,
+                    revision labels, dates) is replaced by a Placeholder such as "⟦ab·text 3 · 1 line
+                    · ~50 chars⟧" before anything is sent to the provider. Template source, field names,
+                    the MetaSchema, category and type names and the prompt stay readable. Part of the
+                    disclosure and so of its groundingHash: approving with it on and sending with it off
+                    is a 409. With the administrator setting ai_template_privacy_mode=always (default
+                    per-run), privacyOff is a 400 "Privacy mode is required on this server", a dry run
+                    included. With Privacy mode on, previewPlugins is a 400 "plugin previews are not
+                    available in Privacy mode". Both refusals come before any library read.
 
                 Generation takes two requests. A dry run returns the disclosure: {"mode", "sections":
                 [{"call", "role", "key", "label", "bytes", "text", "constant", "shared"}], "destination":
                 {"endpoint", "host", "profiles": [{"kind", "model", "thinking", "maxTokens", "maxCalls"}]},
                 "transport": {"stream", "responseFormat", "contentType", "authorization"},
-                "continuationRule": {"version", "text"}, "groundingHash"}, plus, in harness mode
-                only, "tools", "caps", "optIns" and "envelope" (described below). "mode" is
+                "continuationRule": {"version", "text"}, "groundingHash"}, plus "privacy"
+                ({"on", "locked"}, in both modes and part of the hash), "legend" (a list of
+                {"placeholder", "value"} entries, never hashed and present only with Privacy mode on, one
+                entry per spelling so a URL value has two: "⟦tag·url N⟧" and "https://placeholder.invalid/tag-url-N")
+                and, in harness mode only, "tools", "caps", "optIns" and "envelope" (described below). "mode" is
                 "classic" or "harness". "sections" are the system and user messages of the
                 provider calls, split into labelled parts. In classic mode the provider request
                 is built only from them. In harness mode they are the Seed and instructions
@@ -9957,13 +9971,27 @@ paths:
                   - previewMRQL, previewPlugins (boolean) — harness mode only, both off by default,
                     both part of the disclosure and so of its groundingHash: previews run [mrql]
                     queries; previews run plugin shortcodes read-only. Classic mode ignores them.
+                  - privacyOff (boolean) — Privacy mode is on unless this is true, in both modes. With
+                    it on, every Entity value read from the library (names, descriptions, Meta values,
+                    tags, owners, URLs, file names and hashes, locations, share tokens, note blocks,
+                    revision labels, dates) is replaced by a Placeholder such as "⟦ab·text 3 · 1 line
+                    · ~50 chars⟧" before anything is sent to the provider. Template source, field names,
+                    the MetaSchema, category and type names and the prompt stay readable. Part of the
+                    disclosure and so of its groundingHash: approving with it on and sending with it off
+                    is a 409. With the administrator setting ai_template_privacy_mode=always (default
+                    per-run), privacyOff is a 400 "Privacy mode is required on this server", a dry run
+                    included. With Privacy mode on, previewPlugins is a 400 "plugin previews are not
+                    available in Privacy mode". Both refusals come before any library read.
 
                 Generation takes two requests. A dry run returns the disclosure: {"mode", "sections":
                 [{"call", "role", "key", "label", "bytes", "text", "constant", "shared"}], "destination":
                 {"endpoint", "host", "profiles": [{"kind", "model", "thinking", "maxTokens", "maxCalls"}]},
                 "transport": {"stream", "responseFormat", "contentType", "authorization"},
-                "continuationRule": {"version", "text"}, "groundingHash"}, plus, in harness mode
-                only, "tools", "caps", "optIns" and "envelope" (described below). "mode" is
+                "continuationRule": {"version", "text"}, "groundingHash"}, plus "privacy"
+                ({"on", "locked"}, in both modes and part of the hash), "legend" (a list of
+                {"placeholder", "value"} entries, never hashed and present only with Privacy mode on, one
+                entry per spelling so a URL value has two: "⟦tag·url N⟧" and "https://placeholder.invalid/tag-url-N")
+                and, in harness mode only, "tools", "caps", "optIns" and "envelope" (described below). "mode" is
                 "classic" or "harness". "sections" are the system and user messages of the
                 provider calls, split into labelled parts. In classic mode the provider request
                 is built only from them. In harness mode they are the Seed and instructions
@@ -12757,13 +12785,27 @@ paths:
                   - previewMRQL, previewPlugins (boolean) — harness mode only, both off by default,
                     both part of the disclosure and so of its groundingHash: previews run [mrql]
                     queries; previews run plugin shortcodes read-only. Classic mode ignores them.
+                  - privacyOff (boolean) — Privacy mode is on unless this is true, in both modes. With
+                    it on, every Entity value read from the library (names, descriptions, Meta values,
+                    tags, owners, URLs, file names and hashes, locations, share tokens, note blocks,
+                    revision labels, dates) is replaced by a Placeholder such as "⟦ab·text 3 · 1 line
+                    · ~50 chars⟧" before anything is sent to the provider. Template source, field names,
+                    the MetaSchema, category and type names and the prompt stay readable. Part of the
+                    disclosure and so of its groundingHash: approving with it on and sending with it off
+                    is a 409. With the administrator setting ai_template_privacy_mode=always (default
+                    per-run), privacyOff is a 400 "Privacy mode is required on this server", a dry run
+                    included. With Privacy mode on, previewPlugins is a 400 "plugin previews are not
+                    available in Privacy mode". Both refusals come before any library read.
 
                 Generation takes two requests. A dry run returns the disclosure: {"mode", "sections":
                 [{"call", "role", "key", "label", "bytes", "text", "constant", "shared"}], "destination":
                 {"endpoint", "host", "profiles": [{"kind", "model", "thinking", "maxTokens", "maxCalls"}]},
                 "transport": {"stream", "responseFormat", "contentType", "authorization"},
-                "continuationRule": {"version", "text"}, "groundingHash"}, plus, in harness mode
-                only, "tools", "caps", "optIns" and "envelope" (described below). "mode" is
+                "continuationRule": {"version", "text"}, "groundingHash"}, plus "privacy"
+                ({"on", "locked"}, in both modes and part of the hash), "legend" (a list of
+                {"placeholder", "value"} entries, never hashed and present only with Privacy mode on, one
+                entry per spelling so a URL value has two: "⟦tag·url N⟧" and "https://placeholder.invalid/tag-url-N")
+                and, in harness mode only, "tools", "caps", "optIns" and "envelope" (described below). "mode" is
                 "classic" or "harness". "sections" are the system and user messages of the
                 provider calls, split into labelled parts. In classic mode the provider request
                 is built only from them. In harness mode they are the Seed and instructions
