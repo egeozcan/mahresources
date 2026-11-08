@@ -11,15 +11,42 @@ With Privacy mode on, no Entity value read from the database leaves the server i
 any request to an AI provider, in harness or classic mode. It is on by default for
 every run. **Done** means all of the following:
 
-1. An API test seeds entities whose every string field, meta value, tag, owner,
-   relation, note block, hash, location and URL carries a distinctive marker. It
-   drives a harness run through every Tool, including `preview` with `[property]`
-   reads of Hash, Location, OriginalName, URL and ShareToken and an `[mrql]`
-   preview. It captures every outgoing HTTP body at the transport. No marker
-   appears in any body, and Placeholders do.
+1. An API test seeds entities with two kinds of fixture text.
+   - **What it seeds.**
+     - Protected markers in every Entity value: names, descriptions, meta values,
+       tags, owners, relation targets, note blocks, hash, location, URL, share
+       token, partial descriptions, revision labels, and a ContentType carrying
+       parameters.
+     - Separate readable markers in vocabulary: category names, meta keys, template
+       source, partial names and the user's request.
+   - **What it drives.** A scripted harness run through every Tool, using the real
+     wire adapters behind a capturing `http.RoundTripper`.
+     - `preview` with `[property]` reads of Hash, Location, OriginalName, URL and
+       ShareToken.
+     - `[meta]`, `[each]` and `[conditional]`.
+     - An `[mrql]` preview with a nested CustomMRQLResult and an aggregate bucket.
+     - `[mrql saved=…]`.
+     - Full-detail `get_revision`.
+   - **What it asserts.**
+     - No protected marker appears in any body, in raw or JSON-escaped form.
+     - Every readable marker does.
+     - Every scripted Tool call succeeded rather than hiding a failure behind a
+       fixed error.
+     - Placeholders appear, and the legend maps each one back to its marker.
+   - **A determinism test.** Two fresh maskers, given the same data loaded in
+     shuffled association order, build the same Seed bytes.
 2. The same holds for a classic-mode request, including the repair call.
-3. A leak injected below the masking layer stops the run with stop reason
-   `privacy_guard` before that request is sent.
+3. A leak injected below the masking layer stops the run before that request is
+   sent.
+   - **The leak.** The injected value contains a quote, a newline and non-ASCII
+     text, and it reaches the request inside a JSON Tool result.
+   - **Harness mode.** The stop reason is `privacy_guard`, and the Transcript marks
+     that Turn's records `sent:false`.
+   - **Classic mode.** The leak is caught in the first call, in the repair call, and
+     in one fan-out section while a sibling section succeeds. Each case gives
+     HTTP 500 with no Draft.
+   - **No false positive.** A readable Replay leaf and a model identifier that equal
+     a masked value do not trip the guard.
 4. `ai_template_privacy_mode=always` refuses a request that asks for Privacy mode
    off, dry run included. Privacy mode plus `previewPlugins` is refused.
 5. In the editor's Disclosure the Privacy mode box is ticked by default, the Seed
@@ -87,10 +114,15 @@ listed so a reviewer can contest them.
   - The names, `Custom*` fields, `MetaSchema` and `SectionConfig` of Category,
     ResourceCategory and NoteType.
   - The name of a GroupRelationType.
-  - `Resource.ContentType`, which the model needs in order to choose between image
-    and video markup.
+  - `Resource.ContentType`, restricted to its structure. The model needs it to
+    choose between image and video markup, but a stored value can come straight
+    from an import (`groupio/apply_import.go`). So it is kept only as lower-case
+    `type/subtype` matching `^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$`,
+    with any parameters dropped. Anything else is masked.
   - A note block's `Type`.
   - Meta keys and JSON keys.
+  - Partial names. A partial's description is an Entity value and is masked, in
+    the Seed's partials block and in `get_partial` alike.
 
   Every other string is masked, Descriptions of taxonomy types included. Masking a
   field by mistake only lowers quality. Keeping one by mistake would be a leak, so
@@ -102,29 +134,70 @@ listed so a reviewer can contest them.
     - every string passed through `Keep`;
     - the system prompt;
     - the Seed sections that carry no entity data;
-    - the results of `get_template`, `get_revision` (its slot content), `diff_revisions`,
-      `get_partial`, `get_shortcode_docs`, `lint`, `check_mrql` and `submit`;
-    - the model's own output: assistant text, call arguments and Replay;
-    - the run's fixed instructions.
+    - the results of `get_template`, `get_revision` (its slot content only),
+      `diff_revisions`, `get_partial` (name and source only),
+      `get_shortcode_docs`, `lint`, `check_mrql` and `submit`;
+    - the model's own output. That is assistant text, plus every decoded string
+      leaf of the call arguments and of Replay. The live Replay bytes are never
+      changed.
+    - the run's fixed instructions;
+    - the trusted request skeleton: the model identifier from the profile, every
+      string in the Tool catalogue (names, descriptions, parameter schemas), and
+      each wire adapter's fixed protocol strings (`roleUser`-style constants,
+      `type` values, `tool_choice` values). Each adapter declares that skeleton
+      list next to the code that writes it. A test builds a request for each adapter
+      with empty message content and asserts that every string leaf it sends is in
+      the corpus. The payload is never registered wholesale.
   - **How the guard checks.** A masked value found in an outgoing body counts as a
     leak only if it is not also in the corpus.
   - **What a miss costs.** A source of readable text that nobody registered can
     only cause a false positive, so the run fails closed, never open.
+  - **Forms of a value.** Tool results are JSON that `MarshalToolJSON` encodes and
+    that then sits inside a message string. So the guard looks for each masked value
+    in three spellings in every string leaf: raw, JSON-string-escaped, and
+    JSON-escaped with HTML escaping (`<` etc.). Corpus entries are stored in the
+    same three spellings. All matching is on `strings.ToLower` forms.
+  - **The algorithm.** One Aho-Corasick automaton over the lower-cased spellings of
+    every masked value of 4 or more runes. It is rebuilt only when a value has been
+    added since the last check, and it scans each string leaf once. Each candidate
+    hit is then checked against the corpus. The automaton is written in the package
+    (about 150 lines, tested), not added as a dependency. A benchmark with 20,000
+    values against a 2 MB payload must stay under 50 ms.
 - **P8. Where the guard runs.** In `generationProviderClient.postPayload`, reached
   through the request context (`WithTemplatePrivacy`).
   - **What it checks.** It decodes the payload and walks every string leaf.
   - **What it reports.** `ErrTemplatePrivacyLeak` names the JSON path of the leaf
     (for example `messages[7].content`), never the value.
-  - **How the run ends.** A harness run stops with the new stop reason
-    `privacy_guard` and returns the transcript as it stood. The request that tripped
-    the guard is not sent.
-  - **Status codes.** HTTP 500 in JSON delivery. On the event stream, an `error`
-    event with status 500.
+  - **Keeping its identity.** Every wrap between the transport and the handler uses
+    `%w`, so `errors.Is(err, ErrTemplatePrivacyLeak)` holds at the top. This
+    includes the conversion in `defaultTemplateGenerator.callProvider`, which today
+    uses `%v`.
+  - **Classic mode.** The error is fatal and is never absorbed:
+    - The repair fallback (which returns the original Draft when repair fails)
+      re-raises it.
+    - Fan-out cancels its sibling sections and returns no Draft.
+  - **How a harness run ends.** It stops with the new stop reason `privacy_guard`,
+    returns no Draft and returns the transcript as it stood. The request that
+    tripped the guard is not sent.
+  - **Transcript bookkeeping.** `admit` commits a Turn's tentative records (and its
+    stubs) before `callProvider`. On a guard failure those records go back to
+    `sent:false`, and a stub first written in that Turn is reverted, so the
+    Transcript never claims a blocked request was sent.
+  - **Status codes.** `classifyTemplateGenerationError` maps the error to HTTP 500
+    with the fixed text "Privacy mode stopped a request that contained an entity
+    value. Nothing was sent". On the event stream it is an `error` event with
+    status 500.
 - **P9. Accessibility of the legend.** Hover-only reveal fails keyboard and
-  touch users. Each Placeholder in the Disclosure sections and the Transcript is a
-  focusable element whose `title` and accessible description give the value. A
-  "Show real values" toggle button swaps every Placeholder for
-  `Placeholder = value` inline.
+  touch users, and making every Placeholder focusable would add hundreds of Tab
+  stops to a dialog whose focus trap enumerates them on each Tab
+  (`src/utils/containFocus.js`).
+  - **Placeholder markup.** Each Placeholder is a non-focusable `<span>` carrying a
+    `title`, which serves mouse users.
+  - **The toggle.** The accessible path for everyone is one "Show real values"
+    toggle button (`aria-pressed`) per surface, one in the Disclosure and one in the
+    Transcript. It swaps every Placeholder for `Placeholder = value` inline.
+  - **Locked and plugin explanations.** The text for the locked box and for the
+    disabled plugin box is associated through `aria-describedby`.
 - **P10. Where the legend appears, and where it doesn't.**
   - **Where.** In the dry-run response (`TemplateDisclosure.Legend`, never hashed),
     in `TemplateGenerationResult.Legend`, and in the error payload alongside the
@@ -148,6 +221,39 @@ listed so a reviewer can contest them.
 - **P13. Concurrency.** Tools of a Turn run in parallel, so the masker is protected
   by a mutex. Numbering order inside a Turn may then vary between runs. Only the
   Seed needs to be deterministic.
+- **P14. Idempotence.** `Text` on an exact Placeholder this masker issued returns it
+  unchanged and records nothing. Text that merely looks like a Placeholder is
+  ordinary text, so the rule never weakens masking. This lets a masked entity pass
+  through `BuildMetaContextForEntity`, whose presentation names derive from the
+  entity graph, and then through `MetaContext` without double-masking.
+- **P15. MRQL in previews under Privacy mode.**
+  - **Saved queries are refused.** `[mrql saved=…]` (and the `saved` forms of
+    `[using]`, `[conditional]` and `[each]`) renders the fixed text "saved queries
+    are not available in Privacy mode". A saved query's text and its scope can
+    carry stored values, and its errors echo them
+    (`template_filters/shortcode_query_executor.go`, `mrql/scope.go`).
+  - **Inline-query errors become fixed text.** "the query failed; details are
+    hidden in Privacy mode; use check_mrql to check its syntax". The exception is
+    `ErrQueryUnavailable`, which keeps its inert rendering.
+  - **Results are masked field by field** (`privacy.QueryResult`):
+    - flat and bucketed `Items`: `Entity` through `Entity`, `Meta` through `Meta`
+      with that item's `MetaSchema`, the `Scope`/`Parent`/`RootGroupName`
+      fields through `Text`, the `*CategoryName` fields through `Keep`, and
+      `CustomMRQLResult`/`CustomCSS` through `Keep`;
+    - aggregate `Rows`: keys kept, strings through `Text`, `time.Time` values
+      through `Date`, numbers passed through;
+    - bucket `Key` values: the same rules as rows;
+    - `EffectiveQuery`: the model's own inline text, kept.
+- **P16. Bounds.**
+  - **The masked copy.** It sets every `[]byte` field that is not `types.JSON` to
+    nil (preview thumbnails, for example). A render never needs them, and copying
+    them is wasted work.
+  - **The masker's limits.** At most 20,000 distinct masked values, and at most
+    4 MiB of real value bytes in the legend. Past either limit, the next `Text`
+    returns an error sentinel. The calling Tool turns that into an error result
+    ("too much entity data for Privacy mode"), and the Seed builder turns it into
+    a 400 at the dry run. Masking is never skipped.
+  - **Cancellation.** The deep copy checks the context every 1,000 nodes.
 
 ## Architecture
 
@@ -182,13 +288,25 @@ P5 allow-list consulted by struct type name and field name:
 - `types.JSON` goes through `Meta`, with the schema from the entity's category
   where one is loaded.
 - `*types.URL` gets the P6 form.
-- Pointers, slices and structs are recursed. A visited map stops cycles.
-- Numbers and booleans are copied.
+- Pointers, slices and structs are recursed. The visited map is keyed by the
+  original pointer and returns the masked copy already allocated for it, never the
+  original, so aliases stay aliases and cycles end.
+- Nullable `*string` fields are masked behind a new pointer, and nil stays nil.
+- Numbers and booleans are copied. Other `[]byte` fields get the P16 rule.
 
-A test iterates the exported fields of every model reachable from
-Group/Resource/Note preloads. Each string field of a type not on the allow-list must
-come out masked, so a model field added later is covered without anyone editing a
-list.
+**Tests.**
+
+- A test iterates the exported fields of every model reachable from
+  Group/Resource/Note preloads. Each string field of a type not on the allow-list
+  must come out masked, so a model field added later is covered without anyone
+  editing a list.
+- Explicit cases cover:
+  - JSON string leaves in `Meta`, `OwnMeta`, and note block `Content`/`State`;
+  - the URL wrapper;
+  - nullable pointers (`GUID`, `StorageLocation`);
+  - a repeated alias and a cycle;
+  - an original graph that is unchanged after the copy (deep-equal against a copy
+    taken before), and numbers that are unchanged.
 
 ### Seed and projections
 
@@ -206,7 +324,8 @@ The other Seed sections:
   is masked automatically.
 - **request:** goes through `Keep`.
 - **current, siblings, schema, layout and the reference prefix:** each is passed
-  through `Keep`.
+  through `Keep`. The one exception is in the partials block: each partial's
+  description goes through `Text` before the block is formatted (P5).
 
 A new readable section, `privacy`, is added only when privacy is on. It explains
 Placeholders, says never to copy one, gives the stand-in date and says to reference
@@ -226,8 +345,9 @@ The executor config carries the privacy.
 | `list_related`, `list_members` | Entity names go through `Text`. Carrier names go through `Keep`. |
 | `list_carriers` | Names go through `Keep`, descriptions through `Text`. |
 | `list_revisions` | Labels go through `Text`. Everything else is IDs, times and enums. createdAt goes through `Date`. |
-| `get_revision`, `diff_revisions`, `get_template`, `get_partial` | Readable. Their result text is added to the corpus. Revision labels inside `get_revision` go through `Text`. |
-| `preview` | Load the entity, then build the MetaContext from `privacy.Entity(entity)`, then apply `privacy.MetaContext`. The `[mrql]` executor is wrapped so each result passes through `privacy.QueryResult`. The carrier-mode preview masks a copy of the carrier, so the P5 vocabulary stays and its Description is masked. Plugins are refused earlier, at the request. |
+| `get_revision`, `diff_revisions`, `get_template` | Slot content and source are readable, and only that text is added to the corpus. The revision label goes through `Text`, and `createdAt`, in both the full-detail and the field form, goes through `Date`. |
+| `get_partial` | The name and source are readable and are added to the corpus. The description goes through `Text`. |
+| `preview` | Load the entity, then build the MetaContext from `privacy.Entity(entity)`, then apply `privacy.MetaContext`, which P14 makes idempotent. The `[mrql]` executor is wrapped as P15 describes. The carrier-mode preview masks a copy of the carrier, so the P5 vocabulary stays and its Description is masked. Plugins are refused earlier, at the request. |
 | `lint`, `check_mrql`, `get_shortcode_docs`, `submit` | Readable, and added to the corpus. `submit` adds P11. |
 
 ### Run loop (`template_run.go`)
@@ -279,8 +399,28 @@ Its Privacy mode checkbox (`generation-optin-privacy`) sits first, ticked:
   (`templateRun.js`/`templateRunProgress.tpl`) are rendered from text segments
   (`x-text`, never `x-html`) as described in P9.
 
-The request bodies in `templateGeneration.js` and `templateBundle.js` carry
-`privacyOff`.
+**Mode independence.** Privacy mode works in both modes, but the existing opt-in
+flow is harness-only. Today the redisclosure callbacks and the approved options
+are gated on harness mode (`templateGeneration.js` and `templateBundle.js` around
+the `harness` checks), and the opt-ins live inside the harness-only subtree of
+`generationDisclosureDialog.tpl`. So:
+
+- The Privacy mode box and its redisclosure callback sit outside that subtree.
+- `privacyOff` is sent from the approved Disclosure in both modes, by both hosts
+  (`templateGeneration.js`, `templateBundle.js`).
+- The host checks that the server's echoed `privacy.on` matches the box before it
+  enables Send.
+
+**Cleanup of real values in the browser.**
+
+- **The store.** The Disclosure store's payload, its legend and the reveal state
+  are cleared when the dialog settles (Send, Cancel, Escape), when a redisclosure
+  replaces them, and on an access-denied response, JSON or SSE.
+- **The run panel.** The run panel's legend lives with its transcript, and is
+  cleared when the transcript is.
+- **Stale responses.** Both hosts check the request identity again after decoding
+  a response body and before adopting it, so a superseded response's legend is
+  never shown.
 
 ### Classic mode
 
@@ -339,12 +479,25 @@ B starts after A merges, because B's E2E needs A's API.
 1. An E2E test for criterion 5, against the real server, dry run only. It also
    checks that the plugin box is disabled under privacy, that the "Show real
    values" toggle shows the seeded name, and the lock set through the settings API.
+   It covers both hosts: the per-slot generator and the whole-template bundle
+   generator. It also checks classic mode: turning privacy off, re-running the dry
+   run and sending, with a routed generate response.
 2. The UI changes, then `npm run build-js`.
 3. A Transcript legend test. It extends the golden replay fixture
    (`e2e/fixtures/template-run-golden.json`) with a recording that has privacy on
    and a legend, if the recorder can produce one. Otherwise it uses a routed
    response built from the same JSON shape as the API test.
-4. An a11y spec covering the dialog with privacy on and with the legend toggled.
+4. An a11y spec, run with realistic content that is heavy with Placeholders
+   (200 or more). It covers:
+   - axe on the Disclosure and on the expanded Transcript, with the legend toggled
+     off and on;
+   - the toggle reached and operated by keyboard, with its `aria-pressed` state
+     announced;
+   - Send and Cancel reachable at 320×256 by searching the focus order, not by a
+     fixed Tab count;
+   - focus kept across a redisclosure;
+   - the locked and plugin-disabled explanations exposed through
+     `aria-describedby`.
 5. `docs-site/docs/features/custom-templates.md`: a "Privacy mode" subsection
    stating precisely what is and isn't masked, the stand-in date, the lock, and the
    plugin preview restriction.
