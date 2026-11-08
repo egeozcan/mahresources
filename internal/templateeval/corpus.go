@@ -147,6 +147,18 @@ func (c Case) RequiredSlots() []string {
 // templateBundle.js for a bundle. Both send the schema editor's current value,
 // which on an edit page is the saved schema unless the case overrides it.
 func (c Case) Request(categoryID, entityID uint) map[string]any {
+	return c.RequestWith(categoryID, entityID, RequestOptions{})
+}
+
+// RequestOptions are the knobs of a run that the editor does not send.
+type RequestOptions struct {
+	// PrivacyOff sends privacyOff: true. The zero value is what production does,
+	// Privacy mode on, so the eval measures the masked Seed by default.
+	PrivacyOff bool
+}
+
+// RequestWith is Request with options.
+func (c Case) RequestWith(categoryID, entityID uint, opts RequestOptions) map[string]any {
 	metaSchema, ok := c.Current["MetaSchema"]
 	if !ok {
 		if f, found := FixtureForCase(c); found {
@@ -154,6 +166,9 @@ func (c Case) Request(categoryID, entityID uint) map[string]any {
 		}
 	}
 	body := map[string]any{"prompt": c.Prompt, "categoryId": categoryID, "entityId": entityID, "metaSchema": metaSchema}
+	if opts.PrivacyOff {
+		body["privacyOff"] = true
+	}
 	switch c.Kind {
 	case KindSlot:
 		body["target"], body["slot"], body["mode"], body["content"] = "slot", c.Slot, "css", c.Current[c.Slot]
