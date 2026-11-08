@@ -57,3 +57,15 @@ _Avoid_: child (that is only the downward direction), neighbour, linked entity
 **Draft**:
 Template content the model submitted at the end of a Generation run. It is held for the user's review as text and reaches the editors only when the user applies it.
 _Avoid_: generation, result, suggestion, output
+
+**Privacy mode**:
+A way of running a Generation run in which every Entity value is replaced by a Placeholder before it reaches the AI provider. It is on for every run unless the user turns it off in that run's Disclosure, which an administrator can forbid.
+_Avoid_: redaction, anonymisation, incognito, safe mode
+
+**Entity value**:
+Text a person put into their entities: names, Descriptions, Text blocks, meta values, tag names, filenames, URLs, Category descriptions, revision labels. Field names, MetaSchema, template source and the user's own request are not Entity values; they are the vocabulary a template is written in.
+_Avoid_: user data, content, PII
+
+**Placeholder**:
+What the provider sees in place of an Entity value under Privacy mode. Within one Generation run, equal values get the same Placeholder. It tells the model the value's shape (kind, rough length, one line or markdown), never its content.
+_Avoid_: token (that is the provider's billing unit), mask, redaction
