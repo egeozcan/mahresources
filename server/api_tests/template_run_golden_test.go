@@ -21,7 +21,7 @@ const goldenRunFixture = "../../e2e/fixtures/template-run-golden.json"
 // goldenBody is the request the category editor sends for the CustomHeader
 // cluster, so the E2E can drive the recorded run through the real page.
 func goldenBody() map[string]any {
-	return map[string]any{"target": "cluster", "slot": "CustomHeader", "prompt": "a header"}
+	return map[string]any{"target": "cluster", "slot": "CustomHeader", "prompt": "a header", "privacyOff": true}
 }
 
 const (

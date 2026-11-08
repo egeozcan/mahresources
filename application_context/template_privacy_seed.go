@@ -164,13 +164,21 @@ func registerRunSkeleton(privacy *TemplatePrivacy, conv any, model string, tools
 	registerSkeletonOf(privacy, conv)
 }
 
-// registerSkeletonOf registers the protocol strings an adapter declares.
+// registerSkeletonOf registers the protocol strings an adapter declares. A
+// wrapper that hides the adapter (the eval's recorder) gets every adapter's
+// strings, so a short protocol word never looks like a leaked value.
 func registerSkeletonOf(privacy *TemplatePrivacy, adapter any) {
 	if privacy == nil {
 		return
 	}
 	if s, ok := adapter.(interface{ SkeletonStrings() []string }); ok {
 		for _, str := range s.SkeletonStrings() {
+			privacy.Keep(str)
+		}
+		return
+	}
+	for _, list := range [][]string{chatSkeleton, responsesSkeleton, anthropicSkeleton, classicSkeleton} {
+		for _, str := range list {
 			privacy.Keep(str)
 		}
 	}
