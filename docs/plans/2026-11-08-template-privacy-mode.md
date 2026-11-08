@@ -333,8 +333,9 @@ func (p *TemplatePrivacy) Date(t time.Time) string       // ⟦tag·date N⟧, k
 func (p *TemplatePrivacy) Keep(s string) string          // readable; adds to the guard corpus
 func (p *TemplatePrivacy) Meta(raw []byte, schema string) []byte   // string leaves masked (P12), keys kept
 func (p *TemplatePrivacy) Value(v any, schema any) any   // the same, over a decoded JSON value
-func (p *TemplatePrivacy) Entity(e any) any               // deep copy with P2, P5, P6 applied (reflection)
-func (p *TemplatePrivacy) QueryResult(r *shortcodes.QueryResult) *shortcodes.QueryResult
+func (p *TemplatePrivacy) Entity(ctx context.Context, e any) (any, error) // deep copy with P2, P5, P6 applied (reflection)
+func (p *TemplatePrivacy) QueryResult(ctx context.Context, r *shortcodes.QueryResult) (*shortcodes.QueryResult, error)
+func (p *TemplatePrivacy) Err() error                       // sticky limit error (P16)
 func (p *TemplatePrivacy) ContainsIssued(s string) (string, bool)  // P11
 func (p *TemplatePrivacy) Legend() []TemplatePrivacyLegendEntry    // [{placeholder, value}] in issue order
 func (p *TemplatePrivacy) CheckOutbound(payload []byte) error      // P7, P8
