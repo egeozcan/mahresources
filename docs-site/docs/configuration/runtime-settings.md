@@ -95,11 +95,11 @@ with `mrql` or `template`, and `<kind>` with `slot`, `pair`, `plan`, `bundle` or
 | `ai_template_<provider>_<kind>_model` | Optional kind-specific model; empty inherits the template default |
 | `ai_template_<provider>_<kind>_max_tokens` | Optional kind-specific token cap; `0` inherits |
 | `ai_template_<provider>_<kind>_timeout` | Optional kind-specific timeout; `0s` inherits |
+| `ai_template_privacy_mode` | `per-run` (default) or `always` |
 | `ai_template_generation_mode` | `harness` (default) or `classic` |
 | `ai_template_max_turns` | Integer 1–20; default `10` |
 | `ai_template_run_deadline` | Go duration 30s–15m; default `5m` |
 | `ai_template_run_token_budget` | Integer 100000–2000000; default `400000` |
-| `ai_template_privacy_mode` | `per-run` (default) or `always` |
 
 The last four keys control [Generation runs](../features/custom-templates.md#generation-runs).
 `harness` mode lets the model read your data with Tools over several Turns
