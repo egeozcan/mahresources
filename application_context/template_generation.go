@@ -827,7 +827,7 @@ func validateTemplateContent(target string, in TemplateGenerationInput, content 
 	// A Placeholder in a Draft is an error (P11), so repair runs and a draft
 	// that still has one comes back invalid and withheld.
 	if placeholder, bad := in.Privacy.ContainsIssued(content); bad {
-		issues = append(issues, shortcodes.LintIssue{Severity: shortcodes.SeverityError, Message: "The draft contains the Placeholder " + placeholder + ", which can never be applied; reference the field with [meta]/[property] instead."})
+		issues = append(issues, shortcodes.LintIssue{Severity: shortcodes.SeverityError, Message: templatePlaceholderIssuePrefix + placeholder + ", which can never be applied; reference the field with [meta]/[property] instead."})
 	}
 	if target == TemplateTargetMetaSchema {
 		return append(issues, validateMetaSchemaJSON(content, shortcodes.MetaSchemaLintOptions{
@@ -846,6 +846,10 @@ func validateTemplateContent(target string, in TemplateGenerationInput, content 
 	}
 	return issues
 }
+
+// templatePlaceholderIssuePrefix opens the error issue of a draft that carries
+// an issued Placeholder, so a fan-out can tell it from other residual errors.
+const templatePlaceholderIssuePrefix = "The draft contains the Placeholder "
 
 // withholdPlaceholders is the final pass of P11 for classic mode, over the
 // result as assembled (so it covers planner CSS appended into CustomCSS): any

@@ -59,7 +59,7 @@ type privacyCopier struct {
 	ctx     context.Context
 	p       *TemplatePrivacy
 	visited map[privacyVisit]reflect.Value
-	nodes   int
+	w       *privacyWalk
 	err     error
 }
 
@@ -71,10 +71,19 @@ func (p *TemplatePrivacy) Entity(ctx context.Context, e any) (any, error) {
 	if p == nil || e == nil {
 		return e, nil
 	}
-	c := &privacyCopier{ctx: ctx, p: p, visited: map[privacyVisit]reflect.Value{}}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	c := &privacyCopier{ctx: ctx, p: p, visited: map[privacyVisit]reflect.Value{}, w: &privacyWalk{ctx: ctx}}
 	out := c.copy(reflect.ValueOf(e), "", "", nil, 0)
 	if c.err != nil {
 		return nil, c.err
+	}
+	if c.w.err != nil {
+		return nil, c.w.err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if err := p.Err(); err != nil {
 		return nil, err
@@ -89,12 +98,9 @@ func (c *privacyCopier) tick() bool {
 	if c.err != nil {
 		return false
 	}
-	c.nodes++
-	if c.nodes%privacyCheckEvery == 0 {
-		if err := c.ctx.Err(); err != nil {
-			c.err = err
-			return false
-		}
+	if !c.w.tick() {
+		c.err = c.w.err
+		return false
 	}
 	return true
 }
@@ -123,19 +129,23 @@ func (c *privacyCopier) copy(src reflect.Value, structName, field string, parent
 	}
 	switch typ {
 	case privacyTimeType:
-		if src.Interface().(time.Time).IsZero() {
+		t := src.Interface().(time.Time)
+		if t.IsZero() {
 			return src
 		}
+		c.p.protectTime(t) // the original is replaced, not issued: enroll it
 		return reflect.ValueOf(templatePrivacyStandIn)
 	case privacyDeletedAtType:
 		d := src.Interface().(gorm.DeletedAt)
 		if d.Valid {
+			c.p.protectTime(d.Time)
 			d.Time = templatePrivacyStandIn
 		}
 		return reflect.ValueOf(d)
 	case privacyNullTimeType:
 		d := src.Interface().(sql.NullTime)
 		if d.Valid {
+			c.p.protectTime(d.Time)
 			d.Time = templatePrivacyStandIn
 		}
 		return reflect.ValueOf(d)
@@ -162,7 +172,11 @@ func (c *privacyCopier) copy(src reflect.Value, structName, field string, parent
 		if parent != nil {
 			schema = metaSchemaOf(*parent)
 		}
-		return reflect.ValueOf(types.JSON(c.p.Meta(raw, schema)))
+		masked := types.JSON(c.p.metaWalk(c.w, raw, schema))
+		if c.w.err != nil {
+			c.err = c.w.err
+		}
+		return reflect.ValueOf(masked)
 	}
 	switch src.Kind() {
 	case reflect.String:
@@ -275,28 +289,35 @@ func (p *TemplatePrivacy) QueryResult(ctx context.Context, r *shortcodes.QueryRe
 		out.Total = &total
 		p.keepScalar(total)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	w := &privacyWalk{ctx: ctx}
 	var err error
 	if r.Items != nil {
-		if out.Items, err = p.queryItems(ctx, r.Items); err != nil {
+		if out.Items, err = p.queryItems(ctx, w, r.Items); err != nil {
 			return nil, err
 		}
 	}
 	if r.Rows != nil {
 		out.Rows = make([]map[string]any, len(r.Rows))
 		for i, row := range r.Rows {
-			out.Rows[i] = p.queryRow(row)
+			out.Rows[i] = p.queryRow(w, row)
 		}
 	}
 	if r.Groups != nil {
 		out.Groups = make([]shortcodes.QueryResultGroup, len(r.Groups))
 		for i, g := range r.Groups {
-			out.Groups[i].Key = p.queryRow(g.Key)
+			out.Groups[i].Key = p.queryRow(w, g.Key)
 			if g.Items != nil {
-				if out.Groups[i].Items, err = p.queryItems(ctx, g.Items); err != nil {
+				if out.Groups[i].Items, err = p.queryItems(ctx, w, g.Items); err != nil {
 					return nil, err
 				}
 			}
 		}
+	}
+	if w.err != nil {
+		return nil, w.err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -307,15 +328,18 @@ func (p *TemplatePrivacy) QueryResult(ctx context.Context, r *shortcodes.QueryRe
 	return out, nil
 }
 
-func (p *TemplatePrivacy) queryItems(ctx context.Context, items []shortcodes.QueryResultItem) ([]shortcodes.QueryResultItem, error) {
+func (p *TemplatePrivacy) queryItems(ctx context.Context, w *privacyWalk, items []shortcodes.QueryResultItem) ([]shortcodes.QueryResultItem, error) {
 	out := make([]shortcodes.QueryResultItem, len(items))
 	for i, it := range items {
 		n := it
 		var err error
+		if !w.tick() {
+			return nil, w.err
+		}
 		if n.Entity, err = p.Entity(ctx, it.Entity); err != nil {
 			return nil, err
 		}
-		n.Meta = json.RawMessage(p.Meta(it.Meta, it.MetaSchema))
+		n.Meta = json.RawMessage(p.metaWalk(w, it.Meta, it.MetaSchema))
 		n.MetaSchema = p.Keep(it.MetaSchema)
 		n.ScopeGroupName, n.ParentGroupName, n.RootGroupName = p.Text(it.ScopeGroupName), p.Text(it.ParentGroupName), p.Text(it.RootGroupName)
 		n.ScopeCategoryName, n.ParentCategoryName, n.RootCategoryName = p.Keep(it.ScopeCategoryName), p.Keep(it.ParentCategoryName), p.Keep(it.RootCategoryName)
@@ -326,8 +350,8 @@ func (p *TemplatePrivacy) queryItems(ctx context.Context, items []shortcodes.Que
 	return out, nil
 }
 
-func (p *TemplatePrivacy) queryRow(row map[string]any) map[string]any {
-	if row == nil {
+func (p *TemplatePrivacy) queryRow(w *privacyWalk, row map[string]any) map[string]any {
+	if row == nil || !w.tick() {
 		return nil
 	}
 	keys := make([]string, 0, len(row))
@@ -338,12 +362,15 @@ func (p *TemplatePrivacy) queryRow(row map[string]any) map[string]any {
 	out := make(map[string]any, len(row))
 	for _, k := range keys {
 		p.Keep(k)
-		out[k] = p.queryValue(row[k])
+		out[k] = p.queryValue(w, row[k])
 	}
 	return out
 }
 
-func (p *TemplatePrivacy) queryValue(v any) any {
+func (p *TemplatePrivacy) queryValue(w *privacyWalk, v any) any {
+	if !w.tick() {
+		return v
+	}
 	switch x := v.(type) {
 	case string:
 		return p.Text(x)
@@ -355,11 +382,11 @@ func (p *TemplatePrivacy) queryValue(v any) any {
 		}
 		return p.Date(*x)
 	case map[string]any:
-		return p.queryRow(x)
+		return p.queryRow(w, x)
 	case []any:
 		out := make([]any, len(x))
 		for i, e := range x {
-			out[i] = p.queryValue(e)
+			out[i] = p.queryValue(w, e)
 		}
 		return out
 	case []byte:
@@ -380,6 +407,11 @@ func privacyContentType(p *TemplatePrivacy, s string) string {
 	base, _, _ := strings.Cut(s, ";")
 	base = strings.TrimSpace(base)
 	if privacyContentTypeRE.MatchString(base) {
+		// The parameters are dropped, so the original is no Placeholder's value:
+		// enroll it so that its reappearance below the masker is still caught.
+		if s != base {
+			p.protect(s)
+		}
 		return p.Keep(base)
 	}
 	return p.Text(s)

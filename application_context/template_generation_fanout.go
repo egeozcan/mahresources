@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -369,6 +370,8 @@ type pairOutcome struct {
 	// failure is the reason, for the warning, when there is no pair.
 	failure string
 	err     error
+	// withheld marks a pair returned empty because it still carried a Placeholder.
+	withheld bool
 }
 
 func (g *defaultTemplateGenerator) generateFanOut(ctx context.Context, request templateRequest) (*TemplateGenerationResult, error) {
@@ -511,10 +514,27 @@ func (g *defaultTemplateGenerator) generatePair(ctx context.Context, in Template
 	if err != nil {
 		return pairOutcome{base: base, repair: repair, err: err}
 	}
-	for _, issue := range result.Issues {
-		if issue.Severity == shortcodes.SeverityError {
-			return pairOutcome{base: base, repair: repair, failure: "the reply still has validation errors: " + issue.Message, err: ErrTemplateGenerationProvider}
+	onlyPlaceholder, otherError := false, (*shortcodes.LintIssue)(nil)
+	for i, issue := range result.Issues {
+		if issue.Severity != shortcodes.SeverityError {
+			continue
 		}
+		if strings.HasPrefix(issue.Message, templatePlaceholderIssuePrefix) {
+			onlyPlaceholder = true
+		} else if otherError == nil {
+			otherError = &result.Issues[i]
+		}
+	}
+	if otherError != nil {
+		return pairOutcome{base: base, repair: repair, failure: "the reply still has validation errors: " + otherError.Message, err: ErrTemplateGenerationProvider}
+	}
+	if onlyPlaceholder {
+		// The pair still carries a Placeholder after repair. It is returned empty
+		// and listed in withheldFields, not reported as a failed section.
+		for slot := range result.Slots {
+			result.Slots[slot] = ""
+		}
+		return pairOutcome{base: base, repair: repair, result: result, withheld: true}
 	}
 	_, hasHTML := result.Slots[base]
 	_, hasCSS := result.Slots[base+"CSS"]
@@ -574,6 +594,9 @@ func assembleFanOut(in TemplateGenerationInput, fan *templateFanOut, plan templa
 		for slot, content := range outcome.result.Slots {
 			result.Slots[slot] = content
 		}
+		if outcome.withheld {
+			result.WithheldFields = append(result.WithheldFields, outcome.base, outcome.base+"CSS")
+		}
 		for slot, issues := range outcome.result.SlotIssues {
 			result.SlotIssues[slot] = issues
 		}
@@ -603,6 +626,7 @@ func assembleFanOut(in TemplateGenerationInput, fan *templateFanOut, plan templa
 	if len(result.SlotIssues) == 0 {
 		result.SlotIssues = nil
 	}
+	sort.Strings(result.WithheldFields)
 	result.Valid = !hasErrorIssue(result.Issues)
 	if repair != nil && repair.Applied {
 		repair.Reason = ""

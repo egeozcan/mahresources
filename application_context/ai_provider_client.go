@@ -352,6 +352,9 @@ func (p *generationProviderClient) postPayload(ctx context.Context, endpoint str
 	// identity.
 	if privacy := TemplatePrivacyFrom(ctx); privacy != nil {
 		if err := privacy.CheckOutbound(ctx, payload); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return &TemplatePrivacyGuardInterrupted{Err: err}
+			}
 			return err
 		}
 	}

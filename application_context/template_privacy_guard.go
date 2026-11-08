@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"html"
 	"io"
 	"strconv"
 	"strings"
@@ -17,11 +18,6 @@ import (
 
 // privacyGuardMinRunes is the shortest value the guard looks for.
 const privacyGuardMinRunes = 4
-
-// privacyGuardPrefixBytes bounds how much of a value the guard matches: its
-// leading bytes, so a truncated copy of a long value is still found and the
-// automaton stays small.
-const privacyGuardPrefixBytes = 64
 
 // TemplatePrivacyLeakError is ErrTemplatePrivacyLeak with the JSON path of the
 // offending string, never its value.
@@ -48,6 +44,14 @@ func (e *TemplatePrivacyLeakError) Unwrap() []error {
 	return []error{ErrTemplatePrivacyLeak}
 }
 
+// TemplatePrivacyGuardInterrupted is a guard check that the context ended
+// before it finished. Nothing was sent, so a run takes back what it marked as
+// sent; the context error stays reachable with errors.Is.
+type TemplatePrivacyGuardInterrupted struct{ Err error }
+
+func (e *TemplatePrivacyGuardInterrupted) Error() string { return e.Err.Error() }
+func (e *TemplatePrivacyGuardInterrupted) Unwrap() error { return e.Err }
+
 type privacyGuard struct {
 	values    []privacyGuardValue
 	corpus    []string
@@ -72,49 +76,38 @@ func (g *privacyGuard) addValue(value string) {
 	if utf8.RuneCountInString(value) < privacyGuardMinRunes {
 		return
 	}
-	v := privacyGuardValue{full: privacySpellings(value)}
-	v.detect = v.full
-	if len(value) > privacyGuardPrefixBytes {
-		cut := privacyGuardPrefixBytes
-		for cut > 0 && !utf8.RuneStart(value[cut]) {
-			cut--
-		}
-		v.long = true
-		v.detect = privacySpellings(value[:cut])
-	}
-	g.values = append(g.values, v)
+	g.values = append(g.values, privacyGuardValue{spellings: privacySpellings(value)})
 	g.version++
 }
 
-// addCorpus registers a readable text in the same three spellings a protected
-// value is looked for in (raw, JSON-escaped, JSON-escaped with HTML escaping),
-// so text that is escaped when it is encoded into a Tool result still matches.
+// addCorpus registers a readable text in the same spellings a protected value is
+// looked for in, so text that is escaped when it is encoded into a Tool result
+// or rendered into HTML still matches.
 func (g *privacyGuard) addCorpus(s string) {
-	for _, form := range []string{s, jsonStringBody(s, false), jsonStringBody(s, true)} {
-		lowered := strings.ToLower(form)
-		if _, ok := g.corpusSet[lowered]; ok {
+	for _, form := range privacySpellings(s) {
+		if _, ok := g.corpusSet[form]; ok {
 			continue
 		}
-		g.corpusSet[lowered] = struct{}{}
-		g.corpus = append(g.corpus, lowered)
+		g.corpusSet[form] = struct{}{}
+		g.corpus = append(g.corpus, form)
 	}
 }
 
-// privacySpellings are the lower-cased forms a value takes in a request: raw,
-// JSON-string-escaped, and JSON-escaped with HTML escaping.
+// privacySpellings are the lower-cased forms a string takes in a request: raw,
+// HTML-escaped (what a shortcode render makes of it), and the JSON-string and
+// JSON-with-HTML-escaping forms of each.
 func privacySpellings(value string) []string {
-	forms := []string{strings.ToLower(value), strings.ToLower(jsonStringBody(value, false)), strings.ToLower(jsonStringBody(value, true))}
-	out := forms[:0:0]
-	for _, f := range forms {
-		if f == "" {
-			continue
-		}
-		dup := false
-		for _, o := range out {
-			dup = dup || o == f
-		}
-		if !dup {
-			out = append(out, f)
+	bases := []string{value, html.EscapeString(value)}
+	var out []string
+	seen := map[string]bool{}
+	for _, base := range bases {
+		for _, form := range []string{base, jsonStringBody(base, false), jsonStringBody(base, true)} {
+			form = strings.ToLower(form)
+			if form == "" || seen[form] {
+				continue
+			}
+			seen[form] = true
+			out = append(out, form)
 		}
 	}
 	return out
@@ -132,10 +125,11 @@ func jsonStringBody(s string, escapeHTML bool) string {
 }
 
 // settle decides the exemption of every value against the corpus registered so
-// far. Each new corpus text is scanned once against the values already known,
-// and each new value once against the whole corpus. A value is exempt only when
-// a spelling of its COMPLETE text occurs in a corpus text: a long value is
-// found by its prefix and then verified whole.
+// far, in two batches: each new corpus text is scanned once against the values
+// already known, and each new value once against the whole corpus. A value is
+// exempt only when a spelling of its COMPLETE text occurs in a corpus text.
+// An exemption invalidates the cached payload matcher the moment it is made, so
+// an interrupted reconciliation can never leave the matcher stale.
 func (g *privacyGuard) settle(ctx context.Context) error {
 	var oldVals, newVals []int
 	for i := range g.values {
@@ -148,43 +142,14 @@ func (g *privacyGuard) settle(ctx context.Context) error {
 			newVals = append(newVals, i)
 		}
 	}
-	changed := false
 	scan := func(vals []int, texts []string) error {
 		if len(vals) == 0 || len(texts) == 0 {
 			return nil
 		}
-		var short, long []int
-		for _, vi := range vals {
-			if g.values[vi].long {
-				long = append(long, vi)
-			} else {
-				short = append(short, vi)
-			}
-		}
-		// A long value is exempt only when a spelling of the WHOLE value occurs
-		// in a readable text, so it is looked up directly instead of by prefix.
-		ticker := newACAutomaton(ctx)
-		for _, vi := range long {
-		search:
-			for _, text := range texts {
-				if !ticker.tick(len(text)>>6 + 1) {
-					return ticker.err
-				}
-				for _, f := range g.values[vi].full {
-					if strings.Contains(text, f) {
-						g.values[vi].exempt, changed = true, true
-						break search
-					}
-				}
-			}
-		}
-		if len(short) == 0 {
-			return nil
-		}
 		a := newACAutomaton(ctx)
-		for _, vi := range short {
-			for _, sp := range g.values[vi].detect {
-				a.add(sp, vi, false)
+		for _, vi := range vals {
+			for _, sp := range g.values[vi].spellings {
+				a.add(sp, vi)
 			}
 		}
 		a.build()
@@ -194,7 +159,8 @@ func (g *privacyGuard) settle(ctx context.Context) error {
 		for _, text := range texts {
 			if _, err := a.scan(text, true, func(id int) bool {
 				if !g.values[id].exempt {
-					g.values[id].exempt, changed = true, true
+					g.values[id].exempt = true
+					g.version++
 				}
 				return false
 			}); err != nil {
@@ -213,17 +179,15 @@ func (g *privacyGuard) settle(ctx context.Context) error {
 		return err
 	}
 	g.valuesScanned, g.corpusScanned = len(g.values), len(g.corpus)
-	if changed {
-		g.version++
-	}
 	return nil
 }
 
 // payloadAutomaton is the automaton over every non-exempt value, rebuilt only
-// when that set changed. Its work is counted against ctx like the scans.
+// when that set changed. A reused automaton starts each check with a clean
+// context and error, so one check's cancellation never reaches the next.
 func (g *privacyGuard) payloadAutomaton(ctx context.Context) (*acAutomaton, error) {
 	if g.auto != nil && g.autoVersion == g.version {
-		g.auto.ctx = ctx
+		g.auto.ctx, g.auto.err, g.auto.work = ctx, nil, 0
 		return g.auto, nil
 	}
 	a := newACAutomaton(ctx)
@@ -231,8 +195,8 @@ func (g *privacyGuard) payloadAutomaton(ctx context.Context) (*acAutomaton, erro
 		if g.values[i].exempt {
 			continue
 		}
-		for _, sp := range g.values[i].detect {
-			a.add(sp, i, false)
+		for _, sp := range g.values[i].spellings {
+			a.add(sp, i)
 		}
 	}
 	a.build()
@@ -350,9 +314,6 @@ type acNode struct {
 type acPat struct {
 	id   int
 	next int32
-	// keep: scans do not retire this pattern when it is visited (a prefix hit
-	// that the caller still has to verify against the whole value).
-	keep bool
 }
 
 func newACAutomaton(ctx context.Context) *acAutomaton {
@@ -394,7 +355,7 @@ func (a *acAutomaton) childOf(n int32, c byte) int32 {
 	return 0
 }
 
-func (a *acAutomaton) add(pattern string, id int, keep bool) {
+func (a *acAutomaton) add(pattern string, id int) {
 	if pattern == "" || !a.tick(len(pattern)) {
 		return
 	}
@@ -414,7 +375,7 @@ func (a *acAutomaton) add(pattern string, id int, keep bool) {
 		}
 		n = next
 	}
-	a.pats = append(a.pats, acPat{id: id, next: a.nodes[n].patHead, keep: keep})
+	a.pats = append(a.pats, acPat{id: id, next: a.nodes[n].patHead})
 	a.nodes[n].patHead = int32(len(a.pats))
 	a.nodes[n].live++
 	a.n++
@@ -508,7 +469,7 @@ func (a *acAutomaton) scan(text string, retire bool, visit func(id int) bool) (b
 				if a.found[k] {
 					continue
 				}
-				if retire && !a.pats[k-1].keep {
+				if retire {
 					a.found[k] = true
 					a.nodes[n].live--
 				}

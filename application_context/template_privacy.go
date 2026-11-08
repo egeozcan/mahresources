@@ -86,13 +86,12 @@ type privacyIssued struct {
 // privacyGuardValue is one guarded value: its lower-cased spellings, and
 // whether readable text already carries it.
 type privacyGuardValue struct {
-	// detect are the spellings the payload scan looks for: of the whole value, or
-	// of its first privacyGuardPrefixBytes when it is longer, so a truncated copy
-	// is still found. full are the spellings of the COMPLETE value, which alone
-	// can exempt it: a readable prefix never exempts the rest of a value.
-	detect, full []string
-	long         bool
-	exempt       bool
+	// spellings are the lower-cased forms of the COMPLETE value: raw, HTML-escaped,
+	// and the JSON-escaped forms of both. The guard detects and exempts complete
+	// values only, so readable text that equals a prefix of a long value is
+	// sendable and a readable prefix never exempts the rest.
+	spellings []string
+	exempt    bool
 }
 
 // TemplatePrivacy is one request's masker and guard. nil means Privacy mode is
@@ -239,6 +238,9 @@ func (p *TemplatePrivacy) issueLocked(key, value, forceKind string) *privacyIssu
 	p.issued = append(p.issued, entry)
 	p.bytes += len(value)
 	p.guard.addValue(value)
+	// A Placeholder is text this run generated, never a stored value, so it is
+	// readable even when some other stored value happens to equal it.
+	p.guard.addCorpus(entry.placeholder)
 	return entry
 }
 
@@ -264,6 +266,7 @@ func (p *TemplatePrivacy) Date(t time.Time) string {
 	if p == nil {
 		return t.UTC().Format(time.RFC3339)
 	}
+	p.protectTime(t)
 	value := t.UTC().Format(time.RFC3339Nano)
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -289,6 +292,7 @@ func (p *TemplatePrivacy) URLAlias(s string) string {
 	}
 	if entry.alias == "" {
 		entry.alias = "https://placeholder.invalid/" + p.tag + "-url-" + p.numberOf(entry)
+		p.guard.addCorpus(entry.alias)
 	}
 	return entry.alias
 }
@@ -299,6 +303,30 @@ func (p *TemplatePrivacy) numberOf(e *privacyIssued) string {
 	rest := e.placeholder[start+len("·"):]
 	fields := strings.Fields(strings.TrimSuffix(rest, "⟧"))
 	return fields[1]
+}
+
+// protect enrolls a stored value in the guard without issuing a Placeholder,
+// for originals the source replaces by something that is not a Placeholder
+// (a stand-in instant, a content type with its parameters stripped).
+func (p *TemplatePrivacy) protect(value string) {
+	if p == nil || value == "" {
+		return
+	}
+	p.mu.Lock()
+	p.guard.addValue(value)
+	p.mu.Unlock()
+}
+
+// protectTime enrolls the wire spellings of an original instant: RFC 3339 with
+// and without fractional seconds, in UTC and in the zone it was stored in.
+func (p *TemplatePrivacy) protectTime(t time.Time) {
+	if p == nil || t.IsZero() {
+		return
+	}
+	for _, v := range []time.Time{t, t.UTC()} {
+		p.protect(v.Format(time.RFC3339Nano))
+		p.protect(v.Format(time.RFC3339))
+	}
 }
 
 // Keep marks a string as readable. It is returned unchanged and joins the
@@ -419,6 +447,36 @@ func TemplatePrivacyFrom(ctx context.Context) *TemplatePrivacy {
 // equal to an enum or const of its own field in schema stays readable (P12).
 // raw that is not JSON is masked as one string.
 func (p *TemplatePrivacy) Meta(raw []byte, schema string) []byte {
+	return p.metaWalk(nil, raw, schema)
+}
+
+// privacyWalk counts the nodes of every masking walk (reflection, JSON, query
+// rows) and checks the context at bounded intervals, so a large field cannot
+// outrun cancellation. A nil walk checks nothing.
+type privacyWalk struct {
+	ctx context.Context
+	n   int
+	err error
+}
+
+func (w *privacyWalk) tick() bool {
+	if w == nil {
+		return true
+	}
+	if w.err != nil {
+		return false
+	}
+	w.n++
+	if w.n%privacyCheckEvery == 0 {
+		if err := w.ctx.Err(); err != nil {
+			w.err = err
+			return false
+		}
+	}
+	return true
+}
+
+func (p *TemplatePrivacy) metaWalk(w *privacyWalk, raw []byte, schema string) []byte {
 	if p == nil || len(strings.TrimSpace(string(raw))) == 0 {
 		return raw
 	}
@@ -427,7 +485,7 @@ func (p *TemplatePrivacy) Meta(raw []byte, schema string) []byte {
 		quoted, _ := json.Marshal(p.Text(string(raw)))
 		return quoted
 	}
-	out, err := encodeJSONNoEscape(p.Value(decoded, parseSchemaRoot(schema)))
+	out, err := encodeJSONNoEscape(p.valueWalk(w, decoded, parseSchemaRoot(schema)))
 	if err != nil {
 		quoted, _ := json.Marshal(p.Text(string(raw)))
 		return quoted
@@ -469,6 +527,10 @@ func parseSchemaRoot(schema string) map[string]any {
 // Value masks a decoded JSON value. schema is a decoded root schema
 // (map[string]any) or nil.
 func (p *TemplatePrivacy) Value(v any, schema any) any {
+	return p.valueWalk(nil, v, schema)
+}
+
+func (p *TemplatePrivacy) valueWalk(w *privacyWalk, v any, schema any) any {
 	if p == nil {
 		return v
 	}
@@ -477,10 +539,13 @@ func (p *TemplatePrivacy) Value(v any, schema any) any {
 	if root != nil {
 		nodes = expandSchemaNode(root, root)
 	}
-	return p.maskJSON(v, root, nodes)
+	return p.maskJSON(w, v, root, nodes)
 }
 
-func (p *TemplatePrivacy) maskJSON(v any, root map[string]any, nodes []map[string]any) any {
+func (p *TemplatePrivacy) maskJSON(w *privacyWalk, v any, root map[string]any, nodes []map[string]any) any {
+	if !w.tick() {
+		return v
+	}
 	switch x := v.(type) {
 	case string:
 		if schemaAllows(nodes, x) {
@@ -496,13 +561,13 @@ func (p *TemplatePrivacy) maskJSON(v any, root map[string]any, nodes []map[strin
 		out := make(map[string]any, len(x))
 		for _, k := range keys {
 			p.Keep(k) // a preserved key is vocabulary, and it travels in the request
-			out[k] = p.maskJSON(x[k], root, schemaChildNodes(root, nodes, k))
+			out[k] = p.maskJSON(w, x[k], root, schemaChildNodes(root, nodes, k))
 		}
 		return out
 	case []any:
 		out := make([]any, len(x))
 		for i, e := range x {
-			out[i] = p.maskJSON(e, root, schemaItemNodes(root, nodes, i))
+			out[i] = p.maskJSON(w, e, root, schemaItemNodes(root, nodes, i))
 		}
 		return out
 	}

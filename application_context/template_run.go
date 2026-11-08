@@ -488,6 +488,14 @@ func (r *harnessRun) exitOnCallError(err error) (*TemplateGenerationResult, erro
 	if errors.Is(err, ErrTemplatePrivacyLeak) {
 		return r.failPrivacy(err)
 	}
+	// The guard ran out of time or was cancelled before the transport sent
+	// anything: take back the records marked as sent, then handle it as the
+	// timeout or cancellation it is. An ordinary provider timeout is not rolled
+	// back, because that request may really have been sent.
+	var interrupted *TemplatePrivacyGuardInterrupted
+	if errors.As(err, &interrupted) {
+		r.rollbackCommit()
+	}
 	if r.reqCtx.Err() != nil {
 		return nil, r.reqCtx.Err()
 	}

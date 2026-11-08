@@ -686,6 +686,11 @@ func (e *templateToolExecutor) preview(ctx context.Context, mc *application_cont
 			return "", refusef("%v", err)
 		}
 	}
+	// The sources about to be rendered are the author's template, whichever way
+	// they were resolved (the call, a submission, the editor value). They are
+	// registered as readable; the rendered output never is.
+	e.cfg.Privacy.Keep(content)
+	e.cfg.Privacy.Keep(css)
 
 	carrierMode := strings.HasPrefix(a.Field, "CustomListHeader") || strings.HasPrefix(a.Field, "CustomListFooter")
 	var entity any
@@ -847,6 +852,12 @@ func (e *templateToolExecutor) maskRevisionSummary(r contracts.TemplateRevisionS
 	privacy.KeepScalar(int64(r.ID))
 	privacy.KeepScalar(int64(r.Number))
 	privacy.KeepScalar(int64(r.CarrierID))
+	if r.CreatedByUserId != nil {
+		privacy.KeepScalar(int64(*r.CreatedByUserId))
+	}
+	if r.RestoredFrom != nil {
+		privacy.KeepScalar(int64(*r.RestoredFrom))
+	}
 	return out
 }
 

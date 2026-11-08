@@ -13,7 +13,7 @@ import (
 func TestACAutomatonFindsOverlappingPatterns(t *testing.T) {
 	a := newACAutomaton(context.Background())
 	for i, p := range []string{"he", "she", "his", "hers"} {
-		a.add(p, i, false)
+		a.add(p, i)
 	}
 	a.build()
 	var got []int
@@ -32,8 +32,8 @@ func TestACAutomatonFindsOverlappingPatterns(t *testing.T) {
 
 func TestACAutomatonDuplicatePatternsKeepEveryID(t *testing.T) {
 	a := newACAutomaton(context.Background())
-	a.add("same", 1, false)
-	a.add("same", 2, false)
+	a.add("same", 1)
+	a.add("same", 2)
 	a.build()
 	seen := map[int]bool{}
 	_, _ = a.scan("a same b", true, func(id int) bool { seen[id] = true; return false })
@@ -137,15 +137,6 @@ func TestPrivacyGuardCorpusExemptsAValuePerValue(t *testing.T) {
 	// Exemption is permanent: the corpus only grows.
 	if err := outbound(p, "Projects"); err != nil {
 		t.Fatalf("exemption must be permanent: %v", err)
-	}
-}
-
-func TestPrivacyGuardLongValueMatchesItsPrefix(t *testing.T) {
-	p := NewTemplatePrivacy("gd")
-	long := strings.Repeat("distinctive prefix text ", 40)
-	p.Text(long)
-	if err := outbound(p, long[:100]); !errors.Is(err, ErrTemplatePrivacyLeak) {
-		t.Fatalf("a truncated copy of a long value must be found: %v", err)
 	}
 }
 

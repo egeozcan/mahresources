@@ -191,6 +191,7 @@ func startingPointLines(sp TemplateStartingPoints, privacy *TemplatePrivacy) []s
 		Name string `json:"name"`
 	}
 	var body []string
+	privacy.keepScalar(int64(sp.Carrier.ID))
 	if sp.Carrier.ID != 0 {
 		raw, _ := json.Marshal(carrierRef{CarrierType: sp.Carrier.Type, ID: sp.Carrier.ID, Name: privacy.Keep(sp.Carrier.Name)})
 		body = append(body, "Edited carrier: "+string(raw))

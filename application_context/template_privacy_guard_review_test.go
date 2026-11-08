@@ -9,17 +9,18 @@ import (
 	"testing"
 )
 
-func TestPrivacyGuardReadablePrefixNeverExemptsTheWholeValue(t *testing.T) {
+func TestPrivacyGuardDetectsAndExemptsCompleteValuesOnly(t *testing.T) {
 	p := NewTemplatePrivacy("pf")
 	prefix := strings.Repeat("public words ", 6)[:64]
 	whole := prefix + "PRIVATE_SUFFIX_TEXT"
 	p.Text(whole)
 	p.Keep("template source: " + prefix + " and nothing more")
-	if err := outbound(p, "see "+whole); !errors.Is(err, ErrTemplatePrivacyLeak) {
-		t.Fatalf("a readable prefix must not exempt the value: %v", err)
+	// Positive control: readable boilerplate equal to a long value's prefix is sendable.
+	if err := outbound(p, "see "+prefix); err != nil {
+		t.Fatalf("readable boilerplate equal to a prefix must be sendable: %v", err)
 	}
-	if err := outbound(p, "see "+prefix); !errors.Is(err, ErrTemplatePrivacyLeak) {
-		t.Fatalf("a truncated copy is still found by its prefix: %v", err)
+	if err := outbound(p, "see "+whole); !errors.Is(err, ErrTemplatePrivacyLeak) {
+		t.Fatalf("the complete value is still detected, and a readable prefix does not exempt it: %v", err)
 	}
 	p.Keep("the whole thing is readable too: " + whole)
 	if err := outbound(p, "see "+whole); err != nil {
