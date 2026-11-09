@@ -11,11 +11,13 @@ import (
 	"mahresources/models"
 )
 
-// Each carrier gets its own values, so a copy wired for one carrier only (or
-// reading another carrier's field) fails here even though the source-level
-// wiring guard is satisfied by any one matching assignment in the file.
+// newRevisionImportCtx gives each invocation its own database, so the test also
+// passes under -count=2. Each carrier gets its own values, so a copy wired for
+// one carrier only (or reading another carrier's field) fails here even though
+// the source-level wiring guard is satisfied by any one matching assignment in
+// the file.
 func TestExportImportPreservesPanelSummarySlots(t *testing.T) {
-	src := createGUIDIsolatedContext(t, t.Name()+"-src")
+	src := newRevisionImportCtx(t, "panel_summary_src")
 	want := map[string][2]string{
 		"categories":          {`<em>group [property path="Name"]</em>`, `.ps-group{color:red}`},
 		"note_types":          {`<em>note [property path="Name"]</em>`, `.ps-note{color:green}`},
@@ -41,7 +43,7 @@ func TestExportImportPreservesPanelSummarySlots(t *testing.T) {
 		Fidelity:     archive.ExportFidelity{ResourceBlobs: true},
 		SchemaDefs:   archive.ExportSchemaDefs{CategoriesAndTypes: true},
 	}, &buf, nil))
-	dst := createGUIDIsolatedContext(t, t.Name()+"-dst")
+	dst := newRevisionImportCtx(t, "panel_summary_dst")
 	require.NoError(t, dst.fs.MkdirAll("_imports", 0755))
 	require.NoError(t, afero.WriteFile(dst.fs, "_imports/panel.tar", buf.Bytes(), 0644))
 	plan, err := dst.ParseImport(context.Background(), "panel", "_imports/panel.tar")

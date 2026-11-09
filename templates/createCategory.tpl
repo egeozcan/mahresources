@@ -88,7 +88,7 @@
                     </div>
                     <div class="flex gap-2">
                         <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Panel Summary</dt>
-                        <dd>Replaces Custom Summary on group cards inside another entity's detail page panels, such as a parent group's Own Entities and Related Entities. <b>Falls back to Custom Summary when empty</b>; list pages, the dashboard and MRQL results always use Custom Summary</dd>
+                        <dd>Replaces Custom Summary on group cards inside another entity's detail page panels, such as a parent group's Own Entities and Related Entities. <b>Falls back to Custom Summary when empty</b>. List pages, the dashboard, MRQL results and hover cards never use it</dd>
                     </div>
                 </dl>
                 <h3 class="font-medium text-stone-600 mt-3 first:mt-1">List pages</h3>

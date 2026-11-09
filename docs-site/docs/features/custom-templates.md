@@ -301,7 +301,7 @@ A card shown inside another entity's detail page renders `CustomPanelSummary` in
 - on a series: Resources,
 - on a tag, category, note type or resource category page: its Groups, Notes or Resources panel.
 
-**When empty, those cards fall back to `CustomSummary`**, so a carrier that never sets this slot keeps the cards it had. Every other card surface always renders `CustomSummary`: list pages, the dashboard, MRQL result cards, the `/relation` page, the owner card in a detail page's sidebar, and the hover card.
+**When empty, those cards fall back to `CustomSummary`**, so a carrier that never sets this slot keeps the cards it had. No other card surface uses `CustomPanelSummary`. List pages, the dashboard, the `/relation` page and the owner card in a detail page's sidebar render `CustomSummary`. MRQL result cards and the hover card keep their own selection: `CustomMRQLResult` and `CustomHoverCard` when set, otherwise what they rendered before.
 
 The slot renders against the card's own entity, not the page it appears on: on a parent group's page, `[property path="Name"]` in a child group's panel summary is the child's name. A common use is a shorter card inside a parent than in the full list:
 

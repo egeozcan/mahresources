@@ -113,11 +113,17 @@ test.describe('Panel summary slot', () => {
     await open(page, `/relation?id=${forward.ID}`);
     await expectSummarySlot(card(page.locator('main'), childName), childName);
 
-    // The dashboard holds only the few most recent groups, which parallel
-    // workers churn, so assert the slot never renders there rather than
-    // looking for this group's card.
-    await open(page, '/dashboard');
-    await expect(page.locator('[data-probe="panel"]')).toHaveCount(0);
+    // The dashboard shows only the six newest groups, which parallel workers
+    // churn: create a fresh group right before each load until one is listed.
+    let dashName = '';
+    for (let attempt = 0; attempt < 3 && !dashName; attempt++) {
+      const candidate = `PS Dash ${stamp}-${attempt}`;
+      await apiClient.createGroup({ name: candidate, categoryId: cat.ID });
+      await open(page, '/dashboard');
+      if (await card(page.locator('main'), candidate).count()) dashName = candidate;
+    }
+    expect(dashName, 'a fresh group should be among the dashboard\'s recent groups').not.toBe('');
+    await expectSummarySlot(card(page.locator('main'), dashName), dashName);
 
     const mrql = new MRQLPage(page);
     await mrql.navigate();
@@ -229,13 +235,25 @@ test.describe('Panel summary slot', () => {
       data: { ID: cat.ID, Name: cat.Name, Description: 'changed' },
     });
     expect(res.ok()).toBeTruthy();
-    const fetched = (await (await page.request.get(`/category.json?id=${cat.ID}`)).json()).category;
+    const read = async () => (await (await page.request.get(`/category.json?id=${cat.ID}`)).json()).category;
+    const fetched = await read();
+    expect(fetched.Description).toBe('changed');
     expect(fetched.CustomPanelSummary).toBe(PANEL);
     expect(fetched.CustomPanelSummaryCSS).toBe('.psu {}');
 
-    // The edit form offers the slot with its stored value.
+    // The edit form shows the stored values, and an edit made in its editors
+    // is saved.
     await open(page, `/category/edit?id=${cat.ID}`);
     await expect(page.locator('input[type="hidden"][name="CustomPanelSummary"]')).toHaveValue(PANEL);
     await expect(page.locator('input[type="hidden"][name="CustomPanelSummaryCSS"]')).toHaveValue('.psu {}');
+    const cluster = page.locator('[data-template-cluster="CustomPanelSummary"]');
+    await cluster.locator('summary').click();
+    await cluster.locator('.cm-content[aria-label="Custom Panel Summary"]').fill('<p>edited panel</p>');
+    await cluster.locator('.cm-content[aria-label="Custom Panel Summary CSS"]').fill('.edited {}');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.waitForURL(/\/category\?id=/);
+    const saved = await read();
+    expect(saved.CustomPanelSummary).toBe('<p>edited panel</p>');
+    expect(saved.CustomPanelSummaryCSS).toBe('.edited {}');
   });
 });

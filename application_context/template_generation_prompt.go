@@ -273,7 +273,7 @@ func slotRoleLine(slot, entityType string) string {
 	case "CustomHoverCard":
 		return "CustomHoverCard renders inside the small hover card shown when a link to the entity is hovered. Keep it to a couple of lines; when empty the hover card falls back to CustomSummary."
 	case "CustomPanelSummary":
-		return "CustomPanelSummary replaces CustomSummary on entity cards shown inside another entity's detail page panels, such as a parent group's Own Entities and Related Entities sections; keep it compact. When empty those cards fall back to CustomSummary. List pages, the dashboard and MRQL results always use CustomSummary."
+		return "CustomPanelSummary replaces CustomSummary on entity cards shown inside another entity's detail page panels, such as a parent group's Own Entities and Related Entities sections; keep it compact. When empty those cards fall back to CustomSummary. List pages, the dashboard, MRQL results and hover cards never use it."
 	case "CustomPreview":
 		return "CustomPreview renders in the resource detail sidebar directly above the built-in preview image, for file types that image cannot show: a PDF or model viewer, an audio player, an embed. It does not replace the preview image."
 	case "CustomLightbox":
