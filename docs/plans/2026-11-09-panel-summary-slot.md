@@ -3,8 +3,9 @@
 ## Context
 
 Group, resource and note cards render their carrier's `CustomSummary` below the
-title everywhere the card appears: list pages, the dashboard, MRQL results,
-relation and owner cards, and the entity panels on detail pages (a group's Own
+title wherever the card partial appears: list pages, the dashboard, MRQL list
+cards without a `CustomMRQLResult`, relation and owner cards, and the entity
+panels on detail pages (a group's Own
 Entities / Related Entities, a note's Groups / Resources, a resource's Notes /
 Groups, and the tag / category / note type / resource category pages). Authors
 want a card shown *inside another entity's detail page* to carry different
@@ -13,8 +14,9 @@ content from the list-page card, e.g. a compact line on a parent group's page.
 Decided with the user:
 - The new slot replaces **only the summary area** of the card. Title, avatar,
   badges, description, tags and plugin actions stay as they are.
-- It applies to **every card rendered inside a `seeAll` detail panel**. Every
-  other card surface keeps `CustomSummary`.
+- It applies to **every card rendered inside a detail-page panel**. Other
+  surfaces keep their existing slot selection and never use
+  `CustomPanelSummary`.
 - Empty slot → the card falls back to `CustomSummary`, so no existing
   deployment changes appearance (same shape as HoverCard → Summary).
 
@@ -113,17 +115,18 @@ tracked-set test) fail on anything missed, so they double as a checklist.
 
 ## Steps
 
-1. Branch `feat/panel-summary-slot`; copy this plan to
+- [x] 1. Branch `feat/panel-summary-slot`; copy this plan to
    `docs/plans/2026-11-09-panel-summary-slot.md`, run
    `./docs/plans/generate-index.sh`.
-2. Baseline: Go unit (SQLite), E2E browser + CLI, so pre-existing failures are known.
-3. Red: E2E spec `e2e/tests/shortcodes/panel-summary-slot.spec.ts` (below); run
+- [x] 2. Baseline: Go unit (SQLite). The E2E baseline was not run separately;
+   the final E2E runs are fully green, so there was nothing to tell apart.
+- [x] 3. Red: E2E spec `e2e/tests/shortcodes/panel-summary-slot.spec.ts`; run
    it, watch it fail.
-4. Model field + render mechanism; spec goes green for render.
-5. Remaining wiring until drift guards pass; build-js, openapi, CLI docs.
-6. Docs + skill.
-7. pi review of the diff; fix; repeat until clean.
-8. Full suites on SQLite and Postgres; tick plan, add review section.
+- [x] 4. Model field + render mechanism; spec goes green for render.
+- [x] 5. Remaining wiring until drift guards pass; build-js, openapi, CLI docs.
+- [x] 6. Docs + skill.
+- [x] 7. pi review of the diff; fix; repeat until clean.
+- [x] 8. Full suites on SQLite and Postgres; tick plan, add review section.
 
 ## Verification
 
@@ -160,3 +163,38 @@ all three). Accessibility suite (the forms gain a cluster).
 Suites: `go test --tags 'json1 fts5' ./...`, `cd e2e && npm run test:with-server:all`,
 Postgres `go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/... -count=1`
 and `npm run test:with-server:postgres`. Rebuild the binary before E2E.
+
+## Review
+
+Shipped as planned in two commits (feature, then review fixes), plus this
+plan's final edits.
+
+What changed from the plan:
+- The Series, Similar Resources and series Resources panels include the
+  resource card directly rather than through `seeAll`; they set the flag too.
+- No `GET /v1/category` single read exists; the E2E spec reads back through
+  `/category.json?id=`.
+- The dashboard shows only the six newest groups, so its check creates a fresh
+  group before each load (up to three tries) and then asserts that card.
+- Two pinned values moved: the browser bundle field count in
+  `internal/templateeval/compare_test.go` (29 to 31) and the MRQL reference
+  size in `template_generation_prompt_test.go` (+20 bytes for the slot's name in
+  the once-per-card `[lazy]` hint).
+
+pi review (gpt-6.1-sol, high): the plan review had no P0/P1. Diff round 1
+found four P2s: a false claim that hover cards and MRQL results always render
+CustomSummary (they prefer CustomHoverCard / CustomMRQLResult), a round-trip
+test that failed under `-count=2`, a dashboard assertion that could pass
+vacuously, and an update test that never proved a save. All fixed. Round 2
+found no runtime or wiring defect and one P2, the same claim left in this plan
+and the spec header, fixed here.
+
+Not covered by a dedicated test: Similar Resources, which needs perceptual-hash
+fixtures; it shares the include flag with the Series panel, which is tested.
+
+Results at the feature commits: Go unit (SQLite) green; E2E browser + CLI 2923
+passed, 5 skipped; Postgres Go (`mrql`, `server/api_tests`) green; Postgres E2E
+2924 passed, 4 skipped. `TestHarnessRecoveredDraftAfterRunDeadlineIsDelivered`
+failed once in the baseline on master-equivalent Go while a build ran
+alongside, and passed in the final run.
+

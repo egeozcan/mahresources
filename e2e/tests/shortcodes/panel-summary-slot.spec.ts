@@ -3,8 +3,9 @@
  * entity panel (a group's Own / Related Entities and Relations, a note's
  * Groups / Resources, a resource's Notes / Groups / Series, a series' Resources,
  * and the tag / category / note type / resource category pages) it replaces
- * CustomSummary. Every other card surface keeps CustomSummary, and an empty
- * panel slot falls back to it.
+ * CustomSummary, and an empty panel slot falls back to it. No other card
+ * surface uses it: the ones checked here (lists, the dashboard, /relation, the
+ * owner card, MRQL list cards with CustomMRQLResult empty) render CustomSummary.
  *
  * Each assertion is scoped to one entity's card inside one named panel: the
  * card also carries its entity as JSON in a data attribute, so the raw slot
