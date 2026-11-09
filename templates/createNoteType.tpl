@@ -82,6 +82,10 @@
                         <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Hover Card</dt>
                         <dd>The small card shown when a note link is hovered. <b>Falls back to Custom Summary when empty</b>, so set it only when hover should differ from the list card</dd>
                     </div>
+                    <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Panel Summary</dt>
+                        <dd>Replaces Custom Summary on note cards inside another entity's detail page panels, such as a parent group's Own Entities and Related Entities. <b>Falls back to Custom Summary when empty</b>. List pages, the dashboard, MRQL results and hover cards never use it</dd>
+                    </div>
                 </dl>
                 <h3 class="font-medium text-stone-600 mt-3 first:mt-1">List pages</h3>
                 <p class="text-xs text-stone-400">Rendered against the note type itself, not a note: <code class="bg-stone-100 px-1 rounded">[property path="Name"]</code> is the note type name, <code class="bg-stone-100 px-1 rounded">[meta]</code> is empty, and <code class="bg-stone-100 px-1 rounded">[mrql]</code> runs at global scope.</p>
@@ -379,6 +383,16 @@
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Hover Card" name="CustomHoverCard" value=noteType.CustomHoverCard mode="html" description="The hover card shown when a note link is hovered. Falls back to Custom Summary when empty, so set it only when hover should differ from the card." shortcodes=true generate=false %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Hover Card CSS" name="CustomHoverCardCSS" value=noteType.CustomHoverCardCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
         {% include "/partials/form/slotPreview.tpl" with slot="CustomHoverCard" label="Custom Hover Card" %}
+        </details>
+        <details class="template-cluster" data-template-cluster="CustomPanelSummary" @template-slot-changed="$el.open = true" @input="$el.open = true">
+        <summary>Custom Panel Summary</summary>
+        <p class="text-xs text-stone-500">Generate updates this template and its CSS together. Review both before saving.</p>
+        <div x-data="templateGeneration({ fieldName: 'CustomPanelSummary', mode: 'html' })">
+        {% include "/partials/form/templateGenerationControls.tpl" with title="Custom Panel Summary and CSS" name="CustomPanelSummary" field_id="CustomPanelSummary" %}
+        </div>
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Panel Summary" name="CustomPanelSummary" value=noteType.CustomPanelSummary mode="html" description="Replaces Custom Summary on note cards inside another entity's detail page panels. Falls back to Custom Summary when empty, so set it only when those cards should differ from the list card." shortcodes=true generate=false %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Panel Summary CSS" name="CustomPanelSummaryCSS" value=noteType.CustomPanelSummaryCSS mode="css" description="Global styles for this template slot. Use distinctive class names to avoid affecting other page content." shortcodes=true generate=false %}
+        {% include "/partials/form/slotPreview.tpl" with slot="CustomPanelSummary" label="Custom Panel Summary" %}
         </details>
         <details class="template-cluster" data-template-cluster="CustomListHeader" @template-slot-changed="$el.open = true" @input="$el.open = true">
         <summary>Custom List Header</summary>

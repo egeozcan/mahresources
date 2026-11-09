@@ -41,6 +41,8 @@ var sharedCustomSlots = []customSlotFlag{
 	{"custom-avatar-css", "CustomAvatarCSS", "Global CSS for CustomAvatar"},
 	{"custom-hover-card", "CustomHoverCard", "Rendered in the hover card for a {member} link; falls back to --custom-summary when unset"},
 	{"custom-hover-card-css", "CustomHoverCardCSS", "Global CSS for CustomHoverCard"},
+	{"custom-panel-summary", "CustomPanelSummary", "Rendered on {member} cards inside another entity's detail page panels instead of --custom-summary; falls back to --custom-summary when unset"},
+	{"custom-panel-summary-css", "CustomPanelSummaryCSS", "Global CSS for CustomPanelSummary"},
 	{"custom-list-header", "CustomListHeader", "Rendered above {member} list pages filtered to exactly this {carrier}, against the {carrier} itself"},
 	{"custom-list-header-css", "CustomListHeaderCSS", "Global CSS for CustomListHeader"},
 	{"custom-list-footer", "CustomListFooter", "Rendered below {member} list pages filtered to exactly this {carrier}, against the {carrier} itself"},

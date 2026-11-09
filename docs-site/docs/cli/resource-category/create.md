@@ -68,6 +68,8 @@ ID=$(mr resource-category create --name "Scans" --description "scanned documents
 | `--custom-avatar-css` | string | `` | Global CSS for CustomAvatar |
 | `--custom-hover-card` | string | `` | Rendered in the hover card for a resource link; falls back to --custom-summary when unset |
 | `--custom-hover-card-css` | string | `` | Global CSS for CustomHoverCard |
+| `--custom-panel-summary` | string | `` | Rendered on resource cards inside another entity's detail page panels instead of --custom-summary; falls back to --custom-summary when unset |
+| `--custom-panel-summary-css` | string | `` | Global CSS for CustomPanelSummary |
 | `--custom-list-header` | string | `` | Rendered above resource list pages filtered to exactly this resource category, against the resource category itself |
 | `--custom-list-header-css` | string | `` | Global CSS for CustomListHeader |
 | `--custom-list-footer` | string | `` | Rendered below resource list pages filtered to exactly this resource category, against the resource category itself |
@@ -96,7 +98,7 @@ ID=$(mr resource-category create --name "Scans" --description "scanned documents
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Created ResourceCategory object with ID, Name, Description, MetaSchema, AutoDetectRules, sectionConfig, CustomHeader/DetailFooter/Sidebar/Preview/Lightbox/Summary/Avatar/HoverCard/Cell/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, CreatedAt, UpdatedAt
+Created ResourceCategory object with ID, Name, Description, MetaSchema, AutoDetectRules, sectionConfig, CustomHeader/DetailFooter/Sidebar/Preview/Lightbox/Summary/Avatar/HoverCard/PanelSummary/Cell/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, CreatedAt, UpdatedAt
 
 ## Exit Codes
 

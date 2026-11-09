@@ -219,7 +219,7 @@
             <div class="list-container">
                 {% for entity in seriesSiblings %}
                     {# tagBaseUrl: without it the chip appends to the current URL and links back to this same resource page. #}
-                    {% include partial("resource") with tagBaseUrl="/resources" %}
+                    {% include partial("resource") with tagBaseUrl="/resources" cardInDetailPanel=true %}
                 {% endfor %}
             </div>
         </div>
@@ -238,7 +238,7 @@
                 <div class="list-container">
                     {% for entity in similarResources %}
                         <div>
-                            {% include partial("resource") with tagBaseUrl="/resources" %}
+                            {% include partial("resource") with tagBaseUrl="/resources" cardInDetailPanel=true %}
                             {% if entity.SimilarityTier == "duplicate" %}
                                 <p class="mt-1 text-xs font-sans font-medium text-rose-800 bg-rose-100 rounded px-1 py-0.5 text-center" title="Perceptual distance {{ entity.SimilarityDistanceValue }} of 64">Near-certain duplicate · distance {{ entity.SimilarityDistanceValue }}</p>
                             {% elif entity.SimilarityTier == "similar" %}

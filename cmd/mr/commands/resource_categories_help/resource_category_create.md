@@ -1,5 +1,5 @@
 ---
-outputShape: Created ResourceCategory object with ID, Name, Description, MetaSchema, AutoDetectRules, sectionConfig, CustomHeader/DetailFooter/Sidebar/Preview/Lightbox/Summary/Avatar/HoverCard/Cell/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, CreatedAt, UpdatedAt
+outputShape: Created ResourceCategory object with ID, Name, Description, MetaSchema, AutoDetectRules, sectionConfig, CustomHeader/DetailFooter/Sidebar/Preview/Lightbox/Summary/Avatar/HoverCard/PanelSummary/Cell/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, CreatedAt, UpdatedAt
 exitCodes: 0 on success; 1 on any error
 relatedCmds: resource-category get, resource-category edit-name, resource-categories list
 ---

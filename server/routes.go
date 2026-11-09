@@ -468,6 +468,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 			r.ResourceCategory.CustomAvatar = processSlot(r.ResourceCategory.CustomAvatar, metaCtx)
 			r.ResourceCategory.CustomDetailFooter = processSlot(r.ResourceCategory.CustomDetailFooter, metaCtx)
 			r.ResourceCategory.CustomHoverCard = processSlot(r.ResourceCategory.CustomHoverCard, metaCtx)
+			r.ResourceCategory.CustomPanelSummary = processSlot(r.ResourceCategory.CustomPanelSummary, metaCtx)
 			r.ResourceCategory.CustomPreview = processSlot(r.ResourceCategory.CustomPreview, metaCtx)
 			r.ResourceCategory.CustomLightbox = processSlot(r.ResourceCategory.CustomLightbox, metaCtx)
 			r.ResourceCategory.CustomCSS = shortcodes.Process(reqCtx, shortcodes.JoinCSS(r.ResourceCategory.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
@@ -492,6 +493,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 			g.Category.CustomAvatar = processSlot(g.Category.CustomAvatar, metaCtx)
 			g.Category.CustomDetailFooter = processSlot(g.Category.CustomDetailFooter, metaCtx)
 			g.Category.CustomHoverCard = processSlot(g.Category.CustomHoverCard, metaCtx)
+			g.Category.CustomPanelSummary = processSlot(g.Category.CustomPanelSummary, metaCtx)
 			g.Category.CustomOwnEntities = processSlot(g.Category.CustomOwnEntities, metaCtx)
 			g.Category.CustomCSS = shortcodes.Process(reqCtx, shortcodes.JoinCSS(g.Category.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
 		}
@@ -514,6 +516,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 			n.NoteType.CustomAvatar = processSlot(n.NoteType.CustomAvatar, metaCtx)
 			n.NoteType.CustomDetailFooter = processSlot(n.NoteType.CustomDetailFooter, metaCtx)
 			n.NoteType.CustomHoverCard = processSlot(n.NoteType.CustomHoverCard, metaCtx)
+			n.NoteType.CustomPanelSummary = processSlot(n.NoteType.CustomPanelSummary, metaCtx)
 			n.NoteType.CustomCSS = shortcodes.Process(reqCtx, shortcodes.JoinCSS(n.NoteType.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
 		}
 	}

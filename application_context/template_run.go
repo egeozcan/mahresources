@@ -888,7 +888,7 @@ var templateRunSlotNames = func() map[string]bool {
 	m := map[string]bool{"MetaSchema": true, "SectionConfig": true, "CustomCSS": true}
 	for _, slot := range []string{
 		"CustomHeader", "CustomSidebar", "CustomSummary", "CustomAvatar", "CustomDetailFooter", "CustomHoverCard",
-		"CustomPreview", "CustomLightbox", "CustomCell", "CustomOwnEntities", "CustomListHeader", "CustomListFooter",
+		"CustomPanelSummary", "CustomPreview", "CustomLightbox", "CustomCell", "CustomOwnEntities", "CustomListHeader", "CustomListFooter",
 		"CustomMRQLResult", "CustomEntityPickerResult",
 	} {
 		m[slot], m[slot+"CSS"] = true, true

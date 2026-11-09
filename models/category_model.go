@@ -47,6 +47,15 @@ type Category struct {
 	// hydrate. Shortcodes are processed server-side.
 	CustomHoverCard    string `gorm:"type:text"`
 	CustomHoverCardCSS string `gorm:"type:text"`
+	// CustomPanelSummary replaces CustomSummary on group cards shown inside another entity's
+	// detail page panels: a group's Own Entities, Related Entities and Relations, a note's
+	// or resource's linked entities, a series' resources, and the tag, category, note type
+	// and resource category pages. When empty those cards fall back to CustomSummary. List
+	// pages, the dashboard, MRQL results, owner cards and hover cards never use it.
+	// Shortcodes are processed server-side against the card's own group;
+	// an Alpine entity variable is available.
+	CustomPanelSummary    string `gorm:"type:text"`
+	CustomPanelSummaryCSS string `gorm:"type:text"`
 	// CustomOwnEntities replaces the body of the "Own Entities" section on the group detail
 	// page, which otherwise lists owned notes, sub-groups and resources as card grids. When
 	// empty the built-in body renders. The section's own visibility is still governed by

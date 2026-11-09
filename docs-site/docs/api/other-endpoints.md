@@ -306,6 +306,7 @@ POST /v1/category
 | `CustomDetailFooter` | string | Template rendered at the bottom of the detail page |
 | `CustomListFooter` | string | Custom list-page footer template (carrier-bound, like `CustomListHeader`) |
 | `CustomHoverCard` | string | Hover-card template; falls back to `CustomSummary` when empty |
+| `CustomPanelSummary` | string | Replaces `CustomSummary` on cards inside another entity's detail page panels; falls back to `CustomSummary` when empty |
 | `CustomOwnEntities` | string | Replaces the body of the group detail page's Own Entities section |
 | `CustomMRQLResult` | string | Custom MRQL result-card template |
 | `CustomCSS` | string | Custom CSS injected on category pages |
@@ -401,6 +402,7 @@ POST /v1/resourceCategory
 | `CustomDetailFooter` | string | Template rendered at the bottom of the detail page |
 | `CustomListFooter` | string | Custom list-page footer template (carrier-bound, like `CustomListHeader`) |
 | `CustomHoverCard` | string | Hover-card template; falls back to `CustomSummary` when empty |
+| `CustomPanelSummary` | string | Replaces `CustomSummary` on cards inside another entity's detail page panels; falls back to `CustomSummary` when empty |
 | `CustomPreview` | string | Template rendered above the built-in preview image |
 | `CustomLightbox` | string | Lightbox details-panel template; falls back to `CustomSidebar` when empty |
 | `CustomCell` | string | Extra table-cell template for the resources details table |

@@ -90,6 +90,8 @@ func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.Resou
 		CustomListFooterCSS:         query.CustomListFooterCSS,
 		CustomHoverCard:             query.CustomHoverCard,
 		CustomHoverCardCSS:          query.CustomHoverCardCSS,
+		CustomPanelSummary:          query.CustomPanelSummary,
+		CustomPanelSummaryCSS:       query.CustomPanelSummaryCSS,
 		CustomPreview:               query.CustomPreview,
 		CustomPreviewCSS:            query.CustomPreviewCSS,
 		CustomLightbox:              query.CustomLightbox,
@@ -192,6 +194,8 @@ func applyResourceCategoryEditor(resourceCategory *models.ResourceCategory, quer
 	resourceCategory.CustomListFooterCSS = query.CustomListFooterCSS
 	resourceCategory.CustomHoverCard = query.CustomHoverCard
 	resourceCategory.CustomHoverCardCSS = query.CustomHoverCardCSS
+	resourceCategory.CustomPanelSummary = query.CustomPanelSummary
+	resourceCategory.CustomPanelSummaryCSS = query.CustomPanelSummaryCSS
 	resourceCategory.CustomPreview = query.CustomPreview
 	resourceCategory.CustomPreviewCSS = query.CustomPreviewCSS
 	resourceCategory.CustomLightbox = query.CustomLightbox

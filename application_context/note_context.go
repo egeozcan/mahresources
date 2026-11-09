@@ -574,6 +574,8 @@ func applyNoteTypeEditor(noteType *models.NoteType, query *query_models.NoteType
 	noteType.CustomListFooterCSS = query.CustomListFooterCSS
 	noteType.CustomHoverCard = query.CustomHoverCard
 	noteType.CustomHoverCardCSS = query.CustomHoverCardCSS
+	noteType.CustomPanelSummary = query.CustomPanelSummary
+	noteType.CustomPanelSummaryCSS = query.CustomPanelSummaryCSS
 	noteType.ApplyTemplatesToShares = query.ApplyTemplatesToShares
 	noteType.CustomMRQLResult = query.CustomMRQLResult
 	noteType.CustomMRQLResultCSS = query.CustomMRQLResultCSS

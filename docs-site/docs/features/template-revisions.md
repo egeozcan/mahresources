@@ -13,7 +13,7 @@ Categories, Resource Categories and Note Types are called Template Carriers here
 
 A revision stores the whole tracked set of its carrier at that moment, not one slot.
 
-Every carrier tracks these fields: `CustomHeader`, `CustomDetailFooter`, `CustomSidebar`, `CustomSummary`, `CustomAvatar`, `CustomHoverCard`, `CustomListHeader`, `CustomListFooter`, `CustomMRQLResult` and `CustomEntityPickerResult`, each with its `*CSS` sibling, plus `CustomCSS`, `MetaSchema` and `SectionConfig`. Each carrier adds its own:
+Every carrier tracks these fields: `CustomHeader`, `CustomDetailFooter`, `CustomSidebar`, `CustomSummary`, `CustomAvatar`, `CustomHoverCard`, `CustomPanelSummary`, `CustomListHeader`, `CustomListFooter`, `CustomMRQLResult` and `CustomEntityPickerResult`, each with its `*CSS` sibling, plus `CustomCSS`, `MetaSchema` and `SectionConfig`. Each carrier adds its own:
 
 | Carrier | Also tracked |
 |---------|--------------|

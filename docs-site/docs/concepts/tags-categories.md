@@ -160,6 +160,7 @@ Categories define types of Groups with custom presentation and optional metadata
 | `customSummary` | HTML template for list views |
 | `customAvatar` | HTML template for group avatars/icons |
 | `customHoverCard` | HTML template for the hover card, falling back to `customSummary` when empty |
+| `customPanelSummary` | HTML template replacing `customSummary` on cards inside another entity's detail page panels, falling back to `customSummary` when empty |
 | `customOwnEntities` | HTML template replacing the body of the "Own Entities" section |
 | `customListHeader` | HTML template rendered above a group list filtered to this category |
 | `customListFooter` | HTML template rendered below a group list filtered to this category |
@@ -296,6 +297,7 @@ Resource Categories work like Categories but apply to Resources instead of Group
 | `customSummary` | HTML template for list views |
 | `customAvatar` | HTML template for resource avatars/icons |
 | `customHoverCard` | HTML template for the hover card, falling back to `customSummary` when empty |
+| `customPanelSummary` | HTML template replacing `customSummary` on cards inside another entity's detail page panels, falling back to `customSummary` when empty |
 | `customCell` | HTML template for one extra column in the details table view (Resource Categories only) |
 | `customListHeader` | HTML template rendered above a resource list filtered to this category |
 | `customListFooter` | HTML template rendered below a resource list filtered to this category |

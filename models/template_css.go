@@ -23,6 +23,9 @@ func (c Category) TemplateCSSParts() []string {
 	if c.CustomHoverCardCSS != "" {
 		parts = append(parts, c.CustomHoverCardCSS)
 	}
+	if c.CustomPanelSummaryCSS != "" {
+		parts = append(parts, c.CustomPanelSummaryCSS)
+	}
 	if c.CustomOwnEntitiesCSS != "" {
 		parts = append(parts, c.CustomOwnEntitiesCSS)
 	}
@@ -63,6 +66,9 @@ func (c ResourceCategory) TemplateCSSParts() []string {
 	if c.CustomHoverCardCSS != "" {
 		parts = append(parts, c.CustomHoverCardCSS)
 	}
+	if c.CustomPanelSummaryCSS != "" {
+		parts = append(parts, c.CustomPanelSummaryCSS)
+	}
 	if c.CustomCellCSS != "" {
 		parts = append(parts, c.CustomCellCSS)
 	}
@@ -96,6 +102,9 @@ func (c NoteType) TemplateCSSParts() []string {
 	}
 	if c.CustomHoverCardCSS != "" {
 		parts = append(parts, c.CustomHoverCardCSS)
+	}
+	if c.CustomPanelSummaryCSS != "" {
+		parts = append(parts, c.CustomPanelSummaryCSS)
 	}
 	if c.CustomListHeaderCSS != "" {
 		parts = append(parts, c.CustomListHeaderCSS)

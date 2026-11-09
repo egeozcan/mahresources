@@ -57,6 +57,7 @@ Deleting a Note Type **sets `noteTypeId` to NULL** on all Notes of that type. Th
 | `customSummary` | HTML template for list views |
 | `customAvatar` | HTML template for Note avatars |
 | `customHoverCard` | HTML template for the hover card shown on a Note link; falls back to `customSummary` when empty |
+| `customPanelSummary` | HTML template replacing `customSummary` on Note cards inside another entity's detail page panels; falls back to `customSummary` when empty |
 | `customListHeader` | HTML template rendered at the top of a Note list filtered to this one type |
 | `customListFooter` | HTML template rendered at the bottom of a Note list filtered to this one type |
 | `customCSS` | CSS injected as a page-level `<style>` block on pages that render this type's templates |

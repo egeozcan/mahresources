@@ -229,7 +229,7 @@ func templateMRQLRuleLines() []string {
 		"Every $name in a query needs a literal param-name attribute on the same shortcode: [mrql query='type = note AND tags = $tag' param-tag=\"todo\"]. A $name without one, or a param- attribute the query does not use, is an error.",
 		"type takes only resource, note or group. A category, resource category or note type name is never a type: type = \"book\" is invalid. Narrow by the fields above, such as tags, name or meta.<key>.",
 		"Use meta.<key> only with a key from the metadata schema.",
-		"A query in a slot that renders once per card (CustomSummary, CustomAvatar, CustomHoverCard, CustomMRQLResult, CustomEntityPickerResult, CustomCell) runs once per card; wrap it in [lazy]...[/lazy] so a list page does not run it for every card up front.",
+		"A query in a slot that renders once per card (CustomSummary, CustomPanelSummary, CustomAvatar, CustomHoverCard, CustomMRQLResult, CustomEntityPickerResult, CustomCell) runs once per card; wrap it in [lazy]...[/lazy] so a list page does not run it for every card up front.",
 	}
 }
 
@@ -262,7 +262,7 @@ func slotRoleLine(slot, entityType string) string {
 		}
 		return "CustomSidebar renders in the sidebar of the entity's detail page, against the entity itself."
 	case "CustomSummary":
-		return "CustomSummary renders below the title on entity cards in list and dashboard views; keep it compact. When CustomHoverCard is empty, the hover card reuses this content."
+		return "CustomSummary renders below the title on entity cards in list and dashboard views; keep it compact. When CustomHoverCard is empty, the hover card reuses this content, and when CustomPanelSummary is empty, so do cards inside other entities' detail page panels."
 	case "CustomAvatar":
 		if entityType == "resource" {
 			return "CustomAvatar renders next to the category name on resource cards; keep it compact. It does not replace the resource thumbnail."
@@ -272,6 +272,8 @@ func slotRoleLine(slot, entityType string) string {
 		return "CustomDetailFooter renders at the very bottom of the entity's detail page, below every built-in section, against the entity itself."
 	case "CustomHoverCard":
 		return "CustomHoverCard renders inside the small hover card shown when a link to the entity is hovered. Keep it to a couple of lines; when empty the hover card falls back to CustomSummary."
+	case "CustomPanelSummary":
+		return "CustomPanelSummary replaces CustomSummary on entity cards shown inside another entity's detail page panels, such as a parent group's Own Entities and Related Entities sections; keep it compact. When empty those cards fall back to CustomSummary. List pages, the dashboard, MRQL results and hover cards never use it."
 	case "CustomPreview":
 		return "CustomPreview renders in the resource detail sidebar directly above the built-in preview image, for file types that image cannot show: a PDF or model viewer, an audio player, an embed. It does not replace the preview image."
 	case "CustomLightbox":
@@ -311,7 +313,7 @@ func modeRuleLine(mode string) string {
 // contract. The edit form and user guide explain these to a human, but the
 // generation provider sees neither of them.
 func carrierRuntimeLines(entityType string) []string {
-	alpineSlots := []string{"CustomHeader", "CustomSidebar", "CustomSummary", "CustomAvatar", "CustomDetailFooter", "CustomHoverCard"}
+	alpineSlots := []string{"CustomHeader", "CustomSidebar", "CustomSummary", "CustomPanelSummary", "CustomAvatar", "CustomDetailFooter", "CustomHoverCard"}
 	serverOnlySlots := []string{"CustomMRQLResult", "CustomEntityPickerResult"}
 	switch entityType {
 	case "resource":

@@ -20,6 +20,8 @@ type ResourceCategoryCreator struct {
 	CustomListFooterCSS         string
 	CustomHoverCard             string
 	CustomHoverCardCSS          string
+	CustomPanelSummary          string
+	CustomPanelSummaryCSS       string
 	CustomPreview               string
 	CustomPreviewCSS            string
 	CustomLightbox              string

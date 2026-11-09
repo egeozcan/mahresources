@@ -309,6 +309,8 @@ type CategoryDef struct {
 	CustomListFooterCSS         string         `json:"custom_list_footer_css,omitempty"`
 	CustomHoverCard             string         `json:"custom_hover_card,omitempty"`
 	CustomHoverCardCSS          string         `json:"custom_hover_card_css,omitempty"`
+	CustomPanelSummary          string         `json:"custom_panel_summary,omitempty"`
+	CustomPanelSummaryCSS       string         `json:"custom_panel_summary_css,omitempty"`
 	CustomOwnEntities           string         `json:"custom_own_entities,omitempty"`
 	CustomOwnEntitiesCSS        string         `json:"custom_own_entities_css,omitempty"`
 	CustomMRQLResult            string         `json:"custom_mrql_result"`

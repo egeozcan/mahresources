@@ -50,7 +50,7 @@ type Case struct {
 // The harness cannot import that unexported list; keep the two in step.
 var sharedSlots = []string{
 	"CustomHeader", "CustomDetailFooter", "CustomSidebar", "CustomSummary", "CustomAvatar",
-	"CustomHoverCard", "CustomListHeader", "CustomListFooter", "CustomMRQLResult", "CustomEntityPickerResult", "CustomCSS",
+	"CustomHoverCard", "CustomPanelSummary", "CustomListHeader", "CustomListFooter", "CustomMRQLResult", "CustomEntityPickerResult", "CustomCSS",
 }
 
 var carrierSlots = map[string][]string{
@@ -81,6 +81,7 @@ var browserBundleFields = []string{
 	"CustomSidebar", "CustomSidebarCSS", "CustomPreview", "CustomPreviewCSS",
 	"CustomLightbox", "CustomLightboxCSS", "CustomSummary", "CustomSummaryCSS",
 	"CustomAvatar", "CustomAvatarCSS", "CustomHoverCard", "CustomHoverCardCSS",
+	"CustomPanelSummary", "CustomPanelSummaryCSS",
 	"CustomCell", "CustomCellCSS", "CustomOwnEntities", "CustomOwnEntitiesCSS",
 	"CustomListHeader", "CustomListHeaderCSS", "CustomListFooter", "CustomListFooterCSS",
 	"CustomMRQLResult", "CustomMRQLResultCSS", "CustomEntityPickerResult", "CustomEntityPickerResultCSS",

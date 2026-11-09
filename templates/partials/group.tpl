@@ -66,7 +66,8 @@
             <a class="card-url" target="_blank" referrerpolicy="no-referrer" href="{{ entity.URL|printUrl }}" aria-label="External link: {{ entity.URL|printUrl }}">{{ entity.URL|printUrl }}</a>
         {% endif %}
 
-        {% process_shortcodes entity.Category.CustomSummary entity %}
+        {# cardInDetailPanel is set by the detail-page panels (seeAll.tpl, the series and similar-resource panels); there CustomPanelSummary wins when set, everywhere else CustomSummary renders. #}
+        {% if cardInDetailPanel && entity.Category.CustomPanelSummary %}{% process_shortcodes entity.Category.CustomPanelSummary entity %}{% else %}{% process_shortcodes entity.Category.CustomSummary entity %}{% endif %}
 
         {% if !reverse && relation && relation.Description && !noRelDescription %}
             <a target="_blank" href="/relation?id={{ relation.ID }}" referrerpolicy="no-referrer" class="card-description block">

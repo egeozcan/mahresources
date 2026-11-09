@@ -60,6 +60,15 @@ type ResourceCategory struct {
 	// hydrate. Shortcodes are processed server-side.
 	CustomHoverCard    string `gorm:"type:text"`
 	CustomHoverCardCSS string `gorm:"type:text"`
+	// CustomPanelSummary replaces CustomSummary on resource cards shown inside another entity's
+	// detail page panels: a group's Own Entities, Related Entities and Relations, a note's
+	// or resource's linked entities, a series' resources, and the tag, category, note type
+	// and resource category pages. When empty those cards fall back to CustomSummary. List
+	// pages, the dashboard, MRQL results, owner cards and hover cards never use it.
+	// Shortcodes are processed server-side against the card's own resource;
+	// an Alpine entity variable is available.
+	CustomPanelSummary    string `gorm:"type:text"`
+	CustomPanelSummaryCSS string `gorm:"type:text"`
 	// CustomCell is rendered as one extra trailing cell per row in the resources details
 	// table view (?display=details). The column header reads "Custom" and the column is
 	// emitted only when the list is filtered to exactly this one category, so a mixed list

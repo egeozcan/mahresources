@@ -42,6 +42,7 @@ These are stored on the category/type record itself:
 - `CustomSummary`
 - `CustomAvatar`
 - `CustomHoverCard`
+- `CustomPanelSummary`
 - `CustomListHeader`
 - `CustomListFooter`
 - `CustomMRQLResult`
@@ -53,11 +54,11 @@ These are stored on the category/type record itself:
 
 Slots present on all three carriers:
 
-| Definition | `CustomHeader` | `CustomSidebar` | `CustomDetailFooter` | `CustomSummary` | `CustomAvatar` | `CustomHoverCard` | `CustomMRQLResult` |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `Category` | group detail page body top | group detail sidebar | group detail page bottom, below every section | group list cards | group cards (with fallback to initials avatar) | group hover card (falls back to `CustomSummary`) | used by `[mrql]` |
-| `ResourceCategory` | resource detail page body top | resource detail sidebar, and the lightbox panel unless `CustomLightbox` is set | resource detail page bottom | resource list cards | resource cards | resource hover card (falls back to `CustomSummary`) | used by `[mrql]` |
-| `NoteType` | note detail page body top | note detail sidebar | note detail page bottom | note list cards | note cards | note hover card (falls back to `CustomSummary`) | used by `[mrql]` |
+| Definition | `CustomHeader` | `CustomSidebar` | `CustomDetailFooter` | `CustomSummary` | `CustomAvatar` | `CustomHoverCard` | `CustomPanelSummary` | `CustomMRQLResult` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `Category` | group detail page body top | group detail sidebar | group detail page bottom, below every section | group list cards | group cards (with fallback to initials avatar) | group hover card (falls back to `CustomSummary`) | group cards inside another entity's detail page panels, in place of `CustomSummary` (falls back to it) | used by `[mrql]` |
+| `ResourceCategory` | resource detail page body top | resource detail sidebar, and the lightbox panel unless `CustomLightbox` is set | resource detail page bottom | resource list cards | resource cards | resource hover card (falls back to `CustomSummary`) | resource cards inside another entity's detail page panels, in place of `CustomSummary` (falls back to it) | used by `[mrql]` |
+| `NoteType` | note detail page body top | note detail sidebar | note detail page bottom | note list cards | note cards | note hover card (falls back to `CustomSummary`) | note cards inside another entity's detail page panels, in place of `CustomSummary` (falls back to it) | used by `[mrql]` |
 
 List slots, on all three carriers, but bound to the **carrier** rather than a member entity, and rendered only when the list is filtered to exactly that one carrier:
 
@@ -89,6 +90,7 @@ For the standard rendered custom fields:
 - `CustomSummary` -- yes
 - `CustomAvatar` -- yes (all three entity types)
 - `CustomHoverCard` -- yes; the fragment is initialised with `Alpine.initTree` after injection
+- `CustomPanelSummary` -- yes, like `CustomSummary`
 - `CustomLightbox` -- yes (`ResourceCategory`)
 - `CustomListHeader`, `CustomListFooter` -- no member entity at all; they bind the carrier
 - `CustomCell` -- no automatic Alpine `entity` wrapper

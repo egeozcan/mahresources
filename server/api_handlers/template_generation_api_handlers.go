@@ -29,7 +29,7 @@ import (
 // produce markup with nowhere to go.
 var templateGenerateSharedSlots = []string{
 	"CustomHeader", "CustomDetailFooter", "CustomSidebar", "CustomSummary", "CustomAvatar",
-	"CustomHoverCard", "CustomListHeader", "CustomListFooter", "CustomMRQLResult", "CustomEntityPickerResult", "CustomCSS",
+	"CustomHoverCard", "CustomPanelSummary", "CustomListHeader", "CustomListFooter", "CustomMRQLResult", "CustomEntityPickerResult", "CustomCSS",
 }
 
 var templateGenerateCarrierSlots = map[string][]string{
