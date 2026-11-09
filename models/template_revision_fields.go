@@ -64,7 +64,7 @@ func loneSlot(name string, kind TemplateFieldKind) TemplateSlot {
 var (
 	categoryTemplateSlots = []TemplateSlot{
 		templateSlot("CustomHeader"), templateSlot("CustomDetailFooter"), templateSlot("CustomSidebar"),
-		templateSlot("CustomSummary"), templateSlot("CustomAvatar"), templateSlot("CustomHoverCard"),
+		templateSlot("CustomSummary"), templateSlot("CustomAvatar"), templateSlot("CustomHoverCard"), templateSlot("CustomPanelSummary"),
 		templateSlot("CustomOwnEntities"), templateSlot("CustomListHeader"), templateSlot("CustomListFooter"),
 		templateSlot("CustomMRQLResult"), templateSlot("CustomEntityPickerResult"),
 		loneSlot("CustomCSS", TemplateFieldText),
@@ -74,7 +74,7 @@ var (
 	resourceCategoryTemplateSlots = []TemplateSlot{
 		templateSlot("CustomHeader"), templateSlot("CustomDetailFooter"), templateSlot("CustomSidebar"),
 		templateSlot("CustomPreview"), templateSlot("CustomLightbox"), templateSlot("CustomSummary"),
-		templateSlot("CustomAvatar"), templateSlot("CustomHoverCard"), templateSlot("CustomCell"),
+		templateSlot("CustomAvatar"), templateSlot("CustomHoverCard"), templateSlot("CustomPanelSummary"), templateSlot("CustomCell"),
 		templateSlot("CustomListHeader"), templateSlot("CustomListFooter"),
 		templateSlot("CustomMRQLResult"), templateSlot("CustomEntityPickerResult"),
 		loneSlot("CustomCSS", TemplateFieldText),
@@ -84,7 +84,7 @@ var (
 	}
 	noteTypeTemplateSlots = []TemplateSlot{
 		templateSlot("CustomHeader"), templateSlot("CustomDetailFooter"), templateSlot("CustomSidebar"),
-		templateSlot("CustomSummary"), templateSlot("CustomAvatar"), templateSlot("CustomHoverCard"),
+		templateSlot("CustomSummary"), templateSlot("CustomAvatar"), templateSlot("CustomHoverCard"), templateSlot("CustomPanelSummary"),
 		templateSlot("CustomListHeader"), templateSlot("CustomListFooter"),
 		loneSlot("ApplyTemplatesToShares", TemplateFieldBool),
 		templateSlot("CustomMRQLResult"), templateSlot("CustomEntityPickerResult"),

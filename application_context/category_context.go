@@ -105,6 +105,8 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 		CustomListFooterCSS:         categoryQuery.CustomListFooterCSS,
 		CustomHoverCard:             categoryQuery.CustomHoverCard,
 		CustomHoverCardCSS:          categoryQuery.CustomHoverCardCSS,
+		CustomPanelSummary:          categoryQuery.CustomPanelSummary,
+		CustomPanelSummaryCSS:       categoryQuery.CustomPanelSummaryCSS,
 		CustomOwnEntities:           categoryQuery.CustomOwnEntities,
 		CustomOwnEntitiesCSS:        categoryQuery.CustomOwnEntitiesCSS,
 		CustomMRQLResult:            categoryQuery.CustomMRQLResult,
@@ -231,6 +233,8 @@ func applyCategoryEditor(category *models.Category, categoryQuery *query_models.
 	category.CustomListFooterCSS = categoryQuery.CustomListFooterCSS
 	category.CustomHoverCard = categoryQuery.CustomHoverCard
 	category.CustomHoverCardCSS = categoryQuery.CustomHoverCardCSS
+	category.CustomPanelSummary = categoryQuery.CustomPanelSummary
+	category.CustomPanelSummaryCSS = categoryQuery.CustomPanelSummaryCSS
 	category.CustomOwnEntities = categoryQuery.CustomOwnEntities
 	category.CustomOwnEntitiesCSS = categoryQuery.CustomOwnEntitiesCSS
 	category.CustomMRQLResult = categoryQuery.CustomMRQLResult

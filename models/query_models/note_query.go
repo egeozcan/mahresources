@@ -63,6 +63,8 @@ type NoteTypeEditor struct {
 	CustomListFooterCSS         string
 	CustomHoverCard             string
 	CustomHoverCardCSS          string
+	CustomPanelSummary          string
+	CustomPanelSummaryCSS       string
 	ApplyTemplatesToShares      bool
 	CustomMRQLResult            string
 	CustomMRQLResultCSS         string

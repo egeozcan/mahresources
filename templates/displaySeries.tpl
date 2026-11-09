@@ -28,7 +28,7 @@
             {% if series.Resources %}
             <div class="list-container">
                 {% for entity in series.Resources %}
-                    {% include partial("resource") with tagBaseUrl="/resources" %}
+                    {% include partial("resource") with tagBaseUrl="/resources" cardInDetailPanel=true %}
                 {% endfor %}
             </div>
             {% else %}

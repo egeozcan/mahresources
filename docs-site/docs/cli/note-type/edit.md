@@ -72,6 +72,8 @@ mr note-types list --json | jq '.[] | select(.ID == 1).CustomSummary'
 | `--custom-avatar-css` | string | `` | Global CSS for CustomAvatar |
 | `--custom-hover-card` | string | `` | Rendered in the hover card for a note link; falls back to --custom-summary when unset |
 | `--custom-hover-card-css` | string | `` | Global CSS for CustomHoverCard |
+| `--custom-panel-summary` | string | `` | Rendered on note cards inside another entity's detail page panels instead of --custom-summary; falls back to --custom-summary when unset |
+| `--custom-panel-summary-css` | string | `` | Global CSS for CustomPanelSummary |
 | `--custom-list-header` | string | `` | Rendered above note list pages filtered to exactly this note type, against the note type itself |
 | `--custom-list-header-css` | string | `` | Global CSS for CustomListHeader |
 | `--custom-list-footer` | string | `` | Rendered below note list pages filtered to exactly this note type, against the note type itself |
@@ -94,7 +96,7 @@ mr note-types list --json | jq '.[] | select(.ID == 1).CustomSummary'
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Updated NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, ApplyTemplatesToShares, CreatedAt, UpdatedAt
+Updated NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/PanelSummary/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, ApplyTemplatesToShares, CreatedAt, UpdatedAt
 
 ## Exit Codes
 

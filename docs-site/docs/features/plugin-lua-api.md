@@ -473,7 +473,7 @@ editor role, matching the HTTP series surface.
 
 `id` (number), `name` (string), `description` (string), `custom_header`,
 `custom_detail_footer`, `custom_sidebar`, `custom_summary`, `custom_avatar`,
-`custom_hover_card`, `custom_own_entities`, `custom_list_header`,
+`custom_hover_card`, `custom_panel_summary`, `custom_own_entities`, `custom_list_header`,
 `custom_list_footer`, `custom_mrql_result`, `custom_css`, `meta_schema` and
 `section_config` (all strings; `section_config` is JSON-encoded). Section
 configuration round-trips through create, update and patch for both Category

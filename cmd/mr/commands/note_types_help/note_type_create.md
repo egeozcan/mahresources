@@ -1,5 +1,5 @@
 ---
-outputShape: Created NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, ApplyTemplatesToShares, CreatedAt, UpdatedAt
+outputShape: Created NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/PanelSummary/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, ApplyTemplatesToShares, CreatedAt, UpdatedAt
 exitCodes: 0 on success; 1 on any error
 relatedCmds: note-type get, note-type edit, note-types list
 ---
@@ -11,8 +11,8 @@ optional. Pass a JSON Schema string to `--meta-schema` to constrain the
 metadata shape of Notes of this type, and a JSON object to
 `--section-config` to control which sections render on note detail
 pages. There is a `--custom-*` flag for every note type template slot --
-the detail page header, sidebar and footer, the list card summary, avatar
-and hover card, the list page header and footer, MRQL result cards, and entity
+the detail page header, sidebar and footer, the list card summary, the
+summary on cards inside other detail pages' panels, avatar and hover card, the list page header and footer, MRQL result cards, and entity
 picker results. `--custom-entity-picker-result` sets picker content and
 `--custom-entity-picker-result-css` sets its stylesheet; selection controls
 remain host-owned.

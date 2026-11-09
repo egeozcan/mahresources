@@ -45,6 +45,8 @@ mr category edit
 | `--custom-avatar-css` | string | `` | Global CSS for CustomAvatar |
 | `--custom-hover-card` | string | `` | Rendered in the hover card for a group link; falls back to --custom-summary when unset |
 | `--custom-hover-card-css` | string | `` | Global CSS for CustomHoverCard |
+| `--custom-panel-summary` | string | `` | Rendered on group cards inside another entity's detail page panels instead of --custom-summary; falls back to --custom-summary when unset |
+| `--custom-panel-summary-css` | string | `` | Global CSS for CustomPanelSummary |
 | `--custom-list-header` | string | `` | Rendered above group list pages filtered to exactly this category, against the category itself |
 | `--custom-list-header-css` | string | `` | Global CSS for CustomListHeader |
 | `--custom-list-footer` | string | `` | Rendered below group list pages filtered to exactly this category, against the category itself |

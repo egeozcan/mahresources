@@ -102,6 +102,7 @@ Note types add custom templates and styling to notes.
 | `customAvatar` | HTML template for Note avatars |
 | `customDetailFooter` | HTML template rendered at the bottom of the note detail page, below every built-in section |
 | `customHoverCard` | HTML template for the hover card shown when a note link is hovered; falls back to `customSummary` when empty |
+| `customPanelSummary` | HTML template replacing `customSummary` on note cards inside another entity's detail page panels, such as a group's Own Entities; falls back to `customSummary` when empty |
 | `customListHeader` | HTML template rendered at the top of note list pages filtered to this one type |
 | `customListFooter` | HTML template rendered at the bottom of note list pages filtered to this one type, below the results |
 | `applyTemplatesToShares` | Render this type's `customHeader` and `customCSS` on public `/s/<token>` share pages |

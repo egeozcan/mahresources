@@ -9,9 +9,9 @@ import (
 // templatePromptSlots are the HTML slots each carrier can generate, mirroring
 // the handler's slot lists (server/api_handlers/template_generation_api_handlers.go).
 var templatePromptSlots = map[string][]string{
-	"group":    {"CustomHeader", "CustomDetailFooter", "CustomSidebar", "CustomSummary", "CustomAvatar", "CustomHoverCard", "CustomListHeader", "CustomListFooter", "CustomMRQLResult", "CustomEntityPickerResult", "CustomOwnEntities"},
-	"resource": {"CustomHeader", "CustomDetailFooter", "CustomSidebar", "CustomSummary", "CustomAvatar", "CustomHoverCard", "CustomListHeader", "CustomListFooter", "CustomMRQLResult", "CustomEntityPickerResult", "CustomPreview", "CustomLightbox", "CustomCell"},
-	"note":     {"CustomHeader", "CustomDetailFooter", "CustomSidebar", "CustomSummary", "CustomAvatar", "CustomHoverCard", "CustomListHeader", "CustomListFooter", "CustomMRQLResult", "CustomEntityPickerResult"},
+	"group":    {"CustomHeader", "CustomDetailFooter", "CustomSidebar", "CustomSummary", "CustomAvatar", "CustomHoverCard", "CustomPanelSummary", "CustomListHeader", "CustomListFooter", "CustomMRQLResult", "CustomEntityPickerResult", "CustomOwnEntities"},
+	"resource": {"CustomHeader", "CustomDetailFooter", "CustomSidebar", "CustomSummary", "CustomAvatar", "CustomHoverCard", "CustomPanelSummary", "CustomListHeader", "CustomListFooter", "CustomMRQLResult", "CustomEntityPickerResult", "CustomPreview", "CustomLightbox", "CustomCell"},
+	"note":     {"CustomHeader", "CustomDetailFooter", "CustomSidebar", "CustomSummary", "CustomAvatar", "CustomHoverCard", "CustomPanelSummary", "CustomListHeader", "CustomListFooter", "CustomMRQLResult", "CustomEntityPickerResult"},
 }
 
 const promptSentinel = "SENTINEL-7f3a"
@@ -237,7 +237,7 @@ func TestTemplatePrefixCarriesTheMRQLReference(t *testing.T) {
 		in.Postgres = postgres
 		addTemplateReferencePrefix(&p, in)
 		got := len(sectionText(p, "mrql"))
-		if want := map[bool]int{false: 6781, true: 6983}[postgres]; got != want {
+		if want := map[bool]int{false: 6801, true: 7003}[postgres]; got != want {
 			t.Errorf("postgres=%t: the MRQL reference is %d bytes, pinned at %d", postgres, got, want)
 		}
 	}

@@ -11,8 +11,8 @@ optional. Pass a JSON Schema string to `--meta-schema` to constrain the
 metadata shape of Notes of this type, and a JSON object to
 `--section-config` to control which sections render on note detail
 pages. There is a `--custom-*` flag for every note type template slot --
-the detail page header, sidebar and footer, the list card summary, avatar
-and hover card, the list page header and footer, MRQL result cards, and entity
+the detail page header, sidebar and footer, the list card summary, the
+summary on cards inside other detail pages' panels, avatar and hover card, the list page header and footer, MRQL result cards, and entity
 picker results. `--custom-entity-picker-result` sets picker content and
 `--custom-entity-picker-result-css` sets its stylesheet; selection controls
 remain host-owned.
@@ -77,6 +77,8 @@ NT=$(mr note-type create --name "Code Review" --json | jq -r .ID)
 | `--custom-avatar-css` | string | `` | Global CSS for CustomAvatar |
 | `--custom-hover-card` | string | `` | Rendered in the hover card for a note link; falls back to --custom-summary when unset |
 | `--custom-hover-card-css` | string | `` | Global CSS for CustomHoverCard |
+| `--custom-panel-summary` | string | `` | Rendered on note cards inside another entity's detail page panels instead of --custom-summary; falls back to --custom-summary when unset |
+| `--custom-panel-summary-css` | string | `` | Global CSS for CustomPanelSummary |
 | `--custom-list-header` | string | `` | Rendered above note list pages filtered to exactly this note type, against the note type itself |
 | `--custom-list-header-css` | string | `` | Global CSS for CustomListHeader |
 | `--custom-list-footer` | string | `` | Rendered below note list pages filtered to exactly this note type, against the note type itself |
@@ -99,7 +101,7 @@ NT=$(mr note-type create --name "Code Review" --json | jq -r .ID)
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Created NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, ApplyTemplatesToShares, CreatedAt, UpdatedAt
+Created NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/PanelSummary/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, ApplyTemplatesToShares, CreatedAt, UpdatedAt
 
 ## Exit Codes
 

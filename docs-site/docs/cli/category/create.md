@@ -9,7 +9,7 @@ sidebar_label: create
 Create a new Category. `--name` is required; `--description` is optional
 free-form text. A `--custom-*` flag exists for every category template
 slot -- the detail page header, sidebar and footer, the list card summary,
-avatar and hover card, the list page header and footer, the Own Entities
+the summary on cards inside other detail pages' panels, avatar and hover card, the list page header and footer, the Own Entities
 section body, MRQL result cards, entity picker results, and the CSS that styles them.
 `--custom-entity-picker-result` sets picker result content and
 `--custom-entity-picker-result-css` sets its companion stylesheet; the host keeps
@@ -69,6 +69,8 @@ ID=$(mr category create --name "Location" --description "Places you know about" 
 | `--custom-avatar-css` | string | `` | Global CSS for CustomAvatar |
 | `--custom-hover-card` | string | `` | Rendered in the hover card for a group link; falls back to --custom-summary when unset |
 | `--custom-hover-card-css` | string | `` | Global CSS for CustomHoverCard |
+| `--custom-panel-summary` | string | `` | Rendered on group cards inside another entity's detail page panels instead of --custom-summary; falls back to --custom-summary when unset |
+| `--custom-panel-summary-css` | string | `` | Global CSS for CustomPanelSummary |
 | `--custom-list-header` | string | `` | Rendered above group list pages filtered to exactly this category, against the category itself |
 | `--custom-list-header-css` | string | `` | Global CSS for CustomListHeader |
 | `--custom-list-footer` | string | `` | Rendered below group list pages filtered to exactly this category, against the category itself |
@@ -93,7 +95,7 @@ ID=$(mr category create --name "Location" --description "Places you know about" 
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Created Category object with ID (uint), Name (string), Description (string), MetaSchema, sectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/OwnEntities/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, CreatedAt, UpdatedAt
+Created Category object with ID (uint), Name (string), Description (string), MetaSchema, sectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/PanelSummary/OwnEntities/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, CreatedAt, UpdatedAt
 
 ## Exit Codes
 

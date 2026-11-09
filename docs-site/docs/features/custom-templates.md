@@ -35,6 +35,7 @@ Each Category (for Groups), Resource Category (for Resources), and Note Type (fo
 | **CustomSummary** | Entity cards in list views, below the title |
 | **CustomAvatar** | Avatar/icon when linking to the entity |
 | **CustomHoverCard** | The hover card for a link to the entity. Falls back to `CustomSummary` when empty (see [CustomHoverCard](#customhovercard)) |
+| **CustomPanelSummary** | Entity cards inside another entity's detail page panels, in place of `CustomSummary`. Falls back to `CustomSummary` when empty (see [CustomPanelSummary](#custompanelsummary)) |
 | **CustomLightbox** | *Resource Categories only.* The lightbox details panel. Falls back to `CustomSidebar` when empty (see [CustomLightbox](#customlightbox)) |
 | **CustomCell** | *Resource Categories only.* One extra cell per row in the resources details table (see [CustomCell](#customcell)) |
 
@@ -50,9 +51,9 @@ Each Category (for Groups), Resource Category (for Resources), and Note Type (fo
 
 Every slot above holds HTML markup except `CustomCSS`, which holds raw CSS and exists so the others can be styled globally without inlining `<style>` tags in each.
 
-Leaving a slot empty keeps the built-in appearance. Three slots additionally **fall back** rather than rendering nothing: `CustomHoverCard` falls back to `CustomSummary`, `CustomLightbox` falls back to `CustomSidebar`, and `CustomOwnEntities` falls back to the built-in card grids. Setting one of those is only worthwhile when that surface should differ from the slot it borrows from.
+Leaving a slot empty keeps the built-in appearance. Four slots additionally **fall back** rather than rendering nothing: `CustomHoverCard` and `CustomPanelSummary` fall back to `CustomSummary`, `CustomLightbox` falls back to `CustomSidebar`, and `CustomOwnEntities` falls back to the built-in card grids. Setting one of those is only worthwhile when that surface should differ from the slot it borrows from.
 
-"Empty" means **unset** for the hover card and the Own Entities body, which are chosen server-side from the stored template. It means **renders nothing** for the lightbox, whose content arrives pre-rendered in the JSON detail response, where an unset slot and a slot whose shortcodes produced no output are the same empty string. The two only diverge for a slot that is set to something which renders nothing -- `[conditional]` with no matching branch, an `[mrql]` with no results, `[meta … inline="true" hide-empty="true"]` on an absent value. In that case the lightbox shows `CustomSidebar` and the hover card shows nothing.
+"Empty" means **unset** for the hover card, the panel summary and the Own Entities body, which are chosen server-side from the stored template. It means **renders nothing** for the lightbox, whose content arrives pre-rendered in the JSON detail response, where an unset slot and a slot whose shortcodes produced no output are the same empty string. The two only diverge for a slot that is set to something which renders nothing -- `[conditional]` with no matching branch, an `[mrql]` with no results, `[meta … inline="true" hide-empty="true"]` on an absent value. In that case the lightbox shows `CustomSidebar`, and the hover card and the panel card show nothing.
 
 For the same reason, the Own Entities section auto-opens whenever `CustomOwnEntities` is *set*, not when it renders something: a slot that resolves to nothing still opens the section (and still suppresses the Related Entities auto-open that would otherwise take its place).
 
@@ -61,7 +62,7 @@ For the same reason, the Own Entities section auto-opens whenever `CustomOwnEnti
 Custom template content is processed in two ways:
 
 - **Shortcodes** (`[meta]`, `[property]`, `[mrql]`, `[conditional]`, `[link]`, `[each]`, `[partial]`, `[using]`, and plugin shortcodes) are expanded server-side.
-- **Alpine.js directives** (`x-text`, `x-if`, `:class`, `@click`, etc.) work in the slots the outer page template wraps in an `x-data` scope, which is every detail-page and card slot: CustomHeader, CustomSidebar, CustomPreview, CustomOwnEntities, CustomDetailFooter, CustomSummary, CustomAvatar, CustomHoverCard and CustomLightbox. The full entity is available there as `entity`. Alpine directives do **not** work in `CustomMRQLResult`, `CustomEntityPickerResult`, `CustomCell`, `CustomListHeader` or `CustomListFooter`. The first three the shortcode engine renders server-side into a table cell or card; the list slots have no `x-data` wrapper and bind the carrier rather than a member entity, so there is no `entity` object to read. Use shortcodes instead: `[meta]`, `[property]` and `[conditional]` in the first three, `[property]` and `[conditional]` in the list slots, where `[meta]` renders its empty state.
+- **Alpine.js directives** (`x-text`, `x-if`, `:class`, `@click`, etc.) work in the slots the outer page template wraps in an `x-data` scope, which is every detail-page and card slot: CustomHeader, CustomSidebar, CustomPreview, CustomOwnEntities, CustomDetailFooter, CustomSummary, CustomPanelSummary, CustomAvatar, CustomHoverCard and CustomLightbox. The full entity is available there as `entity`. Alpine directives do **not** work in `CustomMRQLResult`, `CustomEntityPickerResult`, `CustomCell`, `CustomListHeader` or `CustomListFooter`. The first three the shortcode engine renders server-side into a table cell or card; the list slots have no `x-data` wrapper and bind the carrier rather than a member entity, so there is no `entity` object to read. Use shortcodes instead: `[meta]`, `[property]` and `[conditional]` in the first three, `[property]` and `[conditional]` in the list slots, where `[meta]` renders its empty state.
 
 :::caution Pongo2 expressions do not work
 
@@ -290,6 +291,24 @@ Hovering a link to a group, resource or note shows a small preview card. By defa
 
 The hover card is delivered as an HTML fragment and initialised with `Alpine.initTree`, so entity-scoped Alpine directives work here as they do on the detail page.
 
+## CustomPanelSummary
+
+A card shown inside another entity's detail page renders `CustomPanelSummary` in place of `CustomSummary`. The rest of the card (title, avatar, badges, description, tags and plugin actions) is unchanged. These are the panels that count:
+
+- on a group: Own Entities (Notes, Sub-Groups, Resources), Related Entities (Related Groups, Related Resources, Related Notes), and the Relations and Reverse Relations panels,
+- on a note: Groups and Resources,
+- on a resource: Notes, Groups, Series and Similar Resources,
+- on a series: Resources,
+- on a tag, category, note type or resource category page: its Groups, Notes or Resources panel.
+
+**When empty, those cards fall back to `CustomSummary`**, so a carrier that never sets this slot keeps the cards it had. Every other card surface always renders `CustomSummary`: list pages, the dashboard, MRQL result cards, the `/relation` page, the owner card in a detail page's sidebar, and the hover card.
+
+The slot renders against the card's own entity, not the page it appears on: on a parent group's page, `[property path="Name"]` in a child group's panel summary is the child's name. A common use is a shorter card inside a parent than in the full list:
+
+```html
+<span class="panel-line">[meta path="status" default="—"] &middot; due [meta path="due" default="—"]</span>
+```
+
 ## CustomOwnEntities
 
 *Categories only.* The group detail page has an **Own Entities** section listing the notes, sub-groups and resources the group owns, as three card grids. `CustomOwnEntities` replaces the body of that section.
@@ -418,6 +437,7 @@ Shortcodes (`[meta]`, `[property]`, `[mrql]`) inside `CustomCSS` are processed s
    - **Custom Summary** - group cards in list views
    - **Custom Avatar** - replaces the initials avatar on group cards
    - **Custom Hover Card** - the hover card for a group link; falls back to Custom Summary
+   - **Custom Panel Summary** - group cards inside another entity's detail page panels; falls back to Custom Summary
    - **Custom Own Entities** - replaces the body of the Own Entities section
    - **Custom List Header** / **Custom List Footer** - above and below a list filtered to exactly this category
    - **Custom MRQL Result** - result cards in `[mrql]` queries
@@ -439,6 +459,7 @@ Every field has a **Generate** button (natural-language drafting) and a live **P
    - **Custom Summary** - resource cards in list views
    - **Custom Avatar** - shown next to the category name on resource cards
    - **Custom Hover Card** - the hover card for a resource link; falls back to Custom Summary
+   - **Custom Panel Summary** - resource cards inside another entity's detail page panels; falls back to Custom Summary
    - **Custom Lightbox** - the lightbox details panel; falls back to Custom Sidebar
    - **Custom Table Cell** - one extra column in the resources details table
    - **Custom List Header** / **Custom List Footer** - above and below a list filtered to exactly this category
@@ -459,6 +480,7 @@ Every field has a **Generate** button (natural-language drafting) and a live **P
    - **Custom Summary** - note cards in list views
    - **Custom Avatar** - replaces the initials avatar on note cards
    - **Custom Hover Card** - the hover card for a note link; falls back to Custom Summary
+   - **Custom Panel Summary** - note cards inside another entity's detail page panels; falls back to Custom Summary
    - **Custom List Header** / **Custom List Footer** - above and below a list filtered to exactly this note type
    - **Custom MRQL Result** - result cards in `[mrql]` queries
    - **Custom CSS** - one CSS block styling all of the above
@@ -530,7 +552,7 @@ The same controls apply to matching sections on list cards:
 
 Each card uses its own category or note type, including mixed-category lists and cards inside another entity's detail page. These settings also apply to the group text list and resource simple list, which use the same cards. Controls for sections that have no counterpart on cards still apply only to detail pages.
 
-CustomSummary and CustomAvatar remain visible when built-in card sections are hidden. Selection controls, entity titles, relation descriptions and plugin actions remain available. Table rows, timeline entries, hover cards, the lightbox, custom MRQL templates and public shares retain their separate rendering behavior.
+CustomSummary, CustomPanelSummary and CustomAvatar remain visible when built-in card sections are hidden. Selection controls, entity titles, relation descriptions and plugin actions remain available. Table rows, timeline entries, hover cards, the lightbox, custom MRQL templates and public shares retain their separate rendering behavior.
 
 To replace the built-in group or resource description with your own card layout, uncheck **Description** in **Section Visibility** and put this in **Custom Summary**:
 
@@ -941,7 +963,7 @@ The partial expands with the including entity's context, so its own `[meta]`, `[
 
 The **Reuse & Presets** panel on each edit form fills the form without saving (nothing is written until you submit). The panel is closed when the form loads; click its title to open it. It opens by itself to show the notice when the form is opened with a revision to load:
 
-- **Copy from…** fills the slots from another category, of the same carrier or a different one. Cross-carrier copies fill the shared fields (the ten slots every carrier has: Header, Detail Footer, Sidebar, Summary, Avatar, Hover Card, List Header, List Footer, MRQL Result and CSS, plus the Meta JSON Schema) and skip Section Config, whose shape differs per carrier.
+- **Copy from…** fills the slots from another category, of the same carrier or a different one. Cross-carrier copies fill the shared fields (the twelve slots every carrier has: Header, Detail Footer, Sidebar, Summary, Panel Summary, Avatar, Hover Card, List Header, List Footer, MRQL Result, Entity Picker Result and CSS, plus the Meta JSON Schema) and skip Section Config, whose shape differs per carrier.
 - **Export bundle** downloads the current editor contents as a `.json` bundle (schema version 1). It exports unsaved edits, so it doubles as a backup before experimenting.
 - **Import bundle** loads a bundle back into the form, warning on a carrier mismatch (then filling shared fields only) and rejecting a newer bundle schema version.
 

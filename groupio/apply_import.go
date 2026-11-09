@@ -561,6 +561,8 @@ func (s *applyState) applySchemaDefDecisions() error {
 				cat.CustomListFooterCSS = def.CustomListFooterCSS
 				cat.CustomHoverCard = def.CustomHoverCard
 				cat.CustomHoverCardCSS = def.CustomHoverCardCSS
+				cat.CustomPanelSummary = def.CustomPanelSummary
+				cat.CustomPanelSummaryCSS = def.CustomPanelSummaryCSS
 				cat.CustomOwnEntities = def.CustomOwnEntities
 				cat.CustomOwnEntitiesCSS = def.CustomOwnEntitiesCSS
 				cat.CustomMRQLResult = def.CustomMRQLResult
@@ -660,6 +662,8 @@ func (s *applyState) applySchemaDefDecisions() error {
 				nt.CustomListFooterCSS = def.CustomListFooterCSS
 				nt.CustomHoverCard = def.CustomHoverCard
 				nt.CustomHoverCardCSS = def.CustomHoverCardCSS
+				nt.CustomPanelSummary = def.CustomPanelSummary
+				nt.CustomPanelSummaryCSS = def.CustomPanelSummaryCSS
 				nt.ApplyTemplatesToShares = def.ApplyTemplatesToShares
 				nt.CustomMRQLResult = def.CustomMRQLResult
 				nt.CustomMRQLResultCSS = def.CustomMRQLResultCSS
@@ -754,6 +758,8 @@ func (s *applyState) applySchemaDefDecisions() error {
 				rc.CustomListFooterCSS = def.CustomListFooterCSS
 				rc.CustomHoverCard = def.CustomHoverCard
 				rc.CustomHoverCardCSS = def.CustomHoverCardCSS
+				rc.CustomPanelSummary = def.CustomPanelSummary
+				rc.CustomPanelSummaryCSS = def.CustomPanelSummaryCSS
 				rc.CustomMRQLResult = def.CustomMRQLResult
 				rc.CustomMRQLResultCSS = def.CustomMRQLResultCSS
 				rc.CustomEntityPickerResult = def.CustomEntityPickerResult

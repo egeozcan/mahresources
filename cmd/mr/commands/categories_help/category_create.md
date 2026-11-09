@@ -1,5 +1,5 @@
 ---
-outputShape: Created Category object with ID (uint), Name (string), Description (string), MetaSchema, sectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/OwnEntities/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, CreatedAt, UpdatedAt
+outputShape: Created Category object with ID (uint), Name (string), Description (string), MetaSchema, sectionConfig, CustomHeader/DetailFooter/Sidebar/Summary/Avatar/HoverCard/PanelSummary/OwnEntities/ListHeader/ListFooter/MRQLResult/EntityPickerResult/EntityPickerResultCSS/CSS, CreatedAt, UpdatedAt
 exitCodes: 0 on success; 1 on any error
 relatedCmds: category get, category edit-name, categories list
 ---
@@ -9,7 +9,7 @@ relatedCmds: category get, category edit-name, categories list
 Create a new Category. `--name` is required; `--description` is optional
 free-form text. A `--custom-*` flag exists for every category template
 slot -- the detail page header, sidebar and footer, the list card summary,
-avatar and hover card, the list page header and footer, the Own Entities
+the summary on cards inside other detail pages' panels, avatar and hover card, the list page header and footer, the Own Entities
 section body, MRQL result cards, entity picker results, and the CSS that styles them.
 `--custom-entity-picker-result` sets picker result content and
 `--custom-entity-picker-result-css` sets its companion stylesheet; the host keeps

@@ -19,7 +19,8 @@
                 <h{{ cardHeadingLevel|default:2 }} class="card-title">
                     <a href="/note?id={{ entity.ID }}">{{ entity.Name }}</a>
                 </h{{ cardHeadingLevel|default:2 }}>
-                {% process_shortcodes entity.NoteType.CustomSummary entity %}
+                {# cardInDetailPanel is set by the detail-page panels (seeAll.tpl, the series and similar-resource panels); there CustomPanelSummary wins when set, everywhere else CustomSummary renders. #}
+                {% if cardInDetailPanel && entity.NoteType.CustomPanelSummary %}{% process_shortcodes entity.NoteType.CustomPanelSummary entity %}{% else %}{% process_shortcodes entity.NoteType.CustomSummary entity %}{% endif %}
             </div>
         </header>
 

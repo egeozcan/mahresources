@@ -312,6 +312,12 @@ func GetAddNoteTypeHandler(ctx contracts.NoteTypeWriter) func(writer http.Respon
 					if _, sent := raw["CustomHoverCardCSS"]; !sent {
 						editor.CustomHoverCardCSS = existing.CustomHoverCardCSS
 					}
+					if _, sent := raw["CustomPanelSummary"]; !sent {
+						editor.CustomPanelSummary = existing.CustomPanelSummary
+					}
+					if _, sent := raw["CustomPanelSummaryCSS"]; !sent {
+						editor.CustomPanelSummaryCSS = existing.CustomPanelSummaryCSS
+					}
 					if _, sent := raw["ApplyTemplatesToShares"]; !sent {
 						editor.ApplyTemplatesToShares = existing.ApplyTemplatesToShares
 					}
@@ -398,6 +404,12 @@ func GetAddNoteTypeHandler(ctx contracts.NoteTypeWriter) func(writer http.Respon
 					}
 					if editor.CustomHoverCardCSS == "" && !formHasField(request, "CustomHoverCardCSS") {
 						editor.CustomHoverCardCSS = existing.CustomHoverCardCSS
+					}
+					if editor.CustomPanelSummary == "" && !formHasField(request, "CustomPanelSummary") {
+						editor.CustomPanelSummary = existing.CustomPanelSummary
+					}
+					if editor.CustomPanelSummaryCSS == "" && !formHasField(request, "CustomPanelSummaryCSS") {
+						editor.CustomPanelSummaryCSS = existing.CustomPanelSummaryCSS
 					}
 					// ApplyTemplatesToShares is a bool, so absence can't be detected by
 					// a zero-value check (unchecked and omitted both decode to false).

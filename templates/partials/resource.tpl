@@ -54,7 +54,8 @@
             </div>
         </header>
 
-        {% process_shortcodes entity.ResourceCategory.CustomSummary entity %}
+        {# cardInDetailPanel is set by the detail-page panels (seeAll.tpl, the series and similar-resource panels); there CustomPanelSummary wins when set, everywhere else CustomSummary renders. #}
+        {% if cardInDetailPanel && entity.ResourceCategory.CustomPanelSummary %}{% process_shortcodes entity.ResourceCategory.CustomPanelSummary entity %}{% else %}{% process_shortcodes entity.ResourceCategory.CustomSummary entity %}{% endif %}
 
         {% if cardSc.Description && entity.Description %}
         <div class="card-description">

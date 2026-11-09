@@ -228,7 +228,7 @@ func TestBundleRequestSendsTheBrowsersWholeFieldMap(t *testing.T) {
 	}
 	// templateBundle.js sends every SLOT_FIELDS entry, including fields the
 	// carrier has no surface for.
-	if len(content) != 29 || content["CustomPreview"] != "" || content["CustomOwnEntities"] != "" || content["CustomHeader"] != "<p>h</p>" {
+	if len(content) != 31 || content["CustomPreview"] != "" || content["CustomOwnEntities"] != "" || content["CustomHeader"] != "<p>h</p>" {
 		t.Fatalf("bundle content = %v", content)
 	}
 	if _, ok := content["CustomPreview"]; !ok {

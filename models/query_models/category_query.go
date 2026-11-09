@@ -20,6 +20,8 @@ type CategoryCreator struct {
 	CustomListFooterCSS         string
 	CustomHoverCard             string
 	CustomHoverCardCSS          string
+	CustomPanelSummary          string
+	CustomPanelSummaryCSS       string
 	CustomOwnEntities           string
 	CustomOwnEntitiesCSS        string
 	CustomMRQLResult            string

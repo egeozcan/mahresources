@@ -45,6 +45,15 @@ type NoteType struct {
 	// hydrate. Shortcodes are processed server-side.
 	CustomHoverCard    string `gorm:"type:text"`
 	CustomHoverCardCSS string `gorm:"type:text"`
+	// CustomPanelSummary replaces CustomSummary on note cards shown inside another entity's
+	// detail page panels: a group's Own Entities, Related Entities and Relations, a note's
+	// or resource's linked entities, a series' resources, and the tag, category, note type
+	// and resource category pages. When empty those cards fall back to CustomSummary; list
+	// pages, the dashboard, MRQL results, owner cards and hover cards always use
+	// CustomSummary. Shortcodes are processed server-side against the card's own note;
+	// an Alpine entity variable is available.
+	CustomPanelSummary    string `gorm:"type:text"`
+	CustomPanelSummaryCSS string `gorm:"type:text"`
 	// CustomListHeader is rendered at the top of note list pages when the list is
 	// filtered to exactly this one note type. It is processed with the note type itself
 	// as the entity: [property path="Name"] yields the type name, [meta] renders its

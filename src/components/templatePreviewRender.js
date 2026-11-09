@@ -26,6 +26,8 @@ const SLOTS = [
   { name: 'CustomAvatarCSS', label: 'Avatar CSS' },
   { name: 'CustomHoverCard', label: 'Hover Card' },
   { name: 'CustomHoverCardCSS', label: 'Hover Card CSS' },
+  { name: 'CustomPanelSummary', label: 'Panel Summary' },
+  { name: 'CustomPanelSummaryCSS', label: 'Panel Summary CSS' },
   { name: 'CustomCell', label: 'Table Cell', only: 'resource' },
   { name: 'CustomCellCSS', label: 'Table Cell CSS', only: 'resource' },
   { name: 'CustomOwnEntities', label: 'Own Entities', only: 'group' },

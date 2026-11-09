@@ -1173,6 +1173,7 @@ POST /v1/note/noteType
 | `CustomDetailFooter` | string | Template rendered at the bottom of the detail page |
 | `CustomListFooter` | string | Custom list-page footer template (carrier-bound, like `CustomListHeader`) |
 | `CustomHoverCard` | string | Hover-card template; falls back to `CustomSummary` when empty |
+| `CustomPanelSummary` | string | Replaces `CustomSummary` on cards inside another entity's detail page panels; falls back to `CustomSummary` when empty |
 | `ApplyTemplatesToShares` | boolean | Apply this note type's `CustomHeader` and `CustomCSS` to shared-note pages |
 | `CustomMRQLResult` | string | Custom MRQL result-card template |
 | `CustomCSS` | string | Custom CSS injected on note type pages |

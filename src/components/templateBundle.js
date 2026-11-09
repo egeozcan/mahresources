@@ -43,6 +43,8 @@ const SLOT_FIELDS = {
   avatarCSS: 'CustomAvatarCSS',
   hoverCard: 'CustomHoverCard',
   hoverCardCSS: 'CustomHoverCardCSS',
+  panelSummary: 'CustomPanelSummary',
+  panelSummaryCSS: 'CustomPanelSummaryCSS',
   cell: 'CustomCell',
   cellCSS: 'CustomCellCSS',
   ownEntities: 'CustomOwnEntities',

@@ -18,6 +18,8 @@ export interface Category extends Entity {
   CustomDetailFooter?: string;
   CustomListFooter?: string;
   CustomHoverCard?: string;
+  CustomPanelSummary?: string;
+  CustomPanelSummaryCSS?: string;
   CustomOwnEntities?: string;
   CustomMRQLResult?: string;
   CustomCSS?: string;
@@ -34,6 +36,8 @@ export interface ResourceCategory extends Entity {
   CustomDetailFooter?: string;
   CustomListFooter?: string;
   CustomHoverCard?: string;
+  CustomPanelSummary?: string;
+  CustomPanelSummaryCSS?: string;
   CustomPreview?: string;
   CustomLightbox?: string;
   CustomCell?: string;
@@ -52,6 +56,8 @@ export interface NoteType extends Entity {
   CustomDetailFooter?: string;
   CustomListFooter?: string;
   CustomHoverCard?: string;
+  CustomPanelSummary?: string;
+  CustomPanelSummaryCSS?: string;
   ApplyTemplatesToShares?: boolean;
   CustomCSS?: string;
   MetaSchema?: string;
@@ -259,6 +265,8 @@ export class ApiClient {
     if (options?.CustomDetailFooter) formData.append('CustomDetailFooter', options.CustomDetailFooter);
     if (options?.CustomListFooter) formData.append('CustomListFooter', options.CustomListFooter);
     if (options?.CustomHoverCard) formData.append('CustomHoverCard', options.CustomHoverCard);
+    if (options?.CustomPanelSummary) formData.append('CustomPanelSummary', options.CustomPanelSummary);
+    if (options?.CustomPanelSummaryCSS) formData.append('CustomPanelSummaryCSS', options.CustomPanelSummaryCSS);
     if (options?.CustomOwnEntities) formData.append('CustomOwnEntities', options.CustomOwnEntities);
     if (options?.CustomMRQLResult) formData.append('CustomMRQLResult', options.CustomMRQLResult);
     if (options?.CustomCSS) formData.append('CustomCSS', options.CustomCSS);
@@ -293,6 +301,8 @@ export class ApiClient {
       CustomDetailFooter?: string;
       CustomListFooter?: string;
       CustomHoverCard?: string;
+      CustomPanelSummary?: string;
+      CustomPanelSummaryCSS?: string;
       CustomPreview?: string;
       CustomLightbox?: string;
       CustomCell?: string;
@@ -313,6 +323,8 @@ export class ApiClient {
     if (options?.CustomDetailFooter) formData.append('CustomDetailFooter', options.CustomDetailFooter);
     if (options?.CustomListFooter) formData.append('CustomListFooter', options.CustomListFooter);
     if (options?.CustomHoverCard) formData.append('CustomHoverCard', options.CustomHoverCard);
+    if (options?.CustomPanelSummary) formData.append('CustomPanelSummary', options.CustomPanelSummary);
+    if (options?.CustomPanelSummaryCSS) formData.append('CustomPanelSummaryCSS', options.CustomPanelSummaryCSS);
     if (options?.CustomPreview) formData.append('CustomPreview', options.CustomPreview);
     if (options?.CustomLightbox) formData.append('CustomLightbox', options.CustomLightbox);
     if (options?.CustomCell) formData.append('CustomCell', options.CustomCell);
@@ -353,6 +365,8 @@ export class ApiClient {
     if (options?.CustomDetailFooter) formData.append('CustomDetailFooter', options.CustomDetailFooter);
     if (options?.CustomListFooter) formData.append('CustomListFooter', options.CustomListFooter);
     if (options?.CustomHoverCard) formData.append('CustomHoverCard', options.CustomHoverCard);
+    if (options?.CustomPanelSummary) formData.append('CustomPanelSummary', options.CustomPanelSummary);
+    if (options?.CustomPanelSummaryCSS) formData.append('CustomPanelSummaryCSS', options.CustomPanelSummaryCSS);
     if (options?.CustomCSS) formData.append('CustomCSS', options.CustomCSS);
     if (options?.MetaSchema) formData.append('MetaSchema', options.MetaSchema);
     if (options?.SectionConfig) formData.append('SectionConfig', options.SectionConfig);

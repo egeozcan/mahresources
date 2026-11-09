@@ -8,9 +8,9 @@ sidebar_label: category
 
 Categories are labels that classify Groups (distinct from ResourceCategory
 which labels Resources). A Category has a name, optional description, and
-eleven optional presentation fields (CustomHeader, CustomDetailFooter,
-CustomSidebar, CustomSummary, CustomAvatar, CustomHoverCard,
-CustomOwnEntities, CustomListHeader, CustomListFooter, CustomMRQLResult,
+twelve optional presentation fields (CustomHeader, CustomDetailFooter,
+CustomSidebar, CustomSummary, CustomPanelSummary, CustomAvatar,
+CustomHoverCard, CustomOwnEntities, CustomListHeader, CustomListFooter, CustomMRQLResult,
 CustomCSS). It also carries a MetaSchema JSON that Groups assigned to this
 category inherit for structured metadata, and a SectionConfig JSON that
 controls which sections render on their detail pages.
