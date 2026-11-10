@@ -73,7 +73,13 @@ install_deps() {
     return 0
   fi
   echo ">> package-lock.json changed -- npm ci"
-  HUSKY=0 npm ci && cp package-lock.json "$LOCK_STAMP"
+  # Stamp the lockfile npm ci was given, and only if a push has not replaced
+  # it meanwhile: a stamp for a lockfile that was never installed would make
+  # the next deploy skip its npm ci.
+  cp package-lock.json "$BUILD_DIR/package-lock.json" && HUSKY=0 npm ci || return 1
+  if cmp -s package-lock.json "$BUILD_DIR/package-lock.json"; then
+    cp package-lock.json "$LOCK_STAMP"
+  fi
 }
 
 build_all() {
@@ -99,6 +105,10 @@ swap_in() {
   mv -f "$BUILD_DIR/mahresources" mahresources
 }
 
+superseded() {
+  [ "$(git rev-parse HEAD)" != "$1" ]
+}
+
 while read -r oldrev newrev refname; do
   if [ "$refname" != "refs/heads/$BRANCH" ]; then
     echo ">> $refname pushed (not $BRANCH) -- no deploy"
@@ -108,13 +118,18 @@ while read -r oldrev newrev refname; do
   unset GIT_DIR
   cd "$APP_DIR"
   acquire_lock
+  # updateInstead moves the checkout as soon as a push lands, lock or no lock.
+  # A deploy whose revision is no longer checked out has nothing to install:
+  # the newer push runs its own hook, which builds what is checked out now.
+  if superseded "$newrev"; then
+    echo ">> ${newrev:0:12} is no longer checked out -- leaving the deploy to the newer push"
+    continue
+  fi
   restore_untracked_outputs "$oldrev" "$newrev"
   echo ">> building ${newrev:0:12}"
   if build_all; then
-    # updateInstead moves the checkout as soon as a push lands, lock or no
-    # lock, so a push during this build means it mixed two revisions. That
-    # push's own deploy is waiting on the lock and builds a clean one.
-    if [ "$(git rev-parse HEAD)" != "$newrev" ]; then
+    # A push during the build means it mixed two revisions.
+    if superseded "$newrev"; then
       rm -rf "$BUILD_DIR"
       echo ">> a newer push arrived during the build -- leaving the deploy to it"
       continue
@@ -122,7 +137,9 @@ while read -r oldrev newrev refname; do
     swap_in
     rm -rf "$BUILD_DIR"
     echo ">> build ok -- restarting"
-    eval "$RESTART_CMD"
+    # Without the lock's descriptor: a restart command that starts the server
+    # directly would otherwise hold the lock for as long as the server runs.
+    eval "$RESTART_CMD" 9>&-
     echo ">> deployed ${newrev:0:12}"
   else
     rm -rf "$BUILD_DIR"
