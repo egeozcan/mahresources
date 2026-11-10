@@ -31,30 +31,24 @@ GO_TAGS=${DEPLOY_GO_TAGS:-json1 fts5}
 # gitignored so Tailwind's source scan does not read the half-built bundle.
 BUILD_DIR="$APP_DIR/.deploy-build"
 LOCK_STAMP="$APP_DIR/node_modules/.deploy-package-lock.json"
-LOCK_DIR="$APP_DIR/.deploy-lock"
+LOCK_FILE="$APP_DIR/.deploy-lock"
 
 # One deploy at a time: two overlapping pushes would otherwise share the
-# scratch directory. The later one waits, then builds the checkout as the
-# last push left it.
+# scratch directory. The kernel drops the lock when this process exits, however
+# it exits, so there is no stale lock to clean up.
 acquire_lock() {
-  local waited=0 holder
-  until mkdir "$LOCK_DIR" 2>/dev/null; do
-    holder=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
-    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
-      echo ">> removing the lock of a deploy that is no longer running"
-      rm -rf "$LOCK_DIR"
-      continue
-    fi
-    if [ "$waited" -ge 900 ]; then
-      echo "!! another deploy has held $LOCK_DIR for 15 minutes -- giving up"
+  if ! command -v flock > /dev/null 2>&1; then
+    echo ">> flock not found -- overlapping deploys are not serialized"
+    return 0
+  fi
+  exec 9> "$LOCK_FILE"
+  if ! flock -n 9; then
+    echo ">> another deploy is running -- waiting"
+    if ! flock -w 900 9; then
+      echo "!! another deploy has held $LOCK_FILE for 15 minutes -- giving up"
       exit 1
     fi
-    [ "$waited" -eq 0 ] && echo ">> another deploy is running -- waiting"
-    sleep 2
-    waited=$((waited + 2))
-  done
-  echo $$ > "$LOCK_DIR/pid"
-  trap 'rm -rf "$LOCK_DIR"' EXIT
+  fi
 }
 
 # A push that moves build output out of git (deletes it and gitignores it)
@@ -117,6 +111,14 @@ while read -r oldrev newrev refname; do
   restore_untracked_outputs "$oldrev" "$newrev"
   echo ">> building ${newrev:0:12}"
   if build_all; then
+    # updateInstead moves the checkout as soon as a push lands, lock or no
+    # lock, so a push during this build means it mixed two revisions. That
+    # push's own deploy is waiting on the lock and builds a clean one.
+    if [ "$(git rev-parse HEAD)" != "$newrev" ]; then
+      rm -rf "$BUILD_DIR"
+      echo ">> a newer push arrived during the build -- leaving the deploy to it"
+      continue
+    fi
     swap_in
     rm -rf "$BUILD_DIR"
     echo ">> build ok -- restarting"

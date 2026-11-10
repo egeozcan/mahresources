@@ -19,7 +19,7 @@
 # Scratch directory and lock of scripts/deploy/post-receive
 /.deploy-build/
 /.deploy-build.restore
-/.deploy-lock/
+/.deploy-lock
 /*.db
 /*.db-shm
 /*.db-wal
