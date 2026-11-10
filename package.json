@@ -6,10 +6,11 @@
   "scripts": {
     "build-css": "tailwindcss -i ./index.css -o ./public/tailwind.css",
     "build-js": "vite build",
+    "build-plugins": "node scripts/copy-plugin-assets.mjs",
     "dev": "vite build --watch",
     "css-gen": "tailwindcss -i ./index.css -o ./public/tailwind.css --watch",
-    "watch": "CompileDaemon -exclude-dir=\".git\" -exclude-dir=\"node_modules\" -command=\"npm run build-css && npm run build-js && mahresources\" -build=\"go build --tags 'json1 fts5'\"",
-    "build": "npm run build-css && npm run build-js && go build --tags 'json1 fts5'",
+    "watch": "CompileDaemon -exclude-dir=\".git\" -exclude-dir=\"node_modules\" -command=\"npm run build-css && npm run build-js && npm run build-plugins && mahresources\" -build=\"go build --tags 'json1 fts5'\"",
+    "build": "npm run build-css && npm run build-js && npm run build-plugins && go build --tags 'json1 fts5'",
     "build-cli": "go build -o mr ./cmd/mr/",
     "docs-gen": "./mr docs dump --format markdown --output docs-site/docs/cli/",
     "docs-lint": "./mr docs lint",
@@ -57,6 +58,7 @@
     "alpinejs": "^3.15.4",
     "diff": "^9.0.0",
     "focus-trap": "^8.2.2",
+    "leaflet": "1.9.4",
     "lit": "^3.3.2"
   }
 }

@@ -8,6 +8,14 @@
 /filezz/
 /files/
 /node_modules/
+
+# Build output: `npm run build` writes all of it (see package.json)
+/public/dist/
+/public/tailwind.css
+/plugins/location-history/public/vendor/
+/e2e/test-plugins/location-history/public/vendor/
+# Scratch directory of scripts/deploy/post-receive
+/.deploy-build/
 /*.db
 /*.db-shm
 /*.db-wal
