@@ -88,11 +88,11 @@ describe('harness approval and final POST body', () => {
     await vi.waitFor(() => expect(store.canSend).toBe(true));
     // The re-disclosure repeated the dry run with the same body plus the opt-ins.
     const [first, again] = calls;
-    expect(again.body).toEqual({ ...first.body, previewMRQL: true, previewPlugins: false });
+    expect(again.body).toEqual({ ...first.body, previewMRQL: true, previewPlugins: false, privacyOff: false });
     store.send();
     await vi.waitFor(() => expect(real(calls)).toHaveLength(1));
     const final = real(calls)[0];
-    expect(final.body).toEqual({ ...first.body, dryRun: undefined, groundingHash: 'h-mrql', previewMRQL: true, previewPlugins: false });
+    expect(final.body).toEqual({ ...first.body, dryRun: undefined, groundingHash: 'h-mrql', previewMRQL: true, previewPlugins: false, privacyOff: false });
     expect(final.body.dryRun).toBeUndefined();
     expect(final.headers.Accept).toBe('text/event-stream');
     s.push(frame('result', { target: 'cluster', slots: { CustomMRQLResult: 'a', CustomMRQLResultCSS: 'b' }, valid: true }));

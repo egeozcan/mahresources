@@ -59,6 +59,7 @@ describe('recorded harness run', () => {
     expect(store.transport[0]).toMatch(/^POST https:\/\//);
     expect(store.envelope).not.toBe('');
     store.send();
-    expect(await pending).toEqual({ groundingHash: 'hash-golden', previewMRQL: false, previewPlugins: false });
+    // The run was recorded with Privacy mode off (the fixture's privacy.on is false).
+    expect(await pending).toEqual({ groundingHash: 'hash-golden', previewMRQL: false, previewPlugins: false, privacyOff: true });
   });
 });
