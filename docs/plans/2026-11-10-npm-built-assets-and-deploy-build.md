@@ -48,36 +48,36 @@ repository by `scripts/update-ketchup.sh`, is not on npm, and stays committed.
 
 ### 1. Leaflet from npm
 
-- [ ] Add `leaflet` pinned to exactly `1.9.4` in `dependencies`. The commit
+- [x] Add `leaflet` pinned to exactly `1.9.4` in `dependencies`. The commit
       message says why: it replaces the same version already vendored, so no
       new code enters the project.
-- [ ] Add `scripts/copy-plugin-assets.mjs` (Node built-ins only). It copies
+- [x] Add `scripts/copy-plugin-assets.mjs` (Node built-ins only). It copies
       `leaflet.js`, `leaflet.js.map`, `leaflet.css` and `images/` from
       `node_modules/leaflet/dist/`, plus `LICENSE`, into both vendor
       directories. It exits non-zero when a source file is missing.
-- [ ] Add `"build-plugins": "node scripts/copy-plugin-assets.mjs"` and put it
+- [x] Add `"build-plugins": "node scripts/copy-plugin-assets.mjs"` and put it
       into `build` (and the `watch` command) so every existing build path picks
       it up.
-- [ ] `git rm` both vendor directories and gitignore them. `plugin.lua` keeps
+- [x] `git rm` both vendor directories and gitignore them. `plugin.lua` keeps
       its `/plugins/location-history/public/vendor/...` URLs, so no plugin code
       changes.
-- [ ] The vendored `README.md` goes away with the directory. Its still-true
+- [x] The vendored `README.md` goes away with the directory. Its still-true
       content (why Leaflet, OSM tile policy link) moves to the header comment
       of the copy script.
 
 ### 2. Stop committing `public/dist/` and `public/tailwind.css`
 
-- [ ] `git rm --cached` both, add them to `.gitignore`.
-- [ ] `.husky/pre-commit`: remove the frontend rebuild-and-stage block. The
+- [x] `git rm --cached` both, add them to `.gitignore`.
+- [x] `.husky/pre-commit`: remove the frontend rebuild-and-stage block. The
       OpenAPI block stays.
-- [ ] `.claude/settings.json`: remove the `git add -A public/dist/` hook.
-- [ ] Startup warning: when `public/dist/main.js` or `public/tailwind.css` is
+- [x] `.claude/settings.json`: remove the `git add -A public/dist/` hook.
+- [x] Startup warning: when `public/dist/main.js` or `public/tailwind.css` is
       missing at startup, log one line naming the file and `npm run build`.
       This is the only new Go code. It exists because un-committing the files
       creates a new state (fresh clone, `go build`, run) that today cannot
       happen and would otherwise fail silently. Test first: a unit test on the
       check function with a temp dir.
-- [ ] Docs that currently say the output is committed: `AGENTS.md` (the
+- [x] Docs that currently say the output is committed: `AGENTS.md` (the
       `public/` section and the merge-conflict advice), `README.md` line 162,
       the comment at `.github/workflows/ci.yml:213`. Each is rewritten to match
       the new behavior, nothing else on those pages changes.
@@ -87,12 +87,12 @@ repository by `scripts/update-ketchup.sh`, is not on npm, and stays committed.
 - [ ] Install a current Node LTS on the host from the official tarball, in a
       user-owned directory (no sudo). The system Node is left alone; only the
       hook's `PATH` sees the new one.
-- [ ] Version the deploy script in the repo as `scripts/deploy/post-receive`.
+- [x] Version the deploy script in the repo as `scripts/deploy/post-receive`.
       It is generic: it names no host, path or service. The host's hook becomes
       a shim that sets those through environment variables and `exec`s the
       script from the checkout. The hook already builds and runs whatever is
       pushed, so this adds no trust, and hook changes become reviewable diffs.
-- [ ] New hook sequence, for a push to `master`:
+- [x] New hook sequence, for a push to `master`:
       1. `npm ci` with `HUSKY=0`, only when `package-lock.json` differs from a
          stamp copy kept in `node_modules/` (skips about a minute on most
          deploys).
@@ -104,7 +104,7 @@ repository by `scripts/update-ketchup.sh`, is not on npm, and stays committed.
       4. If any step fails: delete the temporary outputs, print
          `!! BUILD FAILED`, exit 1. The running binary and the assets it serves
          are untouched.
-- [ ] The Go build tags come from the shim, so the host keeps the tags it
+- [x] The Go build tags come from the shim, so the host keeps the tags it
       builds with today.
 
 ## Assumptions and tradeoffs
@@ -137,19 +137,19 @@ repository by `scripts/update-ketchup.sh`, is not on npm, and stays committed.
 
 Done means:
 
-- [ ] Baseline before any change: Go unit tests, `npm run test:unit`, and
+- [x] Baseline before any change: Go unit tests, `npm run test:unit`, and
       `cd e2e && npm run test:with-server:all` on current `master`.
-- [ ] A fresh `git clone` of the branch into a scratch directory, then
+- [x] A fresh `git clone` of the branch into a scratch directory, then
       `npm ci && npm run build`, produces `public/dist/main.js`,
       `public/tailwind.css` and both Leaflet directories, and `git status` in
       that clone is clean (the ignore rules cover everything generated).
-- [ ] In that clone, before `npm run build`, the server logs the missing-asset
+- [x] In that clone, before `npm run build`, the server logs the missing-asset
       warning; after it, it does not.
-- [ ] Same three suites pass after the change, plus the Postgres Go and E2E
+- [x] Same three suites pass after the change, plus the Postgres Go and E2E
       runs.
-- [ ] `docker build .` succeeds.
-- [ ] `./scripts/css-scan-test.sh` passes.
-- [ ] The deploy script, run locally against a scratch clone with the restart
+- [x] `docker build .` succeeds.
+- [x] `./scripts/css-scan-test.sh` passes.
+- [x] The deploy script, run locally against a scratch clone with the restart
       command stubbed: a good push swaps all three outputs; a forced Vite
       failure and a forced Go failure each leave the previous outputs
       byte-identical.
@@ -167,4 +167,64 @@ Done means:
 
 ## Review
 
-(Filled in when the work is done.)
+Repository work is done. The two unticked items are the host steps, which
+happen at deploy time.
+
+What differed from the plan:
+
+- **Tailwind's output changed.** Tailwind skips gitignored files, so it stopped
+  scanning the minified bundle once `public/dist/` was ignored. Four classes
+  that only ever matched text inside the bundle dropped out: `@container`,
+  `container!`, `list-item`, `resize!`. Nothing authored uses them and
+  `./scripts/css-scan-test.sh` passes.
+- **`.claude/settings.json` was deleted**, not edited: the staging hook was its
+  only content.
+- **The scratch directory is `.deploy-build/`**, not `*.new` paths under
+  `public/`. Those would not have been gitignored, and Tailwind would have
+  scanned a half-built bundle.
+- **`docker build` was already broken on master.** The frontend stage copied
+  only `src/`, which imports JSON from `server/jobview/`. Fixed by copying the
+  whole tree, in the Dockerfile and in the deployment guide's template.
+- **The unit suite was already red on master**: seven tests left behind by the
+  Privacy mode change. Their expectations were updated; no production code
+  changed.
+- **npm dependencies were updated in the same branch**, at the user's request,
+  with Alpine, Playwright and axe-core held back. The commit message of that
+  change has the reasons.
+
+Verified:
+
+- Baseline on the unchanged code: Go pass, E2E 2923 passed and 5 skipped, unit
+  7 failed (the stale tests above).
+- After the asset change, and again after the dependency update: Go pass, unit
+  2543 passed, E2E 2923 passed and 5 skipped, css-scan pass.
+- Postgres: Go (`mrql`, `api_tests`) pass, E2E 2924 passed and 4 skipped.
+- Fresh clone: `npm ci && npm run build` produces every generated file and
+  leaves `git status` clean. The Leaflet files are byte-identical to the copy
+  that was committed. The startup warning names both files when they are
+  missing and is silent after a build.
+- Deploy script against a scratch checkout with `updateInstead`: the
+  transition push (tracked bundle deleted, then rebuilt) deploys; a broken-JS
+  push and a broken-Go push each leave bundle, stylesheet and binary
+  byte-identical with no restart; the fix after them deploys; a push to
+  another branch does nothing; `npm ci` is skipped when the lockfile is
+  unchanged.
+- `docker build .` succeeds. The image's bundle matches a local build.
+
+Not verified:
+
+- The scratch server did not stay up long enough to fetch assets over HTTP in
+  the fresh clone (it exits on an unrelated job-migration check without the
+  E2E harness's flags). Asset serving is covered by the E2E suites instead.
+- The deploy script has not run on the production host, and build time there
+  is unmeasured.
+- The docker-compose E2E path was not run.
+
+Follow-ups:
+
+- Alpine 3.17: the selection checkbox on MRQL result cards does not check.
+- axe-core 4.14: `label-content-name-mismatch` flags the header search button,
+  "Add another sort criterion", the lightbox version buttons, "Replace saved
+  search", the compare page's align and nudge buttons, and the run job links.
+- Playwright 1.65: the Mass Edit tag picker's options do not appear after
+  `fill()` in most runs.
