@@ -84,7 +84,7 @@ repository by `scripts/update-ketchup.sh`, is not on npm, and stays committed.
 
 ### 3. The production host builds on deploy
 
-- [ ] Install a current Node LTS on the host from the official tarball, in a
+- [x] Install a current Node LTS on the host from the official tarball, in a
       user-owned directory (no sudo). The system Node is left alone; only the
       hook's `PATH` sees the new one.
 - [x] Version the deploy script in the repo as `scripts/deploy/post-receive`.
@@ -167,8 +167,8 @@ Done means:
 
 ## Review
 
-Repository work is done. The two unticked items are the host steps, which
-happen at deploy time.
+Repository work is done and the host is prepared (Node installed, hook
+replaced by the shim). The one unticked item is the check after the real push.
 
 What differed from the plan:
 
@@ -192,6 +192,18 @@ What differed from the plan:
   with Alpine, Playwright and axe-core held back. The commit message of that
   change has the reasons.
 
+- **The deploy script grew during review** (four rounds with an independent
+  reviewer). It now restores build output that the push itself removed from
+  git, which removes the degraded window this plan accepted under "Assumptions
+  and tradeoffs" and covers a failed build on that push. It serializes deploys
+  with `flock`, and a deploy stands down when a newer push has replaced the
+  revision it was started for. `copy-plugin-assets.mjs` stages both copies
+  before replacing a served directory.
+- **`npm ci` is not pre-run on the host.** With the restore in place there is
+  no window for it to shorten.
+- **Declined review finding:** a restart command that never returns holds the
+  lock. The script's header now says the command must return.
+
 Verified:
 
 - Baseline on the unchanged code: Go pass, E2E 2923 passed and 5 skipped, unit
@@ -209,6 +221,11 @@ Verified:
   byte-identical with no restart; the fix after them deploys; a push to
   another branch does nothing; `npm ci` is skipped when the lockfile is
   unchanged.
+- The same rehearsal with a broken build on the transition push: every asset
+  the old revision served is byte-identical afterwards.
+- Lock and stand-down, in a Linux container with stubbed build tools and two
+  overlapping pushes: the first deploy stands down, the second waits, and the
+  installed stylesheet, bundle and binary all come from the second.
 - `docker build .` succeeds. The image's bundle matches a local build.
 
 Not verified:
