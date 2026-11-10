@@ -159,7 +159,7 @@ make test-e2e-all  # browser and CLI e2e suites in parallel
 make ci            # the main local CI checks
 ```
 
-E2E tests run against an ephemeral server that the scripts start and stop themselves, so they never touch real data. The Playwright suite lives in `e2e/`, and includes accessibility tests (`make test-a11y`), CLI tests, and a Postgres run. `npm run build-js` must be re-run after editing anything under `src/`, and its output in `public/dist/` is committed.
+E2E tests run against an ephemeral server that the scripts start and stop themselves, so they never touch real data. The Playwright suite lives in `e2e/`, and includes accessibility tests (`make test-a11y`), CLI tests, and a Postgres run. `public/dist/`, `public/tailwind.css` and the location-history plugin's Leaflet copy are build output, not committed: run `npm ci && npm run build` after cloning, and `npm run build-js` after editing anything under `src/`.
 
 ## Documentation
 

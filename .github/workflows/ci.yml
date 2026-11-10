@@ -211,8 +211,8 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       # Builds public/tailwind.css and public/dist/main.js from src/, then the
-      # ./mahresources binary, so the suite exercises this PR's src/ rather than
-      # the bundle committed under public/dist/. e2e/fixtures/server-manager.ts
+      # ./mahresources binary. Neither build output is committed, so without a
+      # build the server has no CSS or JS to serve. e2e/fixtures/server-manager.ts
       # only ever spawns <repo>/mahresources; it never builds it. This step is
       # redundant with e2e/scripts/run-tests.js, which rebuilds unconditionally
       # (an earlier version of this comment claimed it rebuilt only when the file
