@@ -60,6 +60,7 @@ the code wins. For how the system is actually put together see
 - [2026-11-07-template-generation-harness.md](2026-11-07-template-generation-harness.md)
 - [2026-11-08-template-privacy-mode.md](2026-11-08-template-privacy-mode.md)
 - [2026-11-09-panel-summary-slot.md](2026-11-09-panel-summary-slot.md)
+- [2026-11-10-npm-built-assets-and-deploy-build.md](2026-11-10-npm-built-assets-and-deploy-build.md)
 
 ## Archive
 
