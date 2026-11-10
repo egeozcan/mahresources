@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Deploy-on-push for a checkout that receives pushes with
+# receive.denyCurrentBranch=updateInstead. Builds the frontend assets and the
+# server binary into a scratch directory, and swaps them into place only when
+# every build succeeded, so a failed build leaves the running site as it was.
+#
+# Run from the receiving repository's hooks/post-receive, which supplies the
+# host-specific settings through the environment:
+#
+#   #!/usr/bin/env bash
+#   export PATH=/path/to/node/bin:/usr/local/go/bin:/usr/bin:/bin
+#   export DEPLOY_APP_DIR=/path/to/checkout
+#   export DEPLOY_RESTART_CMD='sudo /usr/bin/systemctl restart mahresources'
+#   exec "$DEPLOY_APP_DIR/scripts/deploy/post-receive"
+#
+# DEPLOY_APP_DIR      the checkout the service runs from (required)
+# DEPLOY_RESTART_CMD  shell command that restarts the service (required)
+# DEPLOY_BRANCH       branch that deploys (default: master)
+# DEPLOY_GO_TAGS      go build tags (default: json1 fts5)
+#
+# node (a version Vite accepts), npm and go must be on PATH.
+
+set -euo pipefail
+
+APP_DIR=${DEPLOY_APP_DIR:?DEPLOY_APP_DIR is not set}
+RESTART_CMD=${DEPLOY_RESTART_CMD:?DEPLOY_RESTART_CMD is not set}
+BRANCH=${DEPLOY_BRANCH:-master}
+GO_TAGS=${DEPLOY_GO_TAGS:-json1 fts5}
+
+# Inside the checkout so every mv below is a same-filesystem rename, and
+# gitignored so Tailwind's source scan does not read the half-built bundle.
+BUILD_DIR="$APP_DIR/.deploy-build"
+LOCK_STAMP="$APP_DIR/node_modules/.deploy-package-lock.json"
+
+install_deps() {
+  # npm ci takes about a minute and the lockfile rarely changes.
+  if cmp -s package-lock.json "$LOCK_STAMP"; then
+    return 0
+  fi
+  echo ">> package-lock.json changed -- npm ci"
+  HUSKY=0 npm ci && cp package-lock.json "$LOCK_STAMP"
+}
+
+build_all() {
+  rm -rf "$BUILD_DIR" && mkdir -p "$BUILD_DIR" &&
+    install_deps &&
+    echo ">> building css" &&
+    npx tailwindcss -i ./index.css -o "$BUILD_DIR/tailwind.css" &&
+    echo ">> building js" &&
+    npx vite build --outDir "$BUILD_DIR/dist" --emptyOutDir &&
+    echo ">> building server (go build --tags '$GO_TAGS')" &&
+    go build --tags "$GO_TAGS" -o "$BUILD_DIR/mahresources" . &&
+    node scripts/copy-plugin-assets.mjs
+}
+
+swap_in() {
+  mv -f "$BUILD_DIR/tailwind.css" public/tailwind.css
+  rm -rf public/dist.old
+  if [ -d public/dist ]; then
+    mv public/dist public/dist.old
+  fi
+  mv "$BUILD_DIR/dist" public/dist
+  rm -rf public/dist.old
+  mv -f "$BUILD_DIR/mahresources" mahresources
+}
+
+while read -r _oldrev newrev refname; do
+  if [ "$refname" != "refs/heads/$BRANCH" ]; then
+    echo ">> $refname pushed (not $BRANCH) -- no deploy"
+    continue
+  fi
+  # git sets GIT_DIR for hooks; it would point npm and go at the wrong place.
+  unset GIT_DIR
+  cd "$APP_DIR"
+  echo ">> building ${newrev:0:12}"
+  if build_all; then
+    swap_in
+    rm -rf "$BUILD_DIR"
+    echo ">> build ok -- restarting"
+    eval "$RESTART_CMD"
+    echo ">> deployed ${newrev:0:12}"
+  else
+    rm -rf "$BUILD_DIR"
+    echo "!! BUILD FAILED -- app left running on previous binary and assets"
+    exit 1
+  fi
+done
