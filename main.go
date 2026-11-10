@@ -516,6 +516,10 @@ func main() {
 	}
 	defer context.DownloadManager().Shutdown()
 
+	for _, asset := range template_context_providers.MissingBuiltAssets(".") {
+		log.Printf("Warning: %s is missing, pages will load without it; run `npm run build`", asset)
+	}
+
 	// Validate or auto-detect ffmpeg
 	if context.Config.FfmpegPath != "" {
 		if _, err := exec.LookPath(context.Config.FfmpegPath); err != nil {

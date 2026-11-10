@@ -1,5 +1,5 @@
 # Playwright test runner with pre-installed dependencies
-FROM mcr.microsoft.com/playwright:v1.57.0-jammy
+FROM mcr.microsoft.com/playwright:v1.61.1-jammy
 
 WORKDIR /app/e2e
 

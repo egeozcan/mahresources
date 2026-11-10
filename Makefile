@@ -74,6 +74,7 @@ build:
 	else \
 		$(MAKE) build-css; \
 		$(MAKE) build-js; \
+		npm run build-plugins; \
 		$(MAKE) build-server; \
 	fi
 

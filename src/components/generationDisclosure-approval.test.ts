@@ -31,7 +31,7 @@ describe('approval tuple', () => {
     const pending = store.open(harness('h0'), [], { owner: {}, redisclose: vi.fn() });
     store.send();
     const approval = await pending;
-    expect(approval).toEqual({ groundingHash: 'h0', previewMRQL: false, previewPlugins: false });
+    expect(approval).toEqual({ groundingHash: 'h0', previewMRQL: false, previewPlugins: false, privacyOff: false });
     expect(Object.isFrozen(approval)).toBe(true);
   });
 
@@ -46,7 +46,7 @@ describe('approval tuple', () => {
     const store = makeStore();
     const pending = store.open({ groundingHash: 'c', destination: {}, sections: [] }, []);
     store.send();
-    expect(await pending).toEqual({ groundingHash: 'c', previewMRQL: false, previewPlugins: false });
+    expect(await pending).toEqual({ groundingHash: 'c', previewMRQL: false, previewPlugins: false, privacyOff: false });
   });
 
   it('toggling an opt-in re-requests the dry run, disables Send meanwhile, and approves the new hash', async () => {
@@ -55,7 +55,7 @@ describe('approval tuple', () => {
     const pending = store.open(harness('h0'), [], { owner: {}, redisclose });
     store.setOptIn('previewMRQL', true);
     expect(redisclose).toHaveBeenCalledTimes(1);
-    expect(calls[0].requested).toEqual({ previewMRQL: true, previewPlugins: false });
+    expect(calls[0].requested).toEqual({ previewMRQL: true, previewPlugins: false, privacyOff: false });
     expect(store.canSend).toBe(false);
     store.send(); // refused while the answer is in flight
     expect(store.isOpen).toBe(true);
@@ -63,7 +63,7 @@ describe('approval tuple', () => {
     await vi.waitFor(() => expect(store.canSend).toBe(true));
     expect(store.disclosure.groundingHash).toBe('h1');
     store.send();
-    expect(await pending).toEqual({ groundingHash: 'h1', previewMRQL: true, previewPlugins: false });
+    expect(await pending).toEqual({ groundingHash: 'h1', previewMRQL: true, previewPlugins: false, privacyOff: false });
   });
 
   it('ignores a response older than the latest toggle, whatever order they arrive in', async () => {
@@ -73,7 +73,7 @@ describe('approval tuple', () => {
     store.setOptIn('previewMRQL', true);      // request 0: mrql on
     store.setOptIn('previewPlugins', true);   // request 1: both on
     expect(calls[0].signal.aborted).toBe(true);
-    expect(calls[1].requested).toEqual({ previewMRQL: true, previewPlugins: true });
+    expect(calls[1].requested).toEqual({ previewMRQL: true, previewPlugins: true, privacyOff: false });
     // The newest answers first, then the stale one arrives and must change nothing.
     calls[1].resolve(harness('h-both', true, true));
     await vi.waitFor(() => expect(store.canSend).toBe(true));
@@ -81,7 +81,7 @@ describe('approval tuple', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(store.disclosure.groundingHash).toBe('h-both');
     store.send();
-    expect(await pending).toEqual({ groundingHash: 'h-both', previewMRQL: true, previewPlugins: true });
+    expect(await pending).toEqual({ groundingHash: 'h-both', previewMRQL: true, previewPlugins: true, privacyOff: false });
   });
 
   it('a stale response that arrives first never lets Send through for the wrong opt-ins', async () => {
@@ -200,6 +200,8 @@ describe('harness details', () => {
       tools: [{ name: 'lint', description: 'Lint a field.', parameters: { type: 'object' } }],
       caps: { maxTurns: 10, deadline: '5m0s', tokenBudget: 400000, callsPerTurn: 6, toolTimeout: '20s', previewTimeout: '5s', budgetNote: 'Cached prompt tokens count a quarter.', resultCaps: [{ tool: 'get_entity', bytes: 32768 }, { tool: 'list_related', bytes: 8192, entries: 50 }] },
     };
+    // harness is captured by open(), which this test bypasses by assigning the payload.
+    store._harness = true;
     expect(store.harness).toBe(true);
     expect(store.toolRows[0]).toMatchObject({ name: 'lint', description: 'Lint a field.' });
     expect(store.toolRows[0].parameters).toContain('"type": "object"');

@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# Deploy-on-push for a checkout that receives pushes with
+# receive.denyCurrentBranch=updateInstead. Builds the frontend assets and the
+# server binary into a scratch directory, and swaps them into place only when
+# every build succeeded, so a failed build leaves the running site as it was.
+#
+# Run from the receiving repository's hooks/post-receive, which supplies the
+# host-specific settings through the environment:
+#
+#   #!/usr/bin/env bash
+#   export PATH=/path/to/node/bin:/usr/local/go/bin:/usr/bin:/bin
+#   export DEPLOY_APP_DIR=/path/to/checkout
+#   export DEPLOY_RESTART_CMD='sudo /usr/bin/systemctl restart mahresources'
+#   exec "$DEPLOY_APP_DIR/scripts/deploy/post-receive"
+#
+# DEPLOY_APP_DIR      the checkout the service runs from (required)
+# DEPLOY_RESTART_CMD  shell command that restarts the service and returns
+#                     (required); the hook and its lock wait for it
+# DEPLOY_BRANCH       branch that deploys (default: master)
+# DEPLOY_GO_TAGS      go build tags (default: json1 fts5)
+#
+# node (a version Vite accepts), npm and go must be on PATH.
+
+set -euo pipefail
+
+APP_DIR=${DEPLOY_APP_DIR:?DEPLOY_APP_DIR is not set}
+RESTART_CMD=${DEPLOY_RESTART_CMD:?DEPLOY_RESTART_CMD is not set}
+BRANCH=${DEPLOY_BRANCH:-master}
+GO_TAGS=${DEPLOY_GO_TAGS:-json1 fts5}
+
+# Inside the checkout so every mv below is a same-filesystem rename, and
+# gitignored so Tailwind's source scan does not read the half-built bundle.
+BUILD_DIR="$APP_DIR/.deploy-build"
+LOCK_STAMP="$APP_DIR/node_modules/.deploy-package-lock.json"
+LOCK_FILE="$APP_DIR/.deploy-lock"
+
+# One deploy at a time: two overlapping pushes would otherwise share the
+# scratch directory. The kernel drops the lock when this process exits, however
+# it exits, so there is no stale lock to clean up.
+acquire_lock() {
+  if ! command -v flock > /dev/null 2>&1; then
+    echo ">> flock not found -- overlapping deploys are not serialized"
+    return 0
+  fi
+  exec 9> "$LOCK_FILE"
+  if ! flock -n 9; then
+    echo ">> another deploy is running -- waiting"
+    if ! flock -w 900 9; then
+      echo "!! another deploy has held $LOCK_FILE for 15 minutes -- giving up"
+      exit 1
+    fi
+  fi
+}
+
+# A push that moves build output out of git (deletes it and gitignores it)
+# makes git remove those files from this checkout before the hook runs. Put
+# them back from the previous revision, so the site keeps its assets while the
+# build runs and keeps them if the build fails. Only files that are missing
+# are restored, so this never replaces what a newer deploy installed.
+restore_untracked_outputs() {
+  local oldrev=$1 newrev=$2 list="$APP_DIR/.deploy-build.restore" path
+  case "$oldrev" in *[!0]*) ;; *) return 0 ;; esac
+  git diff -z --name-only --diff-filter=D "$oldrev" "$newrev" |
+    { git check-ignore -z --stdin || true; } |
+    while IFS= read -r -d '' path; do
+      [ -e "$path" ] || printf '%s\0' "$path"
+    done > "$list"
+  if [ -s "$list" ]; then
+    echo ">> restoring build output this push removed from git"
+    xargs -0 git archive "$oldrev" -- < "$list" | tar -x
+  fi
+  rm -f "$list"
+}
+
+install_deps() {
+  # npm ci takes about a minute and the lockfile rarely changes.
+  if cmp -s package-lock.json "$LOCK_STAMP"; then
+    return 0
+  fi
+  echo ">> package-lock.json changed -- npm ci"
+  # Stamp the lockfile npm ci was given, and only if a push has not replaced
+  # it meanwhile: a stamp for a lockfile that was never installed would make
+  # the next deploy skip its npm ci.
+  cp package-lock.json "$BUILD_DIR/package-lock.json" && HUSKY=0 npm ci || return 1
+  if cmp -s package-lock.json "$BUILD_DIR/package-lock.json"; then
+    cp package-lock.json "$LOCK_STAMP"
+  fi
+}
+
+build_all() {
+  rm -rf "$BUILD_DIR" && mkdir -p "$BUILD_DIR" &&
+    install_deps &&
+    echo ">> building css" &&
+    npx tailwindcss -i ./index.css -o "$BUILD_DIR/tailwind.css" &&
+    echo ">> building js" &&
+    npx vite build --outDir "$BUILD_DIR/dist" --emptyOutDir &&
+    echo ">> building server (go build --tags '$GO_TAGS')" &&
+    go build --tags "$GO_TAGS" -o "$BUILD_DIR/mahresources" . &&
+    node scripts/copy-plugin-assets.mjs
+}
+
+swap_in() {
+  mv -f "$BUILD_DIR/tailwind.css" public/tailwind.css
+  rm -rf public/dist.old
+  if [ -d public/dist ]; then
+    mv public/dist public/dist.old
+  fi
+  mv "$BUILD_DIR/dist" public/dist
+  rm -rf public/dist.old
+  mv -f "$BUILD_DIR/mahresources" mahresources
+}
+
+superseded() {
+  [ "$(git rev-parse HEAD)" != "$1" ]
+}
+
+while read -r oldrev newrev refname; do
+  if [ "$refname" != "refs/heads/$BRANCH" ]; then
+    echo ">> $refname pushed (not $BRANCH) -- no deploy"
+    continue
+  fi
+  # git sets GIT_DIR for hooks; it would point npm and go at the wrong place.
+  unset GIT_DIR
+  cd "$APP_DIR"
+  acquire_lock
+  restore_untracked_outputs "$oldrev" "$newrev"
+  # updateInstead moves the checkout as soon as a push lands, lock or no lock.
+  # A deploy whose revision is no longer checked out has nothing to install:
+  # the newer push runs its own hook, which builds what is checked out now.
+  if superseded "$newrev"; then
+    echo ">> ${newrev:0:12} is no longer checked out -- leaving the deploy to the newer push"
+    continue
+  fi
+  echo ">> building ${newrev:0:12}"
+  if build_all; then
+    # A push during the build means it mixed two revisions.
+    if superseded "$newrev"; then
+      rm -rf "$BUILD_DIR"
+      echo ">> a newer push arrived during the build -- leaving the deploy to it"
+      continue
+    fi
+    swap_in
+    rm -rf "$BUILD_DIR"
+    echo ">> build ok -- restarting"
+    # Without the lock's descriptor: a restart command that starts the server
+    # directly would otherwise hold the lock for as long as the server runs.
+    eval "$RESTART_CMD" 9>&-
+    echo ">> deployed ${newrev:0:12}"
+  else
+    rm -rf "$BUILD_DIR"
+    echo "!! BUILD FAILED -- app left running on previous binary and assets"
+    exit 1
+  fi
+done

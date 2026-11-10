@@ -91,8 +91,9 @@ Mahresources is a CRUD application for personal information management written i
 - `tableMaker.js` - JSON table rendering
 
 **public/** - Static assets served by the Go server.
-- `dist/` - Vite build output: `main.js` plus the lazy-loaded chunks in `assets/`. These are **committed**, not gitignored, so `npm run build-js` produces a diff that must be committed alongside the source change that caused it. Two branches that both rebuild will conflict on minified output; resolve by taking either side wholesale and rebuilding once.
-- `tailwind.css` - Generated Tailwind CSS
+- `dist/` - Vite build output: `main.js` plus the lazy-loaded chunks in `assets/`. Gitignored; `npm run build-js` writes it.
+- `tailwind.css` - Generated Tailwind CSS. Gitignored; `npm run build-css` writes it.
+- A fresh clone or worktree has neither, nor the Leaflet files `npm run build-plugins` copies into the location-history plugin. Run `npm ci && npm run build` before starting the server; it logs a warning at startup when the built assets are missing.
 - `index.css`, `jsonTable.css` - Custom styles
 - `favicon/` - Favicon files
 

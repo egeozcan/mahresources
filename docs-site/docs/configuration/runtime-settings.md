@@ -205,4 +205,4 @@ the key as `entity_name`, old→new values in `message`, and the request IP in
 
 See [`mr admin settings`](../cli/admin/settings/index.md).
 
-<!-- SCREENSHOT: /admin/settings -- regenerate via retake-screenshots skill -->
+{/* SCREENSHOT: /admin/settings -- regenerate via retake-screenshots skill */}
