@@ -9,6 +9,9 @@ const config: Config = {
 
   future: {
     v4: true,
+    // Docusaurus 3.10 turns the Rspack/SWC build on with v4, which needs the
+    // separate @docusaurus/faster package. Stay on the bundled webpack build.
+    faster: false,
   },
 
   url: 'https://egeozcan.github.io',
