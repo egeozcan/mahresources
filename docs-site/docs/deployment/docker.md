@@ -174,9 +174,9 @@ FROM node:20-alpine AS frontend-builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
-COPY src/ ./src/
-COPY templates/ ./templates/
-COPY index.css vite.config.js ./
+# The whole tree: src/ imports JSON from server/, and Tailwind scans templates/,
+# plugins/ and the Go sources for class names.
+COPY . .
 RUN npm run build-css && npm run build-js
 
 # Stage 2: Build Go binary
