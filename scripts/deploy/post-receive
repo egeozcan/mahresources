@@ -31,6 +31,47 @@ GO_TAGS=${DEPLOY_GO_TAGS:-json1 fts5}
 # gitignored so Tailwind's source scan does not read the half-built bundle.
 BUILD_DIR="$APP_DIR/.deploy-build"
 LOCK_STAMP="$APP_DIR/node_modules/.deploy-package-lock.json"
+LOCK_DIR="$APP_DIR/.deploy-lock"
+
+# One deploy at a time: two overlapping pushes would otherwise share the
+# scratch directory. The later one waits, then builds the checkout as the
+# last push left it.
+acquire_lock() {
+  local waited=0 holder
+  until mkdir "$LOCK_DIR" 2>/dev/null; do
+    holder=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+      echo ">> removing the lock of a deploy that is no longer running"
+      rm -rf "$LOCK_DIR"
+      continue
+    fi
+    if [ "$waited" -ge 900 ]; then
+      echo "!! another deploy has held $LOCK_DIR for 15 minutes -- giving up"
+      exit 1
+    fi
+    [ "$waited" -eq 0 ] && echo ">> another deploy is running -- waiting"
+    sleep 2
+    waited=$((waited + 2))
+  done
+  echo $$ > "$LOCK_DIR/pid"
+  trap 'rm -rf "$LOCK_DIR"' EXIT
+}
+
+# A push that moves build output out of git (deletes it and gitignores it)
+# makes git remove those files from this checkout before the hook runs. Put
+# them back from the previous revision, so the site keeps its assets while the
+# build runs and keeps them if the build fails.
+restore_untracked_outputs() {
+  local oldrev=$1 newrev=$2 list="$BUILD_DIR.restore"
+  case "$oldrev" in *[!0]*) ;; *) return 0 ;; esac
+  git diff -z --name-only --diff-filter=D "$oldrev" "$newrev" |
+    git check-ignore -z --stdin > "$list" || true
+  if [ -s "$list" ]; then
+    echo ">> restoring build output this push removed from git"
+    xargs -0 git archive "$oldrev" -- < "$list" | tar -x
+  fi
+  rm -f "$list"
+}
 
 install_deps() {
   # npm ci takes about a minute and the lockfile rarely changes.
@@ -64,7 +105,7 @@ swap_in() {
   mv -f "$BUILD_DIR/mahresources" mahresources
 }
 
-while read -r _oldrev newrev refname; do
+while read -r oldrev newrev refname; do
   if [ "$refname" != "refs/heads/$BRANCH" ]; then
     echo ">> $refname pushed (not $BRANCH) -- no deploy"
     continue
@@ -72,6 +113,8 @@ while read -r _oldrev newrev refname; do
   # git sets GIT_DIR for hooks; it would point npm and go at the wrong place.
   unset GIT_DIR
   cd "$APP_DIR"
+  acquire_lock
+  restore_untracked_outputs "$oldrev" "$newrev"
   echo ">> building ${newrev:0:12}"
   if build_all; then
     swap_in

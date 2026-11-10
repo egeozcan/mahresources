@@ -14,7 +14,7 @@
 // TestLocationHistoryE2EFixtureMatchesBundledPlugin compares the two plugin
 // directories file by file, so both get the same copy.
 
-import { cpSync, mkdirSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -34,12 +34,21 @@ const targets = [
   'e2e/test-plugins/location-history/public/vendor',
 ];
 
-for (const target of targets) {
+// Stage every copy before touching a served directory, so a missing source
+// leaves the files a running server is serving exactly as they were.
+const staged = targets.map((target) => {
   const dest = join(root, target);
-  rmSync(dest, { recursive: true, force: true });
-  mkdirSync(dest, { recursive: true });
+  const stage = `${dest}.new`;
+  rmSync(stage, { recursive: true, force: true });
+  mkdirSync(stage, { recursive: true });
   for (const [from, to] of files) {
     // cpSync throws on a missing source, which fails the build.
-    cpSync(join(leaflet, from), join(dest, to), { recursive: true });
+    cpSync(join(leaflet, from), join(stage, to), { recursive: true });
   }
+  return [stage, dest];
+});
+
+for (const [stage, dest] of staged) {
+  rmSync(dest, { recursive: true, force: true });
+  renameSync(stage, dest);
 }

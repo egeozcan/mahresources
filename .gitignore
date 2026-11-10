@@ -13,9 +13,13 @@
 /public/dist/
 /public/tailwind.css
 /plugins/location-history/public/vendor/
+/plugins/location-history/public/vendor.new/
 /e2e/test-plugins/location-history/public/vendor/
-# Scratch directory of scripts/deploy/post-receive
+/e2e/test-plugins/location-history/public/vendor.new/
+# Scratch directory and lock of scripts/deploy/post-receive
 /.deploy-build/
+/.deploy-build.restore
+/.deploy-lock/
 /*.db
 /*.db-shm
 /*.db-wal

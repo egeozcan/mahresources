@@ -71,6 +71,15 @@ volumes:
   app-files:   # persist uploaded files across restarts
 ```
 
+The `./plugins` mount serves the directory from your clone, and the location-history plugin's Leaflet files are build output that a fresh clone does not have. If you use that plugin, generate them once on the host before starting (and again after updating the clone):
+
+```bash
+npm ci
+npm run build-plugins
+```
+
+Without them the plugin's map requests `leaflet.js` and `leaflet.css` and gets a 404.
+
 Start the service:
 
 ```bash
