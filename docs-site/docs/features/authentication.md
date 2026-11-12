@@ -137,7 +137,7 @@ Two limits help contain abuse by an authenticated account.
 - **`MAX_USER_TOKENS`** (`-max-user-tokens`) caps how many API tokens a single user may hold. The default is `100`; `0` disables the cap. This bounds the self-service token table so one account cannot exhaust it. Hitting the cap returns HTTP 409; revoke an existing token to free a slot.
 
 :::warning Consider setting a JSON body limit
-The shared JSON request path is **unbounded by default**, which predates authentication and assumed a trusted single user. With `-auth` enabled, any authenticated account (including a read-only guest) can POST an arbitrarily large JSON body. Set **`MAX_JSON_BODY`** (`-max-json-body`) to a byte limit to cap it. It is keyed on the `application/json` content type, so multipart uploads (bounded separately by `-max-upload-size`) are unaffected. The default `0` leaves it unlimited.
+The shared JSON request path is **unbounded by default**, which predates authentication and assumed a trusted single user. With `-auth` enabled, any authenticated account (including a read-only guest) can POST an arbitrarily large JSON body. The login endpoints (`POST /login`, `POST /v1/auth/login`) are the exception: they are always capped at 64 KiB whatever `MAX_JSON_BODY` is set to, and an oversized login request gets 413. Set **`MAX_JSON_BODY`** (`-max-json-body`) to a byte limit to cap it. It is keyed on the `application/json` content type, so multipart uploads (bounded separately by `-max-upload-size`) are unaffected. The default `0` leaves it unlimited.
 :::
 
 ## Password policy

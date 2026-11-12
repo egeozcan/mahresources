@@ -117,7 +117,11 @@ func logLoginFailure(appCtx *application_context.MahresourcesContext, r *http.Re
 // LoginSubmitHandler handles the browser login form POST.
 func LoginSubmitHandler(appCtx *application_context.MahresourcesContext, limiter *loginRateLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
+		limitLoginBody(w, r)
+		if err := r.ParseForm(); err != nil && errors.As(err, new(*http.MaxBytesError)) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		next := safeLocalPath(r.FormValue("next"), "/dashboard")
 		username := r.FormValue("username")
 		outcome, reserved, err := runLoginAttempt(
@@ -161,7 +165,12 @@ func LogoutHandler(appCtx *application_context.MahresourcesContext) http.Handler
 // APILoginHandler authenticates via JSON or form body and returns the user.
 func APILoginHandler(appCtx *application_context.MahresourcesContext, limiter *loginRateLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		username, password := readCredentials(r)
+		username, password, readErr := readCredentials(w, r)
+		if readErr != nil {
+			// The credential was never judged, so nothing is charged to the limiter.
+			writeAuthJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "request body too large"})
+			return
+		}
 		var user *models.User
 		outcome, reserved, err := runLoginAttempt(
 			limiter,
@@ -227,20 +236,40 @@ func APIMeHandler(appCtx *application_context.MahresourcesContext) http.HandlerF
 	}
 }
 
-// readCredentials extracts username/password from a JSON or form body.
-func readCredentials(r *http.Request) (string, string) {
+// maxLoginBodyBytes caps every login request body. Login is reachable before
+// authentication and before the rate limiter, so it must not depend on the
+// opt-in global JSON cap (MAX_JSON_BODY, off by default).
+const maxLoginBodyBytes = 64 << 10
+
+// limitLoginBody applies the fixed login body cap regardless of Content-Type.
+func limitLoginBody(w http.ResponseWriter, r *http.Request) {
+	if r.Body != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, maxLoginBodyBytes)
+	}
+}
+
+// readCredentials extracts username/password from a JSON or form body. It
+// returns an error only when the body exceeds the login cap; other malformed
+// bodies yield empty credentials, which the caller judges as a failed login.
+func readCredentials(w http.ResponseWriter, r *http.Request) (string, string, error) {
+	limitLoginBody(w, r)
 	if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
 		var body struct {
 			Username string `json:"username"`
 			Password string `json:"password"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
-			return body.Username, body.Password
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			if errors.As(err, new(*http.MaxBytesError)) {
+				return "", "", err
+			}
+			return "", "", nil
 		}
-		return "", ""
+		return body.Username, body.Password, nil
 	}
-	_ = r.ParseForm()
-	return r.FormValue("username"), r.FormValue("password")
+	if err := r.ParseForm(); err != nil && errors.As(err, new(*http.MaxBytesError)) {
+		return "", "", err
+	}
+	return r.FormValue("username"), r.FormValue("password"), nil
 }
 
 func writeAuthJSON(w http.ResponseWriter, status int, v any) {
