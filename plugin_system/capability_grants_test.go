@@ -790,6 +790,28 @@ func TestPluginNameMustBeUsable(t *testing.T) {
 	}
 }
 
+func TestPluginNameMustNotBeARouteWord(t *testing.T) {
+	// /v1/plugins/block/render-batch and /v1/plugins/manage sit where a plugin
+	// name goes, and the per-plugin gate reads that segment as the plugin. A
+	// plugin called "block" answered the gate for every plugin's blocks.
+	for _, name := range []string{"block", "manage"} {
+		_, err := readPluginHeader([]byte(`plugin = { name = "`+name+`", version = "1.0" }`), "p")
+		if err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Errorf("plugin name %q: want a reserved-name error, got %v", name, err)
+		}
+	}
+	dir := t.TempDir()
+	writePlugin(t, dir, "p", `plugin = { name = "blocks", version = "1.0" }`)
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+	if pm.GetDiscoveredPlugin("blocks") == nil {
+		t.Error(`"blocks" is not a route word and must still load`)
+	}
+}
+
 func TestTheHeaderAndLoadVMsOpenTheSameLibraries(t *testing.T) {
 	// Any difference between the two environments is a discriminator: a plugin
 	// could declare one manifest when a library is present and another when it

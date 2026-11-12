@@ -49,7 +49,7 @@ plugin = {
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | Yes | Plugin identifier (displayed in management UI). Must match `^[a-z][a-z0-9_-]{0,49}$` |
+| `name` | Yes | Plugin identifier (displayed in management UI). Must match `^[a-z][a-z0-9_-]{0,49}$`. `block` and `manage` are reserved (they are route words under `/v1/plugins/`), and a plugin using one fails to load |
 | `version` | No | Version string |
 | `description` | No | Short description |
 | `settings` | No | Array of setting definitions |

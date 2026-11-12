@@ -105,6 +105,13 @@ func requiredCapability(method, rawPath string) capability {
 		}
 		return capEditor
 
+	// Plugin block and display renders are reads, like GET block render, so a
+	// guest reaches them on a plugin an operator opened. Deliberately not in
+	// isReadViaPost: csrfExempt reuses that list, and render Lua can still
+	// reach mah.db writers.
+	case method == http.MethodPost && isPluginRenderPost(rawPath):
+		return capRead
+
 	// Everything else: reads open to all; writes need base write access.
 	default:
 		if safe {
@@ -142,6 +149,26 @@ func isReadViaPost(path string) bool {
 	default:
 		return false
 	}
+}
+
+// pluginBlockBatchPath is the one plugin-code route that spans plugins: each
+// block names its own plugin in its type, so the path names none.
+const pluginBlockBatchPath = "/v1/plugins/block/render-batch"
+
+// isPluginRenderPost matches the POST render routes exactly as the router
+// registers them. It takes the raw path, not the .json/.body-normalized one:
+// a suffixed variant matches no render route and falls through to the plugin
+// JSON API catch-all, where a POST is a write.
+func isPluginRenderPost(rawPath string) bool {
+	if rawPath == pluginBlockBatchPath {
+		return true
+	}
+	rest, ok := strings.CutPrefix(rawPath, "/v1/plugins/")
+	if !ok {
+		return false
+	}
+	name, ok := strings.CutSuffix(rest, "/display/render")
+	return ok && name != "" && !strings.Contains(name, "/")
 }
 
 // isSystemPath matches admin-only system surfaces: settings, server/data stats,
@@ -250,6 +277,12 @@ func isEditorPath(path string) bool {
 // render, and the JSON API catch-all). An empty or missing name is still a
 // plugin-code path — /v1/plugins/manage is one — and answers "" so the caller
 // refuses it rather than treating an unparseable path as some named plugin's.
+//
+// A route that spans plugins breaks that assumption: its first segment is a
+// route word, not a plugin. pluginBlockBatchPath is the one such route, and
+// withAuthorization exempts it by exact match so its handler can gate each
+// block. Any future multi-plugin route under these prefixes needs the same
+// treatment, and its route word belongs in plugin_system's reservedPluginNames.
 func pluginCodePathName(path string) (string, bool) {
 	for _, prefix := range []string{"/v1/plugins/", "/plugins/"} {
 		if !strings.HasPrefix(path, prefix) {
@@ -286,7 +319,15 @@ func withAuthorization(appCtx *application_context.MahresourcesContext, next htt
 		// is the live case, and it is admin-only through isSystemPath anyway —
 		// yields "" and is refused, because "which plugin is this?" has no answer
 		// that could be allowed.
-		if name, isPluginPath := pluginCodePathName(r.URL.Path); isPluginPath && !p.IsAdmin() && (p.IsScoped() || p.RequiresScope()) {
+		//
+		// The batch block render is skipped: it renders whichever plugin each
+		// block's type names, so the "block" in its path is no plugin, and
+		// GetPluginBlockBatchRenderHandler gates every block with
+		// auth.PluginAccessFor instead. Exact path and method only: a prefix or
+		// a variant (.json, GET) reaches the plugin JSON API catch-all, which
+		// this gate must still cover.
+		batch := r.Method == http.MethodPost && r.URL.Path == pluginBlockBatchPath
+		if name, isPluginPath := pluginCodePathName(r.URL.Path); isPluginPath && !batch && !p.IsAdmin() && (p.IsScoped() || p.RequiresScope()) {
 			if name == "" || !appCtx.PluginAllowsScopedPrincipals(name) {
 				denyAccess(appCtx, w, r)
 				return

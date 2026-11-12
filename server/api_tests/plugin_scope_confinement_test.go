@@ -34,7 +34,10 @@ func TestPluginEndpoints_ConfinedPrincipalsDenied(t *testing.T) {
 		{http.MethodGet, "/v1/plugins/foo/some/action", ""},
 		{http.MethodPost, "/v1/plugins/foo/display/render", `{"type":"x"}`},
 		{http.MethodGet, "/v1/plugins/foo/block/render?blockId=1&mode=view", ""},
-		{http.MethodPost, "/v1/plugins/block/render-batch", `{"noteId":1,"mode":"view","blockIds":[1]}`},
+		// Only the exact batch route spans plugins; its variants still name
+		// "block" as the plugin and are gated as one.
+		{http.MethodGet, "/v1/plugins/block/render-batch", ""},
+		{http.MethodPost, "/v1/plugins/block/render-batch.json", `{"noteId":1,"mode":"view","blockIds":[1]}`},
 	}
 
 	reqBody := func(e ep) io.Reader {
@@ -55,6 +58,14 @@ func TestPluginEndpoints_ConfinedPrincipalsDenied(t *testing.T) {
 			if rr.Code != http.StatusForbidden {
 				t.Errorf("%s %s %s: confined principal must be 403, got %d", label, e.method, e.path, rr.Code)
 			}
+		}
+		// The batch block render spans plugins, so it is gated per block in its
+		// handler rather than by the URL (TestPluginBlockBatchRender_PerPluginAccess).
+		rr := doReq(tc, http.MethodPost, "/v1/plugins/block/render-batch",
+			map[string]string{"Accept": "application/json", "Authorization": bearer, "Content-Type": "application/json"},
+			nil, strings.NewReader(`{"noteId":1,"mode":"view","blockIds":[1]}`))
+		if rr.Code == http.StatusForbidden {
+			t.Errorf("%s POST /v1/plugins/block/render-batch: must reach the handler's per-block gate, got 403", label)
 		}
 	}
 

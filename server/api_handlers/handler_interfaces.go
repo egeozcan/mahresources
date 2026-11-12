@@ -175,9 +175,11 @@ type PluginAPIContext interface {
 
 // PluginBlockBatchContext is intentionally narrower than PluginAPIContext: the
 // batch render endpoint only needs one authorized note load and its already
-// scoped block collection.
+// scoped block collection. It also needs the per-plugin toggle: the route spans
+// plugins, so the URL gate cannot answer for it and the handler gates each block.
 type PluginBlockBatchContext interface {
 	PluginManagerProvider
+	PluginAllowsScopedPrincipals(pluginName string) bool
 	GetNote(id uint) (*models.Note, error)
 	GetBlocksForNote(noteID uint) ([]models.NoteBlock, error)
 }
