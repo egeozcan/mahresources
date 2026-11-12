@@ -100,7 +100,7 @@ func (ctx *MahresourcesContext) pickerFilteredDB(entity, filter string) (*gorm.D
 		db, table = ctx.db.Model(&models.Resource{}).Scopes(database_scopes.ResourceQuery(q, true, ctx.db)), "resources"
 		expression, mrqlEntity = q.MRQL, mrql.EntityResource
 	case *query_models.GroupQuery:
-		db, table = ctx.db.Model(&models.Group{}).Scopes(database_scopes.GroupQuery(q, true, ctx.db)), "groups"
+		db, table = ctx.db.Model(&models.Group{}).Scopes(database_scopes.GroupQuery(q, true, ctx.db, ctx.listVisibility())), "groups"
 		expression, mrqlEntity = q.MRQL, mrql.EntityGroup
 	case *query_models.NoteQuery:
 		db, table = ctx.db.Model(&models.Note{}).Scopes(database_scopes.NoteQuery(q, true, ctx.db)), "notes"

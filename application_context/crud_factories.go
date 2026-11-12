@@ -336,10 +336,10 @@ func (ctx *MahresourcesContext) GroupCRUDReader() *CRUDReader[models.Group, *que
 	// Note: GroupQuery scope requires originalDB parameter and ignoreSort which we handle specially
 	return NewCRUDReader[models.Group, *query_models.GroupQuery](ctx.db, CRUDReaderConfig[*query_models.GroupQuery]{
 		ScopeFn: func(query *query_models.GroupQuery) func(db *gorm.DB) *gorm.DB {
-			return database_scopes.GroupQuery(query, false, ctx.db)
+			return database_scopes.GroupQuery(query, false, ctx.db, ctx.listVisibility())
 		},
 		ScopeFnNoSort: func(query *query_models.GroupQuery) func(db *gorm.DB) *gorm.DB {
-			return database_scopes.GroupQuery(query, true, ctx.db)
+			return database_scopes.GroupQuery(query, true, ctx.db, ctx.listVisibility())
 		},
 		PreloadAssoc:   true,
 		PreloadClauses: []string{"Tags", "Category"},
