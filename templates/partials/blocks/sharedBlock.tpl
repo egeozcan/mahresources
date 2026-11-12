@@ -1,7 +1,7 @@
 {# with block= shareToken= resourceHashMap= groupDataMap= #}
 {% if block.Type == "text" %}
     <div class="prose prose-sm max-w-none">
-        {{ block.Content.text|default:""|strip_template_comments|markdown2|safe }}
+        {{ block.Content.text|default:""|strip_template_comments|markdown2|sanitize_under_auth:authEnabled|safe }}
     </div>
 {% elif block.Type == "heading" %}
     {# The note title is the page h1, so block headings shift down one level (level N renders as h(N+1)), capped at h6 for levels 5-6. #}

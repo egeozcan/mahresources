@@ -21,6 +21,11 @@ import (
 type processShortcodesNode struct {
 	contentExpr pongo2.IEvaluator
 	entityExpr  pongo2.IEvaluator
+	// untrustedExpr is the optional untrusted=<expr> argument, given where the
+	// content is a Description or a note text block. It is true under -auth
+	// (the page's authEnabled), and only an explicit false leaves the render
+	// trusted, as with sanitize_under_auth (#92).
+	untrustedExpr pongo2.IEvaluator
 }
 
 func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer pongo2.TemplateWriter) *pongo2.Error {
@@ -109,6 +114,14 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 	if principal := auth.PrincipalFromContext(reqCtx); principal != nil {
 		metaCtx.ForceReadOnly = metaCtx.ForceReadOnly || !principal.CanWrite()
 	}
+	if node.untrustedExpr != nil {
+		untrustedVal, err := node.untrustedExpr.Evaluate(ctx)
+		if err != nil {
+			return err
+		}
+		untrusted, isBool := untrustedVal.Interface().(bool)
+		metaCtx.UntrustedSource = untrusted || !isBool
+	}
 	result := shortcodes.Process(reqCtx, content, *metaCtx, pluginRenderer, executor)
 	result = WrapReloadableRegion(result, content, *metaCtx, appCtx)
 	if _, writeErr := writer.WriteString(result); writeErr != nil {
@@ -139,7 +152,7 @@ func WrapReloadableRegion(rendered, raw string, metaCtx shortcodes.MetaShortcode
 	if appCtx == nil || !shortcodes.ContainsReloadButton(rendered) || !shortcodes.IsDeferrableEntity(metaCtx) {
 		return rendered
 	}
-	token := deferredtoken.Seal(appCtx.DeferredSigningKey(), metaCtx.EntityType, metaCtx.EntityID, raw)
+	token := deferredtoken.SealWithTrust(appCtx.DeferredSigningKey(), metaCtx.EntityType, metaCtx.EntityID, raw, metaCtx.UntrustedSource)
 	if token == "" {
 		// Sealing only fails catastrophically (a broken CSPRNG), but a wrapper
 		// with no token is one the frontend would skip anyway. Leave the slot as
@@ -177,8 +190,8 @@ func buildPageRenderContext(reqCtx context.Context, appCtx PageRenderContext) co
 	reqCtx = shortcodes.WithPartialResolver(reqCtx, BuildPartialResolver(partials))
 	reqCtx = shortcodes.WithQueryBudget(reqCtx, pageQueryBudget(appCtx))
 	if appCtx != nil {
-		seal := func(entityType string, entityID uint, body string) string {
-			return deferredtoken.Seal(appCtx.DeferredSigningKey(), entityType, entityID, body)
+		seal := func(entityType string, entityID uint, body string, untrusted bool) string {
+			return deferredtoken.SealWithTrust(appCtx.DeferredSigningKey(), entityType, entityID, body, untrusted)
 		}
 		reqCtx = shortcodes.WithDeferredSigner(reqCtx, seal)
 		reqCtx = shortcodes.WithRefreshSigner(reqCtx, seal)
@@ -443,14 +456,24 @@ func processShortcodesTagParser(doc *pongo2.Parser, start *pongo2.Token, argumen
 		return nil, arguments.Error("process_shortcodes tag requires two arguments: content and entity", nil)
 	}
 
-	if arguments.Remaining() > 0 {
-		return nil, arguments.Error("process_shortcodes tag takes exactly two arguments", nil)
-	}
-
-	return &processShortcodesNode{
+	node := &processShortcodesNode{
 		contentExpr: contentExpr,
 		entityExpr:  entityExpr,
-	}, nil
+	}
+	if arguments.Match(pongo2.TokenIdentifier, "untrusted") != nil {
+		if arguments.Match(pongo2.TokenSymbol, "=") == nil {
+			return nil, arguments.Error("process_shortcodes: expected '=' after untrusted", nil)
+		}
+		if node.untrustedExpr, err = arguments.ParseExpression(); err != nil {
+			return nil, err
+		}
+	}
+
+	if arguments.Remaining() > 0 {
+		return nil, arguments.Error("process_shortcodes tag takes content, entity and an optional untrusted=<expr>", nil)
+	}
+
+	return node, nil
 }
 
 func init() {

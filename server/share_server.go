@@ -14,6 +14,7 @@ import (
 
 	"github.com/flosch/pongo2/v4"
 	"github.com/gorilla/mux"
+	"github.com/jmoiron/sqlx"
 	"mahresources/application_context"
 	"mahresources/models"
 	"mahresources/server/api_handlers"
@@ -739,6 +740,9 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 		"assetVersion":    template_context_providers.AssetVersion,
 		"customHeader":    shareCustomHeader,
 		"customCSS":       shareCustomCSS,
+		// The share page renders the note's Description and text blocks, so
+		// they are sanitized under auth as on the primary server (#92).
+		"authEnabled": s.appContext.AuthEnabled(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -757,11 +761,11 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 // so a binary column rendered as mojibake in a public page while the logged-in
 // view of the same query showed base64. One rule, one place.
 func (s *ShareServer) fetchTableQueryData(queryId uint, params map[string]any) (map[string]interface{}, error) {
-	rows, err := s.appContext.RunReadOnlyQuery(queryId, params)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	return api_handlers.TableBlockQueryData(rows)
+	var data map[string]interface{}
+	err := s.appContext.RunReadOnlyQuery(queryId, params, func(rows *sqlx.Rows) error {
+		var readErr error
+		data, readErr = api_handlers.TableBlockQueryData(rows)
+		return readErr
+	})
+	return data, err
 }

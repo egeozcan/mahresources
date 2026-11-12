@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
@@ -484,30 +485,58 @@ func TestIsReadOnlyDBEnforced_NoReadOnlyDB(t *testing.T) {
 	}
 }
 
-func TestIsReadOnlyDBEnforced_SQLiteWithModeRO(t *testing.T) {
+// GitHub #88: the flag reflects what the code installed on the handle, not a
+// substring of the DSN. A handle that merely wraps a writable pool is not enforced
+// whatever DB_READONLY_DSN says.
+func TestIsReadOnlyDBEnforced_ModeROInTheDSNDoesNotDecide(t *testing.T) {
 	ctx := createCoverageTestContext(t, "readonly_ro")
 	ctx.Config.DbReadOnlyDsn = "file:test.db?mode=ro"
-	if !ctx.IsReadOnlyDBEnforced() {
-		t.Error("Should return true when DSN contains mode=ro")
+	if ctx.IsReadOnlyDBEnforced() {
+		t.Error("a wrapper around a writable pool reported enforced because its DSN says mode=ro")
 	}
 }
 
-func TestIsReadOnlyDBEnforced_PostgresSeparateDSN(t *testing.T) {
+// Without the file: prefix go-sqlite3 drops mode=ro, so this handle is writable as
+// far as the DSN goes; the hardened driver refuses the write anyway, and only
+// then is the flag true.
+func TestIsReadOnlyDBEnforced_HardenedHandleWithoutFilePrefix(t *testing.T) {
+	ctx := createCoverageTestContext(t, "readonly_hardened")
+	path := filepath.Join(t.TempDir(), "plain.db")
+	writer, err := sqlx.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if _, err := writer.Exec("CREATE TABLE t (id INTEGER)"); err != nil {
+		t.Fatal(err)
+	}
+
+	ro, err := models.CreateReadOnlyDatabaseConnection("sqlite", path+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ro.Close()
+	ctx.readOnlyDB = ro
+	ctx.Config.DbReadOnlyDsn = path + "?mode=ro"
+
+	if _, err := ro.Exec("INSERT INTO t (id) VALUES (1)"); err == nil {
+		t.Fatal("a write through the read-only handle succeeded")
+	}
+	if !ctx.IsReadOnlyDBEnforced() {
+		t.Error("the hardened handle reported not enforced")
+	}
+}
+
+// On Postgres RunReadOnlyQuery always runs in a READ ONLY transaction, so the
+// flag no longer depends on whether the two DSNs differ.
+func TestIsReadOnlyDBEnforced_PostgresHandle(t *testing.T) {
 	ctx := createCoverageTestContext(t, "readonly_pg")
 	ctx.Config.DbType = constants.DbTypePosgres
 	ctx.Config.DbDsn = "postgres://host/db1"
-	ctx.Config.DbReadOnlyDsn = "postgres://host/db2"
-	if !ctx.IsReadOnlyDBEnforced() {
-		t.Error("Should return true when Postgres has separate DSNs")
-	}
-}
-
-func TestIsReadOnlyDBEnforced_PostgresSameDSN(t *testing.T) {
-	ctx := createCoverageTestContext(t, "readonly_pg_same")
-	ctx.Config.DbType = constants.DbTypePosgres
-	ctx.Config.DbDsn = "postgres://host/db1"
 	ctx.Config.DbReadOnlyDsn = "postgres://host/db1"
-	if ctx.IsReadOnlyDBEnforced() {
-		t.Error("Should return false when Postgres has same DSN for read/write")
+	// Only the driver name matters to the flag; nothing is queried.
+	ctx.readOnlyDB = sqlx.NewDb(ctx.readOnlyDB.DB, "postgres")
+	if !ctx.IsReadOnlyDBEnforced() {
+		t.Error("a Postgres handle reported not enforced")
 	}
 }

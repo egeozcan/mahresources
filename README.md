@@ -59,7 +59,7 @@ Files (called **Resources**), **Notes**, and **Groups** live in a database with 
 
 **MRQL** is a query language for Resources, Notes, and Groups. It has its own page at `/mrql`, a filter bar on every list page, saved queries, and an `[mrql]` shortcode that embeds results in templates.
 
-**Saved queries** store raw SQL alongside a custom result template. Point `DB_READONLY_DSN` at a read-only connection to enforce that at the database level.
+**Saved queries** store raw SQL alongside a custom result template. They run read-only: on SQLite the server refuses writes, `ATTACH` and reads of credential and secret tables itself; on PostgreSQL it uses a read-only transaction, and `DB_READONLY_DSN` should name a role that cannot read those tables.
 
 Two more ways to move through a library are the **timeline view** and **image similarity** browsing.
 

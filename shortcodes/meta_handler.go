@@ -48,6 +48,14 @@ type MetaShortcodeContext struct {
 	// shortcode's editable attr. Set by the share renderer: the public /s/<token>
 	// page must never emit an edit affordance that would POST to the primary server.
 	ForceReadOnly bool
+	// UntrustedSource marks a render that started in text a less trusted
+	// account wrote — a Description or a note text block with -auth on (#92).
+	// That text is sanitized before shortcodes expand, so what a shortcode emits
+	// is never checked; raw="true" ([property], [meta inline], [item]) is
+	// therefore ignored and the value escaped. It carries to every context the
+	// render derives (an [mrql] or [using] result, a deferred body's token), so
+	// an admin template reached from user content is escaped too.
+	UntrustedSource bool
 	// outer is the context a [using] block switched away from, nil at the top
 	// of a render and on every MRQL result. Nothing reads it yet; it is carried
 	// so that reaching the enclosing entity (ctx="outer") can be added without
@@ -154,7 +162,7 @@ func renderInlineMetaValue(sc Shortcode, ctx MetaShortcodeContext) string {
 		text = sc.Attrs["default"]
 	}
 
-	if sc.Attrs["raw"] == "true" {
+	if sc.Attrs["raw"] == "true" && !ctx.UntrustedSource {
 		return text
 	}
 	return html.EscapeString(text)
