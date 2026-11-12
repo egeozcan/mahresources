@@ -23,6 +23,11 @@ func (g GalleryBlockType) Type() string {
 }
 
 func (g GalleryBlockType) ValidateContent(content json.RawMessage) error {
+	// Reference-carrying content must read the same to a struct and to an
+	// exact-key reader (issue #89).
+	if err := RejectAmbiguousKeys(content); err != nil {
+		return err
+	}
 	var c galleryContent
 	if err := json.Unmarshal(content, &c); err != nil {
 		return err

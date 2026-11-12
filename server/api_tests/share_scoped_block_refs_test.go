@@ -310,3 +310,89 @@ func TestShareServerUnscopedSharerStillRendersAllBlockKinds(t *testing.T) {
 		})
 	}
 }
+
+// dupKeyBlockContents carries each out-of-subtree reference under its real key
+// and an empty case-variant duplicate after it. encoding/json decodes a struct
+// case-insensitively with the last key winning, so a struct-based check saw the
+// empty value, while the share server, reading exact keys from a map, saw the
+// outside reference.
+func (f *scopedRefFixture) dupKeyBlockContents() map[string]string {
+	return map[string]string{
+		"gallery":    fmt.Sprintf(`{"resourceIds":[%d],"RESOURCEIDS":[]}`, f.outsideRes.ID),
+		"references": fmt.Sprintf(`{"groupIds":[%d],"GroupIds":[]}`, f.outside.ID),
+		"table":      fmt.Sprintf(`{"queryId":%d,"QUERYID":null,"queryParams":{}}`, f.query.ID),
+	}
+}
+
+// The write-time and share-time checks read block references exactly as the
+// share server does, so a case-variant duplicate key cannot make them disagree.
+// The sharer here is one the share server resolves broadly (an admin, or a
+// legacy share with no recorded sharer), so the write-time check is the only
+// thing between the scoped user and the public page.
+func TestScopedBlockWritesRefuseCaseVariantDuplicateKeys(t *testing.T) {
+	sharers := []struct {
+		name  string
+		share func(t *testing.T, f *scopedRefFixture, noteID uint) string
+	}{
+		{"admin-sharer", func(t *testing.T, f *scopedRefFixture, noteID uint) string {
+			token, err := f.admin().ShareNote(noteID)
+			require.NoError(t, err)
+			return token
+		}},
+		{"legacy-share", func(t *testing.T, f *scopedRefFixture, noteID uint) string {
+			token, err := f.admin().ShareNote(noteID)
+			require.NoError(t, err)
+			require.NoError(t, f.tc.DB.Model(&models.Note{}).Where("id = ?", noteID).Update("share_created_by_user_id", nil).Error)
+			return token
+		}},
+	}
+	for _, sh := range sharers {
+		t.Run(sh.name, func(t *testing.T) {
+			f := newScopedRefEnv(t, true)
+			shareRouter := setupShareServer(t, f.tc)
+			note := &models.Note{Name: "team-note", OwnerId: &f.root.ID}
+			require.NoError(t, f.tc.DB.Create(note).Error)
+			token := sh.share(t, f, note.ID)
+
+			for kind, content := range f.dupKeyBlockContents() {
+				t.Run(kind, func(t *testing.T) {
+					_, err := f.scoped().CreateBlock(&query_models.NoteBlockEditor{NoteID: note.ID, Type: kind, Content: json.RawMessage(content)})
+					require.Error(t, err, "CreateBlock accepted a case-variant duplicate %s payload", kind)
+
+					blk, err := f.scoped().CreateBlock(&query_models.NoteBlockEditor{NoteID: note.ID, Type: kind})
+					require.NoError(t, err)
+					_, err = f.scoped().UpdateBlockContent(blk.ID, json.RawMessage(content))
+					require.Error(t, err, "UpdateBlockContent accepted a case-variant duplicate %s payload", kind)
+				})
+			}
+
+			page := shareGet(t, shareRouter, "/s/"+token)
+			require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+			body := page.Body.String()
+			for _, secret := range []string{scopedRefOutsideHash, scopedRefOutsideName, scopedRefOutsideGroup, scopedRefOutsideDesc, scopedRefSQLSecret} {
+				assert.NotContains(t, body, secret, "share page leaks %q", secret)
+			}
+			res := shareGet(t, shareRouter, "/s/"+token+"/resource/"+scopedRefOutsideHash)
+			assert.Equal(t, http.StatusNotFound, res.Code)
+			assert.NotContains(t, res.Body.String(), scopedRefOutsideBytes)
+		})
+	}
+}
+
+// The share-time check reads stored blocks the way the share server will: a
+// scoped user cannot share a note whose stored block hides an outside reference
+// behind a case-variant duplicate key.
+func TestScopedShareRefusesCaseVariantDuplicateKeyBlocks(t *testing.T) {
+	f := newScopedRefEnv(t, true)
+	for kind, content := range f.dupKeyBlockContents() {
+		t.Run(kind, func(t *testing.T) {
+			note := &models.Note{Name: "scoped-dup-share-" + kind, OwnerId: &f.root.ID}
+			require.NoError(t, f.tc.DB.Create(note).Error)
+			require.NoError(t, f.tc.DB.Create(&models.NoteBlock{NoteID: note.ID, Type: kind, Position: "a", Content: []byte(content), State: []byte("{}")}).Error)
+
+			_, err := f.scoped().ShareNote(note.ID)
+			require.Error(t, err, "a scoped user shared a note hiding an outside %s reference", kind)
+			assert.True(t, errors.Is(err, application_context.ErrBlockReferenceOutOfScope), "unexpected error: %v", err)
+		})
+	}
+}

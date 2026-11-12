@@ -16,6 +16,7 @@ import (
 	"github.com/gorilla/mux"
 	"mahresources/application_context"
 	"mahresources/models"
+	"mahresources/models/block_types"
 	"mahresources/server/api_handlers"
 	"mahresources/server/template_handlers/loaders"
 	"mahresources/server/template_handlers/template_context_providers"
@@ -451,16 +452,13 @@ func (s *ShareServer) handleSharedResource(w http.ResponseWriter, r *http.Reques
 		// Collect resource IDs from gallery blocks
 		resourceIdsSet := make(map[uint]bool)
 		for _, block := range note.Blocks {
-			if block.Type == "gallery" && len(block.Content) > 0 {
-				var content map[string]interface{}
-				if err := json.Unmarshal(block.Content, &content); err == nil {
-					if resourceIds, ok := content["resourceIds"].([]interface{}); ok {
-						for _, rId := range resourceIds {
-							if id, ok := rId.(float64); ok {
-								resourceIdsSet[uint(id)] = true
-							}
-						}
-					}
+			if block.Type != "gallery" {
+				continue
+			}
+			// The same reader the scope checks use (issue #89).
+			if refs, err := block_types.ExtractBlockReferences(block.Type, json.RawMessage(block.Content)); err == nil {
+				for _, id := range refs.ResourceIDs {
+					resourceIdsSet[id] = true
 				}
 			}
 		}
@@ -642,26 +640,25 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 			}
 		}
 
-		// Collect group IDs from references blocks
-		if block.Type == "references" {
-			if groupIds, ok := tb.Content["groupIds"].([]interface{}); ok {
-				for _, gId := range groupIds {
-					if id, ok := gId.(float64); ok {
-						groupIdsSet[uint(id)] = true
-					}
-				}
+		// Block references are read with the helper the write- and share-time
+		// scope checks use, so what was checked is what is resolved (issue #89).
+		var refs block_types.BlockReferences
+		switch block.Type {
+		case "references", "gallery", "table":
+			var err error
+			if refs, err = block_types.ExtractBlockReferences(block.Type, json.RawMessage(block.Content)); err != nil {
+				log.Printf("Error reading block references: %v", err)
 			}
 		}
 
+		// Collect group IDs from references blocks
+		for _, id := range refs.GroupIDs {
+			groupIdsSet[id] = true
+		}
+
 		// Collect resource IDs from gallery blocks
-		if block.Type == "gallery" {
-			if resourceIds, ok := tb.Content["resourceIds"].([]interface{}); ok {
-				for _, rId := range resourceIds {
-					if id, ok := rId.(float64); ok {
-						resourceIdsSet[uint(id)] = true
-					}
-				}
-			}
+		for _, id := range refs.ResourceIDs {
+			resourceIdsSet[id] = true
 		}
 
 		// Fetch query data for table blocks with queryId
@@ -671,14 +668,11 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 			// this, pongo2 errors on `col.label` against a string and 500s the
 			// whole shared note.
 			normalizeTableBlockContent(tb.Content)
-			if queryIdFloat, ok := tb.Content["queryId"].(float64); ok {
-				queryId := uint(queryIdFloat)
-				// Get query params from content
-				params := make(map[string]any)
-				if queryParams, ok := tb.Content["queryParams"].(map[string]interface{}); ok {
-					for k, v := range queryParams {
-						params[k] = v
-					}
+			if refs.QueryID != nil {
+				queryId := *refs.QueryID
+				params := make(map[string]any, len(refs.QueryParams))
+				for k, v := range refs.QueryParams {
+					params[k] = v
 				}
 				// Execute query
 				if queryData, err := fetchTableQueryData(reader, queryId, params); err == nil {

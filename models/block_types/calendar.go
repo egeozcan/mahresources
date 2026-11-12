@@ -62,6 +62,11 @@ func (c CalendarBlockType) Type() string {
 }
 
 func (c CalendarBlockType) ValidateContent(content json.RawMessage) error {
+	// Reference-carrying content must read the same to a struct and to an
+	// exact-key reader (issue #89).
+	if err := RejectAmbiguousKeys(content); err != nil {
+		return err
+	}
 	var cal calendarContent
 	if err := json.Unmarshal(content, &cal); err != nil {
 		return err

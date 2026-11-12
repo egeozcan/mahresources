@@ -39,27 +39,26 @@ func (ctx *MahresourcesContext) checkBlockReferencesInScope(blockType string, co
 	if !ctx.isScopedPrincipal() {
 		return nil
 	}
-	var refs struct {
-		ResourceIDs []uint                       `json:"resourceIds"`
-		GroupIDs    []uint                       `json:"groupIds"`
-		QueryID     *uint                        `json:"queryId"`
-		Calendars   []block_types.CalendarSource `json:"calendars"`
-	}
 	switch blockType {
 	case "gallery", "references", "table", "calendar":
 	default:
 		return nil
 	}
-	if len(content) > 0 {
-		if err := json.Unmarshal(content, &refs); err != nil {
-			return fmt.Errorf("%w: unreadable %s block content", ErrBlockReferenceOutOfScope, blockType)
-		}
+	// Read the references with the same helper the share server resolves them
+	// with. A private struct decode here matched keys case-insensitively while
+	// the share server read exact keys, so {"resourceIds":[outside],
+	// "RESOURCEIDS":[]} checked as empty and rendered the outside resource.
+	refs, err := block_types.ExtractBlockReferences(blockType, content)
+	if err != nil {
+		return fmt.Errorf("%w: unreadable %s block content", ErrBlockReferenceOutOfScope, blockType)
+	}
+	// Stored content that predates the write-time refusal of ambiguous keys is
+	// refused too: no reader should have to guess which key was meant.
+	if err := block_types.RejectAmbiguousKeys(content); err != nil {
+		return fmt.Errorf("%w: %v", ErrBlockReferenceOutOfScope, err)
 	}
 
-	var resourceIDs []uint
 	switch blockType {
-	case "gallery":
-		resourceIDs = refs.ResourceIDs
 	case "references":
 		visible := ctx.visibleGroupIDs(refs.GroupIDs)
 		for _, id := range refs.GroupIDs {
@@ -72,14 +71,8 @@ func (ctx *MahresourcesContext) checkBlockReferencesInScope(blockType string, co
 		if refs.QueryID != nil {
 			return fmt.Errorf("%w: saved SQL queries are not available for group-limited accounts", ErrBlockReferenceOutOfScope)
 		}
-	case "calendar":
-		for _, cal := range refs.Calendars {
-			if cal.Source.Type == "resource" && cal.Source.ResourceID != nil {
-				resourceIDs = append(resourceIDs, *cal.Source.ResourceID)
-			}
-		}
 	}
-	for _, id := range resourceIDs {
+	for _, id := range refs.ResourceIDs {
 		if !ctx.ResourceVisible(id) {
 			return fmt.Errorf("%w: resource %d", ErrBlockReferenceOutOfScope, id)
 		}

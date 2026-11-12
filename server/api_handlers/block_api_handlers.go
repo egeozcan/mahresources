@@ -461,12 +461,19 @@ func GetTableBlockQueryDataHandler(ctx contracts.TableBlockQueryRunner) func(htt
 			return
 		}
 
-		// Parse block content
+		// Parse block content. queryId and queryParams are read with the helper
+		// the scope checks and the share server use (issue #89).
 		var content tableBlockContent
 		if err := json.Unmarshal(block.Content, &content); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
+		refs, err := block_types.ExtractBlockReferences(block.Type, json.RawMessage(block.Content))
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+		content.QueryID, content.QueryParams = refs.QueryID, refs.QueryParams
 
 		// Check if queryId is set
 		if content.QueryID == nil {
