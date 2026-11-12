@@ -3,16 +3,19 @@ package groupio
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
 	"sort"
 	"time"
 
+	"github.com/spf13/afero"
 	"gorm.io/gorm"
 	"mahresources/archive"
 	"mahresources/models"
 	"mahresources/models/types"
+	"mahresources/storage"
 )
 
 // ExportRequest is the input to EstimateExport / StreamExport. Comes from
@@ -1111,6 +1114,21 @@ func (ctx *opCtx) collectSchemaDefIDs(plan *exportPlan) error {
 // be opened. Missing blobs are recorded in plan.warnings (and emitted via
 // report) so they appear in the manifest — which must be written before any
 // blob streaming starts.
+// errReservedBlobLocation reports a stored location in private storage.
+var errReservedBlobLocation = errors.New("location is in reserved storage")
+
+// statExportBlob is the pre-scan's existence check. A row whose location
+// points into private storage does not own that file, however the row came to
+// exist, so it is reported missing: its bytes never go into an archive and the
+// manifest never promises them.
+func statExportBlob(fs afero.Fs, location string) error {
+	if storage.IsReservedLocation(location) {
+		return errReservedBlobLocation
+	}
+	_, err := fs.Stat(location)
+	return err
+}
+
 func (ctx *opCtx) preScanBlobs(plan *exportPlan, report ReporterFn) error {
 	if plan.missingBlobs == nil {
 		plan.missingBlobs = map[string]bool{}
@@ -1146,7 +1164,7 @@ func (ctx *opCtx) preScanBlobs(plan *exportPlan, report ReporterFn) error {
 			continue
 		}
 		cleanLoc := models.Resource{Location: r.Location}.GetCleanLocation()
-		if _, statErr := fs.Stat(cleanLoc); statErr != nil {
+		if statErr := statExportBlob(fs, cleanLoc); statErr != nil {
 			msg := fmt.Sprintf("blob missing for resource %d (%s): %v", r.ID, r.Hash, statErr)
 			plan.warnings = append(plan.warnings, msg)
 			plan.missingBlobs[r.Hash] = true
@@ -1182,7 +1200,7 @@ func (ctx *opCtx) preScanBlobs(plan *exportPlan, report ReporterFn) error {
 				continue
 			}
 			cleanLoc := models.Resource{Location: vr.Location}.GetCleanLocation()
-			if _, statErr := fs.Stat(cleanLoc); statErr != nil {
+			if statErr := statExportBlob(fs, cleanLoc); statErr != nil {
 				msg := fmt.Sprintf("version blob %s: file missing: %v", vr.Hash, statErr)
 				plan.warnings = append(plan.warnings, msg)
 				plan.missingBlobs[vr.Hash] = true

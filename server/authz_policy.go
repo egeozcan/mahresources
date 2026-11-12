@@ -172,6 +172,11 @@ func isSystemPath(path string) bool {
 	// TestPluginManagementEndpoints_AreAdminOnly.
 	case "/v1/plugin/enable", "/v1/plugin/disable", "/v1/plugin/scopedAccess", "/v1/plugin/settings", "/v1/plugin/purge-data", "/v1/plugin/schedules", "/v1/plugin/schedule/run", "/v1/plugin/scheduled-downloads", "/v1/plugin/scheduled-downloads/cancel", "/v1/plugin/command-runs", "/v1/plugin/command-run", "/v1/plugin/command-run/cancel", "/v1/plugins/manage":
 		return true
+	// Registering a file already on the server's disk reads any path under the
+	// storage root, outside every subtree. AddLocalResource refuses it below
+	// admin as well, for callers that never pass through this rule.
+	case "/v1/resource/local":
+		return true
 	}
 	switch {
 	case strings.HasPrefix(path, "/v1/admin/server-stats"),

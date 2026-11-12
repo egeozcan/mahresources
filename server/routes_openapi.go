@@ -1559,6 +1559,7 @@ func registerResourceRoutes(r *openapi.Registry) {
 		Path:                 "/v1/resource/local",
 		OperationID:          "addLocalResource",
 		Summary:              "Add a resource from a local server path",
+		Description:          "Admin only when authentication is enabled. Paths in private application storage (a top-level entry starting with '_' or '.', anything resolving into a configured private root, or any path with a '..' segment) are refused with 403 for every role.",
 		Tags:                 []string{"resources"},
 		RequestType:          resourceLocalCreatorType,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
