@@ -596,11 +596,11 @@ func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.
 		return nil, errors.New("block is not a calendar type")
 	}
 
-	// Parse block content to get calendar sources
-	var content struct {
-		Calendars []block_types.CalendarSource `json:"calendars"`
-	}
-	if err := json.Unmarshal(block.Content, &content); err != nil {
+	// Read the calendar sources with the exact-key reader the write- and
+	// share-time scope checks use, so the source fetched is the source checked
+	// however the stored content has since been re-serialized (issue #89).
+	sources, err := block_types.ReadCalendarSources(json.RawMessage(block.Content))
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse block content: %w", err)
 	}
 
@@ -610,7 +610,7 @@ func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.
 	var cachedAt time.Time
 
 	// Fetch events from each calendar source
-	for _, cal := range content.Calendars {
+	for _, cal := range sources {
 		var icsContent []byte
 		var fetchTime time.Time
 		var fetchErr error

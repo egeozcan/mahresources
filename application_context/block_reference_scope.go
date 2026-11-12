@@ -54,7 +54,7 @@ func (ctx *MahresourcesContext) checkBlockReferencesInScope(blockType string, co
 	}
 	// Stored content that predates the write-time refusal of ambiguous keys is
 	// refused too: no reader should have to guess which key was meant.
-	if err := block_types.RejectAmbiguousKeys(content); err != nil {
+	if err := block_types.RejectAmbiguousBlockKeys(blockType, content); err != nil {
 		return fmt.Errorf("%w: %v", ErrBlockReferenceOutOfScope, err)
 	}
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"gorm.io/gorm"
+	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/contracts"
 	"mahresources/models/block_types"
@@ -68,7 +69,7 @@ func CreateBlockHandler(ctx contracts.BlockWriter) func(http.ResponseWriter, *ht
 
 		block, err := ctx.CreateBlock(&editor)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			http_utils.HandleError(err, writer, request, blockWriteErrorStatus(err))
 			return
 		}
 
@@ -76,6 +77,16 @@ func CreateBlockHandler(ctx contracts.BlockWriter) func(http.ResponseWriter, *ht
 		writer.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(writer).Encode(block)
 	}
+}
+
+// blockWriteErrorStatus maps a refused block write to its status: a reference
+// outside the writer's group scope is a permission refusal (403), anything
+// else is a bad request.
+func blockWriteErrorStatus(err error) int {
+	if errors.Is(err, application_context.ErrBlockReferenceOutOfScope) {
+		return http.StatusForbidden
+	}
+	return http.StatusBadRequest
 }
 
 func UpdateBlockContentHandler(ctx contracts.BlockWriter) func(http.ResponseWriter, *http.Request) {
@@ -113,7 +124,7 @@ func UpdateBlockContentHandler(ctx contracts.BlockWriter) func(http.ResponseWrit
 
 		block, err := ctx.UpdateBlockContent(id, body.Content)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			http_utils.HandleError(err, writer, request, blockWriteErrorStatus(err))
 			return
 		}
 
