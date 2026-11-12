@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"mahresources/auth"
 	"mahresources/models"
 	"mahresources/models/query_models"
 )
@@ -93,6 +94,131 @@ func TestMergeGroupsTransfersUserScopeToWinner(t *testing.T) {
 	}
 	if loserCount != 0 {
 		t.Fatalf("loser group count = %d, want 0", loserCount)
+	}
+}
+
+// mergeScopeVictimFixture builds root > {child, sibling}, a note under each of
+// child and sibling, and two accounts confined to child: a guest and a user.
+func mergeScopeVictimFixture(t *testing.T, ctx *MahresourcesContext) (root, child *models.Group, childNote, siblingNote *models.Note, victims []*models.User) {
+	t.Helper()
+	root = makeTestGroup(t, ctx, "root")
+	child = &models.Group{Name: "child", OwnerId: &root.ID}
+	sibling := &models.Group{Name: "sibling", OwnerId: &root.ID}
+	for _, g := range []*models.Group{child, sibling} {
+		if err := ctx.db.Create(g).Error; err != nil {
+			t.Fatalf("create group: %v", err)
+		}
+	}
+	childNote = &models.Note{Name: "child-note", OwnerId: &child.ID}
+	siblingNote = &models.Note{Name: "sibling-note", OwnerId: &sibling.ID}
+	for _, n := range []*models.Note{childNote, siblingNote} {
+		if err := ctx.db.Create(n).Error; err != nil {
+			t.Fatalf("create note: %v", err)
+		}
+	}
+	guest, err := ctx.CreateUser(&UserInput{Username: "victim-guest", Password: "password1", Role: models.RoleGuest, ScopeGroupId: &child.ID})
+	if err != nil {
+		t.Fatalf("create guest victim: %v", err)
+	}
+	user := createScopedTestUser(t, ctx, "victim-user", child.ID)
+	return root, child, childNote, siblingNote, []*models.User{guest, user}
+}
+
+func assertNoteOwner(t *testing.T, ctx *MahresourcesContext, noteID, wantOwner uint) {
+	t.Helper()
+	var note models.Note
+	if err := ctx.db.First(&note, noteID).Error; err != nil {
+		t.Fatalf("reload note %d: %v", noteID, err)
+	}
+	if note.OwnerId == nil || *note.OwnerId != wantOwner {
+		t.Fatalf("note %d owner = %v, want %d", noteID, note.OwnerId, wantOwner)
+	}
+}
+
+// Assigning a scope group is admin-only (/v1/user* is capSystem), but a merge
+// moved every account scoped to a loser onto the winner whoever ran it. A
+// scope-limited user merging a tidy-looking child into its parent therefore
+// widened other accounts' confinement to the parent's whole subtree.
+func TestMergeGroupsByScopedUserRefusesUserScopeLoser(t *testing.T) {
+	ctx := newUserScopeGuardTestContext(t)
+	root, child, childNote, siblingNote, victims := mergeScopeVictimFixture(t, ctx)
+	actor := createScopedTestUser(t, ctx, "merging-user", root.ID)
+
+	err := ctx.WithPrincipal(auth.FromUser(actor)).MergeGroups(root.ID, []uint{child.ID})
+	if !errors.Is(err, ErrGroupIsUserScope) {
+		t.Fatalf("scoped user's merge of a scope group: err = %v, want ErrGroupIsUserScope", err)
+	}
+
+	assertGroupPresent(t, ctx, child.ID)
+	for _, v := range victims {
+		assertUserScope(t, ctx, v.ID, child.ID)
+	}
+	assertNoteOwner(t, ctx, childNote.ID, child.ID)
+	if ctx.WithPrincipal(auth.FromUser(victims[0])).NoteVisible(siblingNote.ID) {
+		t.Fatal("the guest scoped to child can now read a note under its sibling")
+	}
+}
+
+// Editors are never scoped, but they cannot assign a scope either, so the
+// refusal keys on the role, not on the caller's own confinement.
+func TestMergeGroupsByEditorRefusesUserScopeLoser(t *testing.T) {
+	ctx := newUserScopeGuardTestContext(t)
+	root, child, childNote, _, victims := mergeScopeVictimFixture(t, ctx)
+	editor, err := ctx.CreateUser(&UserInput{Username: "merging-editor", Password: "password1", Role: models.RoleEditor})
+	if err != nil {
+		t.Fatalf("create editor: %v", err)
+	}
+
+	err = ctx.WithPrincipal(auth.FromUser(editor)).MergeGroups(root.ID, []uint{child.ID})
+	if !errors.Is(err, ErrGroupIsUserScope) {
+		t.Fatalf("editor's merge of a scope group: err = %v, want ErrGroupIsUserScope", err)
+	}
+	assertGroupPresent(t, ctx, child.ID)
+	for _, v := range victims {
+		assertUserScope(t, ctx, v.ID, child.ID)
+	}
+	assertNoteOwner(t, ctx, childNote.ID, child.ID)
+}
+
+// An admin keeps the atomic transfer: the merge succeeds and the scope follows
+// the winner, so it is never orphaned.
+func TestMergeGroupsByAdminTransfersUserScope(t *testing.T) {
+	ctx := newUserScopeGuardTestContext(t)
+	root, child, childNote, _, victims := mergeScopeVictimFixture(t, ctx)
+	admin, err := ctx.CreateUser(&UserInput{Username: "merging-admin", Password: "password1", Role: models.RoleAdmin})
+	if err != nil {
+		t.Fatalf("create admin: %v", err)
+	}
+
+	if err := ctx.WithPrincipal(auth.FromUser(admin)).MergeGroups(root.ID, []uint{child.ID}); err != nil {
+		t.Fatalf("admin merge: %v", err)
+	}
+	for _, v := range victims {
+		assertUserScope(t, ctx, v.ID, root.ID)
+	}
+	assertNoteOwner(t, ctx, childNote.ID, root.ID)
+}
+
+// The refusal is about scope references only: a scoped user may still merge a
+// loser nobody is confined to.
+func TestMergeGroupsByScopedUserStillMergesUnreferencedLoser(t *testing.T) {
+	ctx := newUserScopeGuardTestContext(t)
+	root := makeTestGroup(t, ctx, "root")
+	loser := &models.Group{Name: "plain-loser", OwnerId: &root.ID}
+	if err := ctx.db.Create(loser).Error; err != nil {
+		t.Fatalf("create loser: %v", err)
+	}
+	actor := createScopedTestUser(t, ctx, "merging-user", root.ID)
+
+	if err := ctx.WithPrincipal(auth.FromUser(actor)).MergeGroups(root.ID, []uint{loser.ID}); err != nil {
+		t.Fatalf("scoped merge of an unreferenced loser: %v", err)
+	}
+	var count int64
+	if err := ctx.db.Model(&models.Group{}).Where("id = ?", loser.ID).Count(&count).Error; err != nil {
+		t.Fatalf("count loser: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("loser group count = %d, want 0", count)
 	}
 }
 

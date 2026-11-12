@@ -326,10 +326,10 @@ func buildSeries(creator *query_models.SeriesCreator) (models.Series, error) {
 func (ctx *MahresourcesContext) NoteCRUDReader() *CRUDReader[models.Note, *query_models.NoteQuery] {
 	return NewCRUDReader[models.Note, *query_models.NoteQuery](ctx.db, CRUDReaderConfig[*query_models.NoteQuery]{
 		ScopeFn: func(query *query_models.NoteQuery) func(db *gorm.DB) *gorm.DB {
-			return database_scopes.NoteQuery(query, false, ctx.db)
+			return database_scopes.NoteQuery(query, false, ctx.db, ctx.listVisibility())
 		},
 		ScopeFnNoSort: func(query *query_models.NoteQuery) func(db *gorm.DB) *gorm.DB {
-			return database_scopes.NoteQuery(query, true, ctx.db)
+			return database_scopes.NoteQuery(query, true, ctx.db, ctx.listVisibility())
 		},
 		PreloadAssoc:   true,
 		PreloadClauses: []string{"Tags", "NoteType"},
@@ -342,10 +342,10 @@ func (ctx *MahresourcesContext) GroupCRUDReader() *CRUDReader[models.Group, *que
 	// Note: GroupQuery scope requires originalDB parameter and ignoreSort which we handle specially
 	return NewCRUDReader[models.Group, *query_models.GroupQuery](ctx.db, CRUDReaderConfig[*query_models.GroupQuery]{
 		ScopeFn: func(query *query_models.GroupQuery) func(db *gorm.DB) *gorm.DB {
-			return database_scopes.GroupQuery(query, false, ctx.db)
+			return database_scopes.GroupQuery(query, false, ctx.db, ctx.listVisibility())
 		},
 		ScopeFnNoSort: func(query *query_models.GroupQuery) func(db *gorm.DB) *gorm.DB {
-			return database_scopes.GroupQuery(query, true, ctx.db)
+			return database_scopes.GroupQuery(query, true, ctx.db, ctx.listVisibility())
 		},
 		PreloadAssoc:   true,
 		PreloadClauses: []string{"Tags", "Category"},

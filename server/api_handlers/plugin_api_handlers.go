@@ -595,6 +595,10 @@ type pluginBlockBatchResponse struct {
 
 // GetPluginBlockBatchRenderHandler collapses the initial plugin-block render
 // fan-out to one authorized note query, one block query, and one HTTP response.
+//
+// The route spans plugins, so withAuthorization's per-plugin URL gate skips it
+// and the gate is here, per block. A refused block gets the same error as a
+// missing one, so a caller cannot learn which plugins exist or are closed.
 func GetPluginBlockBatchRenderHandler(ctx PluginBlockBatchContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		pm := ctx.PluginManager()
@@ -627,6 +631,7 @@ func GetPluginBlockBatchRenderHandler(ctx PluginBlockBatchContext) func(http.Res
 		}
 		response := pluginBlockBatchResponse{Renders: map[uint]string{}, Errors: map[uint]string{}, Scripts: map[uint][]string{}}
 		renderCtx := plugin_system.WithMRQLCache(r.Context())
+		access := auth.PluginAccessFor(r.Context(), ctx.PluginAllowsScopedPrincipals)
 		seen := map[uint]bool{}
 		for _, id := range req.BlockIDs {
 			if seen[id] {
@@ -641,6 +646,10 @@ func GetPluginBlockBatchRenderHandler(ctx PluginBlockBatchContext) func(http.Res
 			parts := strings.SplitN(block.Type, ":", 3)
 			if len(parts) != 3 || parts[1] == "" {
 				response.Errors[id] = "invalid plugin block type"
+				continue
+			}
+			if !access(parts[1]) {
+				response.Errors[id] = "plugin block not found"
 				continue
 			}
 			html, renderErr := renderPluginBlock(renderCtx, pm, parts[1], block, note, req.Mode)

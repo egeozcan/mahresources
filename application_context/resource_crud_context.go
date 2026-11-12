@@ -197,7 +197,7 @@ func (ctx *MahresourcesContext) GetResourceCount(query *query_models.ResourceSea
 	var resource models.Resource
 	var count int64
 
-	db := ctx.db.Scopes(database_scopes.ResourceQuery(query, true, ctx.db)).Model(&resource)
+	db := ctx.db.Scopes(database_scopes.ResourceQuery(query, true, ctx.db, ctx.listVisibility())).Model(&resource)
 	db, err := ctx.applyMRQLFilter(db, mrql.EntityResource, query.MRQL)
 	if err != nil {
 		return 0, err
@@ -214,7 +214,7 @@ func (ctx *MahresourcesContext) GetResources(offset, maxResults int, query *quer
 		resLimit = int(query.MaxResults)
 	}
 
-	db := ctx.db.Scopes(database_scopes.ResourceQuery(query, false, ctx.db))
+	db := ctx.db.Scopes(database_scopes.ResourceQuery(query, false, ctx.db, ctx.listVisibility()))
 	db, err := ctx.applyMRQLFilter(db, mrql.EntityResource, query.MRQL)
 	if err != nil {
 		return nil, err
@@ -289,6 +289,17 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 
 	var resource models.Resource
 	err := ctx.withResourceSeriesRetry("edit", func(altCtx *MahresourcesContext) error {
+		// A re-own is a containment change, so for a group-limited principal
+		// the resource and its new owner are judged against the current tree
+		// rather than the request's allow-list snapshot, which can predate an
+		// admin moving the resource's group out of the subtree.
+		if fieldProvided("owner_id") && altCtx.isScopedPrincipal() {
+			rescoped, err := altCtx.rescopeTx(altCtx.db)
+			if err != nil {
+				return err
+			}
+			altCtx.db = rescoped
+		}
 		tx := altCtx.db
 
 		if err := tx.Preload(clause.Associations, pageLimit).First(&resource, resourceQuery.ID).Error; err != nil {

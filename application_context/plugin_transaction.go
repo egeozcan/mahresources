@@ -97,6 +97,11 @@ func (q *deferredPluginHooks) drain(ctx *MahresourcesContext) {
 // plugin's writes join the transaction rather than opening a second connection.
 func (a *pluginDBAdapter) RunInTransaction(inv *plugin_system.Invocation, body func(*plugin_system.Invocation) error) error {
 	bound := a.boundContext(inv)
+	// Refused before WithTransaction so a principal that cannot write never
+	// takes the write lock (SQLite) or opens a transaction (Postgres).
+	if err := bound.requireWriteRole("open a plugin transaction"); err != nil {
+		return err
+	}
 
 	var queue *deferredPluginHooks
 	if err := bound.WithTransaction(func(txCtx *MahresourcesContext) error {

@@ -318,7 +318,7 @@
     {# navigates to the file — which is the old behaviour, silently restored.       #}
     <div class="sidebar-group" x-data>
         <a href="/v1/resource/view?id={{ resource.ID }}&v={{ resource.Hash }}#{{ resource.ContentType }}"
-           @click.prevent="$store.lightbox.openFromClick($event, {{ resource.ID }}, '{{ resource.ContentType }}')"
+           @click.prevent="$store.lightbox.openFromClick($event, {{ resource.ID }}, '{{ resource.ContentType|escapejs }}')"
            data-lightbox-item
            data-testid="resource-main-preview"
            data-resource-id="{{ resource.ID }}"

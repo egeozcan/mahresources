@@ -25,7 +25,8 @@ import "context"
 // back to auth.SystemPrincipal() if that lookup fails; with auth on a protected
 // path either carries one or is refused before the handler, and only a public
 // path (/login, /v1/auth/login, /favicon.ico, /public/*) reaches a handler
-// without one. None of those renders a plugin surface. So a request context
+// without one. None of those renders a plugin surface: /favicon.ico is served as
+// a static file, and the error pages publish no plugin surface without a principal. So a request context
 // here always carries one, and its absence means this is not a request context at all,
 // usually because a render path fell back to context.Background(). Treating that
 // as "auth off" would fail open exactly where the caller lost track of who is

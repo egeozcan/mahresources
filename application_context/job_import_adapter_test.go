@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1160,6 +1161,432 @@ func TestAQueuedImportApplyIsRefusedWhenItsActorLosesTheAuthorityToWrite(t *test
 	}
 	if exists, _ := afero.Exists(other.GetDefaultFs(), importConsumedPlanPathFor(handle, apply.QueueJobID)); !exists {
 		t.Fatalf("a refused apply consumed the plan it was told not to read")
+	}
+}
+
+// TestAQueuedImportApplyIsRefusedWhenItsActorIsConfinedToAGroup is the same rule for
+// the other half of "may no longer import": an account confined to a group subtree
+// keeps its role and may still write, but group import is refused to group-limited
+// accounts outright, on every route. An apply admitted while the account was
+// unscoped and dispatched after it was confined used to run anyway, because the
+// dispatch asked only the role.
+func TestAQueuedImportApplyIsRefusedWhenItsActorIsConfinedToAGroup(t *testing.T) {
+	first := newJobHarnessContext(t, false)
+	first.Config.MaxJobConcurrency = 1
+	key := sharedReplayKey(t)
+	holdJobReplayKey(t, first, key)
+	other, otherRuntime := newSecondProcessJobContext(t, first, key)
+
+	actor, err := first.CreateUser(&UserInput{
+		Username: "import-confined-actor", Password: "correct-horse-battery", Role: models.RoleUser,
+	})
+	if err != nil {
+		t.Fatalf("create the actor: %v", err)
+	}
+	actorCtx := first.WithPrincipal(auth.FromUser(actor))
+	scope := &models.Group{Name: "confined-apply-scope"}
+	if err := first.db.Create(scope).Error; err != nil {
+		t.Fatalf("create the scope group: %v", err)
+	}
+
+	handle := "imp-confined-apply-1"
+	staging := writeImportArchiveForTest(t, first, handle)
+	parse := actorCtx.SubmitImportParse(handle, staging, "", "api")
+	if parse.Err != nil {
+		t.Fatalf("submit the parse: %v", parse.Err)
+	}
+	waitForSnapshot(t, first, parse.CanonicalJobID, "the parse to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	server, _, unblock := heldTransferServer(t)
+	holder := first.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/holding.bin"}, nil, "", "api")
+	if len(holder) != 1 || holder[0].Err != nil {
+		t.Fatalf("the holding transfer: %+v", holder)
+	}
+	waitForSnapshot(t, first, holder[0].CanonicalJobID, "the holding transfer to start", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateRunning
+	})
+
+	// The apply would land under the group the actor is about to be confined to,
+	// so its groups would stay inside the subtree: what is refused is the import
+	// itself, not where it writes.
+	apply := actorCtx.SubmitImportApply(handle, &ImportDecisions{
+		ParentGroupID:   &scope.ID,
+		MappingActions:  map[string]MappingAction{},
+		DanglingActions: map[string]DanglingAction{},
+	}, "api")
+	if apply.Err != nil {
+		t.Fatalf("submit the apply: %v", apply.Err)
+	}
+	if _, found := first.queueEntryFor(apply.CanonicalJobID); found {
+		t.Fatalf("the apply started an executor while the deployment's only slot was taken")
+	}
+
+	// The confinement, between acceptance and dispatch. The role stays user.
+	if _, err := first.UpdateUser(actor.ID, &UserUpdate{
+		ScopeGroupID: UserField[*uint]{Set: true, Value: &scope.ID},
+	}); err != nil {
+		t.Fatalf("confine the actor: %v", err)
+	}
+
+	unblock()
+	waitForSnapshot(t, first, holder[0].CanonicalJobID, "the holding transfer to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	waitFor(t, "the other runtime to claim and dispatch the apply", func() bool {
+		otherRuntime.tick(context.Background())
+		snap, err := other.JobService().Get(other.jobDeps(), jobs.Access{Administrator: true}, apply.CanonicalJobID)
+		return err == nil && (snap.State.Terminal() || snap.State == jobs.StateBlocked)
+	})
+
+	decided := waitForSnapshot(t, other, apply.CanonicalJobID, "the apply to be decided", func(s jobs.Snapshot) bool {
+		return s.State.Terminal() || s.State == jobs.StateBlocked
+	})
+	if decided.State != jobs.StateBlocked {
+		t.Fatalf("an apply whose actor was confined before dispatch ended %s, want blocked", decided.State)
+	}
+	if detail := blockedDetailForTest(t, other, apply.CanonicalJobID); !strings.Contains(detail, "scope-refused") {
+		t.Fatalf("the blocked apply does not say why: %s", detail)
+	}
+	var imported int64
+	if err := other.db.Model(&models.Group{}).Where("name = ?", "Imported").Count(&imported).Error; err != nil {
+		t.Fatalf("count imported groups: %v", err)
+	}
+	if imported != 0 {
+		t.Fatalf("a refused apply created %d groups from its archive", imported)
+	}
+	if exists, _ := afero.Exists(other.GetDefaultFs(), importConsumedPlanPathFor(handle, apply.QueueJobID)); !exists {
+		t.Fatalf("a refused apply consumed the plan it was told not to read")
+	}
+}
+
+// TestAQueuedImportParseIsRefusedWhenItsActorIsConfinedToAGroup is the parse half,
+// and the one that leaked: a parse dispatched after its actor was confined ran on
+// the adapter's unscoped context, so the plan it wrote named the groups and notes
+// outside the actor's subtree that carry the GUIDs in the archive.
+func TestAQueuedImportParseIsRefusedWhenItsActorIsConfinedToAGroup(t *testing.T) {
+	first := newJobHarnessContext(t, false)
+	first.Config.MaxJobConcurrency = 1
+	key := sharedReplayKey(t)
+	holdJobReplayKey(t, first, key)
+	other, otherRuntime := newSecondProcessJobContext(t, first, key)
+
+	actor, err := first.CreateUser(&UserInput{
+		Username: "import-confined-parser", Password: "correct-horse-battery", Role: models.RoleUser,
+	})
+	if err != nil {
+		t.Fatalf("create the actor: %v", err)
+	}
+	actorCtx := first.WithPrincipal(auth.FromUser(actor))
+
+	// The deployment's one slot is taken before the parse is submitted, so the
+	// parse is accepted durably and runs nowhere until a runtime has room.
+	server, _, unblock := heldTransferServer(t)
+	holder := first.SubmitRemoteDownloads(&query_models.ResourceFromRemoteCreator{URL: server.URL + "/holding.bin"}, nil, "", "api")
+	if len(holder) != 1 || holder[0].Err != nil {
+		t.Fatalf("the holding transfer: %+v", holder)
+	}
+	waitForSnapshot(t, first, holder[0].CanonicalJobID, "the holding transfer to start", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateRunning
+	})
+
+	handle := "imp-confined-parse-1"
+	staging := writeImportArchiveForTest(t, first, handle)
+	parse := actorCtx.SubmitImportParse(handle, staging, "", "api")
+	if parse.Err != nil {
+		t.Fatalf("submit the parse: %v", parse.Err)
+	}
+	if _, found := first.queueEntryFor(parse.CanonicalJobID); found {
+		t.Fatalf("the parse started an executor while the deployment's only slot was taken")
+	}
+
+	// A group outside the subtree the actor is about to be confined to, carrying
+	// the GUID of the archive's group: a parse that read the library unscoped
+	// names it in the plan.
+	guid := "11111111-2222-3333-4444-555555555555"
+	outside := &models.Group{Name: "outside-secret-name", GUID: &guid}
+	scope := &models.Group{Name: "confined-parse-scope"}
+	for _, group := range []*models.Group{outside, scope} {
+		if err := first.db.Create(group).Error; err != nil {
+			t.Fatalf("create group %s: %v", group.Name, err)
+		}
+	}
+	if _, err := first.UpdateUser(actor.ID, &UserUpdate{
+		ScopeGroupID: UserField[*uint]{Set: true, Value: &scope.ID},
+	}); err != nil {
+		t.Fatalf("confine the actor: %v", err)
+	}
+
+	unblock()
+	waitForSnapshot(t, first, holder[0].CanonicalJobID, "the holding transfer to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	waitFor(t, "the other runtime to claim and dispatch the parse", func() bool {
+		otherRuntime.tick(context.Background())
+		snap, err := other.JobService().Get(other.jobDeps(), jobs.Access{Administrator: true}, parse.CanonicalJobID)
+		return err == nil && (snap.State.Terminal() || snap.State == jobs.StateBlocked)
+	})
+
+	decided := waitForSnapshot(t, other, parse.CanonicalJobID, "the parse to be decided", func(s jobs.Snapshot) bool {
+		return s.State.Terminal() || s.State == jobs.StateBlocked
+	})
+	if decided.State != jobs.StateBlocked {
+		t.Fatalf("a parse whose actor was confined before dispatch ended %s, want blocked", decided.State)
+	}
+	if detail := blockedDetailForTest(t, other, parse.CanonicalJobID); !strings.Contains(detail, "scope-refused") {
+		t.Fatalf("the blocked parse does not say why: %s", detail)
+	}
+	if exists, _ := afero.Exists(other.GetDefaultFs(), importPlanPathFor(handle)); exists {
+		t.Fatalf("a refused parse wrote a plan")
+	}
+	outputs, err := other.JobService().Outputs(other.jobDeps(), jobs.Access{Administrator: true}, parse.CanonicalJobID)
+	if err != nil {
+		t.Fatalf("read outputs: %v", err)
+	}
+	if _, published := findJobOutput(outputs, jobImportPlanOutput); published {
+		t.Fatalf("a refused parse published a plan output")
+	}
+}
+
+// blockedDetailForTest answers the detail of the last blocked event on one Job.
+func blockedDetailForTest(t *testing.T, ctx *MahresourcesContext, jobID string) string {
+	t.Helper()
+	events, err := ctx.GetJobTimeline(jobID, 0, 200)
+	if err != nil {
+		t.Fatalf("read the timeline: %v", err)
+	}
+	detail := ""
+	for _, event := range events {
+		if event.Type == jobs.EventBlocked {
+			detail = string(event.Detail)
+		}
+	}
+	return detail
+}
+
+// TestAConfinedOwnerIsNotOfferedImportRetryOrOutputs pins the rest of the Job plane
+// for the import Kinds. An account confined to a group after it imported keeps the
+// history of its imports, and Cancel, but loses Retry and the import's outputs: the
+// plan and report the import routes already refuse it, and a Retry whose only
+// outcome would be a blocked Job.
+func TestAConfinedOwnerIsNotOfferedImportRetryOrOutputs(t *testing.T) {
+	ctx := newWorkflowJobContext(t)
+	owner, err := ctx.CreateUser(&UserInput{Username: "import-confined-owner", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatalf("create the owner: %v", err)
+	}
+	ownerCtx := ctx.WithPrincipal(auth.FromUser(owner))
+	administrator := makeAdmin(t, ctx, "import-confined-admin")
+	scope := createGroupNamed(t, ctx, "import-confined-scope", nil)
+	decisions := &ImportDecisions{MappingActions: map[string]MappingAction{}, DanglingActions: map[string]DanglingAction{}}
+
+	// One parse whose plan stays to be opened, and one parse applied to success,
+	// whose apply publishes its report.
+	parsed := map[string]string{}
+	for _, handle := range []string{"imp-confined-owner-plan", "imp-confined-owner-applied"} {
+		submission := ownerCtx.SubmitImportParse(handle, writeImportArchiveForTest(t, ctx, handle), "", "api")
+		if submission.Err != nil {
+			t.Fatalf("submit the parse %s: %v", handle, submission.Err)
+		}
+		snap := waitForSnapshot(t, ctx, submission.CanonicalJobID, "the parse to finish", func(s jobs.Snapshot) bool {
+			return s.State.Terminal()
+		})
+		if snap.State != jobs.StateSucceeded {
+			t.Fatalf("the parse %s ended %s (%+v)", handle, snap.State, snap.Failure)
+		}
+		parsed[handle] = snap.ID
+	}
+	planJobID := parsed["imp-confined-owner-plan"]
+	appliedHandle := "imp-confined-owner-applied"
+	apply := ownerCtx.SubmitImportApply(appliedHandle, decisions, "api")
+	if apply.Err != nil {
+		t.Fatalf("submit the apply: %v", apply.Err)
+	}
+	applied := waitForSnapshot(t, ctx, apply.CanonicalJobID, "the apply to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if applied.State != jobs.StateSucceeded {
+		t.Fatalf("the apply ended %s (%+v)", applied.State, applied.Failure)
+	}
+
+	// The applied import's parse and apply are made retryable: both failed on this
+	// server, with the archive and plan their Retry would read recorded as there.
+	failedParseID := parsed[appliedHandle]
+	retryable := []string{failedParseID, apply.CanonicalJobID}
+	for _, id := range retryable {
+		if err := ctx.db.Model(&models.Job{}).Where("id = ?", id).Updates(map[string]any{
+			"state": jobs.StateFailed, "failure_code": "import-parse-failed", "failure_class": jobs.FailureClassInternal,
+		}).Error; err != nil {
+			t.Fatalf("fail job %s: %v", id, err)
+		}
+	}
+	if err := setImportCommandAvailability(ctx.db, appliedHandle, true, true); err != nil {
+		t.Fatalf("record the import's files: %v", err)
+	}
+
+	parseAdapter := &importParseAdapter{ctx: ctx, kind: JobKindGroupImportParse}
+	applyAdapter := &importApplyAdapter{ctx: ctx, kind: JobKindGroupImportApply}
+	ownerAccess := jobs.Access{UserID: owner.ID}
+	adminAccess := jobs.Access{UserID: administrator.ID, Administrator: true}
+	offered := func(access jobs.Access, jobID string) []jobs.Command {
+		t.Helper()
+		commands, err := ctx.JobService().AdvertisedCommands(context.Background(), ctx.jobDeps(), access, jobID)
+		if err != nil {
+			t.Fatalf("advertise the commands of %s: %v", jobID, err)
+		}
+		return commands
+	}
+	snapshotOf := func(jobID string) jobs.Snapshot {
+		t.Helper()
+		snap, err := ctx.JobService().Get(ctx.jobDeps(), adminAccess, jobID)
+		if err != nil {
+			t.Fatalf("read %s: %v", jobID, err)
+		}
+		return snap
+	}
+	preflight := func(snapshot jobs.Snapshot, access jobs.Access, key string) jobs.CommandRefusal {
+		t.Helper()
+		var adapter any = parseAdapter
+		if snapshot.Kind == JobKindGroupImportApply {
+			adapter = applyAdapter
+		}
+		preflighter, ok := adapter.(jobs.CommandPreflight)
+		if !ok {
+			t.Fatalf("the %s Kind has no command preflight", snapshot.Kind)
+		}
+		refusal, err := preflighter.PreflightCommand(context.Background(),
+			jobs.CommandContext{Snapshot: snapshot, Access: access, Deps: ctx.jobDeps()}, key)
+		if err != nil {
+			t.Fatalf("preflight %s of %s: %v", key, snapshot.ID, err)
+		}
+		return refusal
+	}
+	setScope := func(scopeID *uint) *MahresourcesContext {
+		t.Helper()
+		updated, err := ctx.UpdateUser(owner.ID, &UserUpdate{ScopeGroupID: UserField[*uint]{Set: true, Value: scopeID}})
+		if err != nil {
+			t.Fatalf("set the owner's scope: %v", err)
+		}
+		return ctx.WithPrincipal(auth.FromUser(updated))
+	}
+	openOutput := func(on *MahresourcesContext, jobID, key string) error {
+		t.Helper()
+		content, err := on.openJobOutput(context.Background(), jobID, key)
+		if err == nil && content.Body != nil {
+			_ = content.Body.Close()
+		}
+		return err
+	}
+
+	// Unscoped, the owner is offered Retry, and the plan and report open.
+	for _, id := range retryable {
+		if !offersCommand(offered(ownerAccess, id), jobs.CommandRetry) {
+			t.Fatalf("precondition: the unscoped owner is not offered Retry of %s", id)
+		}
+	}
+	if err := openOutput(ownerCtx, planJobID, jobImportPlanOutput); err != nil {
+		t.Fatalf("precondition: the unscoped owner could not open the plan: %v", err)
+	}
+	if err := openOutput(ownerCtx, apply.CanonicalJobID, jobImportResultOutput); err != nil {
+		t.Fatalf("precondition: the unscoped owner could not open the report: %v", err)
+	}
+
+	confinedCtx := setScope(&scope.ID)
+	for _, id := range retryable {
+		if commands := offered(ownerAccess, id); offersCommand(commands, jobs.CommandRetry) {
+			t.Fatalf("a confined owner was offered Retry of import job %s: %+v", id, commands)
+		}
+		if !offersCommand(offered(adminAccess, id), jobs.CommandRetry) {
+			t.Fatalf("an administrator lost Retry of import job %s, whose successor acts as the administrator", id)
+		}
+		snap := snapshotOf(id)
+		_, err := confinedCtx.ExecuteJobCommand(context.Background(), jobs.CommandRequest{
+			JobID: id, Key: jobs.CommandRetry, IdempotencyKey: "confined-retry-" + id,
+			ExpectedVersion: snap.Version, Origin: "test",
+		})
+		if !errors.Is(err, jobs.ErrCommandNotAdvertised) {
+			t.Fatalf("the confined owner's Retry of %s answered %v, want not advertised", id, err)
+		}
+
+		// Stopping one's own work stays.
+		live := snap
+		live.State = jobs.StateQueued
+		command := jobs.CommandContext{Snapshot: live, Access: ownerAccess, Deps: ctx.jobDeps()}
+		var kindCommands []jobs.Command
+		if snap.Kind == JobKindGroupImportApply {
+			kindCommands, err = applyAdapter.Commands(context.Background(), command)
+		} else {
+			kindCommands, err = parseAdapter.Commands(context.Background(), command)
+		}
+		if err != nil || !offersCommand(kindCommands, jobs.CommandCancel) {
+			t.Fatalf("a confined owner lost Cancel of %s: %+v, %v", id, kindCommands, err)
+		}
+	}
+	for _, opened := range []struct{ jobID, key string }{
+		{planJobID, jobImportPlanOutput}, {planJobID, jobImportReviewOutput}, {apply.CanonicalJobID, jobImportResultOutput},
+	} {
+		if err := openOutput(confinedCtx, opened.jobID, opened.key); !errors.Is(err, ErrJobOutputForbidden) {
+			t.Fatalf("a confined owner opening import output %s answered %v, want forbidden", opened.key, err)
+		}
+	}
+	listed, err := confinedCtx.GetOpenableJobOutputs(planJobID)
+	if err != nil {
+		t.Fatalf("list the parse's outputs: %v", err)
+	}
+	for _, key := range []string{jobImportPlanOutput, jobImportReviewOutput} {
+		if _, found := findJobOutput(listed, key); found {
+			t.Fatalf("a confined owner was offered the parse's %s output: %+v", key, listed)
+		}
+	}
+
+	// The preflight states the dispatch rule for the commands that start work: a
+	// Retry acts as its asker, a Resume as the Job's own actor, whoever asks.
+	for _, id := range retryable {
+		snap := snapshotOf(id)
+		if refusal := preflight(snap, ownerAccess, jobs.CommandRetry); refusal.Reason != "scope-refused" {
+			t.Fatalf("the confined owner's Retry preflight of %s = %+v, want scope-refused", id, refusal)
+		}
+		if refusal := preflight(snap, adminAccess, jobs.CommandRetry); refusal.Reason != "" {
+			t.Fatalf("an administrator's Retry preflight of %s = %+v, want allowed", id, refusal)
+		}
+		blocked := snap
+		blocked.State = jobs.StateBlocked
+		blocked.ActorUserID = &owner.ID
+		blocked.ExecutionPrincipal = jobs.PrincipalActor
+		if refusal := preflight(blocked, adminAccess, jobs.CommandResume); refusal.Reason != "scope-refused" {
+			t.Fatalf("a Resume of %s held for the confined owner = %+v, want scope-refused", id, refusal)
+		}
+	}
+
+	// A guest is refused on its role, before its scope.
+	if _, err := ctx.UpdateUser(owner.ID, &UserUpdate{Role: UserField[models.Role]{Set: true, Value: models.RoleGuest}}); err != nil {
+		t.Fatalf("demote the owner: %v", err)
+	}
+	for _, id := range retryable {
+		if refusal := preflight(snapshotOf(id), ownerAccess, jobs.CommandRetry); refusal.Reason != "role-refused" {
+			t.Fatalf("a guest's Retry preflight of %s = %+v, want role-refused", id, refusal)
+		}
+		if commands := offered(ownerAccess, id); offersCommand(commands, jobs.CommandRetry) {
+			t.Fatalf("a guest was offered Retry of %s: %+v", id, commands)
+		}
+	}
+
+	// Unscoped again, everything comes back: the rule is the account's current
+	// scope, not anything recorded on the Job.
+	if _, err := ctx.UpdateUser(owner.ID, &UserUpdate{Role: UserField[models.Role]{Set: true, Value: models.RoleUser}}); err != nil {
+		t.Fatalf("promote the owner: %v", err)
+	}
+	unscopedCtx := setScope(nil)
+	for _, id := range retryable {
+		if !offersCommand(offered(ownerAccess, id), jobs.CommandRetry) {
+			t.Fatalf("the owner, unscoped again, is not offered Retry of %s", id)
+		}
+		if refusal := preflight(snapshotOf(id), ownerAccess, jobs.CommandRetry); refusal.Reason != "" {
+			t.Fatalf("the owner's Retry of %s, unscoped again, was refused: %+v", id, refusal)
+		}
+	}
+	if err := openOutput(unscopedCtx, planJobID, jobImportPlanOutput); err != nil {
+		t.Fatalf("the owner, unscoped again, could not open the plan: %v", err)
 	}
 }
 

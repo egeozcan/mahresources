@@ -104,6 +104,12 @@ var validPagePath = regexp.MustCompile(`^[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$`)
 // produces shortcodes that cannot be written.
 var validPluginName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,49}$`)
 
+// reservedPluginNames are route words that sit where a plugin name goes:
+// /v1/plugins/block/render-batch and /v1/plugins/manage (and /plugins/manage).
+// The per-plugin access gate reads that segment as the plugin, so a plugin
+// carrying one of these names would be confused with the route.
+var reservedPluginNames = map[string]bool{"block": true, "manage": true}
+
 // PluginInfo holds metadata about a loaded plugin.
 type PluginInfo struct {
 	Name        string
@@ -762,6 +768,10 @@ func readPluginIdentity(L *lua.LState) (pluginHeader, error) {
 	if !validPluginName.MatchString(h.Name) {
 		return pluginHeader{}, fmt.Errorf("plugin name %q is not usable: it must match %s, because it is "+
 			"a URL segment and the prefix of every shortcode the plugin registers", h.Name, validPluginName)
+	}
+	if reservedPluginNames[h.Name] {
+		return pluginHeader{}, fmt.Errorf("plugin name %q is reserved: it is a route word under /v1/plugins/ "+
+			"and /plugins/; rename the plugin", h.Name)
 	}
 	// A malformed manifest is a hard failure, not a silent legacy fallback: a
 	// typo'd capability that granted nothing would surface as "attempt to call

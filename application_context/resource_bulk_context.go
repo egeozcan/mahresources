@@ -848,7 +848,7 @@ func (ctx *MahresourcesContext) GetPopularResourceTags(query *query_models.Resou
 	var res []PopularTag
 
 	db := ctx.db.Model(&models.Resource{}).
-		Scopes(database_scopes.ResourceQuery(query, true, ctx.db)).
+		Scopes(database_scopes.ResourceQuery(query, true, ctx.db, ctx.listVisibility())).
 		Joins("INNER JOIN resource_tags pt ON pt.resource_id = resources.id").
 		Joins("INNER JOIN tags t ON t.id = pt.tag_id").
 		Select("t.id AS id, t.name AS name, count(*) AS count").

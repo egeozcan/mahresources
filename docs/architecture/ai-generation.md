@@ -87,7 +87,7 @@ affects later operations.
 
 The controller owns the template semaphore. Rebuilding a per-operation generator
 reuses that semaphore, so old and new settings together admit at most eight
-template provider calls. Existing process-wide rate limiters are never reset by
+template provider calls. Generation rate limiters (MRQL, template generation and disclosure) are keyed per authenticated account when auth is on and per client IP (`ctx.ClientIP`, which honours `-trust-proxy-headers`) otherwise; they sweep expired buckets once per window and fail closed past 10000 keys. Existing process-wide rate limiters are never reset by
 a settings save. Waiting for a provider slot counts against the call timeout.
 The settings cache retains its existing single-process semantics: another
 running process does not receive automatic invalidation after a write.

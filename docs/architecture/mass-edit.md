@@ -29,7 +29,11 @@ bulk bar's per-page, per-op shape.
   filter-mode partial success is unrecoverable because the successful edits
   changed the filter's own result set. The owner op is parsed last and applied
   last: re-parenting changes subtree membership and the scope allow-list is a
-  snapshot from request start. Owner/group re-parent validation runs on `tx`,
+  snapshot. For a group-limited principal that snapshot is re-derived on the
+  transaction (`rescopeTx`) after the tree lock and before the lock-and-verify
+  phase, so a target or owner an admin moved out of the subtree after the
+  request was bound fails that phase with its not-found error; the owner UPDATE
+  still does not refresh it. Owner/group re-parent validation runs on `tx`,
   and group cycles are **refused, never repaired** — unlike `MergeGroups`, where
   NULLing an owner is cleanup of an incidental cycle, here the cycle is the
   primary effect of what was asked.

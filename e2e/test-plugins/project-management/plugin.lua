@@ -931,6 +931,17 @@ local function status_counts(container, conditions, tax)
     return counts, nil
 end
 
+-- stored_counts returns the pm_counts rollup from group Meta only when every
+-- member is a number (Meta is writable by any capWrite account).
+local function stored_counts(value)
+    local counts = type(value) == "table" and value.pm_counts or nil
+    if type(counts) ~= "table" or type(counts.total) ~= "number" then return nil end
+    for _, v in pairs(counts) do
+        if type(v) ~= "number" then return nil end
+    end
+    return counts
+end
+
 -- owner_container resolves the ordering container for a task owned by
 -- `owner_group` (a PM Project or PM Epic group). The board's columns span the
 -- whole project, so a task under an epic must take its position key from the
@@ -1258,6 +1269,10 @@ end
 local function register_work_blocks(filters)
     local item_schema = {type='object',required={'id','label'},additionalProperties=false,properties={
         id={type='string',minLength=1,maxLength=100},label={type='string',maxLength=2000},task_id={type='integer',minimum=1}}}
+    local function task_ref(item)
+        local id = tonumber(item.task_id)
+        if id and id >= 1 and id == math.floor(id) then return string.format('%d', id) end
+    end
     mah.block_type({type='subtasks',label='Subtasks',icon='ST',description='A checklist of up to 100 subtask rows. Checked IDs are block state; a row can be promoted once to a PM Task.',filters=filters,scripts=BLOCK_SCRIPTS,
         content_schema={type='object',required={'items'},additionalProperties=false,properties={items={type='array',maxItems=100,items=item_schema}}},
         state_schema={type='object',properties={checked={type='array',maxItems=100,uniqueItems=true,items={type='string'}}},additionalProperties=false},
@@ -1268,9 +1283,10 @@ local function register_work_blocks(filters)
             for i,item in ipairs(ctx.block.content.items or {}) do
                 local mark = checked[item.id] and '☑ ' or '☐ '
                 local label = mah.html_escape(item.label)
-                if item.task_id then label = '<a href="/note?id=' .. item.task_id .. '">' .. label .. '</a>' end
+                local ref = task_ref(item)
+                if ref then label = '<a href="/note?id=' .. ref .. '">' .. label .. '</a>' end
                 local toggle = ctx.can_write and block_button(ctx,'toggle',mark .. item.label,i-1) or mark .. label
-                rows[#rows+1] = '<li>' .. toggle .. (item.task_id and (' <a href="/note?id=' .. item.task_id .. '">Promoted task</a>') or '') .. '</li>'
+                rows[#rows+1] = '<li>' .. toggle .. (ref and (' <a href="/note?id=' .. ref .. '">Promoted task</a>') or '') .. '</li>'
             end
             return '<section class="pm-content-block" data-testid="pm-subtasks"><h3>Subtasks</h3><ul>' .. table.concat(rows) .. '</ul></section>'
         end,
@@ -1278,7 +1294,7 @@ local function register_work_blocks(filters)
             local rows = {}
             for i,item in ipairs(ctx.block.content.items or {}) do
                 rows[#rows+1] = '<div class="pm-block-row">' .. block_field(ctx,'Subtask','items.' .. (i-1) .. '.label',item.label)
-                    .. row_buttons(ctx,i-1,nil,not item.task_id and block_button(ctx,'promote','Promote to task',i-1) or '<a href="/note?id=' .. item.task_id .. '">Open task</a>') .. '</div>'
+                    .. row_buttons(ctx,i-1,nil,not task_ref(item) and block_button(ctx,'promote','Promote to task',i-1) or '<a href="/note?id=' .. task_ref(item) .. '">Open task</a>') .. '</div>'
             end
             return '<section class="pm-content-block pm-block-editor" data-testid="pm-subtasks-editor"><h3>Subtasks</h3>' .. table.concat(rows) .. block_button(ctx,'add','Add subtask') .. '</section>'
         end})
@@ -1670,8 +1686,8 @@ local function render_mini_board(ctx)
     local entity = ctx.entity or {}
     local group = {id=ctx.entity_id,category_id=entity.CategoryId,owner_id=entity.OwnerId}
     local container = group_container(group,tax)
-    local counts = ctx.value and ctx.value.pm_counts
-    if type(counts) ~= "table" then counts = status_counts(container,nil,tax) end
+    local counts = stored_counts(ctx.value)
+    if not counts then counts = status_counts(container,nil,tax) end
     if not counts then return '<p>Task counts are temporarily unavailable.</p>' end
     local cfg, columns = resolved_config(), {}
     for _, status in ipairs(cfg.statuses) do
@@ -1683,7 +1699,7 @@ local function render_mini_board(ctx)
                 .. control_html("status",task.id,status.name,render_pill(status.name,status,""),ctx.read_only,cfg.statuses) .. '</article>'
         end
         columns[#columns+1] = '<section class="pm-mini-column" data-status="' .. status.name .. '"><h3>' .. mah.html_escape(status.label)
-            .. ' <span class="pm-mini-count">' .. tostring(counts[status.name] or 0) .. '</span></h3>' .. table.concat(cards) .. '</section>'
+            .. ' <span class="pm-mini-count">' .. tostring(tonumber(counts[status.name]) or 0) .. '</span></h3>' .. table.concat(cards) .. '</section>'
     end
     return '<div class="pm-mini-board" data-testid="pm-mini-board">' .. table.concat(columns) .. '</div>'
 end
@@ -1965,8 +1981,8 @@ function init()
             if project_id == 0 and not epic_id then return "" end
             local container = { owner_epic = epic_id ~= nil, project_id = project_id, epic_id = epic_id }
             local value = meta_object(group.meta) or {}
-            local counts, cerr = value.pm_counts, nil
-            if type(counts) ~= "table" then counts, cerr = status_counts(container, nil, tax) end
+            local counts, cerr = stored_counts(value), nil
+            if not counts then counts, cerr = status_counts(container, nil, tax) end
             if cerr then return "" end
             local cfg = resolved_config()
             local done = counts[cfg.done_status] or 0

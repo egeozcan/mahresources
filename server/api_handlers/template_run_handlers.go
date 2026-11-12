@@ -170,24 +170,25 @@ func acceptsEventStream(r *http.Request) bool {
 // templateRunAccountKey is the key a run is limited and finished by: the user
 // ID of a signed-in account, else the client address. With auth off every
 // request carries the root admin principal, a real user ID flagged SuperUser
-// (a signed-in account never is), and those clients are told apart by address.
-func templateRunAccountKey(r *http.Request) string {
+// (a signed-in account never is), and those clients are told apart by address,
+// which honours -trust-proxy-headers like every other client-IP reader.
+func templateRunAccountKey(ctx interface{ ClientIP(*http.Request) string }, r *http.Request) string {
 	var userID uint
 	if p := auth.PrincipalFromContext(r.Context()); p != nil && !p.SuperUser {
 		userID = p.UserID
 	}
-	return application_context.TemplateRunAccountKey(userID, application_context.ClientIP(r))
+	return application_context.TemplateRunAccountKey(userID, ctx.ClientIP(r))
 }
 
 // serveHarnessRun registers the run, runs it, and delivers its one result or
 // error: as an event when the client asked for a stream and the run got as far
 // as its first Turn, as an ordinary response otherwise.
-func serveHarnessRun(w http.ResponseWriter, r *http.Request, s harnessServe) {
+func serveHarnessRun(ctx interface{ ClientIP(*http.Request) string }, w http.ResponseWriter, r *http.Request, s harnessServe) {
 	p := s.prepared
 	p.r = r
 	runCtx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	handle, err := application_context.StartTemplateRun(templateRunAccountKey(r), cancel)
+	handle, err := application_context.StartTemplateRun(templateRunAccountKey(ctx, r), cancel)
 	if err != nil {
 		writeTemplateGenerationError(w, r, err)
 		return
@@ -311,9 +312,9 @@ type TemplateRunFinishRequest struct {
 // a live run to make its next Turn the final one. Only the account that started
 // the run can; an unknown run and another account's are both 404, so run IDs
 // cannot be probed. It reads no entities, so it needs no request-scoped
-// context; mounted under the carrier's prefix it inherits the generate route's
-// role gate.
-func GetFinishTemplateRunHandler() func(http.ResponseWriter, *http.Request) {
+// context, only the client-IP reader; mounted under the carrier's prefix it
+// inherits the generate route's role gate.
+func GetFinishTemplateRunHandler(ctx interface{ ClientIP(*http.Request) string }) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req TemplateRunFinishRequest
 		if err := tryFillStructValuesFromRequest(&req, r); err != nil {
@@ -325,7 +326,7 @@ func GetFinishTemplateRunHandler() func(http.ResponseWriter, *http.Request) {
 			http_utils.HandleError(errors.New("runId is required"), w, r, http.StatusBadRequest)
 			return
 		}
-		if !application_context.FinishTemplateRun(runID, templateRunAccountKey(r)) {
+		if !application_context.FinishTemplateRun(runID, templateRunAccountKey(ctx, r)) {
 			http_utils.HandleError(errors.New("no such generation run"), w, r, http.StatusNotFound)
 			return
 		}

@@ -142,7 +142,7 @@ func (ctx *MahresourcesContext) GetResourceTimelineCounts(
 
 	for i, b := range boundaries {
 		var createdCount int64
-		created := ctx.db.Scopes(database_scopes.ResourceQuery(query, true, ctx.db)).
+		created := ctx.db.Scopes(database_scopes.ResourceQuery(query, true, ctx.db, ctx.listVisibility())).
 			Model(&models.Resource{}).
 			Scopes(database_scopes.InstantRange("resources.created_at", b.Start, b.End))
 		if mrqlFilter != nil {
@@ -157,7 +157,7 @@ func (ctx *MahresourcesContext) GetResourceTimelineCounts(
 		buckets[i].Created = createdCount
 
 		var updatedCount int64
-		updated := ctx.db.Scopes(database_scopes.ResourceQuery(query, true, ctx.db)).
+		updated := ctx.db.Scopes(database_scopes.ResourceQuery(query, true, ctx.db, ctx.listVisibility())).
 			Model(&models.Resource{}).
 			Scopes(database_scopes.InstantRange("resources.updated_at", b.Start, b.End)).
 			Scopes(database_scopes.InstantAfter("resources.updated_at", "resources.created_at"))
@@ -190,7 +190,7 @@ func (ctx *MahresourcesContext) GetNoteTimelineCounts(
 
 	for i, b := range boundaries {
 		var createdCount int64
-		created := ctx.db.Scopes(database_scopes.NoteQuery(query, true, ctx.db)).
+		created := ctx.db.Scopes(database_scopes.NoteQuery(query, true, ctx.db, ctx.listVisibility())).
 			Model(&models.Note{}).
 			Scopes(database_scopes.InstantRange("notes.created_at", b.Start, b.End))
 		if mrqlFilter != nil {
@@ -205,7 +205,7 @@ func (ctx *MahresourcesContext) GetNoteTimelineCounts(
 		buckets[i].Created = createdCount
 
 		var updatedCount int64
-		updated := ctx.db.Scopes(database_scopes.NoteQuery(query, true, ctx.db)).
+		updated := ctx.db.Scopes(database_scopes.NoteQuery(query, true, ctx.db, ctx.listVisibility())).
 			Model(&models.Note{}).
 			Scopes(database_scopes.InstantRange("notes.updated_at", b.Start, b.End)).
 			Scopes(database_scopes.InstantAfter("notes.updated_at", "notes.created_at"))
@@ -238,7 +238,7 @@ func (ctx *MahresourcesContext) GetGroupTimelineCounts(
 
 	for i, b := range boundaries {
 		var createdCount int64
-		created := ctx.db.Scopes(database_scopes.GroupQuery(query, true, ctx.db)).
+		created := ctx.db.Scopes(database_scopes.GroupQuery(query, true, ctx.db, ctx.listVisibility())).
 			Model(&models.Group{}).
 			Scopes(database_scopes.InstantRange("groups.created_at", b.Start, b.End))
 		if mrqlFilter != nil {
@@ -253,7 +253,7 @@ func (ctx *MahresourcesContext) GetGroupTimelineCounts(
 		buckets[i].Created = createdCount
 
 		var updatedCount int64
-		updated := ctx.db.Scopes(database_scopes.GroupQuery(query, true, ctx.db)).
+		updated := ctx.db.Scopes(database_scopes.GroupQuery(query, true, ctx.db, ctx.listVisibility())).
 			Model(&models.Group{}).
 			Scopes(database_scopes.InstantRange("groups.updated_at", b.Start, b.End)).
 			Scopes(database_scopes.InstantAfter("groups.updated_at", "groups.created_at"))

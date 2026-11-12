@@ -88,8 +88,8 @@ func (a *importParseAdapter) SelectCommandJobs(_ context.Context, request jobs.C
 	if !supported {
 		return nil, false, nil
 	}
-	allowed, _ := a.ctx.commandActorAllowed(request.Deps, request.Access)
-	if !allowed {
+	allowed, scoped := a.ctx.commandActorAllowed(request.Deps, request.Access)
+	if !allowed || (scoped && request.Key == jobs.CommandRetry) {
 		return emptyCommandSelection(request), true, nil
 	}
 	query := request.Jobs
@@ -119,8 +119,8 @@ func (a *importApplyAdapter) SelectCommandJobs(_ context.Context, request jobs.C
 	if !supported {
 		return nil, false, nil
 	}
-	allowed, _ := a.ctx.commandActorAllowed(request.Deps, request.Access)
-	if !allowed {
+	allowed, scoped := a.ctx.commandActorAllowed(request.Deps, request.Access)
+	if !allowed || (scoped && request.Key == jobs.CommandRetry) {
 		return emptyCommandSelection(request), true, nil
 	}
 	query := request.Jobs
@@ -394,7 +394,7 @@ func (ctx *MahresourcesContext) commandActorAllowed(deps jobs.Deps, access jobs.
 	if !principal.CanWrite() {
 		return false, false
 	}
-	return true, !principal.IsAdmin() && (principal.IsScoped() || principal.RequiresScope())
+	return true, principal.IsGroupLimited()
 }
 
 func jobSummaryTextExpr(db *gorm.DB, field string) string {

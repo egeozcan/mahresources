@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/afero"
@@ -17,6 +18,7 @@ import (
 	"mahresources/archive"
 	"mahresources/download_queue"
 	"mahresources/models"
+	"mahresources/models/block_types"
 	"mahresources/models/types"
 	"mahresources/mrql"
 )
@@ -325,6 +327,30 @@ func importBlobLocation(hash, contentType string) (string, error) {
 	return path.Join("resources", hash+ext), nil
 }
 
+// sanitizeImportedContentType returns ct unchanged (true) when it is empty or a
+// well-formed media type made only of RFC 6838 name characters plus what
+// parameters need. Anything else (quotes, backticks, parentheses...) would be
+// stored verbatim and later interpolated into pages, so it is replaced with
+// application/octet-stream (false). mime.ParseMediaType alone accepts ' and `.
+func sanitizeImportedContentType(ct string) (string, bool) {
+	if ct == "" {
+		return ct, true
+	}
+	for i := 0; i < len(ct); i++ {
+		c := ct[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case strings.IndexByte(" !#$&^_.+-/;=", c) >= 0:
+		default:
+			return "application/octet-stream", false
+		}
+	}
+	if _, _, err := mime.ParseMediaType(ct); err != nil {
+		return "application/octet-stream", false
+	}
+	return ct, true
+}
+
 func (s *applyState) isExcluded(exportID string) bool {
 	for _, id := range s.decisions.ExcludedItems {
 		if id == exportID {
@@ -518,6 +544,45 @@ func (s *applyState) findGRTByCompositeKey(grt *models.GroupRelationType) (uint,
 	return id, true
 }
 
+// gateCarrierPayload decides how much of an archived carrier's template payload
+// a create may keep. Import creates carrier rows at capWrite, but their payload
+// is the carrier's edit role's to author (admin for Categories and Resource
+// Categories, editor for Note Types), as on every other surface. Below that role
+// the payload is cleared and the import warns; at it the payload must pass the
+// save path's validation, or the apply fails.
+//
+// It runs before CreateTemplateCarrierWithRevision, which snapshots the carrier
+// into revision #1: clearing afterwards would leave the payload in history.
+func (s *applyState) gateCarrierPayload(carrierType, label string, carrier any, metadataIndexes *string, name string) error {
+	if s.ctx.carriers == nil {
+		return nil
+	}
+	snap := models.NewTemplateSnapshot(carrierType, carrier)
+	if s.ctx.carriers.AuthorTemplateCarrier(carrierType) != nil {
+		// Emptiness is judged on the raw values, not with TemplateSnapshotsEqual:
+		// its canonical view resolves a SectionConfig that does not unmarshal, or
+		// carries unknown keys, to the defaults, yet the raw column is what is
+		// stored and what the edit page loads.
+		carries := *metadataIndexes != ""
+		for _, v := range snap {
+			if v != "" && v != false {
+				carries = true
+			}
+		}
+		models.ApplyTemplateSnapshot(carrierType, carrier, models.TemplateSnapshot{})
+		*metadataIndexes = ""
+		if carries {
+			s.result.Warnings = append(s.result.Warnings, fmt.Sprintf(
+				"%s %q was created without its templates, schema or rules: your role may not author them", label, name))
+		}
+		return nil
+	}
+	if err := s.ctx.carriers.ValidateTemplateCarrier(carrierType, snap); err != nil {
+		return fmt.Errorf("invalid %s %q: %w", label, name, err)
+	}
+	return nil
+}
+
 // applySchemaDefDecisions resolves categories, note types, resource categories,
 // tags, and group relation types according to the user's mapping decisions.
 // For each entry: "map" reuses an existing DB row, "create" inserts a new one.
@@ -615,6 +680,9 @@ func (s *applyState) applySchemaDefDecisions() error {
 			}
 			continue
 		}
+		if err := s.gateCarrierPayload(models.TemplateCarrierCategory, "category", &cat, &cat.MetadataIndexes, cat.Name); err != nil {
+			return err
+		}
 		if err := models.CreateTemplateCarrierWithRevision(s.ctx.db, models.TemplateCarrierCategory, &cat, models.RevisionKindImport); err != nil {
 			return fmt.Errorf("create category %q: %w", cat.Name, err)
 		}
@@ -710,6 +778,9 @@ func (s *applyState) applySchemaDefDecisions() error {
 				s.idMap[entry.SourceExportID] = id
 			}
 			continue
+		}
+		if err := s.gateCarrierPayload(models.TemplateCarrierNoteType, "note type", &nt, &nt.MetadataIndexes, nt.Name); err != nil {
+			return err
 		}
 		if err := models.CreateTemplateCarrierWithRevision(s.ctx.db, models.TemplateCarrierNoteType, &nt, models.RevisionKindImport); err != nil {
 			return fmt.Errorf("create note type %q: %w", nt.Name, err)
@@ -813,6 +884,9 @@ func (s *applyState) applySchemaDefDecisions() error {
 				s.idMap[entry.SourceExportID] = id
 			}
 			continue
+		}
+		if err := s.gateCarrierPayload(models.TemplateCarrierResourceCategory, "resource category", &rc, &rc.MetadataIndexes, rc.Name); err != nil {
+			return err
 		}
 		if err := models.CreateTemplateCarrierWithRevision(s.ctx.db, models.TemplateCarrierResourceCategory, &rc, models.RevisionKindImport); err != nil {
 			return fmt.Errorf("create resource category %q: %w", rc.Name, err)
@@ -1363,6 +1437,18 @@ func (s *applyState) applyResources() error {
 // applyOneResource creates a single resource row plus its versions, wires
 // CurrentVersionID, and creates preview rows — all within the caller's tx.
 func (s *applyState) applyOneResource(tx *gorm.DB, exportID string, rp *archive.ResourcePayload, batch *batchAccumulator) error {
+	// Content types come from the archive manifest and end up in rendered
+	// pages; never store one that is not a plain media type.
+	if ct, ok := sanitizeImportedContentType(rp.ContentType); !ok {
+		s.result.Warnings = append(s.result.Warnings, fmt.Sprintf("resource %s (%s): unsafe content type replaced with %s", exportID, rp.Name, ct))
+		rp.ContentType = ct
+	}
+	for i := range rp.Versions {
+		if ct, ok := sanitizeImportedContentType(rp.Versions[i].ContentType); !ok {
+			s.result.Warnings = append(s.result.Warnings, fmt.Sprintf("resource %s (%s): unsafe content type on version %d replaced with %s", exportID, rp.Name, rp.Versions[i].VersionNumber, ct))
+			rp.Versions[i].ContentType = ct
+		}
+	}
 	// (a0) GUID collision takes precedence over hash collision
 	if rp.GUID != "" {
 		var existing models.Resource
@@ -1973,39 +2059,9 @@ func (s *applyState) applyOneNote(tx *gorm.DB, exportID string, np *archive.Note
 	batch.createdNotes++
 	batch.createdNoteIDs = append(batch.createdNoteIDs, n.ID)
 
-	// Create NoteBlock rows
-	for _, bp := range np.Blocks {
-		block := models.NoteBlock{
-			NoteID:   n.ID,
-			Type:     bp.Type,
-			Position: bp.Position,
-		}
-
-		// Content defaults to {} if nil
-		if bp.Content != nil {
-			c, err := json.Marshal(bp.Content)
-			if err != nil {
-				return fmt.Errorf("marshal block content: %w", err)
-			}
-			block.Content = types.JSON(c)
-		} else {
-			block.Content = types.JSON([]byte("{}"))
-		}
-
-		// State defaults to {} if nil
-		if bp.State != nil {
-			st, err := json.Marshal(bp.State)
-			if err != nil {
-				return fmt.Errorf("marshal block state: %w", err)
-			}
-			block.State = types.JSON(st)
-		} else {
-			block.State = types.JSON([]byte("{}"))
-		}
-
-		if err := tx.Create(&block).Error; err != nil {
-			return fmt.Errorf("create note block (note %q, pos %s): %w", n.Name, bp.Position, err)
-		}
+	// Create NoteBlock rows (validated like every live block writer)
+	if err := s.createImportedBlocks(tx, n.ID, n.Name, np.Blocks, "create"); err != nil {
+		return err
 	}
 
 	return nil
@@ -2605,33 +2661,8 @@ func (s *applyState) replaceNote(tx *gorm.DB, existing *models.Note, np *archive
 	if err := tx.Where("note_id = ?", existing.ID).Delete(&models.NoteBlock{}).Error; err != nil {
 		return fmt.Errorf("delete existing blocks: %w", err)
 	}
-	for _, bp := range np.Blocks {
-		block := models.NoteBlock{
-			NoteID:   existing.ID,
-			Type:     bp.Type,
-			Position: bp.Position,
-		}
-		if bp.Content != nil {
-			c, err := json.Marshal(bp.Content)
-			if err != nil {
-				return fmt.Errorf("marshal block content: %w", err)
-			}
-			block.Content = types.JSON(c)
-		} else {
-			block.Content = types.JSON([]byte("{}"))
-		}
-		if bp.State != nil {
-			st, err := json.Marshal(bp.State)
-			if err != nil {
-				return fmt.Errorf("marshal block state: %w", err)
-			}
-			block.State = types.JSON(st)
-		} else {
-			block.State = types.JSON([]byte("{}"))
-		}
-		if err := tx.Create(&block).Error; err != nil {
-			return fmt.Errorf("create replaced note block (note %q, pos %s): %w", np.Name, bp.Position, err)
-		}
+	if err := s.createImportedBlocks(tx, existing.ID, np.Name, np.Blocks, "create replaced"); err != nil {
+		return err
 	}
 
 	return nil
@@ -2679,6 +2710,58 @@ func findGRTDef(defs []archive.GroupRelationTypeDef, exportID string) *archive.G
 	for i := range defs {
 		if defs[i].ExportID == exportID {
 			return &defs[i]
+		}
+	}
+	return nil
+}
+
+// createImportedBlocks writes imported NoteBlock rows, running the registered
+// BlockType validators (built-in and plugin types share one registry) so import
+// cannot store content that CreateBlock/UpdateBlockContent would reject.
+// Invalid or unknown-type blocks are skipped with a warning.
+func (s *applyState) createImportedBlocks(tx *gorm.DB, noteID uint, noteName string, blocks []archive.NoteBlockPayload, verb string) error {
+	for _, bp := range blocks {
+		bt := block_types.GetBlockType(bp.Type)
+		if bt == nil {
+			s.result.Warnings = append(s.result.Warnings,
+				fmt.Sprintf("skipped block %q at position %s of note %q: unknown block type", bp.Type, bp.Position, noteName))
+			continue
+		}
+		content := bt.DefaultContent()
+		if bp.Content != nil {
+			c, err := json.Marshal(bp.Content)
+			if err != nil {
+				return fmt.Errorf("marshal block content: %w", err)
+			}
+			content = c
+		}
+		state := bt.DefaultState()
+		if bp.State != nil {
+			st, err := json.Marshal(bp.State)
+			if err != nil {
+				return fmt.Errorf("marshal block state: %w", err)
+			}
+			state = st
+		}
+		if err := bt.ValidateContent(content); err != nil {
+			s.result.Warnings = append(s.result.Warnings,
+				fmt.Sprintf("skipped block %q at position %s of note %q: invalid content: %v", bp.Type, bp.Position, noteName, err))
+			continue
+		}
+		if err := bt.ValidateState(state); err != nil {
+			s.result.Warnings = append(s.result.Warnings,
+				fmt.Sprintf("skipped block %q at position %s of note %q: invalid state: %v", bp.Type, bp.Position, noteName, err))
+			continue
+		}
+		block := models.NoteBlock{
+			NoteID:   noteID,
+			Type:     bp.Type,
+			Position: bp.Position,
+			Content:  types.JSON(content),
+			State:    types.JSON(state),
+		}
+		if err := tx.Create(&block).Error; err != nil {
+			return fmt.Errorf("%s note block (note %q, pos %s): %w", verb, noteName, bp.Position, err)
 		}
 	}
 	return nil

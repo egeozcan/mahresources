@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"mahresources/application_context"
+	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/plugin_system"
@@ -47,7 +48,7 @@ type shortcodeDocResponse struct {
 // GetShortcodeDocsHandler handles GET /v1/shortcodes/docs — a machine-readable
 // catalogue of the built-in shortcodes plus every shortcode registered by
 // an enabled plugin. It powers editor lint, autocomplete, and hover docs.
-func GetShortcodeDocsHandler(ctx PluginManagerProvider) func(http.ResponseWriter, *http.Request) {
+func GetShortcodeDocsHandler(ctx ShortcodeDocsContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		docs := make([]shortcodeDocResponse, 0, 8)
 
@@ -64,7 +65,8 @@ func GetShortcodeDocsHandler(ctx PluginManagerProvider) func(http.ResponseWriter
 		}
 
 		if pm := ctx.PluginManager(); pm != nil {
-			for _, sc := range pm.AllShortcodeDocs() {
+			access := auth.PluginAccessFor(request.Context(), ctx.PluginAllowsScopedPrincipals)
+			for _, sc := range offeredShortcodeDocs(access, pm.AllShortcodeDocs()) {
 				docs = append(docs, shortcodeDocResponse{
 					Name:        sc.FullName,
 					Syntax:      pluginShortcodeSyntax(sc),
@@ -154,7 +156,7 @@ func GetShortcodeLintHandler(ctx ShortcodeLintContext) func(http.ResponseWriter,
 			return
 		}
 
-		known := buildKnownShortcodes(ctx)
+		known := buildKnownShortcodes(ctx, auth.PluginAccessFor(request.Context(), ctx.PluginAllowsScopedPrincipals))
 		issues := shortcodes.Lint(req.Content, shortcodes.LintOptions{
 			Known:         known,
 			ValidateMRQL:  templateMRQLValidator(ctx.MRQLStaticEnv()),
@@ -182,12 +184,15 @@ func templateMRQLValidator(env application_context.MRQLStaticEnv) func(string, s
 // buildKnownShortcodes assembles the linter catalogue from the built-in registry
 // plus every enabled plugin shortcode. A plugin shortcode is treated as
 // "documented" (attribute checks enabled) only when it declares attributes.
-func buildKnownShortcodes(ctx PluginManagerProvider) shortcodes.KnownShortcodes {
+//
+// The catalogue is filtered by the request's reach predicate: lint verdicts on a
+// plugin the caller cannot reach would otherwise confirm it exists.
+func buildKnownShortcodes(ctx PluginManagerProvider, access auth.PluginAccess) shortcodes.KnownShortcodes {
 	pm := ctx.PluginManager()
 	if pm == nil {
 		return buildKnownShortcodesFromPluginDocs(nil)
 	}
-	return buildKnownShortcodesFromPluginDocs(pm.AuthoringSnapshot().Shortcodes)
+	return buildKnownShortcodesFromPluginDocs(offeredShortcodeDocs(access, pm.AuthoringSnapshot().Shortcodes))
 }
 
 // buildKnownShortcodesFromPluginDocs derives lint rules from an already
@@ -214,6 +219,18 @@ func buildKnownShortcodesFromPluginDocs(docs []plugin_system.PluginShortcodeInfo
 		}
 	}
 	return known
+}
+
+// offeredShortcodeDocs keeps the shortcodes of plugins the caller may reach, the
+// one filter the docs endpoint and the lint catalogue share.
+func offeredShortcodeDocs(access auth.PluginAccess, docs []plugin_system.PluginShortcodeInfo) []plugin_system.PluginShortcodeInfo {
+	offered := make([]plugin_system.PluginShortcodeInfo, 0, len(docs))
+	for _, sc := range docs {
+		if access(sc.PluginName) {
+			offered = append(offered, sc)
+		}
+	}
+	return offered
 }
 
 // pluginShortcodeSyntax builds a one-line usage hint, marking required attrs.

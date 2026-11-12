@@ -293,6 +293,10 @@ func (s *ShareServer) handleSharedNote(w http.ResponseWriter, r *http.Request) {
 	s.renderSharedNote(w, note, token)
 }
 
+// maxShareBlockStateBodyBytes caps the anonymous block state write body. A todos
+// state is a short list of item IDs, so 64 KiB is far above legitimate use.
+const maxShareBlockStateBodyBytes = 64 << 10
+
 // handleBlockStateUpdate updates a block's state (e.g., todo checkbox)
 // It validates that the token is valid and the block belongs to the note
 func (s *ShareServer) handleBlockStateUpdate(w http.ResponseWriter, r *http.Request) {
@@ -344,9 +348,16 @@ func (s *ShareServer) handleBlockStateUpdate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Update block state
+	// Update block state. The body is capped here, independent of the primary
+	// server's JSON limit and of Content-Type, because this route is anonymous.
+	r.Body = http.MaxBytesReader(w, r.Body, maxShareBlockStateBodyBytes)
 	err = s.appContext.UpdateBlockStateFromRequest(blockId, r)
 	if err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -413,8 +424,16 @@ func (s *ShareServer) handleCalendarEvents(w http.ResponseWriter, r *http.Reques
 	// Fetch calendar events, resolving resource sources as the sharer (issue #89)
 	response, err := s.appContext.ShareReaderFor(note).GetCalendarEvents(blockId, start, end)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("Shared calendar block %d: failed to load events: %v", blockId, err)
+		http.Error(w, "Failed to load calendar", http.StatusInternalServerError)
 		return
+	}
+
+	// Per-calendar errors carry Go error text, which includes the private feed
+	// URL and resource lookups. The operator's copy is logged by
+	// GetCalendarEvents, so anonymous visitors get a fixed message instead.
+	for i := range response.Errors {
+		response.Errors[i].Error = "calendar unavailable"
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -597,6 +616,36 @@ func (s *ShareServer) processShareTemplates(note *models.Note) (header, css stri
 	return header, css
 }
 
+// sharedCalendarContent projects a calendar block's Content to the fields an
+// anonymous visitor needs: each calendar's id, name and color. The source
+// (private ICS URL or resource ID) is dropped. The typed decode means any
+// field added later is dropped by default. On a decode error it returns an
+// empty list, never the raw content.
+func sharedCalendarContent(raw []byte) map[string]interface{} {
+	out := []interface{}{}
+	if len(raw) > 0 {
+		var typed struct {
+			Calendars []struct {
+				ID    string `json:"id"`
+				Name  string `json:"name"`
+				Color string `json:"color"`
+			} `json:"calendars"`
+		}
+		if err := json.Unmarshal(raw, &typed); err != nil {
+			log.Printf("Error decoding calendar block content for share page: %v", err)
+		} else {
+			for _, cal := range typed.Calendars {
+				out = append(out, map[string]interface{}{
+					"id":    cal.ID,
+					"name":  cal.Name,
+					"color": cal.Color,
+				})
+			}
+		}
+	}
+	return map[string]interface{}{"calendars": out}
+}
+
 func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note, shareToken string) {
 	template := pongo2.Must(s.templateSet.FromFile("/shared/displayNote.tpl"))
 
@@ -629,6 +678,12 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 			if err := json.Unmarshal(block.State, &tb.State); err != nil {
 				log.Printf("Error decoding block state: %v", err)
 			}
+		}
+
+		// A calendar block's stored Content holds private ICS feed URLs and
+		// resource IDs. Publish only the display fields the page reads.
+		if block.Type == "calendar" {
+			tb.Content = sharedCalendarContent(block.Content)
 		}
 
 		// Heading level decodes from JSON as float64, which pongo2 does not treat

@@ -50,6 +50,10 @@ func (ctx *MahresourcesContext) requireEditorRole(op string) error {
 // answer it either -- a guest's own subtree is exactly where the write would
 // land.
 //
+// Every pluginDBAdapter writer and RunInTransaction carry it, so a guest or the
+// deny-all principal gets a read-only mah.db
+// (TestPluginDBAdapterWritersCarryAWriteRoleGuard pins that).
+//
 // It is on the operations a plugin surface reaches directly rather than on
 // every write in the tree: the ones below server/ that only a request can
 // reach are already covered by the path rule.
@@ -89,7 +93,10 @@ func (ctx *MahresourcesContext) requireAdminRole(op string) error {
 // which. A plain user's upload find-or-creates a Category
 // (AddRemoteResource), and group import creates and renames them in bulk; both
 // are legitimate at capWrite and neither goes through the operations guarded
-// here.
+// here. The rows are capWrite, their template payload is not: group import
+// keeps a new carrier's templates, schema and rules only when
+// requireTemplateCarrierEdit allows them (groupioCarriers), and creates the row
+// bare otherwise.
 func (ctx *MahresourcesContext) requireRole(op string, allowed func() bool) error {
 	if ctx.principal == nil {
 		return nil

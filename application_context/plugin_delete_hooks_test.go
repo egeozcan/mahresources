@@ -585,8 +585,6 @@ end
 // against anything handed in: the stamp callback writes *through* the caller's
 // pointer, so asserting on an in-memory value can pass while the column is NULL.
 func TestPluginWrite_IsAttributedToTriggeringUser(t *testing.T) {
-	const actor = 4242
-
 	ctx := newPluginHookTestContext(t, `
 plugin = { name = "hooktest", version = "1.0", description = "writes a tag" }
 function init()
@@ -597,7 +595,15 @@ function init()
 end
 `)
 
-	reqCtx := auth.WithPrincipal(context.Background(), &auth.Principal{UserID: actor})
+	// A real account that may write: an actor id resolving to no stored user is
+	// bound deny-all and, since the mah.db write-role guard, refused every write.
+	user, err := ctx.CreateUser(&UserInput{Username: "writer", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	actor := user.ID
+
+	reqCtx := auth.WithPrincipal(context.Background(), auth.FromUser(user))
 	if out := ctx.PluginManager().RenderSlot(reqCtx, "page_bottom", map[string]any{}, nil); out != "ok" {
 		t.Fatalf("slot output = %q, want %q", out, "ok")
 	}

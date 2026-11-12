@@ -444,11 +444,12 @@ var (
 
 func userManagementErrors(statuses ...int) map[int]string {
 	descriptions := map[int]string{
-		http.StatusBadRequest:   "Invalid input",
-		http.StatusUnauthorized: "Authentication required or credentials invalid",
-		http.StatusForbidden:    "Insufficient permissions",
-		http.StatusNotFound:     "User or token not found",
-		http.StatusConflict:     "Username, administrator invariant, scope dependency, or token limit conflict",
+		http.StatusBadRequest:      "Invalid input",
+		http.StatusUnauthorized:    "Authentication required or credentials invalid",
+		http.StatusForbidden:       "Insufficient permissions",
+		http.StatusTooManyRequests: "Too many failed attempts; try again later",
+		http.StatusNotFound:        "User or token not found",
+		http.StatusConflict:        "Username, administrator invariant, scope dependency, or token limit conflict",
 	}
 	result := make(map[int]string, len(statuses))
 	for _, status := range statuses {
@@ -518,14 +519,14 @@ func registerUserAccountRoutes(r *openapi.Registry) {
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodPost, Path: "/v1/account/password", OperationID: "changeOwnPassword",
 		Summary: "Change the authenticated user's password",
-		Description: fmt.Sprintf("Requires the current password. The new password requires at least %d Unicode code points and at most %d UTF-8 bytes. On success, other browser sessions are invalidated while the current browser session remains active. Existing API tokens remain valid.",
+		Description: fmt.Sprintf("Requires the current password. The new password requires at least %d Unicode code points and at most %d UTF-8 bytes. On success, other browser sessions are invalidated while the current browser session remains active. Existing API tokens remain valid. Failed current-password checks count against the login rate limit (-login-max-attempts) for the account and client IP.",
 			auth.MinPasswordLength, auth.MaxPasswordBytes),
 		Tags:                 []string{"account"},
 		RequestType:          changePasswordRequestType,
 		ResponseType:         accountOKResponseType,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
-		ErrorResponses:       userManagementErrors(http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden),
+		ErrorResponses:       userManagementErrors(http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests),
 	})
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodGet, Path: "/v1/account/tokens", OperationID: "listOwnTokens",
@@ -1045,10 +1046,16 @@ func registerNoteRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:               http.MethodGet,
-		Path:                 "/v1/note",
-		OperationID:          "getNote",
-		Summary:              "Get a specific note",
+		Method:      http.MethodGet,
+		Path:        "/v1/note",
+		OperationID: "getNote",
+		Summary:     "Get a specific note",
+		Description: `hasShare is true when the note is shared. The response also carries the
+note's shareToken (omitted when it is not shared), but only for a principal that
+may share the note: admin, editor or user, or any request with auth disabled. A
+guest gets hasShare alone. No other note payload (lists, MRQL, notes nested in
+groups, resources, tags and note types) carries the token; POST /v1/note/share
+returns it too.`,
 		Tags:                 []string{"notes"},
 		IDQueryParam:         "id",
 		IDRequired:           true,

@@ -34,7 +34,7 @@ func BuildPrimaryRouter(appContext *application_context.MahresourcesContext, fs 
 	// 404 and 403 pages use goes with it, so an API rejection a browser displays
 	// renders identical chrome to every other page.
 	http_utils.SetHTMLErrorRenderer(func(w http.ResponseWriter, r *http.Request, statusCode int, message string) {
-		template_handlers.RenderHTMLError(w, r, statusCode, message, pluginMenuEnricher(appContext, r))
+		template_handlers.RenderHTMLError(w, r, statusCode, message, errorPageEnricher(appContext, r))
 	})
 
 	registerRoutes(router, appContext)
@@ -42,7 +42,7 @@ func BuildPrimaryRouter(appContext *application_context.MahresourcesContext, fs 
 	// Build a context enricher that adds plugin info to error pages (404/403),
 	// mirroring what wrapContextWithPlugins does for normal routes.
 	router.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		template_handlers.RenderNotFound(w, r, pluginMenuEnricher(appContext, r))
+		template_handlers.RenderNotFound(w, r, errorPageEnricher(appContext, r))
 	})
 
 	filePathPrefix := "/files/"
@@ -102,25 +102,29 @@ func CreateServer(appContext *application_context.MahresourcesContext, fs afero.
 	}
 }
 
-// pluginMenuEnricher returns a context enricher that injects plugin nav info
-// (menu items, manager handle) into a template context, or nil when no plugin
-// manager is configured. Shared by the 404 and 403 error pages so they render
-// with the same chrome as normal routes.
+// errorPageEnricher returns the context enricher for the error pages (404, 403,
+// and HandleError's HTML renderer). It always publishes the principal fields, so
+// the menu's role guards and the account block match normal routes. The plugin
+// surface (menu items, manager handle) is published only when a plugin manager is
+// configured AND the request carries a principal: a public path such as
+// /favicon.ico reaches here with none, and must not list plugin labels.
 // It takes the request because the plugin render tags need the principal: the
 // error pages extend the same base layout, whose six {% plugin_slot %} tags would
 // otherwise run plugin Lua on the very 403 page a group-confined principal is
-// sent to. Publishing _requestContext alongside _pluginManager keeps that tag's
-// fail-closed check working here exactly as it does on normal routes.
-func pluginMenuEnricher(appContext *application_context.MahresourcesContext, r *http.Request) func(ctx pongo2.Context) pongo2.Context {
+// sent to. _pluginManager, _requestContext and _pluginAccess are published
+// together or not at all, so that tag's fail-closed check keeps working here.
+func errorPageEnricher(appContext *application_context.MahresourcesContext, r *http.Request) func(ctx pongo2.Context) pongo2.Context {
 	pm := appContext.PluginManager()
-	if pm == nil {
-		return nil
-	}
 	return func(ctx pongo2.Context) pongo2.Context {
+		setPrincipalTemplateFields(appContext, r, ctx)
+		if pm == nil || auth.PrincipalFromContext(r.Context()) == nil {
+			return ctx
+		}
 		ctx["_pluginManager"] = pm
 		ctx["_requestContext"] = r.Context()
-		ctx["_pluginAccess"] = auth.PluginAccessFor(r.Context(), appContext.PluginAllowsScopedPrincipals)
-		ctx["pluginMenuItems"] = pm.GetMenuItems()
+		access := auth.PluginAccessFor(r.Context(), appContext.PluginAllowsScopedPrincipals)
+		ctx["_pluginAccess"] = access
+		ctx["pluginMenuItems"] = offeredMenuItems(access, pm.GetMenuItems())
 		ctx["hasPluginManager"] = true
 		return ctx
 	}
@@ -129,7 +133,7 @@ func pluginMenuEnricher(appContext *application_context.MahresourcesContext, r *
 // renderForbiddenPage renders the styled 403 page for browser navigations,
 // enriched with plugin nav so it matches the rest of the app.
 func renderForbiddenPage(appContext *application_context.MahresourcesContext, w http.ResponseWriter, r *http.Request, message string) {
-	template_handlers.RenderForbidden(w, r, message, pluginMenuEnricher(appContext, r))
+	template_handlers.RenderForbidden(w, r, message, errorPageEnricher(appContext, r))
 }
 
 func createCachedStorage(path string) afero.Fs {

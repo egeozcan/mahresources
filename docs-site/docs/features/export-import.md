@@ -124,7 +124,7 @@ mr group export 42 --no-tag-defs --no-group-relation-type-defs -o cats-only.tar
 
 Import is a multi-step workflow: upload the tar, review the parsed plan, supply decisions, then apply.
 
-Group-limited users and guests cannot import; every import route refuses them. Export is unaffected and works within their subtree.
+Group-limited users and guests cannot import; every import route refuses them, and so do the import Jobs: a user confined to a group after starting an import cannot retry it, its waiting import is blocked instead of run, and its import plans and reports are no longer offered on the Job page. Export is unaffected and works within their subtree.
 
 ### Workflow
 
@@ -165,6 +165,8 @@ For each schema definition in the archive (categories, note types, resource cate
 | Multiple name matches | ambiguous | User must choose which local definition to map to, or create a new one |
 
 The `--auto-map` CLI flag (on by default) accepts all unambiguous suggestions automatically. Set `--auto-map=false` to require a `--decisions` file with explicit choices for every mapping.
+
+A `create` of a Category or Resource Category keeps its templates, CSS, Meta schema, section config, indexed metadata keys and auto-detect rules only when an admin applies the import; a Note Type keeps them, and its "apply templates to shares" setting, when an editor or admin does. For any other role the definition is created with its name and description only, and the apply result lists a warning for it. Kept content is validated as it would be in the editor, and an invalid schema or rule set fails the apply. See [Authentication](./authentication.md#the-four-roles).
 
 ### Manifest-Only Imports
 

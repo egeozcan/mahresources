@@ -107,7 +107,7 @@ func GetUIntFormValue(request *http.Request, paramName string, defVal uint) uint
 func RedirectIfHTMLAccepted(writer http.ResponseWriter, request *http.Request, defaultURL string) bool {
 	requestedBackUrl := GetQueryParameter(request, "redirect", "")
 
-	if requestedBackUrl != "" && isSafeRedirect(requestedBackUrl) {
+	if requestedBackUrl != "" && IsSafeLocalPath(requestedBackUrl) {
 		http.Redirect(writer, request, requestedBackUrl, http.StatusSeeOther)
 
 		return true
@@ -314,24 +314,25 @@ func HandleError(err error, writer http.ResponseWriter, request *http.Request, r
 	_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
 }
 
-// isSafeRedirect checks that a redirect URL is a relative path and not an open redirect.
-func isSafeRedirect(rawURL string) bool {
-	// Must start with a single slash (not //)
-	if !strings.HasPrefix(rawURL, "/") || strings.HasPrefix(rawURL, "//") {
+// IsSafeLocalPath reports whether raw is a same-site absolute path that is safe
+// to use as a redirect target or link. It rejects absolute URLs, scheme-relative
+// ("//host") targets, and any backslash or control character: browsers following
+// the WHATWG URL rules treat a backslash as "/" in http(s) URLs, so "/\host"
+// becomes the cross-origin "//host" even though Go's url.Parse sees a plain path.
+// A percent-encoded backslash ("%5C") stays a local path and is accepted.
+func IsSafeLocalPath(raw string) bool {
+	if !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") {
 		return false
 	}
-
-	// Parse the URL to check for scheme-based tricks
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
+	for i := 0; i < len(raw); i++ {
+		if c := raw[i]; c == '\\' || c < 0x20 || c == 0x7f {
+			return false
+		}
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" {
 		return false
 	}
-
-	// Reject if it has a scheme or host (e.g., "javascript:", "data:", or absolute URLs)
-	if parsed.Scheme != "" || parsed.Host != "" {
-		return false
-	}
-
 	return true
 }
 

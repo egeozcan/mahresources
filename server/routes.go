@@ -168,6 +168,22 @@ var templates = map[string]templateInformation{
 	"/reduction":     {adaptTemplate(template_context_providers.ResourceReductionContextProvider), "displayResourceReduction.tpl", http.MethodGet},
 }
 
+// setPrincipalTemplateFields publishes the who-is-asking fields the base layout
+// and menu guards read: authEnabled, currentUser and csrfToken. Shared by normal
+// routes and the error pages so the two cannot drift; a page missing authEnabled
+// makes the menu's `not authEnabled or ...` guards fail open.
+func setPrincipalTemplateFields(appContext *application_context.MahresourcesContext, request *http.Request, ctx pongo2.Context) {
+	// The implicit super-user used when auth is disabled is intentionally not
+	// surfaced, so the no-auth UI is unchanged.
+	ctx["authEnabled"] = appContext.AuthEnabled()
+	if p := auth.PrincipalFromContext(request.Context()); p != nil && !p.SuperUser {
+		ctx["currentUser"] = p
+	}
+	// CSRF synchronizer token for the page (meta tag + form fields). Empty
+	// when auth is off or for Bearer requests, where CSRF is not enforced.
+	ctx["csrfToken"] = auth.CSRFTokenFromContext(request.Context())
+}
+
 func wrapContextWithPlugins(appContext *application_context.MahresourcesContext, ctxFn func(request *http.Request) pongo2.Context) func(request *http.Request) pongo2.Context {
 	pm := appContext.PluginManager()
 	return func(request *http.Request) pongo2.Context {
@@ -195,13 +211,9 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		// PluginActionAccessFor delegates to PluginAccessFor for that half.
 		actionAccess := auth.PluginActionAccessFor(request.Context(), appContext.PluginAllowsScopedPrincipals)
 
-		// Expose the authenticated user to templates (nav avatar / logout). The
-		// implicit super-user used when auth is disabled is intentionally not
-		// surfaced, so the no-auth UI is unchanged.
-		ctx["authEnabled"] = appContext.AuthEnabled()
+		setPrincipalTemplateFields(appContext, request, ctx)
 		ctx["jobCenterCutoverEnabled"] = template_context_providers.JobCenterCutoverEnabled
 		if p := auth.PrincipalFromContext(request.Context()); p != nil && !p.SuperUser {
-			ctx["currentUser"] = p
 			// An administrator's Jobs drawer lists their own Jobs unless they
 			// chose every account's; rendered with the page, so the first read
 			// already has the right scope.
@@ -209,9 +221,6 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 				ctx["jobsPanelOwnerScope"] = "me"
 			}
 		}
-		// CSRF synchronizer token for the page (meta tag + form fields). Empty
-		// when auth is off or for Bearer requests, where CSRF is not enforced.
-		ctx["csrfToken"] = auth.CSRFTokenFromContext(request.Context())
 
 		// Keep the export-retention helper in the admin export template.
 		//
@@ -252,7 +261,7 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 
 		ctx["_pluginManager"] = pm
 		ctx["currentPath"] = request.URL.Path
-		ctx["pluginMenuItems"] = pm.GetMenuItems()
+		ctx["pluginMenuItems"] = offeredMenuItems(pluginAccess, pm.GetMenuItems())
 		ctx["hasPluginManager"] = true
 
 		// Compute plugin actions for detail pages
@@ -336,6 +345,20 @@ func offeredActions(access auth.PluginAccess, actions []plugin_system.ActionRegi
 	for _, action := range actions {
 		if access(action.PluginName) {
 			offered = append(offered, action)
+		}
+	}
+	return offered
+}
+
+// offeredMenuItems keeps the nav menu items of the plugins the caller may reach.
+// Same shape and rule as offeredActions ("what is offered follows what is
+// allowed"), but with the reach predicate: a plugin page is a read, so a guest
+// is offered the page of a plugin the operator opened to it.
+func offeredMenuItems(access auth.PluginAccess, items []plugin_system.MenuRegistration) []plugin_system.MenuRegistration {
+	offered := make([]plugin_system.MenuRegistration, 0, len(items))
+	for _, item := range items {
+		if access(item.PluginName) {
+			offered = append(offered, item)
 		}
 	}
 	return offered
@@ -598,8 +621,15 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	// Authentication routes. The login page is a standalone template (it must be
 	// reachable when logged out, so it is not wrapped with plugin context).
 	// One shared rate limiter throttles failed logins from both the web form and
-	// the JSON API (no-op when -login-max-attempts is 0).
+	// the JSON API, and failed current-password checks on POST
+	// /v1/account/password (no-op when -login-max-attempts is 0).
 	loginLimiter := newLoginRateLimiter(appContext.LoginRateLimit(), appContext.LoginRateWindow())
+	// Public (browsers probe it before login) and served as a static file, so an
+	// anonymous request never falls through to the app-shell 404 page.
+	router.Methods(http.MethodGet, http.MethodHead).Path("/favicon.ico").HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFile(w, r, "./public/favicon/favicon.ico")
+		})
 	router.Methods(http.MethodGet).Path("/login").HandlerFunc(
 		template_handlers.RenderTemplate("login.tpl", template_context_providers.LoginContextProvider(appContext)))
 	router.Methods(http.MethodPost).Path("/login").HandlerFunc(LoginSubmitHandler(appContext, loginLimiter))
@@ -621,7 +651,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/user/delete").HandlerFunc(api_handlers.DeleteUserHandler(appContext))
 
 	// Self-service account management (any authenticated user, including guests).
-	router.Methods(http.MethodPost).Path("/v1/account/password").HandlerFunc(api_handlers.ChangeOwnPasswordHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/account/password").HandlerFunc(api_handlers.ChangeOwnPasswordHandler(appContext, credentialAttemptGuard(appContext, loginLimiter)))
 	router.Methods(http.MethodGet).Path("/v1/account/tokens").HandlerFunc(api_handlers.ListOwnTokensHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/account/tokens").HandlerFunc(api_handlers.CreateOwnTokenHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/account/tokens/delete").HandlerFunc(api_handlers.RevokeOwnTokenHandler(appContext))
@@ -712,7 +742,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/relationType").HandlerFunc(api_handlers.GetAddGroupRelationTypeHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/relationType/delete").HandlerFunc(api_handlers.GetRemoveRelationTypeHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/relationType/edit").HandlerFunc(api_handlers.GetEditGroupRelationTypeHandler(appContext))
-	router.Methods(http.MethodGet).Path("/v1/relationTypes").HandlerFunc(api_handlers.GetRelationTypesHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/relationTypes").HandlerFunc(scopedAPI(appContext, api_handlers.GetRelationTypesHandler))
 	router.Methods(http.MethodPost).Path("/v1/relation/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.GroupRelation](basicRelationWriter, "relation"))
 	router.Methods(http.MethodPost).Path("/v1/relation/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.GroupRelation](basicRelationWriter, "relation"))
 	router.Methods(http.MethodPost).Path("/v1/relation/previewDescription").HandlerFunc(scopedPreviewDescription[models.GroupRelation](appContext, "relation"))
@@ -935,9 +965,9 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	}))
 	// Finish now for a live run. Mounted under each carrier's prefix, so the
 	// role gate is the generate route's; it reads no entities, so it takes no
-	// request-scoped context.
+	// request-scoped context, only the client-IP reader.
 	for _, carrier := range []string{"category", "resourceCategory", "noteType"} {
-		router.Methods(http.MethodPost).Path("/v1/" + carrier + "/generateTemplate/finish").HandlerFunc(api_handlers.GetFinishTemplateRunHandler())
+		router.Methods(http.MethodPost).Path("/v1/" + carrier + "/generateTemplate/finish").HandlerFunc(api_handlers.GetFinishTemplateRunHandler(appContext))
 	}
 
 	// Global Search

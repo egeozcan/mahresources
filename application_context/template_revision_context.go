@@ -59,6 +59,7 @@ func (ctx *MahresourcesContext) templateRevisionSource() string {
 // Categories and Resource Categories, editor for Note Types. Viewing history
 // needs it too, because the edit pages are deliberately readable by lower
 // roles and a revision exposes content the author may have meant to remove.
+// Group import asks it too, before keeping an archived carrier's payload.
 func (ctx *MahresourcesContext) requireTemplateCarrierEdit(carrierType, op string) error {
 	switch carrierType {
 	case models.TemplateCarrierCategory, models.TemplateCarrierResourceCategory:

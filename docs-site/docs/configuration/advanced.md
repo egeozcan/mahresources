@@ -428,7 +428,7 @@ Bound the size of request bodies the server accepts:
 | `-max-user-tokens` | `MAX_USER_TOKENS` | `100` | Maximum API tokens a single user may hold; `0` disables the cap |
 
 :::tip Harden JSON limits under `-auth`
-`-max-json-body` defaults to `0` (unlimited) to preserve the historical unbounded behaviour. When `-auth` is enabled, any authenticated user can POST JSON, so setting an explicit limit is recommended. The limit keys on `Content-Type`, so multipart uploads (bounded by `-max-upload-size`) are unaffected.
+`-max-json-body` defaults to `0` (unlimited) to preserve the historical unbounded behaviour. When `-auth` is enabled, any authenticated user can POST JSON, so setting an explicit limit is recommended. The limit keys on `Content-Type`, so multipart uploads (bounded by `-max-upload-size`) are unaffected. The login endpoints are always capped at a fixed 64 KiB, whatever this is set to.
 :::
 
 ## Background Jobs and Exports

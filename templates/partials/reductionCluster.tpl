@@ -165,7 +165,7 @@
              {% if member.Ejected %}data-ejected="true"{% endif %}>
             {% if member.Resource %}
                 <a href="/v1/resource/view?id={{ member.Resource.ID }}&v={{ member.Resource.Hash }}#{{ member.Resource.ContentType }}"
-                   @click.prevent="$store.lightbox.openFromClick($event, {{ member.Resource.ID }}, '{{ member.Resource.ContentType }}')"
+                   @click.prevent="$store.lightbox.openFromClick($event, {{ member.Resource.ID }}, '{{ member.Resource.ContentType|escapejs }}')"
                    data-lightbox-item
                    data-resource-id="{{ member.Resource.ID }}"
                    data-content-type="{{ member.Resource.ContentType }}"

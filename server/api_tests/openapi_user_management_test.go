@@ -128,7 +128,7 @@ func TestOpenAPIUserManagementDocumentsErrorsAndClearSemantics(t *testing.T) {
 	}{
 		{"/v1/users", http.MethodPost, []string{"400", "401", "403", "409"}},
 		{"/v1/user", http.MethodPost, []string{"400", "401", "403", "404", "409"}},
-		{"/v1/account/password", http.MethodPost, []string{"400", "401", "403"}},
+		{"/v1/account/password", http.MethodPost, []string{"400", "401", "403", "429"}},
 		{"/v1/account/tokens", http.MethodPost, []string{"400", "401", "403", "409"}},
 		{"/v1/account/tokens/delete", http.MethodPost, []string{"400", "401", "403", "404"}},
 	}

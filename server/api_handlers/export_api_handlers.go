@@ -180,6 +180,12 @@ func GetExportDownloadHandler(ctx *application_context.MahresourcesContext, fs a
 		}
 
 		job, ok := ctx.DownloadManager().GetJob(jobID)
+		// Only a group export's entry is an export. Every queue Kind writes a result
+		// file, and an import's is its plan or report, which this route must not
+		// serve: /v1/imports/* holds the rules for those (#126).
+		if ok && job.Snapshot().Source != download_queue.JobSourceGroupExport {
+			ok = false
+		}
 		if !ok {
 			if durable {
 				// The id names a durable Job and this process holds no queue entry for it: a

@@ -3,6 +3,7 @@ package api_handlers
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"time"
 
 	"mahresources/application_context"
@@ -50,12 +51,20 @@ type PluginManagerProvider interface {
 	PluginManager() *plugin_system.PluginManager
 }
 
+// ShortcodeDocsContext serves /v1/shortcodes/docs. The per-plugin reach
+// predicate is needed so the catalogue lists only plugins the caller may reach.
+type ShortcodeDocsContext interface {
+	PluginManagerProvider
+	PluginAllowsScopedPrincipals(pluginName string) bool
+}
+
 // ShortcodeLintContext serves /v1/shortcodes/lint. Beyond the plugin registry
 // (for the plugin shortcode catalogue) it reads the template-partial *names*, so
 // a [partial] reference to a partial that does not exist can be reported
 // (finding 155).
 type ShortcodeLintContext interface {
 	PluginManagerProvider
+	PluginAllowsScopedPrincipals(pluginName string) bool
 	partialNameResolver
 	mrqlStaticEnvProvider
 }
@@ -70,6 +79,7 @@ type mrqlStaticEnvProvider interface {
 // MRQLAPIContext serves the /v1/mrql surface: execution, validation,
 // completion, explain, generation, and the saved-query CRUD.
 type MRQLAPIContext interface {
+	ClientIP(r *http.Request) string
 	mrqlListRenderContext
 	// PluginAllowsScopedPrincipals reports whether a group-limited caller may
 	// reach this plugin's own surfaces. An operator decision, per plugin, so a
@@ -175,9 +185,11 @@ type PluginAPIContext interface {
 
 // PluginBlockBatchContext is intentionally narrower than PluginAPIContext: the
 // batch render endpoint only needs one authorized note load and its already
-// scoped block collection.
+// scoped block collection. It also needs the per-plugin toggle: the route spans
+// plugins, so the URL gate cannot answer for it and the handler gates each block.
 type PluginBlockBatchContext interface {
 	PluginManagerProvider
+	PluginAllowsScopedPrincipals(pluginName string) bool
 	GetNote(id uint) (*models.Note, error)
 	GetBlocksForNote(noteID uint) ([]models.NoteBlock, error)
 }
@@ -223,12 +235,14 @@ type AdminStatsContext interface {
 
 // SettingsContext serves the runtime-settings admin API.
 type SettingsContext interface {
+	ClientIP(r *http.Request) string
 	Settings() *application_context.RuntimeSettings
 }
 
 // TemplateGenerationContext serves the natural-language category-template
 // generation endpoints.
 type TemplateGenerationContext interface {
+	ClientIP(r *http.Request) string
 	TemplatePreviewContext
 	TemplateGenerator() application_context.TemplateGenerator
 	PrepareTemplateGeneration() (application_context.TemplateGenerationPrep, error)

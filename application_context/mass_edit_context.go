@@ -404,6 +404,19 @@ func (ctx *MahresourcesContext) massEdit(spec massEditSpec, q *query_models.Mass
 			}
 		}
 
+		// The request's allow-list is a snapshot that can predate an admin
+		// moving a target or the owner out of the subtree. Re-derive it on the
+		// transaction, after the tree lock, so the lock-and-verify phase below
+		// refuses a row that has left the subtree (with its not-found error)
+		// rather than re-owning it back in.
+		if txCtx.isScopedPrincipal() {
+			rescoped, rescopeErr := txCtx.rescopeTx(txCtx.db)
+			if rescopeErr != nil {
+				return rescopeErr
+			}
+			txCtx.db = rescoped
+		}
+
 		// Phase 1 — lock and verify every row the edit depends on. Requirements
 		// are UNIONED BY MODEL and taken in one fixed model order, ids ascending
 		// within each model: a global total order that two mass edits cannot
@@ -432,8 +445,9 @@ func (ctx *MahresourcesContext) massEdit(spec massEditSpec, q *query_models.Mass
 
 		// Phase 3 — apply. Ops OUTER, chunks INNER, and the owner op is parsed
 		// last: re-parenting changes subtree membership, and the scope allow-list
-		// on the db context is a snapshot from request start, so no scoped read
-		// after the owner UPDATE may be expected to see fresh membership.
+		// on the db context is a snapshot taken at the start of this transaction,
+		// so no scoped read after the owner UPDATE may be expected to see fresh
+		// membership.
 		for _, op := range ops {
 			for _, chunk := range chunkUints(ids, massEditChunkSize) {
 				n, err := op.apply(txCtx, chunk)
@@ -568,7 +582,7 @@ func (ctx *MahresourcesContext) resolveMassEditTargets(spec massEditSpec, q *que
 // it. A bad MRQL expression fails here and never widens: applyMRQLFilter
 // returns *MRQLFilterError, and there is no fall-through to the unfiltered set.
 func (ctx *MahresourcesContext) countMassEditTargets(spec massEditSpec, filter string) (int64, error) {
-	mrqlExpr, scope, err := spec.massEditScope(filter, ctx.db)
+	mrqlExpr, scope, err := spec.massEditScope(filter, ctx.db, ctx.listVisibility())
 	if err != nil {
 		return 0, err
 	}
@@ -598,7 +612,7 @@ func (ctx *MahresourcesContext) pluckMassEditTargets(spec massEditSpec, filter s
 // denial of service. cap <= 0 means unbounded (tests). The caller re-checks
 // the final length against the confirmed count and the ceiling either way.
 func (ctx *MahresourcesContext) pluckMassEditTargetsWithinCap(spec massEditSpec, filter string, cap int) ([]uint, error) {
-	mrqlExpr, scope, err := spec.massEditScope(filter, ctx.db)
+	mrqlExpr, scope, err := spec.massEditScope(filter, ctx.db, ctx.listVisibility())
 	if err != nil {
 		return nil, err
 	}
@@ -635,7 +649,8 @@ func (ctx *MahresourcesContext) pluckMassEditTargetsWithinCap(spec massEditSpec,
 
 // massEditScope decodes the raw filter query string into the entity's real
 // search DTO and returns its MRQL expression and list scope (ignoreSort=true) —
-// the same scope GetResourceCount and its siblings build. The decode cannot
+// the same scope GetResourceCount and its siblings build, confined by vis
+// (ctx.listVisibility) exactly as theirs are. The decode cannot
 // live in server/api_handlers — its decoder is package-private and
 // application_context may not import server/.
 //
@@ -643,26 +658,26 @@ func (ctx *MahresourcesContext) pluckMassEditTargetsWithinCap(spec massEditSpec,
 // the field needs hand-parsing because gorilla/schema converters never fire for
 // slice fields, and a dropped MetaQuery would widen the target set beyond what
 // the reader was shown.
-func (spec *massEditSpec) massEditScope(filter string, base *gorm.DB) (string, func(db *gorm.DB) *gorm.DB, error) {
+func (spec *massEditSpec) massEditScope(filter string, base *gorm.DB, vis database_scopes.Visibility) (string, func(db *gorm.DB) *gorm.DB, error) {
 	switch spec.entity {
 	case "note":
 		nq, err := query_models.DecodeNoteFilter(filter)
 		if err != nil {
 			return "", nil, err
 		}
-		return nq.MRQL, database_scopes.NoteQuery(nq, true, base), nil
+		return nq.MRQL, database_scopes.NoteQuery(nq, true, base, vis), nil
 	case "group":
 		gq, err := query_models.DecodeGroupFilter(filter)
 		if err != nil {
 			return "", nil, err
 		}
-		return gq.MRQL, database_scopes.GroupQuery(gq, true, base), nil
+		return gq.MRQL, database_scopes.GroupQuery(gq, true, base, vis), nil
 	default:
 		rq, err := query_models.DecodeResourceFilter(filter)
 		if err != nil {
 			return "", nil, err
 		}
-		return rq.MRQL, database_scopes.ResourceQuery(rq, true, base), nil
+		return rq.MRQL, database_scopes.ResourceQuery(rq, true, base, vis), nil
 	}
 }
 

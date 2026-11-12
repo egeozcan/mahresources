@@ -233,16 +233,36 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 	// See CreateGroup: db.Transaction so this path savepoint-nests inside a
 	// transaction the caller already opened.
 	if err := ctx.db.Transaction(func(tx *gorm.DB) error {
-		if groupQuery.OwnerId != 0 {
-			// Serialise re-parents against every other re-parent (the mass
-			// edit's owner op included): the cycle walk below reads an
-			// ancestor CHAIN that a concurrent re-parent could extend between
-			// the walk and the write, and row locks cannot freeze a chain.
-			// First operation in the transaction, before any group row is
-			// read or locked — see group_tree_lock.go.
-			if err := ctx.lockGroupTreeMutation(tx); err != nil {
+		// Serialise re-parents against every other re-parent (the mass edit's
+		// owner op included): the cycle walk below reads an ancestor CHAIN that
+		// a concurrent re-parent could extend between the walk and the write,
+		// and row locks cannot freeze a chain. Clearing the owner is a re-parent
+		// to the root, so it takes the lock too. First operation in the
+		// transaction, before any group row is read or locked — see
+		// group_tree_lock.go.
+		if err := ctx.lockGroupTreeMutation(tx); err != nil {
+			return err
+		}
+		// The check before the hook read the request's allow-list, a snapshot
+		// that can predate an admin moving this group out of the subtree. Ask
+		// the current tree, after the lock, and run everything below against
+		// it. The explicit refusal matters: on a stale target the UPDATE would
+		// merely match no row, while the id-keyed tag and relation writes
+		// after it would still run.
+		if ctx.isScopedPrincipal() {
+			var err error
+			if tx, err = ctx.rescopeTx(tx); err != nil {
 				return err
 			}
+			var n int64
+			if err := tx.Model(&models.Group{}).Where("id = ?", groupQuery.ID).Limit(1).Count(&n).Error; err != nil {
+				return err
+			}
+			if n == 0 {
+				return gorm.ErrRecordNotFound
+			}
+		}
+		if groupQuery.OwnerId != 0 {
 			if groupQuery.OwnerId == groupQuery.ID {
 				return errors.New("a group cannot be its own owner")
 			}
@@ -454,7 +474,7 @@ func (ctx *MahresourcesContext) GetGroupByID(id uint) (*models.Group, error) {
 
 func (ctx *MahresourcesContext) GetGroups(offset, maxResults int, query *query_models.GroupQuery) ([]models.Group, error) {
 	var groups []models.Group
-	groupScope := database_scopes.GroupQuery(query, false, ctx.db)
+	groupScope := database_scopes.GroupQuery(query, false, ctx.db, ctx.listVisibility())
 
 	db := ctx.db.Scopes(groupScope)
 	db, err := ctx.applyMRQLFilter(db, mrql.EntityGroup, query.MRQL)
@@ -486,7 +506,7 @@ func (ctx *MahresourcesContext) GetGroupsCount(query *query_models.GroupQuery) (
 	var group models.Group
 	var count int64
 
-	db := ctx.db.Scopes(database_scopes.GroupQuery(query, true, ctx.db)).Model(&group)
+	db := ctx.db.Scopes(database_scopes.GroupQuery(query, true, ctx.db, ctx.listVisibility())).Model(&group)
 	db, err := ctx.applyMRQLFilter(db, mrql.EntityGroup, query.MRQL)
 	if err != nil {
 		return 0, err
@@ -499,7 +519,7 @@ func (ctx *MahresourcesContext) GetPopularGroupTags(query *query_models.GroupQue
 	var res []PopularTag
 
 	db := ctx.db.Model(&models.Group{}).
-		Scopes(database_scopes.GroupQuery(query, true, ctx.db)).
+		Scopes(database_scopes.GroupQuery(query, true, ctx.db, ctx.listVisibility())).
 		Joins("INNER JOIN group_tags pt ON pt.group_id = groups.id").
 		Joins("INNER JOIN tags t ON t.id = pt.tag_id").
 		Select("t.id AS id, t.name AS name, count(*) AS count").

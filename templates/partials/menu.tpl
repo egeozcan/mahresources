@@ -76,7 +76,7 @@
         </div>
         {% endif %}
 
-        {% if hasPluginManager %}
+        {% if hasPluginManager and (not authEnabled or currentUser.IsAdmin or pluginMenuItems) %}
         <div class="navbar-dropdown" @click.outside="pluginsOpen = false" @keydown.escape="if (pluginsOpen) { pluginsOpen = false; $el.querySelector('button').focus(); }">
             <button @click="pluginsOpen = !pluginsOpen"
                     class="navbar-link navbar-link--dropdown"
@@ -97,6 +97,7 @@
                  x-transition:leave-start="opacity-100 translate-y-0"
                  x-transition:leave-end="opacity-0 -translate-y-1"
                  class="navbar-dropdown-menu">
+                {% if not authEnabled or currentUser.IsAdmin %}
                 <a href="/plugins/manage"
                    class="navbar-dropdown-item {% if '/plugins/manage' == currentPath %}navbar-dropdown-item--active{% endif %}"
                    @click="pluginsOpen = false">
@@ -104,6 +105,7 @@
                 </a>
                 {% if pluginMenuItems %}
                 <div class="navbar-dropdown-divider" role="separator"></div>
+                {% endif %}
                 {% endif %}
                 {% for pi in pluginMenuItems %}
                 <a href="{{ pi.FullPath }}"
@@ -188,16 +190,18 @@
         </div>
         {% endif %}
 
-        {% if hasPluginManager %}
+        {% if hasPluginManager and (not authEnabled or currentUser.IsAdmin or pluginMenuItems) %}
         <div class="navbar-mobile-divider"></div>
 
         <div class="navbar-mobile-section">
             <span class="navbar-mobile-label">Plugins</span>
+            {% if not authEnabled or currentUser.IsAdmin %}
             <a href="/plugins/manage"
                class="navbar-mobile-link {% if '/plugins/manage' == currentPath %}navbar-mobile-link--active{% endif %}"
                @click="mobileOpen = false">
                 Manage Plugins
             </a>
+            {% endif %}
             {% for pi in pluginMenuItems %}
             <a href="{{ pi.FullPath }}"
                class="navbar-mobile-link {% if pi.FullPath == path %}navbar-mobile-link--active{% endif %}"

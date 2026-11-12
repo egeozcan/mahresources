@@ -9,6 +9,7 @@ import (
 
 	"mahresources/auth"
 	"mahresources/models"
+	"mahresources/models/database_scopes"
 
 	"gorm.io/gorm"
 )
@@ -104,6 +105,22 @@ func (ctx *MahresourcesContext) principalForcedScope() (scopeID uint, forced boo
 		return 0, false, true
 	}
 	return 0, false, false
+}
+
+// listVisibility is the subtree the list-filter builders in database_scopes may
+// read through for this principal, mirroring mrqlTranslateOptions: the scope
+// root for a group-limited principal, deny-all for one that must be scoped but
+// has no scope group, and unconfined otherwise. The scope callback confines the
+// rows a list returns; this confines the rows its filter subqueries read.
+func (ctx *MahresourcesContext) listVisibility() database_scopes.Visibility {
+	scopeID, forced, deny := ctx.principalForcedScope()
+	switch {
+	case forced:
+		return database_scopes.Visibility{Confined: true, RootID: scopeID}
+	case deny:
+		return database_scopes.Visibility{Confined: true}
+	}
+	return database_scopes.Visibility{}
 }
 
 // WithPrincipal returns a shallow copy of the context bound to the given
@@ -214,6 +231,45 @@ func (ctx *MahresourcesContext) unscopedDB() *gorm.DB {
 		return ctx.db
 	}
 	return ctx.db.WithContext(context.WithValue(ctx.db.Statement.Context, scopeCtxKey{}, (*scopeFilter)(nil)))
+}
+
+// rescopeTx re-derives a group-limited principal's allow-list from the current
+// tree, on the transaction tx itself, and returns tx bound to it.
+//
+// The allow-list applyPrincipalScope binds is a snapshot from when the request
+// context was built, which can be long before the write runs (the scope is bound
+// before the request body is read). For most writes that is the accepted read
+// TOCTOU. A write that changes containment (a re-parent, a re-own, a merge) is
+// different: it is durable and decides future visibility, so a stale "this
+// group is mine" could undo an admin's move of that group out of the subtree.
+// Such writes call this after their tree lock, so every scoped statement that
+// follows answers against current membership.
+//
+// The lookup runs on tx, never on the outer handle: inside a transaction a
+// second connection waits on the transaction's own SQLite writer lock. It fails
+// closed by returning the error. Admins, unscoped users, the system principal
+// and a handle with no filter get tx back unchanged.
+func (ctx *MahresourcesContext) rescopeTx(tx *gorm.DB) (*gorm.DB, error) {
+	if tx == nil || tx.Statement == nil || scopeFromContext(tx.Statement.Context) == nil {
+		return tx, nil
+	}
+	scopeID, forced, deny := ctx.principalForcedScope()
+	var allowed []uint
+	switch {
+	case deny:
+		// allowed stays empty: deny-all.
+	case forced:
+		lookup := *ctx
+		lookup.db = tx
+		ids, err := lookup.collectSubtreeGroupIDs(scopeID)
+		if err != nil {
+			return nil, err
+		}
+		allowed = ids
+	default:
+		return tx, nil
+	}
+	return tx.WithContext(context.WithValue(tx.Statement.Context, scopeCtxKey{}, &scopeFilter{allowed: allowed})), nil
 }
 
 // subtreeScopeIDs resolves the set of group IDs a scoped principal may touch.

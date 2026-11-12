@@ -60,12 +60,31 @@ type ScopeResolver interface {
 	VisibleGroupIDs(ids []uint) map[uint]bool
 }
 
+// CarrierAuthority answers, for the acting principal, what an import may write
+// into a Template Carrier (Category, Resource Category, Note Type) it creates.
+// Role is not something a *gorm.DB carries, so the import applier cannot ask it
+// of the handle; application_context answers it from the principal instead.
+type CarrierAuthority interface {
+	// AuthorTemplateCarrier is nil when the principal may author the template
+	// payload (Custom* slots, CSS, MetaSchema, SectionConfig, MetadataIndexes,
+	// AutoDetectRules, ApplyTemplatesToShares) of a carrier of this type.
+	AuthorTemplateCarrier(carrierType string) error
+	// ValidateTemplateCarrier runs the ordinary save validation over a
+	// carrier's tracked state.
+	ValidateTemplateCarrier(carrierType string, snap models.TemplateSnapshot) error
+}
+
 // Deps is the per-call input. Rebuild it for every call — never cache one — so
 // that a transactional or principal-derived handle is picked up rather than the
 // handle that happened to be current when the Service was built.
+//
+// A nil Carriers lets an import keep every carrier's payload unvalidated, which
+// is requireRole's rule for a call with no principal. Only tests leave it nil:
+// the application_context facade always sets it.
 type Deps struct {
-	DB    *gorm.DB      // carries transaction membership, subtree scope, and actor
-	Scope ScopeResolver // the principal-derived bits the handle cannot carry
+	DB       *gorm.DB         // carries transaction membership, subtree scope, and actor
+	Scope    ScopeResolver    // the principal-derived bits the handle cannot carry
+	Carriers CarrierAuthority // the principal's role, for carrier payload on import
 }
 
 // opCtx binds the immutable Service to one call's Deps. It exists for exactly
@@ -73,14 +92,15 @@ type Deps struct {
 // impossible: there is nowhere durable to capture it to.
 type opCtx struct {
 	*Service
-	db    *gorm.DB
-	scope ScopeResolver
+	db       *gorm.DB
+	scope    ScopeResolver
+	carriers CarrierAuthority
 }
 
 // op builds the per-call binding. Scope must be non-nil; the export planner and
 // the import applier both consult it.
 func (s *Service) op(d Deps) *opCtx {
-	return &opCtx{Service: s, db: d.DB, scope: d.Scope}
+	return &opCtx{Service: s, db: d.DB, scope: d.Scope, carriers: d.Carriers}
 }
 
 // --- Public entry points ---

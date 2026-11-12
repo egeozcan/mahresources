@@ -101,7 +101,52 @@ func (ctx *MahresourcesContext) getGroupForCompare(id uint) (*models.Group, erro
 		Preload("BackRelations.RelationType").
 		First(&group, id).Error
 
+	if err == nil {
+		ctx.confineGroupEdges(&group)
+	}
 	return &group, err
+}
+
+// confineGroupEdges drops relation edges whose far endpoint is outside the
+// principal's subtree. group_relations is not in scopeColumn, so the scope
+// callback never filters the Relationships/BackRelations preloads; the nested
+// ToGroup/FromGroup preloads come back nil but the edge row (ids, type, name,
+// description) would otherwise survive. Like GetGroup's relCond and
+// relationInScope this confines the far endpoint, but in Go through
+// visibleGroupIDs rather than an IN (<subtree ids>) preload condition, which
+// could exceed parameter ceilings and re-run the subtree CTE. Dangling or nil
+// far ids belong to no subtree and are dropped. Inert for unscoped principals.
+func (ctx *MahresourcesContext) confineGroupEdges(group *models.Group) {
+	if !ctx.isScopedPrincipal() {
+		return
+	}
+	far := make([]uint, 0, len(group.Relationships)+len(group.BackRelations))
+	for _, r := range group.Relationships {
+		if r != nil && r.ToGroupId != nil {
+			far = append(far, *r.ToGroupId)
+		}
+	}
+	for _, r := range group.BackRelations {
+		if r != nil && r.FromGroupId != nil {
+			far = append(far, *r.FromGroupId)
+		}
+	}
+	visible := ctx.visibleGroupIDs(far)
+
+	fwd := make([]*models.GroupRelation, 0, len(group.Relationships))
+	for _, r := range group.Relationships {
+		if r != nil && r.ToGroupId != nil && visible[*r.ToGroupId] {
+			fwd = append(fwd, r)
+		}
+	}
+	group.Relationships = fwd
+	back := make([]*models.GroupRelation, 0, len(group.BackRelations))
+	for _, r := range group.BackRelations {
+		if r != nil && r.FromGroupId != nil && visible[*r.FromGroupId] {
+			back = append(back, r)
+		}
+	}
+	group.BackRelations = back
 }
 
 func compareDiff(left, right []models.CompareListItem) models.CompareListDiff {

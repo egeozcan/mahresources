@@ -1069,6 +1069,82 @@ func TestMassEditOwnerSetToOutOfSubtreeGroupIsRefused(t *testing.T) {
 	}
 }
 
+// staleScopeMassFixture adds A and B under the scope group, binds the scoped
+// context, and only then has the admin move B out of the subtree, so the
+// scoped context carries an allow-list that still lists B.
+func staleScopeMassFixture(t *testing.T, name string) (f *massScopedFixture, a, b *models.Group, bRes *models.Resource) {
+	t.Helper()
+	f = newMassScopedFixture(t, name, 0, 0)
+	a = &models.Group{Name: name + "-A", OwnerId: &f.scopeGroup.ID}
+	b = &models.Group{Name: name + "-B", OwnerId: &f.scopeGroup.ID}
+	for _, g := range []*models.Group{a, b} {
+		if err := f.ctx.db.Create(g).Error; err != nil {
+			t.Fatalf("create group: %v", err)
+		}
+	}
+	bRes = &models.Resource{Name: name + "-B-res", OwnerId: &b.ID}
+	if err := f.ctx.db.Create(bRes).Error; err != nil {
+		t.Fatalf("create resource: %v", err)
+	}
+	f.scoped = scopedMassEditContext(f.ctx, f.scopeGroup) // bound before the revocation
+	if err := f.ctx.db.Model(&models.Group{}).Where("id = ?", b.ID).Update("owner_id", f.outsideGroup.ID).Error; err != nil {
+		t.Fatalf("admin move of B: %v", err)
+	}
+	return f, a, b, bRes
+}
+
+func TestMassEditStaleScopeCannotReparentARevokedGroup(t *testing.T) {
+	f, a, b, _ := staleScopeMassFixture(t, "stalegrp")
+
+	if _, err := f.scoped.MassEditGroups(&query_models.MassEditQuery{
+		ID: []uint{b.ID}, OwnerOp: "set", OwnerId: a.ID,
+	}); err == nil {
+		t.Fatal("a stale binding re-parented a group moved out of its subtree")
+	}
+	var got models.Group
+	if err := f.ctx.db.First(&got, b.ID).Error; err != nil {
+		t.Fatalf("reload B: %v", err)
+	}
+	if got.OwnerId == nil || *got.OwnerId != f.outsideGroup.ID {
+		t.Fatalf("B's owner = %v, want %d", got.OwnerId, f.outsideGroup.ID)
+	}
+
+	// Control: the same stale binding still re-parents a group that stayed inside.
+	if _, err := f.scoped.MassEditGroups(&query_models.MassEditQuery{
+		ID: []uint{a.ID}, OwnerOp: "set", OwnerId: f.scopeGroup.ID,
+	}); err != nil {
+		t.Fatalf("re-parent inside the subtree: %v", err)
+	}
+}
+
+func TestMassEditStaleScopeCannotReownAResourceOfARevokedGroup(t *testing.T) {
+	f, a, b, bRes := staleScopeMassFixture(t, "staleres")
+
+	if _, err := f.scoped.MassEditResources(&query_models.MassEditQuery{
+		ID: []uint{bRes.ID}, OwnerOp: "set", OwnerId: a.ID,
+	}); err == nil {
+		t.Fatal("a stale binding re-owned a resource of a group moved out of its subtree")
+	}
+	var got models.Resource
+	if err := f.ctx.db.First(&got, bRes.ID).Error; err != nil {
+		t.Fatalf("reload resource: %v", err)
+	}
+	if got.OwnerId == nil || *got.OwnerId != b.ID {
+		t.Fatalf("resource owner = %v, want %d", got.OwnerId, b.ID)
+	}
+
+	// Control: a fresh binding re-owns a resource inside the subtree.
+	inside := &models.Resource{Name: "staleres-inside", OwnerId: &a.ID}
+	if err := f.ctx.db.Create(inside).Error; err != nil {
+		t.Fatalf("create inside resource: %v", err)
+	}
+	if _, err := scopedMassEditContext(f.ctx, f.scopeGroup).MassEditResources(&query_models.MassEditQuery{
+		ID: []uint{inside.ID}, OwnerOp: "set", OwnerId: f.scopeGroup.ID,
+	}); err != nil {
+		t.Fatalf("re-own inside the subtree: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // groups: owner is the parent
 // ---------------------------------------------------------------------------

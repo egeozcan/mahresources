@@ -6,7 +6,12 @@ import (
 	"mahresources/models/types"
 )
 
-func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, originalDb *gorm.DB) func(db *gorm.DB) *gorm.DB {
+// ResourceQuery builds the resource list filter. vis confines the rows its
+// subqueries read besides the listed resource itself (see Visibility): a
+// related group or note, a duplicate image hash. OwnerId with IncludeSubgroups
+// needs no guard: the subtree it names only narrows the scoped list, so a
+// hidden ancestor yields the visible part of its subtree.
+func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, originalDb *gorm.DB, vis Visibility) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
 		likeOperator := GetLikeOperator(db)
 		dbQuery := db
@@ -45,7 +50,7 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 					  UNION ALL
 					  SELECT id AS res_id, owner_id AS src_group FROM resources WHERE owner_id IN ?
 					)
-					SELECT res_id FROM cte GROUP BY res_id HAVING count(DISTINCT src_group) = ?
+					SELECT res_id FROM cte`+where(vis.groupVisible("src_group"))+` GROUP BY res_id HAVING count(DISTINCT src_group) = ?
 				)`,
 				groups,
 				groups,
@@ -57,7 +62,7 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 			notes := deduplicateUints(query.Notes)
 			subQuery := originalDb.
 				Table("resource_notes rn").
-				Where("rn.note_id IN ?", notes).
+				Where(and("rn.note_id IN ?", vis.ownedRowVisible("rn.note_id", "notes")), notes).
 				Group("rn.resource_id").
 				Having("count(*) = ?", len(notes)).
 				Select("rn.resource_id")
@@ -69,7 +74,8 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 			findDifferentHashToCurrent := originalDb.
 				Table("image_hashes i").
 				Where("ih.d_hash = i.d_hash").
-				Where("ih.id <> i.id").
+				// Only a duplicate the caller can see counts.
+				Where(and("ih.id <> i.id", vis.ownedRowVisible("i.resource_id", "resources"))).
 				Select("1")
 
 			hashAndHashDuplicateExists := originalDb.

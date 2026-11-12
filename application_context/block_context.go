@@ -554,13 +554,35 @@ func (ctx *MahresourcesContext) RebalanceBlockPositions(noteID uint) error {
 // UpdateBlockStateFromRequest decodes a block state update from an HTTP request body
 // and applies it using UpdateBlockState. This is used by the share server for
 // allowing anonymous visitors to update todo checkboxes on shared notes.
+//
+// The caller must cap r.Body (the share server uses http.MaxBytesReader). The
+// submitted state is normalised before it is stored: only the block's own item
+// IDs survive, as {"checked": [...]}, so the client cannot persist arbitrary
+// JSON. The block must be a todos block; the share allowlist is todos-only and
+// this is a second check on that.
 func (ctx *MahresourcesContext) UpdateBlockStateFromRequest(blockId uint, r *http.Request) error {
 	var stateUpdate json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&stateUpdate); err != nil {
 		return err
 	}
+	if isNullJSON(stateUpdate) {
+		return errors.New("state field is required")
+	}
 
-	_, err := ctx.UpdateBlockState(blockId, stateUpdate)
+	var block models.NoteBlock
+	if err := ctx.db.First(&block, blockId).Error; err != nil {
+		return err
+	}
+	if block.Type != "todos" {
+		return errors.New("block type does not accept share-token state writes")
+	}
+
+	normalised, err := block_types.NormalizeTodosState(json.RawMessage(block.Content), stateUpdate)
+	if err != nil {
+		return err
+	}
+
+	_, err = ctx.UpdateBlockState(blockId, normalised)
 	return err
 }
 

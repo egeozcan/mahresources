@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/contracts"
 	"mahresources/models"
@@ -59,6 +60,17 @@ func GetNoteHandler(ctx contracts.NoteReader) func(writer http.ResponseWriter, r
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
+		// The share token never serializes from models.Note (#107). This is its
+		// one read disclosure, to principals that may share the note anyway: the
+		// capability POST /v1/note/share demands. The embedded field shadowing
+		// relies on models.Note having no MarshalJSON of its own.
+		if auth.PrincipalFromContext(request.Context()).CanWrite() {
+			_ = json.NewEncoder(writer).Encode(struct {
+				*models.Note
+				ShareToken *string `json:"shareToken,omitempty"`
+			}{note, note.ShareToken})
+			return
+		}
 		_ = json.NewEncoder(writer).Encode(note)
 	}
 }

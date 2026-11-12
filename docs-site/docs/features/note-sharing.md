@@ -24,7 +24,7 @@ The share URL is unguessable. Knowing one token does not help discover others. T
 When a note is shared, visitors can see:
 
 - **Note content** - The note's name, description, and text content
-- **Block content** - Every block type renders on the share page. Text, headings, dividers, todos, galleries, and calendars show their own content. A **references block** publishes the name, description, and category of each group it references. A **table block** backed by a saved query executes that query on the share server and renders the result rows (see [Interactive Blocks](#interactive-blocks-on-shared-notes)).
+- **Block content** - Every block type renders on the share page. Text, headings, dividers, todos, and galleries show their own content. A **calendar block** publishes only each calendar's id, name and colour, plus its proxied events (see [Shared Calendars](#shared-calendars)). A **references block** publishes the name, description, and category of each group it references. A **table block** backed by a saved query executes that query on the share server and renders the result rows (see [Interactive Blocks](#interactive-blocks-on-shared-notes)).
 - **Embedded resources** - Images and files attached to the note
 
 What remains private:
@@ -32,6 +32,7 @@ What remains private:
 - Tags and categories
 - The note's own group memberships (a references block, however, publishes the name, description, and category of the specific groups it references)
 - Metadata, **unless** the note's type opts into [applying templates to shares](#note-type-templates-on-shared-pages): a `[meta]` shortcode in a shared Custom Header renders the real metadata value (read-only) onto the public page
+- Calendar feed URLs and resource IDs. A calendar block's subscription address is never sent to visitors
 - Other notes and resources
 
 ## Enabling Note Sharing
@@ -78,6 +79,8 @@ When shared:
 - A "Shared" badge appears
 - An **Unshare** button becomes available
 
+Under `-auth`, the share URL and the Share/Unshare controls are shown only to accounts that may share (admin, editor and user). A read-only guest sees just the "Shared" badge, never the token.
+
 If `SHARE_PUBLIC_URL` is configured, the absolute share URL is copied to your clipboard automatically and displayed with a copy button. If it is unset, no clipboard copy happens: a warning is shown and only the relative `/s/<token>` path is displayed, which you must append to your server's public URL manually.
 
 ### Using the API
@@ -111,7 +114,7 @@ http://your-share-server:8383/s/{token}
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/s/{token}` | View the shared Note |
-| `POST` | `/s/{token}/block/{blockId}/state` | Update block state (todo checkboxes only; other block types are rejected with HTTP 403) |
+| `POST` | `/s/{token}/block/{blockId}/state` | Update block state (todo checkboxes only; other block types are rejected with HTTP 403; bodies over 64 KiB are rejected with HTTP 413) |
 | `GET` | `/s/{token}/block/{blockId}/calendar/events` | Get calendar events for a calendar block |
 | `GET` | `/s/{token}/resource/{hash}` | Access a Resource file by its hash |
 
@@ -163,9 +166,11 @@ Visitors can check and uncheck todo items on shared notes. Changes are visible t
 
 Adding, removing, or editing todo items is not allowed on shared views -- only toggling the checked state.
 
+The state request body is capped at 64 KiB regardless of `Content-Type`; larger bodies get HTTP 413. The server does not store the body as sent. It stores only `{"checked": [...]}`, filtered to the block's own item IDs with duplicates removed, so unknown keys and IDs that are not items are dropped. A visitor's toggle on a page that is out of date (an item was deleted) still succeeds, and the dead ID is simply not stored.
+
 ### Shared Calendars
 
-Calendar blocks on shared notes are view-only. Visitors can browse month and agenda views and see events sourced from the block's ICS feed, but they cannot create, edit, or delete events. The share server rejects state writes for every block type except todos (HTTP 403, BH-031), so calendar changes never persist. `GET /s/{token}/block/{blockId}/calendar/events` serves the events for display only.
+Calendar blocks on shared notes are view-only. Visitors can browse month and agenda views and see events sourced from the block's ICS feed, but they cannot create, edit, or delete events. The share server rejects state writes for every block type except todos (HTTP 403, BH-031), so calendar changes never persist. `GET /s/{token}/block/{blockId}/calendar/events` serves the events for display only. Visitors see each calendar's id, name and colour, but never its feed URL or resource ID. If a calendar fails to load, the page shows a generic "calendar unavailable" message. The detailed error is written to the server log for the operator.
 
 ### Shared Block Constraints
 
@@ -291,4 +296,8 @@ Without `Accept: application/json` the request redirects to `/admin/shares`.
 GET /v1/notes?Shared=1
 ```
 
-Returns all notes that have a share token.
+Returns all notes that have a share token, each with `"hasShare": true`. List responses never include the token itself; read it from `GET /v1/note?id={id}` (accounts that may share) or `POST /v1/note/share`, which returns the existing token for a note that is already shared.
+
+### Where the Token Appears
+
+The share token is a bearer credential: anyone holding it can open the note on the share server and toggle its todos, without an account. It is therefore not part of the note's JSON. Only `GET /v1/note` returns `shareToken`, and only to a principal that may share the note (admin, editor or user, or any request with auth disabled); `POST /v1/note/share` and the [shares dashboard](#auditing-shares) show it too. Every other payload that carries a note (`GET /v1/notes`, MRQL results, and notes nested in groups, resources, tags and note types) has `hasShare` instead. Tokens collected before this restriction remain valid until the note is unshared; unshare and reshare a note to rotate its token.

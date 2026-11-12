@@ -74,7 +74,7 @@ Relation fields (`tags`, `groups`/`group`, `notes`, `resources`, `children`) mat
 Two derived fields behave differently from the rest:
 
 - `similarImages` is a derived relation over resources sharing an exact DHash. Query it as `similarImages IS [NOT] EMPTY`.
-- `shared` (notes) is a derived boolean backed by share-token presence. As a comparison it accepts only `= true` / `!= false` and their inverses; any other comparison operator, or a non-boolean value, is an error. `shared IS EMPTY` and `shared IS NOT EMPTY` also work, and mean not shared and shared.
+- `shared` (notes) is a derived boolean backed by share-token presence. As a comparison it accepts only `= true` / `!= false` and their inverses; any other comparison operator, or a non-boolean value, is an error. `shared IS EMPTY` and `shared IS NOT EMPTY` also work, and mean not shared and shared. As a `GROUP BY` key or an `ORDER BY` field it is `1` for a shared note and `0` otherwise; the share token itself is never returned.
 
 ## Metadata Fields
 

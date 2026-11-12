@@ -98,6 +98,14 @@ func TestAuthorizationMatrix(t *testing.T) {
 			allowed: map[models.Role]bool{models.RoleAdmin: true, models.RoleEditor: false, models.RoleUser: false, models.RoleGuest: false},
 		},
 		{
+			name: "admin shares dashboard (capEditor)", method: http.MethodGet, path: "/admin/shares.json",
+			allowed: map[models.Role]bool{models.RoleAdmin: true, models.RoleEditor: true, models.RoleUser: false, models.RoleGuest: false},
+		},
+		{
+			name: "admin shares bulk revoke (capEditor)", method: http.MethodPost, path: "/v1/admin/shares/bulk-revoke",
+			allowed: map[models.Role]bool{models.RoleAdmin: true, models.RoleEditor: true, models.RoleUser: false, models.RoleGuest: false},
+		},
+		{
 			name: "admin data-stats (capSystem)", method: http.MethodGet, path: "/v1/admin/data-stats",
 			allowed: map[models.Role]bool{models.RoleAdmin: true, models.RoleEditor: false, models.RoleUser: false, models.RoleGuest: false},
 		},

@@ -228,8 +228,10 @@ including plugins that were installed before the control existed.
 
 What it does *not* do is widen the plugin. A confined caller's `mah.db` calls stay
 bound to that caller's own subtree, and taxonomy operations still require that
-caller's own role, exactly as they do everywhere else. The toggle is about the
-door, not about the room.
+caller's own role, exactly as they do everywhere else. A guest's `mah.db` is read-only: writes,
+deletes and `mah.db.transaction` return an error even on a plugin opened to
+limited users. Plugins that keep bookkeeping while a page is viewed should use
+`mah.kv`, which is unaffected. The toggle is about the door, not about the room.
 
 Two consequences worth knowing:
 
@@ -237,6 +239,9 @@ Two consequences worth knowing:
   which is what a page renders when there is no plugin renderer at all. It is
   deliberately indistinguishable: otherwise a page would report which plugins
   exist, and which ones a given account may not use.
+- **A closed plugin is not listed.** It does not appear in the Plugins menu, nor
+  in the shortcode autocomplete, docs or lint results, for a group-limited
+  account. The "Manage Plugins" link is shown to administrators only.
 - **Actions are covered.** A group-limited account running a plugin action from
   a card or the bulk bar gets `403` unless that plugin is open to it. This is
   the one place the setting *narrows* what such an account could do before, and

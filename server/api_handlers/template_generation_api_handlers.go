@@ -283,7 +283,7 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 		}
 		// A dry run calls no provider, so it has its own limiter and reviewing
 		// does not use up generation slots.
-		key := application_context.ClientIP(request)
+		key := generationRateKey(ctx, request)
 		if req.DryRun {
 			if !ctx.TemplateDisclosureRateLimiter().Allow(key, time.Now()) {
 				http_utils.HandleError(errors.New("template generation review rate limit exceeded"), writer, request, http.StatusTooManyRequests)
@@ -339,7 +339,7 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 		// Seed shows is masked in the same order for the dry run and the request.
 		var privacy *application_context.TemplatePrivacy
 		if privacyOn {
-			privacy = application_context.NewTemplatePrivacy(application_context.TemplatePrivacyTag(templateRunAccountKey(request), entityType, req.CategoryID))
+			privacy = application_context.NewTemplatePrivacy(application_context.TemplatePrivacyTag(templateRunAccountKey(ctx, request), entityType, req.CategoryID))
 		}
 		samples, sampleRefs, samplesArePreview := loadTemplateSamples(ctx, entityType, req.CategoryID, req.EntityID, privacy, metaSchema)
 		input := application_context.TemplateGenerationInput{
@@ -422,7 +422,7 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 				_ = json.NewEncoder(writer).Encode(result)
 				return
 			}
-			serveHarnessRun(writer, request, harnessServe{
+			serveHarnessRun(ctx, writer, request, harnessServe{
 				generator: generator, input: input, prepared: prepared,
 				prompt: req.Prompt, hash: strings.TrimSpace(req.GroundingHash),
 			})

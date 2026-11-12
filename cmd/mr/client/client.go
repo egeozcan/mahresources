@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -25,35 +26,86 @@ type Client struct {
 // `mr auth login`), every request is authenticated with it via a Bearer header.
 // When the server has auth disabled the token is simply ignored.
 func New(baseURL string) *Client {
-	hc := &http.Client{Transport: &authTransport{token: ResolveToken(baseURL), base: http.DefaultTransport}}
+	hc := &http.Client{
+		Transport: &authTransport{
+			token:  ResolveToken(baseURL),
+			origin: normalizeOrigin(baseURL),
+			base:   http.DefaultTransport,
+		},
+		CheckRedirect: SameOriginRedirectPolicy(baseURL),
+	}
 	return &Client{
 		BaseURL:    strings.TrimRight(baseURL, "/"),
 		httpClient: hc,
 	}
 }
 
-// authTransport injects an Authorization: Bearer header on every request when
-// it holds a token, and always marks the request as coming from the mr CLI.
-// The server records that as the source of a Template Revision; it is
+// authTransport always marks the request as coming from the mr CLI and injects
+// an Authorization: Bearer header only when the request targets the origin the
+// token is bound to (same scheme://host:port as the configured server). The
+// server records the client marker as the source of a Template Revision; it is
 // provenance only, never an authorization input.
 type authTransport struct {
-	token string
-	base  http.RoundTripper
+	token  string
+	origin string
+	base   http.RoundTripper
 }
 
 func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Clone so the caller's request (and Go's redirect header copy) never sees
+	// the credential, per the RoundTripper contract.
+	req = req.Clone(req.Context())
 	req.Header.Set("X-Mahresources-Client", "mr")
-	if t.token != "" && req.Header.Get("Authorization") == "" {
+	if t.token != "" && requestOrigin(req.URL) == t.origin && req.Header.Get("Authorization") == "" {
 		req.Header.Set("Authorization", "Bearer "+t.token)
 	}
 	return t.base.RoundTrip(req)
 }
 
+// requestOrigin returns u's lowercased scheme://host[:port], the same shape
+// normalizeOrigin produces.
+func requestOrigin(u *url.URL) string {
+	return asciiLower(u.Scheme + "://" + u.Host)
+}
+
+// asciiLower lowercases only A-Z. Origins must not be compared with Unicode
+// case mapping (strings.ToLower / EqualFold): it folds U+0130 to 'i' and U+212A
+// to 'k', so a different host (dialed by its IDNA form) would compare equal to
+// the configured one. Two strings equal under ASCII-only lowering differ only in
+// ASCII case, which DNS and IDNA treat as the same name.
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return string(b)
+}
+
+// SameOriginRedirectPolicy is an http.Client CheckRedirect that refuses to
+// follow a redirect to a different origin than baseURL (so neither the token
+// nor a replayed 307/308 body reaches another host) and keeps Go's default
+// limit of 10 hops.
+func SameOriginRedirectPolicy(baseURL string) func(*http.Request, []*http.Request) error {
+	origin := normalizeOrigin(baseURL)
+	return func(req *http.Request, via []*http.Request) error {
+		if o := requestOrigin(req.URL); o != origin {
+			return fmt.Errorf("server redirected to a different origin: %s (refusing to follow; check --server)", o)
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+}
+
 // ResolveToken returns the API token to use for baseURL. The MR_TOKEN env var is
 // an explicit global override and takes precedence; otherwise the stored token
 // for baseURL's origin is returned (or "" if none). Stored tokens are bound to a
-// server origin so a token minted against one server is never sent to a
-// different host.
+// server origin; the binding is enforced at send time (authTransport) and on
+// redirects (SameOriginRedirectPolicy), so a token is never sent to a different
+// host.
 func ResolveToken(baseURL string) string {
 	if t := strings.TrimSpace(os.Getenv("MR_TOKEN")); t != "" {
 		return t
@@ -62,13 +114,13 @@ func ResolveToken(baseURL string) string {
 }
 
 // normalizeOrigin reduces a server URL to its scheme://host[:port] origin
-// (lowercased) — the key under which that server's token is stored.
+// (ASCII-lowercased) — the key under which that server's token is stored.
 func normalizeOrigin(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if u, err := url.Parse(raw); err == nil && u.Host != "" {
-		return strings.ToLower(u.Scheme + "://" + u.Host)
+		return asciiLower(u.Scheme + "://" + u.Host)
 	}
-	return strings.ToLower(strings.TrimRight(raw, "/"))
+	return asciiLower(strings.TrimRight(raw, "/"))
 }
 
 // readTokenMap loads the origin→token map from the credentials file. A legacy
@@ -102,7 +154,21 @@ func writeTokenMap(m map[string]string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(b, '\n'), 0600)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	// The create mode only applies to new files; tighten an existing one before
+	// the token is written into it.
+	if err := f.Chmod(0600); err != nil {
+		f.Close()
+		return err
+	}
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // tokenFilePath returns the path to the stored token file. Honors MR_TOKEN_FILE,

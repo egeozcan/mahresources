@@ -97,13 +97,13 @@ func (ctx *MahresourcesContext) pickerFilteredDB(entity, filter string) (*gorm.D
 	var mrqlEntity mrql.EntityType
 	switch q := decoded.(type) {
 	case *query_models.ResourceSearchQuery:
-		db, table = ctx.db.Model(&models.Resource{}).Scopes(database_scopes.ResourceQuery(q, true, ctx.db)), "resources"
+		db, table = ctx.db.Model(&models.Resource{}).Scopes(database_scopes.ResourceQuery(q, true, ctx.db, ctx.listVisibility())), "resources"
 		expression, mrqlEntity = q.MRQL, mrql.EntityResource
 	case *query_models.GroupQuery:
-		db, table = ctx.db.Model(&models.Group{}).Scopes(database_scopes.GroupQuery(q, true, ctx.db)), "groups"
+		db, table = ctx.db.Model(&models.Group{}).Scopes(database_scopes.GroupQuery(q, true, ctx.db, ctx.listVisibility())), "groups"
 		expression, mrqlEntity = q.MRQL, mrql.EntityGroup
 	case *query_models.NoteQuery:
-		db, table = ctx.db.Model(&models.Note{}).Scopes(database_scopes.NoteQuery(q, true, ctx.db)), "notes"
+		db, table = ctx.db.Model(&models.Note{}).Scopes(database_scopes.NoteQuery(q, true, ctx.db, ctx.listVisibility())), "notes"
 		expression, mrqlEntity = q.MRQL, mrql.EntityNote
 	case *query_models.CategoryQuery:
 		db, table = ctx.db.Model(&models.Category{}).Scopes(database_scopes.CategoryQuery(q, true)), "categories"
@@ -116,7 +116,7 @@ func (ctx *MahresourcesContext) pickerFilteredDB(entity, filter string) (*gorm.D
 	case *query_models.QueryQuery:
 		db, table = ctx.db.Model(&models.Query{}).Scopes(database_scopes.QueryQuery(q, true)), "queries"
 	case *query_models.RelationshipTypeQuery:
-		db, table = ctx.db.Model(&models.GroupRelationType{}).Scopes(database_scopes.RelationTypeQuery(q)), "group_relation_types"
+		db, table = ctx.db.Model(&models.GroupRelationType{}).Scopes(database_scopes.RelationTypeQuery(q, ctx.listVisibility())), "group_relation_types"
 	case *query_models.SeriesQuery:
 		db, table = ctx.db.Model(&models.Series{}).Scopes(database_scopes.SeriesQuery(q, true)), "series"
 	default:

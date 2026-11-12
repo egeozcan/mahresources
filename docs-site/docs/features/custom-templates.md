@@ -12,6 +12,8 @@ Custom templates execute arbitrary HTML and JavaScript. Only use them on **trust
 
 Do not allow untrusted users to create or edit Categories, Resource Categories, and Note Types with custom templates, as they could inject malicious scripts.
 
+Only an admin can author the templates of Categories and Resource Categories, and only an editor or admin those of Note Types. That includes [group import](./export-import.md): a lower role's import creates these carriers without their templates, schema or rules.
+
 :::
 
 ## Template Locations
@@ -874,7 +876,7 @@ A section that fails (a provider error, a timeout, a reply cut off at the output
 
 The draft is listed for review, each returned slot with its text and issues, and nothing is written to the form until you press **Apply**. Apply asks one question before it writes anything. It names each returned field whose current content differs from the draft and is either not empty or was changed while the request ran (a field you cleared meanwhile is named too), marks the ones edited since you asked, and does not mention fields the draft does not return. A reply cut off at the model's output limit, or a slot over 20,000 bytes, is marked invalid with that issue and is never shortened.
 
-Generation requires a model and key for the selected provider (the button returns "not configured" otherwise), is rate-limited per client, and is gated at the same permission level as saving the template: **admin** for Category and Resource Category, **editor** for Note Type. One generation request uses one rate-limit slot, including its planning, section and repair calls. At most eight template provider calls run at once across the server, including across configuration changes. [Runtime provider settings](../configuration/runtime-settings.md#ai-providers-models-and-credentials) control models, token budgets and timeouts; [Template generation configuration](../configuration/advanced.md#template-generation) describes DeepSeek thinking defaults.
+Generation requires a model and key for the selected provider (the button returns "not configured" otherwise), is rate-limited per account when authentication is on (per connection IP otherwise), and is gated at the same permission level as saving the template: **admin** for Category and Resource Category, **editor** for Note Type. One generation request uses one rate-limit slot, including its planning, section and repair calls. At most eight template provider calls run at once across the server, including across configuration changes. [Runtime provider settings](../configuration/runtime-settings.md#ai-providers-models-and-credentials) control models, token budgets and timeouts; [Template generation configuration](../configuration/advanced.md#template-generation) describes DeepSeek thinking defaults.
 
 ### Generation runs
 
