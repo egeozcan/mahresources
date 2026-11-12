@@ -71,6 +71,20 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 			lockedGroups[id] = group
 		}
 
+		// A merge moves every account scoped to a loser onto the winner
+		// (transferUserScopeReferences below). Assigning a scope is admin-only,
+		// so only an admin or the system may cause that move; anyone else gets
+		// the refusal a delete of that group already gives. Checked here, under
+		// the user-management lock and the loser row locks, and before any
+		// transfer or before_group_delete hook runs.
+		if !altCtx.Principal().IsAdmin() {
+			for _, id := range loserIds {
+				if err := rejectGroupDeletionIfUserScope(altCtx.db, id); err != nil {
+					return err
+				}
+			}
+		}
+
 		winner := *lockedGroups[winnerId]
 		losers := make([]*models.Group, 0, len(loserIds))
 		for _, id := range loserIds {
@@ -257,6 +271,8 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 		}
 
 		for _, loser := range losers {
+			// Moves rows only for an admin or system caller; any other caller
+			// was refused above if a loser is someone's scope.
 			if err := transferUserScopeReferences(altCtx.db, loser.ID, winner.ID); err != nil {
 				return err
 			}
