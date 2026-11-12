@@ -121,8 +121,10 @@ func sameAccess(a, b *auth.Principal) bool {
 
 // scopedEditName / scopedEditDescription / scopedEditMeta build the per-entity
 // edit handlers against a request-scoped EntityWriter, so a group-limited
-// principal cannot rename/redescribe/edit-meta of an entity outside its subtree
-// (the scoped DB filters the update to zero rows).
+// principal cannot rename/redescribe/edit-meta of an entity outside its subtree:
+// for name and description the scoped DB filters the update to zero rows; for
+// meta, UpdateMetaAtPath reads the row through the scoped handle inside its
+// locked transaction and answers not found before writing or returning any Meta.
 func scopedEditName[T contracts.BasicEntityReader](appCtx *application_context.MahresourcesContext, entityName string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writer := application_context.NewEntityWriter[T](scopedCtx(appCtx, r))
