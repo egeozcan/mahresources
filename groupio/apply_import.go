@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/afero"
@@ -311,6 +312,30 @@ func importBlobLocation(hash, contentType string) string {
 		ext = exts[0]
 	}
 	return path.Join("resources", hash+ext)
+}
+
+// sanitizeImportedContentType returns ct unchanged (true) when it is empty or a
+// well-formed media type made only of RFC 6838 name characters plus what
+// parameters need. Anything else (quotes, backticks, parentheses...) would be
+// stored verbatim and later interpolated into pages, so it is replaced with
+// application/octet-stream (false). mime.ParseMediaType alone accepts ' and `.
+func sanitizeImportedContentType(ct string) (string, bool) {
+	if ct == "" {
+		return ct, true
+	}
+	for i := 0; i < len(ct); i++ {
+		c := ct[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case strings.IndexByte(" !#$&^_.+-/;=", c) >= 0:
+		default:
+			return "application/octet-stream", false
+		}
+	}
+	if _, _, err := mime.ParseMediaType(ct); err != nil {
+		return "application/octet-stream", false
+	}
+	return ct, true
 }
 
 func (s *applyState) isExcluded(exportID string) bool {
@@ -1345,6 +1370,18 @@ func (s *applyState) applyResources() error {
 // applyOneResource creates a single resource row plus its versions, wires
 // CurrentVersionID, and creates preview rows — all within the caller's tx.
 func (s *applyState) applyOneResource(tx *gorm.DB, exportID string, rp *archive.ResourcePayload, batch *batchAccumulator) error {
+	// Content types come from the archive manifest and end up in rendered
+	// pages; never store one that is not a plain media type.
+	if ct, ok := sanitizeImportedContentType(rp.ContentType); !ok {
+		s.result.Warnings = append(s.result.Warnings, fmt.Sprintf("resource %s (%s): unsafe content type replaced with %s", exportID, rp.Name, ct))
+		rp.ContentType = ct
+	}
+	for i := range rp.Versions {
+		if ct, ok := sanitizeImportedContentType(rp.Versions[i].ContentType); !ok {
+			s.result.Warnings = append(s.result.Warnings, fmt.Sprintf("resource %s (%s): unsafe content type on version %d replaced with %s", exportID, rp.Name, rp.Versions[i].VersionNumber, ct))
+			rp.Versions[i].ContentType = ct
+		}
+	}
 	// (a0) GUID collision takes precedence over hash collision
 	if rp.GUID != "" {
 		var existing models.Resource

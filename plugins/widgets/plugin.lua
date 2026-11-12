@@ -190,7 +190,7 @@ local function render_gallery(ctx)
         local hash = html_escape(r.hash or "")
         parts[#parts + 1] = string.format(
             '<a href="/v1/resource/view?id=%d&v=%s#%s"'
-            .. ' @click.prevent="$store.lightbox.openFromClick($event, %d, \'%s\')"'
+            .. ' @click.prevent="$store.lightbox.openFromClick($event, %d, $el.dataset.contentType)"'
             .. ' data-lightbox-item'
             .. ' data-resource-id="%d"'
             .. ' data-content-type="%s"'
@@ -201,7 +201,7 @@ local function render_gallery(ctx)
             .. 'class="rounded object-cover %s" />'
             .. '</a>',
             r.id, hash, ct,
-            r.id, ct,
+            r.id,
             r.id,
             ct,
             name,
