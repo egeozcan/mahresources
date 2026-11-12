@@ -18,8 +18,8 @@ import (
 )
 
 // SQLiteDriverName is the database/sql driver every production SQLite handle
-// opens with. CreateDatabaseConnection and CreateReadOnlyDatabaseConnection
-// register it; a handle opened with the plain "sqlite3" driver gets neither the
+// opens with, except the saved-SQL handle (ReadOnlySQLiteDriverName).
+// CreateDatabaseConnection registers it; a handle opened with the plain "sqlite3" driver gets neither the
 // connection PRAGMAs nor the transaction semantics below.
 const SQLiteDriverName = "sqlite3_pragmas"
 

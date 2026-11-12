@@ -14,6 +14,7 @@ import (
 
 	"github.com/flosch/pongo2/v4"
 	"github.com/gorilla/mux"
+	"github.com/jmoiron/sqlx"
 	"mahresources/application_context"
 	"mahresources/models"
 	"mahresources/models/block_types"
@@ -739,6 +740,9 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 		"assetVersion":    template_context_providers.AssetVersion,
 		"customHeader":    shareCustomHeader,
 		"customCSS":       shareCustomCSS,
+		// The share page renders the note's Description and text blocks, so
+		// they are sanitized under auth as on the primary server (#92).
+		"authEnabled": s.appContext.AuthEnabled(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -758,13 +762,14 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 // view of the same query showed base64. One rule, one place.
 //
 // reader is the sharer-bound context (ShareReaderFor), so a scoped or deny-all
-// sharer meets RunReadOnlyQuery's group-limited deny (issue #89).
+// sharer meets RunReadOnlyQuery's group-limited deny (issue #89). Rows are read
+// inside RunReadOnlyQuery's callback, i.e. within its read-only transaction.
 func fetchTableQueryData(reader *application_context.MahresourcesContext, queryId uint, params map[string]any) (map[string]interface{}, error) {
-	rows, err := reader.RunReadOnlyQuery(queryId, params)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	return api_handlers.TableBlockQueryData(rows)
+	var data map[string]interface{}
+	err := reader.RunReadOnlyQuery(queryId, params, func(rows *sqlx.Rows) error {
+		var readErr error
+		data, readErr = api_handlers.TableBlockQueryData(rows)
+		return readErr
+	})
+	return data, err
 }

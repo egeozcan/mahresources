@@ -80,6 +80,20 @@ func TestAuthorizationMatrix(t *testing.T) {
 			allowed: map[models.Role]bool{models.RoleAdmin: true, models.RoleEditor: false, models.RoleUser: false, models.RoleGuest: false},
 		},
 		{
+			name: "author saved SQL (capEditor)", method: http.MethodPost, path: "/v1/query", body: `{"name":"authz-q","text":"SELECT 1"}`,
+			allowed: map[models.Role]bool{models.RoleAdmin: true, models.RoleEditor: true, models.RoleUser: false, models.RoleGuest: false},
+		},
+		{
+			// Read-via-POST, so capRead at the router; a group-limited guest is then
+			// refused by RunReadOnlyQuery (GitHub #87).
+			name: "run saved SQL (unscoped only)", method: http.MethodPost, path: "/v1/query/run?name=authz-missing",
+			allowed: map[models.Role]bool{models.RoleAdmin: true, models.RoleEditor: true, models.RoleUser: true, models.RoleGuest: false},
+		},
+		{
+			name: "saved SQL schema (unscoped only)", method: http.MethodGet, path: "/v1/query/schema",
+			allowed: map[models.Role]bool{models.RoleAdmin: true, models.RoleEditor: true, models.RoleUser: true, models.RoleGuest: false},
+		},
+		{
 			name: "register a server-local file (capSystem)", method: http.MethodPost, path: "/v1/resource/local", body: `{"LocalPath":"authz-missing.txt"}`,
 			allowed: map[models.Role]bool{models.RoleAdmin: true, models.RoleEditor: false, models.RoleUser: false, models.RoleGuest: false},
 		},

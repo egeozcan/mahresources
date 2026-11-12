@@ -148,11 +148,15 @@ func CreateDatabaseConnection(dbType, dsn, logType string, slowThreshold time.Du
 	return db, slowLogger, nil
 }
 
+// CreateReadOnlyDatabaseConnection opens the handle saved SQL queries run on. On
+// SQLite it uses ReadOnlySQLiteDriverName, which refuses writes, ATTACH and reads
+// of sensitive tables on every connection whatever the DSN says; with an empty
+// DSN that is a private, empty temporary database. On Postgres the caller runs
+// each query in a read-only transaction (RunReadOnlyQuery).
 func CreateReadOnlyDatabaseConnection(dbType, dsn string) (*sqlx.DB, error) {
 	if dbType == strings.ToLower(constants.DbTypeSqlite) {
-		// Use the custom driver that sets busy_timeout on every connection
-		registerSQLiteDriver()
-		dbType = SQLiteDriverName
+		registerReadOnlySQLiteDriver()
+		dbType = ReadOnlySQLiteDriverName
 	}
 
 	return sqlx.Open(dbType, dsn)

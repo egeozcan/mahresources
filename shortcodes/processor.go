@@ -113,12 +113,13 @@ func partialResolverFrom(ctx context.Context) PartialResolver {
 
 // DeferredSigner signs the (entityType, entityID, body) triple of a [lazy] or
 // [details] block into an opaque token the deferred-render endpoint can later
-// verify and render. It is injected per-render via WithDeferredSigner, mirroring
+// verify and render. untrusted is the rendering context's UntrustedSource,
+// sealed with the body so the later render ignores raw="true" as this one does. It is injected per-render via WithDeferredSigner, mirroring
 // how the partial resolver is threaded, so the shortcodes package stays free of
 // crypto/DB imports. When absent, [lazy]/[details] render their body inline
 // (the graceful fallback used by the share server, live preview, and JSON API —
 // none of which can serve a deferred round-trip).
-type DeferredSigner func(entityType string, entityID uint, body string) string
+type DeferredSigner func(entityType string, entityID uint, body string, untrusted bool) string
 
 type deferredSignerKey struct{}
 

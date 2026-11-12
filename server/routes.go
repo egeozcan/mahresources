@@ -411,8 +411,8 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 	// [autorefresh] can be asked for again here, but [lazy]/[details] stay
 	// inline: no deferred signer is installed on this path.
 	if appCtx != nil {
-		reqCtx = shortcodes.WithRefreshSigner(reqCtx, func(entityType string, entityID uint, body string) string {
-			return deferredtoken.Seal(appCtx.DeferredSigningKey(), entityType, entityID, body)
+		reqCtx = shortcodes.WithRefreshSigner(reqCtx, func(entityType string, entityID uint, body string, untrusted bool) string {
+			return deferredtoken.SealWithTrust(appCtx.DeferredSigningKey(), entityType, entityID, body, untrusted)
 		})
 	}
 	mainEntity := ctx["mainEntity"]
@@ -877,7 +877,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/query").HandlerFunc(queryFactory.GetHandler())
 	router.Methods(http.MethodPost).Path("/v1/query").HandlerFunc(api_handlers.CreateQueryHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/query/delete").HandlerFunc(queryFactory.DeleteHandler())
-	router.Methods(http.MethodGet).Path("/v1/query/schema").HandlerFunc(api_handlers.GetDatabaseSchemaHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/query/schema").HandlerFunc(scopedAPI(appContext, api_handlers.GetDatabaseSchemaHandler))
 	router.Methods(http.MethodPost).Path("/v1/query/run").HandlerFunc(scopedAPI(appContext, api_handlers.GetRunQueryHandler))
 	router.Methods(http.MethodPost).Path("/v1/query/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Query](basicQueryWriter, "query"))
 	router.Methods(http.MethodPost).Path("/v1/query/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Query](basicQueryWriter, "query"))

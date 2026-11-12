@@ -301,7 +301,7 @@ func TestUsingSetsOuter(t *testing.T) {
 func TestUsingDeferredBlockSignsTarget(t *testing.T) {
 	var signedType string
 	var signedID uint
-	signer := func(entityType string, entityID uint, body string) string {
+	signer := func(entityType string, entityID uint, body string, _ bool) string {
 		signedType, signedID = entityType, entityID
 		return "tok"
 	}

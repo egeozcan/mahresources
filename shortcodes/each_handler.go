@@ -257,7 +257,7 @@ func renderItemValueObserved(ctx MetaShortcodeContext, sc Shortcode, elem any, i
 		}
 	}
 
-	if sc.Attrs["raw"] == "true" {
+	if sc.Attrs["raw"] == "true" && !ctx.UntrustedSource {
 		return text
 	}
 	return html.EscapeString(text)

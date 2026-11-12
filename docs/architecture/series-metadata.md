@@ -29,3 +29,29 @@ revalidates hash, location and storage with the locked row and repeats the backu
 if a version upload landed in that gap — filesystem identity and the row used for
 reference counting must remain one snapshot. SQLite rejects `FOR UPDATE` and
 already serializes writers, so the helper is deliberately a no-op there.
+
+## Auto-deleting an empty Series under subtree scope
+
+Every "Series is now empty" decision is a `NOT EXISTS (SELECT 1 FROM resources
+WHERE series_id = ?)` inside the Series `DELETE` (`deleteSeriesIfEmpty` for
+`EditResource` and `RemoveResourceFromSeries`; the same statement in single,
+bulk and merge deletion). Never decide it with a `Count` on `resources` through
+the caller's handle: the subtree scope callback filters that count by owner, so
+a group-limited principal reads members outside its subtree as absent and
+deletes a Series they still belong to (#91). `series` has no scope column, so
+nothing rewrites the delete. Pinned by `series_scope_test.go` and its
+`_pg_test` variant.
+
+A scoped principal may still **join** any Series by id or slug through an
+ordinary Resource write, whatever members it has outside the caller's subtree.
+That is deliberate for now: with emptiness decided unscoped, a join only adds
+the caller's own Resource and copies Series metadata that every authenticated
+role can already read, and refusing it would also break uploads naming a shared
+(global) `SeriesSlug`. Revisit if Series membership ever becomes confidential.
+
+Known open: a Postgres row whose `series_id` names a Series that no longer
+exists (left by the bug above, which had no FK to null it) makes
+`EditResource`, `DeleteResource` and `RemoveResourceFromSeries` fail with
+record-not-found from `lockSeriesRowsForWrite`. Repair such rows in SQL
+(`UPDATE resources SET series_id = NULL, own_meta = '{}' WHERE series_id IS NOT
+NULL AND NOT EXISTS (SELECT 1 FROM series WHERE series.id = resources.series_id)`).

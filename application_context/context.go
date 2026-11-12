@@ -1576,17 +1576,18 @@ func (ctx *MahresourcesContext) EnsureForeignKeysActive(db *gorm.DB) {
 	}
 }
 
-// IsReadOnlyDBEnforced returns true if the read-only database connection
-// has database-level read-only enforcement (e.g., SQLite mode=ro or separate DSN).
+// IsReadOnlyDBEnforced reports whether saved SQL is refused writes by what this
+// code installed on the read-only handle, not by what its DSN appears to say: on
+// SQLite, the handle was opened with models.ReadOnlySQLiteDriverName (whose
+// authorizer refuses every write, ATTACH and PRAGMA); on Postgres, RunReadOnlyQuery
+// runs every query in a READ ONLY transaction. A handle built any other way, such
+// as a test wrapping the main pool, is not enforced.
 func (ctx *MahresourcesContext) IsReadOnlyDBEnforced() bool {
 	if ctx.readOnlyDB == nil {
 		return false
 	}
-	dsn := ctx.Config.DbReadOnlyDsn
-	if strings.Contains(dsn, "mode=ro") {
-		return true
-	}
-	if ctx.Config.DbType == constants.DbTypePosgres && dsn != "" && dsn != ctx.Config.DbDsn {
+	switch ctx.readOnlyDB.DriverName() {
+	case models.ReadOnlySQLiteDriverName, "postgres":
 		return true
 	}
 	return false

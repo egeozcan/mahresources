@@ -27,7 +27,7 @@ func RenderPropertyShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
 		return ""
 	}
 
-	raw := sc.Attrs["raw"] == "true"
+	raw := sc.Attrs["raw"] == "true" && !ctx.UntrustedSource
 
 	field, ok := traversePropertyPath(ctx.Entity, path)
 	var text string

@@ -92,3 +92,15 @@ func TestOpenMalformedTokenFails(t *testing.T) {
 		}
 	}
 }
+
+func TestSealWithTrustRoundTripsTheFlag(t *testing.T) {
+	for _, untrusted := range []bool{false, true} {
+		_, _, body, got, ok := OpenWithTrust(testKey, SealWithTrust(testKey, "note", 1, "b", untrusted))
+		if !ok || body != "b" || got != untrusted {
+			t.Fatalf("untrusted=%v: got (%q, %v, ok=%v)", untrusted, body, got, ok)
+		}
+	}
+	if _, _, _, got, _ := OpenWithTrust(testKey, Seal(testKey, "note", 1, "b")); got {
+		t.Fatal("Seal must mint a trusted token")
+	}
+}

@@ -558,12 +558,8 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		// already be waiting to use it as a destination, and PostgreSQL cannot see
 		// that transaction's uncommitted membership yet.
 		if seriesChanged && oldSeriesID != nil && newSeriesID == 0 {
-			var count int64
-			tx.Model(&models.Resource{}).Where("series_id = ?", *oldSeriesID).Count(&count)
-			if count == 0 {
-				if err := tx.Delete(&models.Series{}, *oldSeriesID).Error; err != nil {
-					return err
-				}
+			if _, err := deleteSeriesIfEmpty(tx, *oldSeriesID); err != nil {
+				return err
 			}
 		}
 

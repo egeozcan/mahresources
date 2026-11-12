@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type EntityWriter[T contracts.BasicEntityReader] struct {
@@ -158,94 +159,75 @@ func (w *EntityWriter[T]) UpdateMetaAtPath(id uint, path string, value json.RawM
 	}
 
 	var updatedJSON json.RawMessage
+	lockedMergeWrite := func(h *gorm.DB) error {
+		var err error
+		updatedJSON, err = readMergeWrite[T](h, tableName, id, parts, newVal)
+		return err
+	}
 
 	// Serialize concurrent writes to the same row.
 	// Postgres: GORM transaction with SELECT ... FOR UPDATE.
-	// SQLite: mattn/go-sqlite3 ignores TxOptions.Isolation, so we use a raw
-	// *sql.Conn with BEGIN IMMEDIATE to acquire the write lock up front.
+	// SQLite: mattn/go-sqlite3 ignores TxOptions.Isolation, so we use a
+	// dedicated connection with BEGIN IMMEDIATE to acquire the write lock up
+	// front. Both run on w.ctx.db's handle, so its subtree scope travels with
+	// them, but without its cancellation: a request ending between BEGIN and
+	// ROLLBACK must not hand the pool a connection still holding the lock.
+	db := w.ctx.db.WithContext(context.WithoutCancel(w.ctx.db.Statement.Context))
+	var err error
 	if w.ctx.Config.DbType != constants.DbTypePosgres {
-		sqlDB, err := w.ctx.db.DB()
-		if err != nil {
-			return nil, err
-		}
-		ctx := context.Background()
-		conn, err := sqlDB.Conn(ctx)
-		if err != nil {
-			return nil, err
-		}
-		defer conn.Close()
-
-		if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-			return nil, err
-		}
-
-		updatedJSON, err = readMergeWrite(ctx, conn, tableName, id, parts, newVal)
-		if err != nil {
-			conn.ExecContext(ctx, "ROLLBACK")
-			return nil, err
-		}
-		if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-			return nil, err
-		}
+		err = db.Connection(func(conn *gorm.DB) error {
+			conn = conn.Session(&gorm.Session{})
+			if err := conn.Exec("BEGIN IMMEDIATE").Error; err != nil {
+				return err
+			}
+			if err := lockedMergeWrite(conn); err != nil {
+				conn.Exec("ROLLBACK")
+				return err
+			}
+			return conn.Exec("COMMIT").Error
+		})
 	} else {
-		sqlDB, err := w.ctx.db.DB()
-		if err != nil {
-			return nil, err
-		}
-		ctx := context.Background()
-		sqlTx, err := sqlDB.BeginTx(ctx, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		// Lock the row with FOR UPDATE.
-		updatedJSON, err = readMergeWriteTx(ctx, sqlTx, tableName, id, parts, newVal)
-		if err != nil {
-			sqlTx.Rollback()
-			return nil, err
-		}
-		if err := sqlTx.Commit(); err != nil {
-			return nil, err
-		}
+		err = db.Transaction(lockedMergeWrite)
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	return updatedJSON, nil
 }
 
-// readMergeWrite performs a locked read-modify-write on a raw *sql.Conn (SQLite).
-func readMergeWrite(ctx context.Context, conn *sql.Conn, tableName string, id uint, parts []string, newVal any) (json.RawMessage, error) {
-	var metaStr *string
-	if err := conn.QueryRowContext(ctx, "SELECT meta FROM "+tableName+" WHERE id = ?", id).Scan(&metaStr); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, gorm.ErrRecordNotFound
-		}
+// readMergeWrite performs the read-modify-write of UpdateMetaAtPath inside the
+// transaction h is bound to. The read goes through GORM, not Scan or raw SQL, so
+// the subtree scope callback applies: an entity outside a group-limited
+// principal's subtree reads as not found, before anything is written and before
+// any of its Meta reaches the caller. On Postgres the read also locks the row
+// (FOR UPDATE; SQLite ignores the clause and already holds the writer lock),
+// which pins owner_id, the column the resource and note scope tests, until the
+// write commits.
+func readMergeWrite[T contracts.BasicEntityReader](h *gorm.DB, tableName string, id uint, parts []string, newVal any) (json.RawMessage, error) {
+	var metas []sql.NullString
+	if err := h.Model(new(T)).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
+		Where("id = ?", id).Pluck("meta", &metas).Error; err != nil {
 		return nil, err
 	}
-	return mergeAndWrite(ctx, func(query string, args ...any) (sql.Result, error) {
-		return conn.ExecContext(ctx, query, args...)
+	if len(metas) == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var metaStr *string
+	if metas[0].Valid {
+		metaStr = &metas[0].String
+	}
+	return mergeAndWrite(func(query string, args ...any) (int64, error) {
+		result := h.Exec(query, args...)
+		return result.RowsAffected, result.Error
 	}, "UPDATE "+tableName+" SET meta = ?, updated_at = ? WHERE id = ?",
-		parts, newVal, metaStr, id)
-}
-
-// readMergeWriteTx performs a locked read-modify-write on a *sql.Tx (Postgres).
-func readMergeWriteTx(ctx context.Context, tx *sql.Tx, tableName string, id uint, parts []string, newVal any) (json.RawMessage, error) {
-	var metaStr *string
-	if err := tx.QueryRowContext(ctx, "SELECT meta FROM "+tableName+" WHERE id = $1 FOR UPDATE", id).Scan(&metaStr); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, gorm.ErrRecordNotFound
-		}
-		return nil, err
-	}
-	return mergeAndWrite(ctx, func(query string, args ...any) (sql.Result, error) {
-		return tx.ExecContext(ctx, query, args...)
-	}, "UPDATE "+tableName+" SET meta = $1, updated_at = $2 WHERE id = $3",
 		parts, newVal, metaStr, id)
 }
 
 // mergeAndWrite parses the current meta, applies setNestedValue, and executes
 // the caller-provided UPDATE statement with the encoded JSON, the new
 // updated_at stamp, and the entity ID — in that parameter order.
-func mergeAndWrite(_ context.Context, exec func(string, ...any) (sql.Result, error), updateSQL string, parts []string, newVal any, metaStr *string, id uint) (json.RawMessage, error) {
+func mergeAndWrite(exec func(string, ...any) (int64, error), updateSQL string, parts []string, newVal any, metaStr *string, id uint) (json.RawMessage, error) {
 	var meta map[string]any
 	if metaStr != nil && *metaStr != "" {
 		if err := json.Unmarshal([]byte(*metaStr), &meta); err != nil {
@@ -268,11 +250,10 @@ func mergeAndWrite(_ context.Context, exec func(string, ...any) (sql.Result, err
 	// was written came back with an UpdatedAt *earlier* than before. Anything
 	// ordering by that column believed the edit was the older state; the
 	// [reload] shortcode used it to discard freshly rendered content as stale.
-	result, err := exec(updateSQL, string(encoded), time.Now(), id)
+	rows, err := exec(updateSQL, string(encoded), time.Now(), id)
 	if err != nil {
 		return nil, err
 	}
-	rows, _ := result.RowsAffected()
 	if rows == 0 {
 		return nil, gorm.ErrRecordNotFound
 	}

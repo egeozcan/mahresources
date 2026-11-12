@@ -42,7 +42,7 @@ func RenderAutorefreshShortcode(reqCtx context.Context, sc Shortcode, ctx MetaSh
 	if signer == nil || !isDeferrableEntity(ctx) {
 		return inner
 	}
-	token := signer(ctx.EntityType, ctx.EntityID, sc.InnerContent)
+	token := signer(ctx.EntityType, ctx.EntityID, sc.InnerContent, ctx.UntrustedSource)
 	if token == "" {
 		return inner
 	}

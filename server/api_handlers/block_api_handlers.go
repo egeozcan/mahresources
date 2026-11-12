@@ -505,16 +505,18 @@ func GetTableBlockQueryDataHandler(ctx contracts.TableBlockQueryRunner) func(htt
 		}
 
 		// Execute query; translate record-not-found to 404 (BH-024)
-		rows, err := ctx.RunReadOnlyQuery(*content.QueryID, params)
-		if err != nil {
-			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
+		var resultSet *contracts.SQLResultSet
+		var readErr error
+		err = ctx.RunReadOnlyQuery(*content.QueryID, params, func(rows *sqlx.Rows) error {
+			resultSet, readErr = SQLToResultSet(rows)
+			return readErr
+		})
+		if readErr != nil {
+			http_utils.HandleError(readErr, writer, request, http.StatusInternalServerError)
 			return
 		}
-		defer rows.Close()
-
-		resultSet, err := SQLToResultSet(rows)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 
