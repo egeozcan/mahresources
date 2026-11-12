@@ -172,6 +172,21 @@ func (ctx *MahresourcesContext) DeleteSeries(id uint) error {
 	})
 }
 
+// deleteSeriesIfEmpty deletes the Series when no Resource belongs to it and
+// reports whether it did. Emptiness is decided by a NOT EXISTS subquery inside
+// the DELETE rather than a Count on resources: the subtree scope callback
+// appends the caller's owner filter to a Count, so a group-limited principal
+// would read every member outside its subtree as absent and delete a Series
+// those members still belong to (#91). The series table has no scope column, so
+// nothing rewrites this statement, and every member counts whoever is asking.
+// Callers hold the Series row lock (lockSeriesRowsForWrite), so no concurrent
+// join can slip in between the check and the delete.
+func deleteSeriesIfEmpty(tx *gorm.DB, seriesID uint) (bool, error) {
+	result := tx.Where("id = ? AND NOT EXISTS (SELECT 1 FROM resources WHERE series_id = ?)", seriesID, seriesID).
+		Delete(&models.Series{})
+	return result.RowsAffected > 0, result.Error
+}
+
 // RemoveResourceFromSeries detaches a resource from its series,
 // merging series meta back (resource wins). Auto-deletes empty series.
 func (ctx *MahresourcesContext) RemoveResourceFromSeries(resourceID uint) error {
@@ -230,12 +245,11 @@ func (ctx *MahresourcesContext) RemoveResourceFromSeries(resourceID uint) error 
 		}
 
 		// Auto-delete series if now empty
-		var count int64
-		tx.Model(&models.Resource{}).Where("series_id = ?", seriesID).Count(&count)
-		if count == 0 {
-			if err := tx.Delete(&models.Series{}, seriesID).Error; err != nil {
-				return err
-			}
+		deleted, err := deleteSeriesIfEmpty(tx, seriesID)
+		if err != nil {
+			return err
+		}
+		if deleted {
 			txCtx.Logger().Info(models.LogActionDelete, "series", &seriesID, "", "Auto-deleted empty series", nil)
 		}
 
