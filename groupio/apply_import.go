@@ -17,6 +17,7 @@ import (
 	"mahresources/archive"
 	"mahresources/download_queue"
 	"mahresources/models"
+	"mahresources/models/block_types"
 	"mahresources/models/types"
 	"mahresources/mrql"
 )
@@ -1946,39 +1947,9 @@ func (s *applyState) applyOneNote(tx *gorm.DB, exportID string, np *archive.Note
 	batch.createdNotes++
 	batch.createdNoteIDs = append(batch.createdNoteIDs, n.ID)
 
-	// Create NoteBlock rows
-	for _, bp := range np.Blocks {
-		block := models.NoteBlock{
-			NoteID:   n.ID,
-			Type:     bp.Type,
-			Position: bp.Position,
-		}
-
-		// Content defaults to {} if nil
-		if bp.Content != nil {
-			c, err := json.Marshal(bp.Content)
-			if err != nil {
-				return fmt.Errorf("marshal block content: %w", err)
-			}
-			block.Content = types.JSON(c)
-		} else {
-			block.Content = types.JSON([]byte("{}"))
-		}
-
-		// State defaults to {} if nil
-		if bp.State != nil {
-			st, err := json.Marshal(bp.State)
-			if err != nil {
-				return fmt.Errorf("marshal block state: %w", err)
-			}
-			block.State = types.JSON(st)
-		} else {
-			block.State = types.JSON([]byte("{}"))
-		}
-
-		if err := tx.Create(&block).Error; err != nil {
-			return fmt.Errorf("create note block (note %q, pos %s): %w", n.Name, bp.Position, err)
-		}
+	// Create NoteBlock rows (validated like every live block writer)
+	if err := s.createImportedBlocks(tx, n.ID, n.Name, np.Blocks, "create"); err != nil {
+		return err
 	}
 
 	return nil
@@ -2578,33 +2549,8 @@ func (s *applyState) replaceNote(tx *gorm.DB, existing *models.Note, np *archive
 	if err := tx.Where("note_id = ?", existing.ID).Delete(&models.NoteBlock{}).Error; err != nil {
 		return fmt.Errorf("delete existing blocks: %w", err)
 	}
-	for _, bp := range np.Blocks {
-		block := models.NoteBlock{
-			NoteID:   existing.ID,
-			Type:     bp.Type,
-			Position: bp.Position,
-		}
-		if bp.Content != nil {
-			c, err := json.Marshal(bp.Content)
-			if err != nil {
-				return fmt.Errorf("marshal block content: %w", err)
-			}
-			block.Content = types.JSON(c)
-		} else {
-			block.Content = types.JSON([]byte("{}"))
-		}
-		if bp.State != nil {
-			st, err := json.Marshal(bp.State)
-			if err != nil {
-				return fmt.Errorf("marshal block state: %w", err)
-			}
-			block.State = types.JSON(st)
-		} else {
-			block.State = types.JSON([]byte("{}"))
-		}
-		if err := tx.Create(&block).Error; err != nil {
-			return fmt.Errorf("create replaced note block (note %q, pos %s): %w", np.Name, bp.Position, err)
-		}
+	if err := s.createImportedBlocks(tx, existing.ID, np.Name, np.Blocks, "create replaced"); err != nil {
+		return err
 	}
 
 	return nil
@@ -2652,6 +2598,58 @@ func findGRTDef(defs []archive.GroupRelationTypeDef, exportID string) *archive.G
 	for i := range defs {
 		if defs[i].ExportID == exportID {
 			return &defs[i]
+		}
+	}
+	return nil
+}
+
+// createImportedBlocks writes imported NoteBlock rows, running the registered
+// BlockType validators (built-in and plugin types share one registry) so import
+// cannot store content that CreateBlock/UpdateBlockContent would reject.
+// Invalid or unknown-type blocks are skipped with a warning.
+func (s *applyState) createImportedBlocks(tx *gorm.DB, noteID uint, noteName string, blocks []archive.NoteBlockPayload, verb string) error {
+	for _, bp := range blocks {
+		bt := block_types.GetBlockType(bp.Type)
+		if bt == nil {
+			s.result.Warnings = append(s.result.Warnings,
+				fmt.Sprintf("skipped block %q at position %s of note %q: unknown block type", bp.Type, bp.Position, noteName))
+			continue
+		}
+		content := bt.DefaultContent()
+		if bp.Content != nil {
+			c, err := json.Marshal(bp.Content)
+			if err != nil {
+				return fmt.Errorf("marshal block content: %w", err)
+			}
+			content = c
+		}
+		state := bt.DefaultState()
+		if bp.State != nil {
+			st, err := json.Marshal(bp.State)
+			if err != nil {
+				return fmt.Errorf("marshal block state: %w", err)
+			}
+			state = st
+		}
+		if err := bt.ValidateContent(content); err != nil {
+			s.result.Warnings = append(s.result.Warnings,
+				fmt.Sprintf("skipped block %q at position %s of note %q: invalid content: %v", bp.Type, bp.Position, noteName, err))
+			continue
+		}
+		if err := bt.ValidateState(state); err != nil {
+			s.result.Warnings = append(s.result.Warnings,
+				fmt.Sprintf("skipped block %q at position %s of note %q: invalid state: %v", bp.Type, bp.Position, noteName, err))
+			continue
+		}
+		block := models.NoteBlock{
+			NoteID:   noteID,
+			Type:     bp.Type,
+			Position: bp.Position,
+			Content:  types.JSON(content),
+			State:    types.JSON(state),
+		}
+		if err := tx.Create(&block).Error; err != nil {
+			return fmt.Errorf("%s note block (note %q, pos %s): %w", verb, noteName, bp.Position, err)
 		}
 	}
 	return nil
