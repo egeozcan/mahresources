@@ -66,7 +66,10 @@ until the user interacts, and each query fetches one bounded result page through
 
 Options are `entity`, `selected` (raw `{ ID, Name }` values), `parameters` (a callback),
 `title` (the accessible label), `onChange` (the core's atomic change record), and an optional
-`signal` for cancelling the markup fetch. Other single-entity profile options also apply.
+`signal` for cancelling the markup fetch. The `/partials/autocompleter` endpoint reads only an
+allow-list of data parameters from the request; callback and raw-JS inputs (`parameters`,
+`excludeIds`, `onChange`, `entityId`, `addUrl`, `removeUrl`) exist only for template includes
+and are never read from the request. Other single-entity profile options also apply.
 Inputs remain JavaScript values rather than interpolated executable Alpine expressions.
 
 The returned promise resolves to a handle with `getRawValues()`, `replaceRawValues(values)`,

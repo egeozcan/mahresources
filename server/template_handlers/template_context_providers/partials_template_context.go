@@ -5,6 +5,16 @@ import (
 	"net/http"
 )
 
+// partialContextKeys is an allow-list of request parameters copied into the
+// autocompleter template context. Request data must never share a namespace
+// with internal control keys (such as _redirect), the raw-JS inputs the
+// template interpolates (parameters, excludeIds, onChange, entityId, addUrl,
+// removeUrl), or the StaticTemplateCtx helpers.
+var partialContextKeys = []string{
+	"profile", "entity", "usage", "selectedItems", "title", "id", "elName",
+	"standalone", "min", "max", "placeholder", "categoryDecoration",
+}
+
 func PartialContextProvider(_ any) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		result := StaticTemplateCtx(request)
@@ -14,18 +24,13 @@ func PartialContextProvider(_ any) func(request *http.Request) pongo2.Context {
 			return addErrContext(err, result)
 		}
 
-		for key, values := range request.Form {
-			if len(values) == 1 {
+		for _, key := range partialContextKeys {
+			values := request.Form[key]
+			switch len(values) {
+			case 0:
+			case 1:
 				result[key] = values[0]
-			} else {
-				result[key] = values
-			}
-		}
-
-		for key, values := range request.URL.Query() {
-			if len(values) == 1 {
-				result[key] = values[0]
-			} else {
+			default:
 				result[key] = values
 			}
 		}
