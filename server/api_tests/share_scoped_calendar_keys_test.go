@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -183,4 +184,82 @@ func TestScopedBlockWriteRefusalIsForbidden(t *testing.T) {
 	rr = httptest.NewRecorder()
 	api_handlers.UpdateBlockContentHandler(f.scoped())(rr, req)
 	assert.Equal(t, http.StatusForbidden, rr.Code, rr.Body.String())
+}
+
+// singleKeyVariantCalendarContents hide an outside ICS resource behind a single
+// key that matches the real one only under encoding/json case folding, with no
+// duplicate for the ambiguity check to catch. The exact-key reader sees no
+// resource source in any of them; a case-insensitive struct decode would fetch
+// the outside ICS file.
+func (f *scopedRefFixture) singleKeyVariantCalendarContents() map[string]string {
+	outside := f.icsRes.ID
+	return map[string]string{
+		"Calendars":        fmt.Sprintf(`{"Calendars":[{"id":"a","name":"a","source":{"type":"resource","resourceId":%d}}]}`, outside),
+		"source.Type":      fmt.Sprintf(`{"calendars":[{"id":"a","name":"a","source":{"Type":"resource","resourceId":%d}}]}`, outside),
+		"ResourceId":       fmt.Sprintf(`{"calendars":[{"id":"a","name":"a","source":{"type":"resource","ResourceId":%d}}]}`, outside),
+		"long-s-source":    fmt.Sprintf(`{"calendars":[{"id":"a","name":"a","`+"ſ"+`ource":{"type":"resource","resourceId":%d}}]}`, outside),
+		"long-s-Calendars": fmt.Sprintf(`{"Calendar`+"ſ"+`":[{"id":"a","name":"a","source":{"type":"resource","resourceId":%d}}]}`, outside),
+	}
+}
+
+// The calendar endpoint reads sources with the same exact keys as the write-time
+// scope check. A scoped write whose only calendar key is a case variant passes
+// the check (it sees no calendars), so the endpoint must not resolve it either.
+func TestScopedCalendarSingleKeyVariantsNeverLeak(t *testing.T) {
+	for _, sh := range scopedCalendarSharers() {
+		t.Run(sh.name, func(t *testing.T) {
+			f := newScopedRefEnv(t, true)
+			shareRouter := setupShareServer(t, f.tc)
+			note := &models.Note{Name: "team-note", OwnerId: &f.root.ID}
+			require.NoError(t, f.tc.DB.Create(note).Error)
+			token := sh.share(t, f, note.ID)
+
+			accepted := 0
+			for name, content := range f.singleKeyVariantCalendarContents() {
+				t.Run(name, func(t *testing.T) {
+					blk, err := f.scoped().CreateBlock(&query_models.NoteBlockEditor{NoteID: note.ID, Type: "calendar", Content: json.RawMessage(content)})
+					if err != nil {
+						// Refusing the write is as good as never resolving it.
+						t.Logf("write refused: %v", err)
+						return
+					}
+					accepted++
+					cal := shareGet(t, shareRouter, fmt.Sprintf("/s/%s/block/%d/calendar/events%s", token, blk.ID, scopedRefCalendarQuery))
+					assert.NotContains(t, cal.Body.String(), scopedRefMeetingTitle, "share calendar endpoint leaks the outside ICS file through %s", content)
+				})
+			}
+			// The top-level variants pass validation (it sees no calendars), so
+			// the share endpoint above was really exercised.
+			require.Positive(t, accepted, "every variant was refused; the share endpoint was never exercised")
+		})
+	}
+}
+
+// Direct coverage of GetCalendarEvents: a stored block whose only calendar key
+// is a case variant resolves no calendar source.
+func TestGetCalendarEventsReadsExactKeys(t *testing.T) {
+	f := newScopedRefEnv(t, true)
+	note := &models.Note{Name: "legacy-note", OwnerId: &f.root.ID}
+	require.NoError(t, f.tc.DB.Create(note).Error)
+	start := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC)
+
+	// Sanity: the exact-key payload does resolve the ICS file, so the
+	// assertions below are not passing for an unrelated reason.
+	exact := &models.NoteBlock{NoteID: note.ID, Type: "calendar", Position: "a", Content: []byte(f.outsideBlockContents()["calendar"]), State: []byte("{}")}
+	require.NoError(t, f.tc.DB.Create(exact).Error)
+	resp, err := f.admin().GetCalendarEvents(exact.ID, start, end)
+	require.NoError(t, err)
+	require.Len(t, resp.Events, 1)
+	require.Equal(t, scopedRefMeetingTitle, resp.Events[0].Title)
+
+	for name, content := range f.singleKeyVariantCalendarContents() {
+		t.Run(name, func(t *testing.T) {
+			b := &models.NoteBlock{NoteID: note.ID, Type: "calendar", Position: "b", Content: []byte(content), State: []byte("{}")}
+			require.NoError(t, f.tc.DB.Create(b).Error)
+			resp, err := f.admin().GetCalendarEvents(b.ID, start, end)
+			require.NoError(t, err)
+			assert.Empty(t, resp.Events, "GetCalendarEvents resolved a case-variant key in %s", content)
+		})
+	}
 }
