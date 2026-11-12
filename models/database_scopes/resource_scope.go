@@ -1,6 +1,8 @@
 package database_scopes
 
 import (
+	"strconv"
+
 	"gorm.io/gorm"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
@@ -8,9 +10,10 @@ import (
 
 // ResourceQuery builds the resource list filter. vis confines the rows its
 // subqueries read besides the listed resource itself (see Visibility): a
-// related group or note, a duplicate image hash. OwnerId with IncludeSubgroups
-// needs no guard: the subtree it names only narrows the scoped list, so a
-// hidden ancestor yields the visible part of its subtree.
+// related group or note, a duplicate image hash, the root of an OwnerId
+// subtree. That root must be visible too: a hidden ancestor's subtree holds
+// the caller's whole subtree, so it would list the caller's rows where any
+// other hidden or missing id lists none, revealing the scope root's ancestry.
 func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, originalDb *gorm.DB, vis Visibility) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
 		likeOperator := GetLikeOperator(db)
@@ -138,7 +141,9 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 
 		if query.OwnerId != 0 {
 			if query.IncludeSubgroups {
-				dbQuery = dbQuery.Where("resources.owner_id IN ("+groupSubtreeCTE+")", query.OwnerId)
+				// The root is inlined so the guard binds nothing (see Visibility).
+				rootVisible := vis.groupVisible(strconv.FormatUint(uint64(query.OwnerId), 10))
+				dbQuery = dbQuery.Where(and("resources.owner_id IN ("+groupSubtreeCTE+")", rootVisible), query.OwnerId)
 			} else {
 				dbQuery = dbQuery.Where("resources.owner_id = ?", query.OwnerId)
 			}

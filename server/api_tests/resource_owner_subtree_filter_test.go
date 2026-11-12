@@ -127,29 +127,32 @@ func TestResources_OwnerSubtree_HTTP(t *testing.T) {
 	assert.NotContains(t, names, "os-unrelated-res")
 }
 
-// Scoped-user (RBAC): a principal confined to the child subtree who asks for
-// ownerId=root&includeSubgroups=1 must only get results inside its own scope —
-// the user-facing subtree filter intersects with RBAC scoping, never widens it.
+// Scoped-user (RBAC): a principal confined to the child subtree gets only
+// results inside its own scope — the user-facing subtree filter intersects
+// with RBAC scoping, never widens it. Naming a hidden ancestor (root) answers
+// like a missing group: an empty list, not the caller's own rows, which would
+// tell it that root is an ancestor of its scope.
 func TestResources_OwnerSubtree_ScopedToSubtree(t *testing.T) {
 	tc := setupAuthEnv(t)
-	root, child, _, _ := ownerSubtreeFixtures(t, tc)
+	root, child, _, unrelated := ownerSubtreeFixtures(t, tc)
 
 	bearer := scopedUserBearer(t, tc, child.ID)
 	h := map[string]string{"Accept": "application/json", "Authorization": bearer}
 
-	url := fmt.Sprintf("/v1/resources?ownerId=%d&includeSubgroups=1", root.ID)
-	rr := doReq(tc, http.MethodGet, url, h, nil, nil)
-	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
-
-	var got []models.Resource
-	require.NoError(t, json.NewDecoder(rr.Body).Decode(&got))
-
-	names := make([]string, 0, len(got))
-	for _, r := range got {
-		names = append(names, r.Name)
+	list := func(owner uint) []string {
+		t.Helper()
+		url := fmt.Sprintf("/v1/resources?ownerId=%d&includeSubgroups=1", owner)
+		rr := doReq(tc, http.MethodGet, url, h, nil, nil)
+		require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+		var got []models.Resource
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&got))
+		return resourceNames(got)
 	}
-	assert.Contains(t, names, "os-child-res")
-	assert.Contains(t, names, "os-grandchild-res")
-	assert.NotContains(t, names, "os-root-res", "scoped user must NOT see resources above their scope group")
-	assert.NotContains(t, names, "os-unrelated-res")
+
+	names := list(child.ID)
+	assert.ElementsMatch(t, []string{"os-child-res", "os-grandchild-res"}, names)
+
+	assert.Empty(t, list(root.ID), "a hidden ancestor must answer like a missing group")
+	assert.Empty(t, list(unrelated.ID))
+	assert.Empty(t, list(999999))
 }

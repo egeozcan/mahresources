@@ -160,6 +160,12 @@ func runListFiltersDoNotReadOutsideTheSubtree(t *testing.T, tc *TestContext) {
 		{"related note", func() *query_models.ResourceSearchQuery {
 			return &query_models.ResourceSearchQuery{Notes: []uint{f.outsideNote}}
 		}, fmt.Sprintf("Notes=%d", f.outsideNote), []string{"inside-res"}},
+		// The subtree of a hidden ancestor holds the caller's whole subtree:
+		// unconfined, it lists the caller's rows for an ancestor and none for
+		// any other hidden or missing id, revealing the root's ancestry.
+		{"owner subtree of a hidden ancestor", func() *query_models.ResourceSearchQuery {
+			return &query_models.ResourceSearchQuery{OwnerId: f.ancestor, IncludeSubgroups: true}
+		}, fmt.Sprintf("OwnerId=%d&IncludeSubgroups=1", f.ancestor), []string{"inside-res"}},
 	}
 
 	principals := map[string]struct {
@@ -185,6 +191,12 @@ func runListFiltersDoNotReadOutsideTheSubtree(t *testing.T, tc *TestContext) {
 		for _, l := range leaks {
 			assert.Equal(t, l.admin, listedResourceNames(t, ctx, l.query()), "%s/%s", who, l.name)
 		}
+	}
+
+	// Naming the scope root itself still lists its subtree.
+	ownRoot := &query_models.ResourceSearchQuery{OwnerId: root, IncludeSubgroups: true}
+	for _, who := range []string{"scoped guest", "scoped user"} {
+		assert.Equal(t, []string{"inside-res"}, listedResourceNames(t, principals[who].ctx, ownRoot), "%s: owner subtree of the scope root", who)
 	}
 
 	// A visible duplicate still counts, and the list agrees with MRQL's
