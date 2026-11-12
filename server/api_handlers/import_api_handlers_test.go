@@ -94,7 +94,7 @@ func TestApplyImport_NoGUIDResourceMarksRetryUnsafe(t *testing.T) {
 		ExportID:    "r0001",
 		SourceID:    1,
 		Name:        "legacy-res",
-		Hash:        "deadbeef",
+		Hash:        "deadbeef00000000000000000000000000000000",
 		HashType:    "SHA1",
 		OwnerRef:    "g0001",
 		BlobMissing: true,

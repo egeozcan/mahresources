@@ -28,7 +28,7 @@ func TestRoundTrip_FullManifest(t *testing.T) {
 				{ExportID: "n0001", Name: "Notes", SourceID: 10, Owner: "g0001", Path: "notes/n0001.json"},
 			},
 			Resources: []ResourceEntry{
-				{ExportID: "r0001", Name: "f.png", SourceID: 100, Owner: "g0001", Hash: "h1", Path: "resources/r0001.json"},
+				{ExportID: "r0001", Name: "f.png", SourceID: 100, Owner: "g0001", Hash: testDigest, Path: "resources/r0001.json"},
 			},
 		},
 		Dangling: []DanglingRef{
@@ -42,8 +42,8 @@ func TestRoundTrip_FullManifest(t *testing.T) {
 	_ = w.WriteGroup(&GroupPayload{ExportID: "g0001", SourceID: 1, Name: "Root"})
 	_ = w.WriteGroup(&GroupPayload{ExportID: "g0002", SourceID: 2, Name: "Child", OwnerRef: "g0001"})
 	_ = w.WriteNote(&NotePayload{ExportID: "n0001", SourceID: 10, Name: "Notes", OwnerRef: "g0001"})
-	_ = w.WriteResource(&ResourcePayload{ExportID: "r0001", SourceID: 100, Name: "f.png", Hash: "h1", BlobRef: "h1", OwnerRef: "g0001"})
-	_ = w.WriteBlob("h1", strings.NewReader("PNG"), 3)
+	_ = w.WriteResource(&ResourcePayload{ExportID: "r0001", SourceID: 100, Name: "f.png", Hash: testDigest, BlobRef: testDigest, OwnerRef: "g0001"})
+	_ = w.WriteBlob(testDigest, strings.NewReader("PNG"), 3)
 	_ = w.Close()
 
 	r, _ := NewReader(&buf)
@@ -80,7 +80,7 @@ func TestRoundTrip_FullManifest(t *testing.T) {
 		t.Fatalf("g0002 owner = %q", g2.OwnerRef)
 	}
 
-	blob, ok := c.blobs["h1"]
+	blob, ok := c.blobs[testDigest]
 	if !ok {
 		t.Fatalf("blob h1 missing")
 	}
