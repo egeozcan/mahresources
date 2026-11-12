@@ -23,11 +23,12 @@ var ErrSavedSQLScoped = errors.New("saved SQL queries are not available for grou
 // to read, closing them afterwards. An error read returns is returned as is.
 //
 // The handle, not this function, is what keeps the query from writing or reading
-// credentials on SQLite (models.ReadOnlySQLiteDriverName). On Postgres the query
-// runs as one prepared statement inside a READ ONLY transaction that has already
-// taken its snapshot, so it can neither switch the transaction to read-write nor
-// end it and write after. Which tables it can read there is up to the role behind
-// DB_READONLY_DSN.
+// tables outside the allow-list on SQLite (models.ReadOnlySQLiteDriverName). On
+// Postgres the query runs as one prepared statement inside a READ ONLY
+// transaction that has already taken its snapshot, so it can neither switch the
+// transaction to read-write nor end it and write after; which tables it can read
+// there is up to the role behind DB_READONLY_DSN, so under -auth it runs only
+// while that role passes models.VerifyPostgresReadOnlyRole (savedSQLRefusal).
 func (ctx *MahresourcesContext) RunReadOnlyQuery(queryId uint, params map[string]any, read func(*sqlx.Rows) error) error {
 	// Saved queries are arbitrary SQL executed on the unscoped read-only DB, which
 	// the group-subtree scope callbacks cannot constrain. There is no safe way to
@@ -37,6 +38,9 @@ func (ctx *MahresourcesContext) RunReadOnlyQuery(queryId uint, params map[string
 	// force-scoped at the executor).
 	if ctx.isScopedPrincipal() {
 		return ErrSavedSQLScoped
+	}
+	if err := ctx.savedSQLRefusal(); err != nil {
+		return err
 	}
 
 	var query models.Query
@@ -94,6 +98,9 @@ func runPostgresReadOnly(db *sqlx.DB, text string, params map[string]any, read f
 func (ctx *MahresourcesContext) RunReadOnlyQueryByName(queryName string, params map[string]any, read func(*sqlx.Rows) error) error {
 	if ctx.isScopedPrincipal() {
 		return ErrSavedSQLScoped
+	}
+	if err := ctx.savedSQLRefusal(); err != nil {
+		return err
 	}
 	var query models.Query
 
@@ -185,12 +192,16 @@ func (ctx *MahresourcesContext) UpdateQuery(queryQuery *query_models.QueryEditor
 	return &query, nil
 }
 
-// GetDatabaseSchema lists tables and columns for the query editor. It leaves
-// out the tables saved SQL may not read (models.IsSavedSQLDeniedTable) and is
-// refused to group-limited principals, who cannot run saved SQL.
+// GetDatabaseSchema lists tables and columns for the query editor. It lists
+// only the tables saved SQL may read (models.IsSavedSQLAllowedTable), and is
+// refused to group-limited principals, who cannot run saved SQL, and whenever
+// running saved SQL is refused (savedSQLRefusal).
 func (ctx *MahresourcesContext) GetDatabaseSchema() (map[string][]string, error) {
 	if ctx.isScopedPrincipal() {
 		return nil, ErrSavedSQLScoped
+	}
+	if err := ctx.savedSQLRefusal(); err != nil {
+		return nil, err
 	}
 	schema := make(map[string][]string)
 
@@ -213,7 +224,7 @@ func (ctx *MahresourcesContext) GetDatabaseSchema() (map[string][]string, error)
 			if err := rows.Scan(&table, &column); err != nil {
 				return nil, fmt.Errorf("scanning postgres schema row: %w", err)
 			}
-			if !models.IsSavedSQLDeniedTable(table) {
+			if models.IsSavedSQLAllowedTable(table) {
 				schema[table] = append(schema[table], column)
 			}
 		}
@@ -238,7 +249,7 @@ func (ctx *MahresourcesContext) GetDatabaseSchema() (map[string][]string, error)
 		if err := rows.Scan(&table, &column); err != nil {
 			return nil, fmt.Errorf("scanning sqlite schema row: %w", err)
 		}
-		if !models.IsSavedSQLDeniedTable(table) {
+		if models.IsSavedSQLAllowedTable(table) {
 			schema[table] = append(schema[table], column)
 		}
 	}

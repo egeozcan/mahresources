@@ -8,6 +8,7 @@ Boot settings can be configured via environment variables (in `.env`) or command
 | `-db-type` | `DB_TYPE` | Database type: SQLITE or POSTGRES |
 | `-db-dsn` | `DB_DSN` | Database connection string |
 | `-db-readonly-dsn` | `DB_READONLY_DSN` | Read-only database connection (optional) |
+| `-print-readonly-role-sql` | | Print the PostgreSQL SQL that creates a read-only role with this name for saved SQL, then exit |
 | `-db-log-file` | `DB_LOG_FILE` | DB log: STDOUT, empty, or file path |
 | `-db-slow-query-threshold` | `DB_SLOW_QUERY_THRESHOLD` | Log SQL queries slower than this duration (e.g. `200ms`) to the DB log and the application log (warning entries with entity type `sql` at `/logs`); `0` disables (default). Works standalone (slow queries to STDOUT) or combined with `-db-log-file` |
 | `-bind-address` | `BIND_ADDRESS` | Server address:port |

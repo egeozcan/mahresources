@@ -90,6 +90,15 @@ func statusCodeForError(err error, fallback int) int {
 	if errors.Is(err, application_context.ErrFfmpegUnavailable) {
 		return http.StatusServiceUnavailable
 	}
+	// Saved SQL refused because the PostgreSQL role behind DB_READONLY_DSN can
+	// do more than read the content tables. 503 for the same reason as ffmpeg:
+	// the request is well formed and the caller is allowed to make it; what is
+	// missing is the deployment's configuration, and the refusal lifts by
+	// itself, within a minute, once an administrator fixes the role. Neither
+	// 403 (it is not about who asks) nor 409 (no resource's state conflicts).
+	if errors.Is(err, application_context.ErrSavedSQLUnavailable) {
+		return http.StatusServiceUnavailable
+	}
 
 	// Resource Reduction refusals, typed for the same reason the ones above are:
 	// "no such Resource Reduction" contains no "not found", and the conflict's

@@ -25,46 +25,14 @@ import (
 //     data_version), and denies everything else (writes, DDL, ATTACH/DETACH,
 //     every other PRAGMA, transactions), so query_only cannot be switched off
 //     again;
-//   - may not read the tables IsSavedSQLDeniedTable names.
+//   - may read only the tables IsSavedSQLAllowedTable allows, and the
+//     json_each/json_tree table-valued functions.
 const ReadOnlySQLiteDriverName = "sqlite3_saved_sql"
 
 var registerReadOnlyOnce sync.Once
 
 // sqliteRecursive is SQLITE_RECURSIVE, which go-sqlite3 does not export.
 const sqliteRecursive = 33
-
-// savedSQLDeniedTables holds credentials, secrets, the audit log and other
-// accounts' private data: what the role model keeps from editors and plain users.
-// Saved SQL runs as any unscoped principal and is authored by editors, so it must
-// not read them.
-var savedSQLDeniedTables = map[string]bool{
-	"users":                true, // password hashes, roles
-	"sessions":             true, // session token hashes, CSRF tokens
-	"api_tokens":           true, // API token hashes
-	"plugin_states":        true, // plugin settings, including secrets in plaintext
-	"plugin_kvs":           true, // plugin key-value store
-	"runtime_settings":     true, // admin-only system settings
-	"log_entries":          true, // admin-only audit log
-	"user_settings":        true, // another account's preferences
-	"saved_searches":       true, // another account's saved searches
-	"job_replay_envelopes": true, // sealed job inputs
-}
-
-// IsSavedSQLDeniedTable reports whether saved SQL may not read table, and whether
-// the schema listing offered to query authors leaves it out. A full-text index
-// over a denied table (<table>_fts, as fts/provider.go names them) and its FTS5
-// shadow tables (<table>_fts_data, _content, ...) hold the same data and are
-// denied with it, should one ever be created.
-func IsSavedSQLDeniedTable(table string) bool {
-	table = strings.ToLower(table)
-	if savedSQLDeniedTables[table] {
-		return true
-	}
-	if i := strings.Index(table, "_fts"); i > 0 {
-		return savedSQLDeniedTables[table[:i]]
-	}
-	return false
-}
 
 func registerReadOnlySQLiteDriver() {
 	registerReadOnlyOnce.Do(func() {
@@ -86,6 +54,10 @@ func registerReadOnlySQLiteDriver() {
 	})
 }
 
+// savedSQLTableFunctions are the eponymous virtual tables saved SQL may read
+// from: they read their arguments, not the database.
+var savedSQLTableFunctions = map[string]bool{"json_each": true, "json_tree": true}
+
 // savedSQLAuthorizer is an allow-list; see ReadOnlySQLiteDriverName.
 func savedSQLAuthorizer(action int, arg1, arg2, _ string) int {
 	switch action {
@@ -100,10 +72,20 @@ func savedSQLAuthorizer(action int, arg1, arg2, _ string) int {
 	case sqlite3.SQLITE_SELECT, sqlite3.SQLITE_FUNCTION, sqliteRecursive:
 		return sqlite3.SQLITE_OK
 	case sqlite3.SQLITE_READ:
-		if IsSavedSQLDeniedTable(arg1) {
-			return sqlite3.SQLITE_DENY
+		if IsSavedSQLAllowedTable(arg1) || savedSQLTableFunctions[strings.ToLower(arg1)] {
+			return sqlite3.SQLITE_OK
 		}
-		return sqlite3.SQLITE_OK
+		// An empty column is SQLite reporting a FROM item none of whose columns
+		// the statement reads (SELECT count(*) FROM x). Its name is whatever the
+		// FROM clause says, which for a CTE is the CTE's own name, so a
+		// recursive CTE counted this way arrives here as an unknown table. Such a
+		// reference reads no data, so only names the table list denies and the
+		// SQLite catalogue are refused; a table the server does not create at
+		// all would give away its row count and nothing else.
+		if arg2 == "" && !IsSavedSQLClassifiedTable(arg1) && !strings.HasPrefix(strings.ToLower(arg1), "sqlite_") {
+			return sqlite3.SQLITE_OK
+		}
+		return sqlite3.SQLITE_DENY
 	default:
 		return sqlite3.SQLITE_DENY
 	}

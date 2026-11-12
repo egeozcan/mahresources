@@ -74,7 +74,8 @@ func TestEphemeralDatabaseLivesInAPrivateDirectoryAndIsRemovedOnRelease(t *testi
 	dir := filepath.Join(isolateTempDir(t), ephemeralDirectoryName())
 
 	ctx, exec := openEphemeralContext(t)
-	if err := exec("CREATE TABLE ephemeral_probe (id INTEGER PRIMARY KEY)"); err != nil {
+	// A table saved SQL may read, so the read-only handle can see it.
+	if err := exec("CREATE TABLE tags (id INTEGER PRIMARY KEY)"); err != nil {
 		t.Fatalf("writing to the ephemeral database: %v", err)
 	}
 
@@ -150,7 +151,8 @@ func TestEphemeralDatabaseOpensTheFileInATempDirWithURISyntaxInItsPath(t *testin
 	isolateTempDirAt(t, odd)
 
 	ctx, exec := openEphemeralContext(t)
-	if err := exec("CREATE TABLE ephemeral_probe (id INTEGER PRIMARY KEY)"); err != nil {
+	// A table saved SQL may read, so the read-only handle can see it.
+	if err := exec("CREATE TABLE tags (id INTEGER PRIMARY KEY)"); err != nil {
 		t.Fatalf("writing to the ephemeral database: %v", err)
 	}
 	if !strings.HasPrefix(ctx.ephemeralDB.path, odd+string(filepath.Separator)) {
@@ -160,7 +162,7 @@ func TestEphemeralDatabaseOpensTheFileInATempDirWithURISyntaxInItsPath(t *testin
 		t.Fatalf("%s is not the database that was written", ctx.ephemeralDB.path)
 	}
 	var tables int
-	if err := ctx.readOnlyDB.Get(&tables, "SELECT count(*) FROM sqlite_master WHERE name = 'ephemeral_probe'"); err != nil || tables != 1 {
+	if err := ctx.readOnlyDB.Get(&tables, "SELECT count(*) + 1 FROM tags"); err != nil || tables != 1 {
 		t.Fatalf("the read-only connection opened another database: tables=%d err=%v", tables, err)
 	}
 	entries, err := os.ReadDir(base)

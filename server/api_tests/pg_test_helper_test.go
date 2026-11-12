@@ -46,6 +46,13 @@ func TestMain(m *testing.M) {
 
 // SetupPostgresTestEnv creates a fresh Postgres database and application context.
 func SetupPostgresTestEnv(t *testing.T) *TestContext {
+	return setupPostgresTestEnvWith(t, nil, nil)
+}
+
+// setupPostgresTestEnvWith is SetupPostgresTestEnv with an optional config
+// change and an optional readOnlyDSN, which is handed the migrated database's
+// DSN (its owner, a superuser) and returns the DSN the read-only handle opens.
+func setupPostgresTestEnvWith(t *testing.T, mutate func(*application_context.MahresourcesConfig), readOnlyDSN func(testDSN string) string) *TestContext {
 	db, testDSN := pgContainer.CreateTestDBWithDSN(t)
 
 	err := db.AutoMigrate(
@@ -106,6 +113,9 @@ func SetupPostgresTestEnv(t *testing.T) *TestContext {
 		DbType:      constants.DbTypePosgres,
 		BindAddress: ":0",
 	}
+	if mutate != nil {
+		mutate(config)
+	}
 
 	fs := afero.NewMemMapFs()
 	altFsPaths := make(map[string]string)
@@ -117,7 +127,11 @@ func SetupPostgresTestEnv(t *testing.T) *TestContext {
 	// column: with the pgx handle a numeric, uuid or array column arrives as a
 	// string and with lib/pq it arrives as []byte. Reusing the GORM handle made
 	// every value-encoding defect in POST /v1/query/run invisible to this suite.
-	readOnlyDB, err := models.CreateReadOnlyDatabaseConnection("postgres", testDSN)
+	roDSN := testDSN
+	if readOnlyDSN != nil {
+		roDSN = readOnlyDSN(testDSN)
+	}
+	readOnlyDB, err := models.CreateReadOnlyDatabaseConnection("postgres", roDSN)
 	if err != nil {
 		t.Fatalf("Failed to open the read-only connection: %v", err)
 	}

@@ -17,10 +17,10 @@ func TestRunReadOnlyQueryCannotWriteThroughAnAttachedDatabase(t *testing.T) {
 	if err := ctx.db.AutoMigrate(&models.Query{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := exec("CREATE TABLE probe (id INTEGER PRIMARY KEY, v TEXT)"); err != nil {
+	if err := exec("CREATE TABLE tags (id INTEGER PRIMARY KEY, v TEXT)"); err != nil {
 		t.Fatal(err)
 	}
-	if err := exec("INSERT INTO probe (id, v) VALUES (1, 'original')"); err != nil {
+	if err := exec("INSERT INTO tags (id, v) VALUES (1, 'original')"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -37,7 +37,7 @@ func TestRunReadOnlyQueryCannotWriteThroughAnAttachedDatabase(t *testing.T) {
 		return q.ID
 	}
 
-	positive := save("positive", "SELECT v FROM probe")
+	positive := save("positive", "SELECT v FROM tags")
 	if err := ctx.RunReadOnlyQuery(positive, map[string]any{}, drain); err != nil {
 		t.Fatalf("positive control: a plain SELECT failed: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestRunReadOnlyQueryCannotWriteThroughAnAttachedDatabase(t *testing.T) {
 	if err := ctx.RunReadOnlyQuery(attach, map[string]any{}, drain); err == nil {
 		t.Error("ATTACH of the primary database ran")
 	}
-	write := save("write", "UPDATE rw.probe SET v = 'pwned' WHERE id = 1")
+	write := save("write", "UPDATE rw.tags SET v = 'pwned' WHERE id = 1")
 	_ = ctx.RunReadOnlyQuery(write, map[string]any{}, drain)
 	query := save("query_only", "PRAGMA query_only = 0")
 	if err := ctx.RunReadOnlyQuery(query, map[string]any{}, drain); err == nil {
@@ -54,11 +54,11 @@ func TestRunReadOnlyQueryCannotWriteThroughAnAttachedDatabase(t *testing.T) {
 	}
 
 	var v string
-	if err := ctx.db.Raw("SELECT v FROM probe WHERE id = 1").Scan(&v).Error; err != nil {
+	if err := ctx.db.Raw("SELECT v FROM tags WHERE id = 1").Scan(&v).Error; err != nil {
 		t.Fatal(err)
 	}
 	if v != "original" {
-		t.Fatalf("probe.v = %q through the main handle, want it unchanged", v)
+		t.Fatalf("tags.v = %q through the main handle, want it unchanged", v)
 	}
 	if !ctx.IsReadOnlyDBEnforced() {
 		t.Error("the ephemeral read-only handle reported not enforced")

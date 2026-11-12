@@ -102,16 +102,16 @@ DB_DSN="host=db.example.com port=5432 user=app password=secret dbname=mahresourc
 
 ### Read-Only Connection for Saved Queries
 
-Point saved SQL Queries at a replica or a read-only role so their arbitrary SQL never runs on the primary:
+Point saved SQL Queries at a read-only role, on the primary or a replica, so their arbitrary SQL never runs as the application's own role:
 
 ```bash
 ./mahresources \
   -db-type=POSTGRES \
   -db-dsn="host=primary.db user=app password=secret dbname=mahresources" \
-  -db-readonly-dsn="host=replica.db user=app password=secret dbname=mahresources"
+  -db-readonly-dsn="host=replica.db user=mahres_readonly password=other dbname=mahresources"
 ```
 
-On PostgreSQL the server runs each saved query in a read-only transaction but does not restrict which tables it reads, so give this role no `SELECT` on the credential, secret and audit tables listed in [Saved Queries](../features/saved-queries.md). On SQLite the server enforces read-only access and that table deny list itself, whatever this DSN contains.
+On PostgreSQL the server runs each saved query in a read-only transaction and checks that this role can read the content tables and nothing else. `./mahresources -print-readonly-role-sql=mahres_readonly` prints the SQL that creates such a role; run it on the primary (a replica inherits its roles). With `-auth` on, saved queries are disabled until the role passes the check; see [Saved Queries](../features/saved-queries.md#the-postgresql-read-only-role). On SQLite the server enforces read-only access and the table list itself, whatever this DSN contains.
 
 This connection is used by exactly one code path: executing a saved SQL Query at `/query`. Ordinary reads (lists, single-item fetches, search, MRQL) all go through the `-db-dsn` connection, so this setting offloads no general read traffic.
 
@@ -175,6 +175,7 @@ Skips the resource version migration that runs at startup. Safe to use after the
 | `-db-type` | `DB_TYPE` | Database type: `SQLITE` or `POSTGRES` |
 | `-db-dsn` | `DB_DSN` | Database connection string |
 | `-db-readonly-dsn` | `DB_READONLY_DSN` | Connection that saved SQL Queries execute on |
+| `-print-readonly-role-sql` | | Print the PostgreSQL SQL that creates a read-only role with this name for `DB_READONLY_DSN`, then exit |
 | `-db-log-file` | `DB_LOG_FILE` | Query log destination |
 | `-db-slow-query-threshold` | `DB_SLOW_QUERY_THRESHOLD` | Log queries slower than this duration (e.g. `200ms`) to the DB log and the application log; `0` disables |
 | `-memory-db` | `MEMORY_DB=1` | Use in-memory SQLite |

@@ -109,7 +109,7 @@ func TestSavedSQLCannotEscalateEditorToAdmin(t *testing.T) {
 	}
 }
 
-// GitHub #87 item 4: the schema listing leaves out what saved SQL may not read,
+// GitHub #87 item 4: the schema listing lists only what saved SQL may read,
 // and a group-limited principal, who cannot run saved SQL, does not get it.
 func TestSavedSQLSchemaOmitsSensitiveTablesAndRefusesScoped(t *testing.T) {
 	tc := setupAuthEnv(t)
@@ -135,17 +135,17 @@ func TestSavedSQLSchemaOmitsSensitiveTablesAndRefusesScoped(t *testing.T) {
 		t.Fatalf("positive control: resources missing from schema %v", schema)
 	}
 	for table := range schema {
-		if models.IsSavedSQLDeniedTable(table) {
+		if !models.IsSavedSQLAllowedTable(table) {
 			t.Errorf("schema lists %s", table)
 		}
 	}
 	for _, table := range []string{"users", "sessions", "api_tokens", "plugin_states", "plugin_kvs",
 		"runtime_settings", "log_entries", "user_settings", "saved_searches", "job_replay_envelopes"} {
-		// The deny list names real tables, not a guess at GORM's naming.
+		// These are real tables, not a guess at GORM's naming.
 		var n int64
 		tc.DB.Raw("SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&n)
 		if n != 1 {
-			t.Errorf("no table named %s; the deny list is out of date", table)
+			t.Errorf("no table named %s; the table list is out of date", table)
 		}
 		if _, ok := schema[table]; ok {
 			t.Errorf("schema lists %s", table)
@@ -153,5 +153,40 @@ func TestSavedSQLSchemaOmitsSensitiveTablesAndRefusesScoped(t *testing.T) {
 	}
 	if strings.Contains(rr.Body.String(), "password_hash") {
 		t.Error("schema mentions password_hash")
+	}
+}
+
+// GitHub #87: saved SQL reads content tables only. A table that holds no
+// credential but is not content either (Jobs, downloads, template history,
+// owner-restricted Reductions, the SQLite catalogue) is refused as well, because
+// the handle allows reads of listed tables rather than denying listed ones.
+func TestSavedSQLReadsOnlyAllowListedTables(t *testing.T) {
+	tc := setupAuthEnv(t)
+	editor := roleBearer(t, tc, models.RoleEditor)
+
+	positive := editorSavesQuery(t, tc, editor, "content",
+		"SELECT t.name, count(rt.resource_id) AS n FROM tags t LEFT JOIN resource_tags rt ON rt.tag_id = t.id GROUP BY t.name")
+	if code, body := runSavedQuery(tc, editor, positive); code != http.StatusOK {
+		t.Fatalf("positive control: a content query = %d, want 200: %s", code, body)
+	}
+
+	for i, text := range []string{
+		"SELECT * FROM jobs",
+		"SELECT * FROM job_events",
+		"SELECT * FROM download_history_entries",
+		"SELECT * FROM scheduled_downloads",
+		"SELECT * FROM template_revisions",
+		"SELECT * FROM resource_reductions",
+		"SELECT * FROM plugin_command_runs",
+		"SELECT sql FROM sqlite_master",
+		"SELECT r.name FROM resources r JOIN jobs j ON j.id = r.id",
+	} {
+		name := editorSavesQuery(t, tc, editor, fmt.Sprintf("unlisted-%d", i), text)
+		code, body := runSavedQuery(tc, editor, name)
+		if code == http.StatusOK {
+			t.Errorf("%q ran: 200 %s", text, body)
+		} else if !strings.Contains(body, "not authorized") && !strings.Contains(body, "prohibited") {
+			t.Errorf("%q failed for another reason than the authorizer: %d %s", text, code, body)
+		}
 	}
 }

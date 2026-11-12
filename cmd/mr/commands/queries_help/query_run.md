@@ -7,18 +7,23 @@ relatedCmds: query run-by-name, query schema, query get
 # Long
 
 Execute a saved query by ID and return the result set. The query
-runs read-only whatever `-db-readonly-dsn` names. On SQLite the
+runs read-only whatever `-db-readonly-dsn` names, and reads only
+content tables (resources, notes, groups, tags, categories, note
+types, series, queries, their versions, previews, relations, join
+tables and full-text indexes); `query schema` lists them. Accounts,
+sessions, API tokens, settings, the audit log, plugin state, Jobs
+and every table not on that list are off limits. On SQLite the
 connection refuses every write, DDL statement, `ATTACH`, `PRAGMA`
-(bar the read of `data_version` full-text search makes) and
-transaction statement, and every read of the credential, secret
-and audit tables (`users`, `sessions`, `api_tokens`,
-`plugin_states`, `plugin_kvs`, `runtime_settings`, `log_entries`,
-`user_settings`, `saved_searches`, `job_replay_envelopes`). On
+(bar the read of `data_version` full-text search makes),
+transaction statement, view and read of a table off the list. On
 PostgreSQL the query runs as a single statement in a `READ ONLY`
-transaction; which tables it can read is up to the role
-`-db-readonly-dsn` connects as. With no `-db-readonly-dsn` on
-SQLite the connection opens an empty private database, so every
-query answers `no such table`. Column
+transaction as the role `-db-readonly-dsn` connects as, and the
+server checks that role's grants; with `-auth` on it answers `503`,
+naming the failed check, until the role can read nothing else
+(`mahresources -print-readonly-role-sql=<role>` prints the SQL that
+creates one). With no `-db-readonly-dsn` on SQLite the connection
+opens an empty private database, so every query answers
+`no such table`. Column
 names come verbatim from the SELECT list, so use explicit column
 aliases (`select count(*) as n ...`) to produce predictable ones.
 

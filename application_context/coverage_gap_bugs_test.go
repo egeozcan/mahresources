@@ -527,16 +527,19 @@ func TestIsReadOnlyDBEnforced_HardenedHandleWithoutFilePrefix(t *testing.T) {
 	}
 }
 
-// On Postgres RunReadOnlyQuery always runs in a READ ONLY transaction, so the
-// flag no longer depends on whether the two DSNs differ.
-func TestIsReadOnlyDBEnforced_PostgresHandle(t *testing.T) {
+// GitHub #87: on Postgres the flag reflects whether the role behind the handle
+// passed the privilege check, not merely the driver; a handle the check cannot
+// even query is not enforced, and says why.
+func TestIsReadOnlyDBEnforced_PostgresHandleNeedsAVerifiedRole(t *testing.T) {
 	ctx := createCoverageTestContext(t, "readonly_pg")
 	ctx.Config.DbType = constants.DbTypePosgres
-	ctx.Config.DbDsn = "postgres://host/db1"
-	ctx.Config.DbReadOnlyDsn = "postgres://host/db1"
-	// Only the driver name matters to the flag; nothing is queried.
+	// A SQLite pool under the postgres driver name: the check's catalogue
+	// queries fail on it, as they would on an unreachable server.
 	ctx.readOnlyDB = sqlx.NewDb(ctx.readOnlyDB.DB, "postgres")
-	if !ctx.IsReadOnlyDBEnforced() {
-		t.Error("a Postgres handle reported not enforced")
+	if ctx.IsReadOnlyDBEnforced() {
+		t.Error("a Postgres handle whose role was never verified reported enforced")
+	}
+	if ctx.ReadOnlyDBProblem() == "" {
+		t.Error("ReadOnlyDBProblem is empty for an unverified Postgres role")
 	}
 }

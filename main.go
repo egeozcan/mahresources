@@ -297,9 +297,19 @@ func main() {
 	createAdminPassword := flag.String("create-admin-password", os.Getenv("CREATE_ADMIN_PASSWORD"), "Bootstrap: password for -create-admin-user (env: CREATE_ADMIN_PASSWORD)")
 	loginMaxAttempts := flag.Int("login-max-attempts", parseIntEnv("LOGIN_MAX_ATTEMPTS", 0), "Max failed login attempts per client IP within -login-attempt-window before throttling with HTTP 429; 0 disables (env: LOGIN_MAX_ATTEMPTS)")
 	loginAttemptWindow := flag.Duration("login-attempt-window", parseDurationEnv("LOGIN_ATTEMPT_WINDOW", 15*time.Minute), "Sliding window for -login-max-attempts and the lockout duration once it is hit (env: LOGIN_ATTEMPT_WINDOW)")
+	printReadOnlyRoleSQL := flag.String("print-readonly-role-sql", "", "Print the PostgreSQL SQL that creates a read-only role with this name for DB_READONLY_DSN, restricted to the tables saved SQL queries may read, and exit")
 	trustProxyHeaders := flag.Bool("trust-proxy-headers", os.Getenv("TRUST_PROXY_HEADERS") == "1", "Trust X-Forwarded-For for the client IP in login rate-limiting; enable only behind a trusted reverse proxy (env: TRUST_PROXY_HEADERS=1)")
 
 	flag.Parse()
+	if *printReadOnlyRoleSQL != "" {
+		script, err := models.PostgresReadOnlyRoleSQL(*printReadOnlyRoleSQL)
+		if err != nil {
+			fail("%v", err)
+			return
+		}
+		fmt.Print(script)
+		return
+	}
 	setFlags := make(map[string]bool)
 	flag.CommandLine.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
 	resolvedPluginCommandPath, pluginCommandPathExplicit := pluginCommandPathValue(
@@ -560,59 +570,7 @@ func main() {
 		db.Exec("PRAGMA foreign_keys = OFF")
 	}
 
-	// Migration order matters for Postgres: tables with FK constraints must be
-	// created after the tables they reference. Independent tables first, then
-	// tables with foreign keys in dependency order.
-	if err := db.AutoMigrate(
-		// Independent tables (no FK dependencies)
-		&models.Query{},
-		&models.Series{},
-		&models.Tag{},
-		&models.Category{},
-		&models.ResourceCategory{},
-		&models.NoteType{},
-		&models.LogEntry{},
-		&models.PluginState{},
-		&models.PluginKV{},
-		&models.RuntimeSetting{},
-		&models.SavedMRQLQuery{},
-		&models.TemplatePartial{},
-		&models.TemplateRevision{}, // associationless: carrier_type + carrier_id, deleted with the carrier
-		&models.DownloadHistoryEntry{},
-		&models.ScheduledDownload{}, // no FK association; created_by_user_id is a scalar
-		// No FK association either; plugin_name/schedule_id is its own key and
-		// created_by_user_id is a scalar.
-		&models.PluginSchedule{}, // no FK association; created_by_user_id is a scalar
-		// Durable command rows are associationless too. The actor columns are
-		// scalar provenance; run/output and import/map lifetimes are coordinated
-		// transactionally by the command store rather than by foreign keys.
-		&models.PluginCommandRun{},
-		&models.PluginCommandRunOutput{},
-		&models.PluginCommandImport{},
-		&models.PluginCommandImportMap{},
-		// Likewise associationless: the Extent and the plan are JSON documents of
-		// ids, deliberately not foreign keys — a Cluster naming a Resource that has
-		// since been deleted is a staleness the apply revalidation must detect and
-		// report, not a row the database quietly rewrites.
-		&models.ResourceReduction{},
-		// Tables with FK to independent tables
-		&models.Group{},             // FK to Category (self-referencing Owner is handled by GORM)
-		&models.GroupRelationType{}, // FK to Category
-		&models.Resource{},          // FK to ResourceCategory, Series, Group
-		&models.User{},              // FK to Group (ScopeGroupId)
-		&models.SavedSearch{},       // personal saved list searches
-		&models.UserSetting{},       // per-user KV prefs; no FK association (like PluginKV)
-		// Tables with FK to Resource/Group/Note
-		&models.Note{},               // FK to Group, NoteType; many2many with Resource
-		&models.ResourceVersion{},    // FK to Resource
-		&models.NoteBlock{},          // FK to Note
-		&models.Preview{},            // FK to Resource
-		&models.GroupRelation{},      // FK to Group, GroupRelationType
-		&models.ImageHash{},          // FK to Resource
-		&models.ResourceSimilarity{}, // FK to Resource
-		&models.Session{},            // FK to User
-		&models.ApiToken{},           // FK to User
-	); err != nil {
+	if err := migrateModels(db); err != nil {
 		fail("failed to migrate: %v", err)
 		return
 	}
@@ -889,6 +847,9 @@ func main() {
 	} else {
 		log.Println("FTS setup skipped (-skip-fts flag or SKIP_FTS=1)")
 	}
+	// After migration, so the check sees every table the server has. It logs its
+	// verdict; under -auth a failing role keeps saved SQL refused until fixed.
+	_ = context.CheckSavedSQLRole()
 	// Started only now: InitFTS issues plain CREATE INDEX IF NOT EXISTS on the
 	// resources table, which takes a lock that conflicts with a concurrent build
 	// and would queue every upload behind it, or deadlock with it.
@@ -1098,6 +1059,66 @@ func activatePluginsWithJobControlPlane(context *application_context.Mahresource
 		}
 		context.ActivateEnabledPlugins()
 	}
+}
+
+// migrateModels creates or updates the tables of every model outside the Job
+// core. It is the list a server start migrates, kept in one place so the test
+// that classifies every table for saved SQL migrates exactly what a server does.
+//
+// Migration order matters for Postgres: tables with FK constraints must be
+// created after the tables they reference. Independent tables first, then
+// tables with foreign keys in dependency order.
+func migrateModels(db *gorm.DB) error {
+	return db.AutoMigrate(
+		// Independent tables (no FK dependencies)
+		&models.Query{},
+		&models.Series{},
+		&models.Tag{},
+		&models.Category{},
+		&models.ResourceCategory{},
+		&models.NoteType{},
+		&models.LogEntry{},
+		&models.PluginState{},
+		&models.PluginKV{},
+		&models.RuntimeSetting{},
+		&models.SavedMRQLQuery{},
+		&models.TemplatePartial{},
+		&models.TemplateRevision{}, // associationless: carrier_type + carrier_id, deleted with the carrier
+		&models.DownloadHistoryEntry{},
+		&models.ScheduledDownload{}, // no FK association; created_by_user_id is a scalar
+		// No FK association either; plugin_name/schedule_id is its own key and
+		// created_by_user_id is a scalar.
+		&models.PluginSchedule{}, // no FK association; created_by_user_id is a scalar
+		// Durable command rows are associationless too. The actor columns are
+		// scalar provenance; run/output and import/map lifetimes are coordinated
+		// transactionally by the command store rather than by foreign keys.
+		&models.PluginCommandRun{},
+		&models.PluginCommandRunOutput{},
+		&models.PluginCommandImport{},
+		&models.PluginCommandImportMap{},
+		// Likewise associationless: the Extent and the plan are JSON documents of
+		// ids, deliberately not foreign keys — a Cluster naming a Resource that has
+		// since been deleted is a staleness the apply revalidation must detect and
+		// report, not a row the database quietly rewrites.
+		&models.ResourceReduction{},
+		// Tables with FK to independent tables
+		&models.Group{},             // FK to Category (self-referencing Owner is handled by GORM)
+		&models.GroupRelationType{}, // FK to Category
+		&models.Resource{},          // FK to ResourceCategory, Series, Group
+		&models.User{},              // FK to Group (ScopeGroupId)
+		&models.SavedSearch{},       // personal saved list searches
+		&models.UserSetting{},       // per-user KV prefs; no FK association (like PluginKV)
+		// Tables with FK to Resource/Group/Note
+		&models.Note{},               // FK to Group, NoteType; many2many with Resource
+		&models.ResourceVersion{},    // FK to Resource
+		&models.NoteBlock{},          // FK to Note
+		&models.Preview{},            // FK to Resource
+		&models.GroupRelation{},      // FK to Group, GroupRelationType
+		&models.ImageHash{},          // FK to Resource
+		&models.ResourceSimilarity{}, // FK to Resource
+		&models.Session{},            // FK to User
+		&models.ApiToken{},           // FK to User
+	)
 }
 
 // migrateJobCore creates the durable job tables and seeds the writer epoch.

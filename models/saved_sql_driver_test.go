@@ -202,23 +202,93 @@ func TestSavedSQLHandleCannotReadSensitiveTables(t *testing.T) {
 	}
 }
 
-func TestSavedSQLDeniedTablesCoverEveryAuthAndSecretTable(t *testing.T) {
+func TestSavedSQLTableAllowList(t *testing.T) {
 	for _, table := range []string{
 		"users", "sessions", "api_tokens", "plugin_states", "plugin_kvs",
 		"runtime_settings", "log_entries", "user_settings", "saved_searches", "job_replay_envelopes",
+		"jobs", "template_revisions", "resource_reductions", "download_history_entries",
 	} {
-		if !IsSavedSQLDeniedTable(table) {
+		if IsSavedSQLAllowedTable(table) {
+			t.Errorf("%s is readable by saved SQL", table)
+		}
+		if !IsSavedSQLClassifiedTable(table) {
+			t.Errorf("%s is not classified", table)
+		}
+	}
+	for _, table := range []string{"users_fts", "users_fts_data", "SESSIONS_FTS_content", "api_tokens_fts_idx",
+		"sqlite_master", "sqlite_schema", "sqlite_sequence", "unknown_table", "resources_ftsx", "pragma_table_info"} {
+		if IsSavedSQLAllowedTable(table) {
 			t.Errorf("%s is readable by saved SQL", table)
 		}
 	}
-	for _, table := range []string{"users_fts", "users_fts_data", "SESSIONS_FTS_content", "api_tokens_fts_idx"} {
-		if !IsSavedSQLDeniedTable(table) {
-			t.Errorf("full-text index table %s over a denied table is readable by saved SQL", table)
+	for _, table := range []string{"resources", "Resources", "resources_fts", "resources_fts_data", "resources_fts_idx",
+		"resources_fts_docsize", "resources_fts_config", "notes_fts", "tags_fts", "resource_tags", "groups_related_notes"} {
+		if !IsSavedSQLAllowedTable(table) {
+			t.Errorf("%s must stay readable by saved SQL", table)
 		}
 	}
-	for _, table := range []string{"resources", "resources_fts", "resources_fts_data", "notes_fts", "tags_fts"} {
-		if IsSavedSQLDeniedTable(table) {
-			t.Errorf("%s must stay readable by saved SQL", table)
+}
+
+// Reads go through the allow-list however they are spelled: a table the list
+// does not name is refused directly, through a view, a join, a CTE or a
+// subquery, and so is the schema catalogue. A view is refused even over allowed
+// tables; the server creates none.
+func TestSavedSQLHandleReadsOnlyAllowListedTables(t *testing.T) {
+	path := savedSQLFixture(t)
+	writer, err := sqlx.Open(SQLiteDriverName, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"CREATE TABLE probe (id INTEGER PRIMARY KEY, v TEXT)",
+		"INSERT INTO probe (id, v) VALUES (1, 'unlisted')",
+		"CREATE VIEW probe_values AS SELECT v FROM probe",
+	} {
+		if _, err := writer.Exec(statement); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	_ = writer.Close()
+	ro := openSavedSQLHandle(t, "file:"+path+"?mode=ro")
+
+	for _, query := range []string{
+		"SELECT * FROM probe",
+		"SELECT count(*) FROM users",
+		"SELECT count(*) FROM main.users",
+		"SELECT count(*) FROM sqlite_master",
+		"SELECT * FROM probe_values",
+		"SELECT r.name FROM resources r JOIN probe p ON p.id = r.id",
+		"WITH x AS (SELECT v FROM probe) SELECT * FROM x",
+		"SELECT name FROM resources WHERE id IN (SELECT id FROM probe)",
+		"SELECT sql FROM sqlite_master",
+		"SELECT name FROM sqlite_schema",
+		"SELECT * FROM sqlite_temp_master",
+	} {
+		rows, err := ro.Queryx(query)
+		if err == nil {
+			rows.Close()
+			t.Errorf("%q ran on the read-only handle", query)
+			continue
+		}
+		if msg := err.Error(); !strings.Contains(msg, "prohibited") && !strings.Contains(msg, "not authorized") {
+			t.Errorf("%q failed for the wrong reason: %v", query, err)
+		}
+	}
+
+	// Positive controls: CTEs and subqueries over allowed tables work, and so
+	// does counting a CTE, whose name SQLite reports like a table's.
+	var n int
+	if err := ro.Get(&n, "WITH x AS MATERIALIZED (SELECT name FROM resources) SELECT count(*) FROM x"); err != nil || n != 1 {
+		t.Errorf("count(*) over a CTE: n=%d err=%v", n, err)
+	}
+	for _, query := range []string{
+		"WITH x AS (SELECT name FROM resources) SELECT name FROM x",
+		"SELECT name FROM (SELECT name FROM resources) AS sub",
+		"SELECT name FROM resources WHERE id IN (SELECT rowid FROM resources_fts WHERE resources_fts MATCH 'original')",
+	} {
+		var name string
+		if err := ro.Get(&name, query); err != nil || name != "original" {
+			t.Errorf("%q: name=%q err=%v", query, name, err)
 		}
 	}
 }
