@@ -15,6 +15,7 @@ import (
 	"strings"
 	"unicode"
 
+	"mahresources/auth"
 	"mahresources/contracts"
 	"mahresources/download_queue"
 	"mahresources/groupio"
@@ -724,7 +725,7 @@ func (a *importParseAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 			// rather than run against nothing.
 			return a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, "staged-archive-missing")
 		}
-		entry, err = a.start(execution, input)
+		entry, err = a.start(parsePrincipal, execution, input)
 		if err != nil {
 			return err
 		}
@@ -753,12 +754,15 @@ func (a *importParseAdapter) Dispatch(ctx context.Context, execution jobs.Execut
 // start submits the parse this execution needs. The archive stays where the
 // submission staged it: the handle names it, and the executor normalizes any
 // pre-rename staging path itself.
-func (a *importParseAdapter) start(execution jobs.Execution, input *importParseJobInput) (*download_queue.DownloadJob, error) {
+//
+// The parse runs bound to its actor, as an apply does, so the library reads that
+// match the archive's GUIDs and hashes never reach further than the actor may.
+func (a *importParseAdapter) start(bound *MahresourcesContext, execution jobs.Execution, input *importParseJobInput) (*download_queue.DownloadJob, error) {
 	handle, err := a.ctx.jobHandleFor(execution.JobID, ImportParseHandleNamespace)
 	if err != nil {
 		return nil, err
 	}
-	return a.ctx.submitQueueJob(
+	return bound.submitQueueJob(
 		download_queue.JobOptions{
 			Source:       download_queue.JobSourceGroupImportParse,
 			InitialPhase: "queued",
@@ -767,8 +771,25 @@ func (a *importParseAdapter) start(execution jobs.Execution, input *importParseJ
 		},
 		handle,
 		jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
-		a.ctx.buildImportParseRunFn(input),
+		bound.buildImportParseRunFn(input),
 	)
+}
+
+// AuthorizeJobOutput withholds a parse's plan and its review link from a
+// group-limited principal, which the import routes refuse the same plan
+// (denyScopedPrincipal). Listing and opening both ask it.
+func (a *importParseAdapter) AuthorizeJobOutput(_ context.Context, request JobOutputOpenRequest) error {
+	return importOutputPolicy(request.Principal)
+}
+
+// importOutputPolicy is the output policy of both import Kinds: every output of an
+// import is refused to a group-limited principal. It reads only the principal's
+// fields, because it is asked for every output of every Job a listing renders.
+func importOutputPolicy(principal *auth.Principal) error {
+	if principal == nil || principal.IsGroupLimited() {
+		return ErrJobOutputForbidden
+	}
+	return nil
 }
 
 func (a *importParseAdapter) publishOutcome(execution jobs.Execution, input *importParseJobInput, snap *download_queue.DownloadJob) error {
@@ -947,12 +968,14 @@ func (a *importParseAdapter) CleanupArtifacts(_ context.Context, _ jobs.Artifact
 // Commands reports what one parse offers. Retry is advertised only while the
 // staged archive is still there, because the archive is the input a Retry needs and
 // a button that dispatches a Job which cannot read its own input is not a control;
-// and never for an archive the reader refused on its content, which a re-parse of
-// the same bytes would refuse again.
+// never for an archive the reader refused on its content, which a re-parse of
+// the same bytes would refuse again; and never to a group-limited asker, whose
+// successor importWriteRefusal would block.
 func (a *importParseAdapter) Commands(_ context.Context, commandContext jobs.CommandContext) ([]jobs.Command, error) {
 	// §8: a principal demoted below "may write" keeps the history and loses the
-	// controls over it.
-	if a.ctx.commandActorRefusal(commandContext.Deps, commandContext.Access, "") != "" {
+	// controls over it. One confined to a group keeps Cancel and loses Retry.
+	allowed, groupLimited := a.ctx.commandActorAllowed(commandContext.Deps, commandContext.Access)
+	if !allowed {
 		return nil, nil
 	}
 	commands := []jobs.Command{{
@@ -964,7 +987,7 @@ func (a *importParseAdapter) Commands(_ context.Context, commandContext jobs.Com
 	}}
 	state := commandContext.Snapshot.State
 	failure := commandContext.Snapshot.Failure
-	if (state == jobs.StateFailed || state == jobs.StateCancelled || state == jobs.StateInterrupted) &&
+	if !groupLimited && (state == jobs.StateFailed || state == jobs.StateCancelled || state == jobs.StateInterrupted) &&
 		(failure == nil || !importParseFailureRepeats(failure.Code)) {
 		if summary, ok := importParseSummaryOf(commandContext.Snapshot.Summary); ok {
 			available, err := a.ctx.importCommandFileAvailable(commandContext.Deps, summary.Handle, "archive_available")
@@ -1186,6 +1209,12 @@ func (a *importApplyAdapter) claimPlanForApply(execution jobs.Execution, input *
 	return mine, nil
 }
 
+// AuthorizeJobOutput withholds an apply's report and its link to the imported group
+// from a group-limited principal, which the import routes refuse the same report.
+func (a *importApplyAdapter) AuthorizeJobOutput(_ context.Context, request JobOutputOpenRequest) error {
+	return importOutputPolicy(request.Principal)
+}
+
 func (a *importApplyAdapter) publishOutcome(execution jobs.Execution, input *importApplyJobInput, snap *download_queue.DownloadJob) error {
 	// The report goes first, and on every outcome: a partial apply's result is the
 	// only thing that names the rows it created, which is exactly what a failure
@@ -1308,11 +1337,13 @@ func (a *importApplyAdapter) CleanupArtifacts(_ context.Context, _ jobs.Artifact
 // on disk: the plan restored to its unconsumed path *and* the archive it reads
 // blobs from. A partial apply that is not replay-safe offers none — it publishes its
 // report and stays failed, which is the honest answer, and re-running it would
-// duplicate the rows it already committed.
+// duplicate the rows it already committed. A group-limited asker is offered none
+// either: importWriteRefusal would block its successor.
 func (a *importApplyAdapter) Commands(_ context.Context, commandContext jobs.CommandContext) ([]jobs.Command, error) {
 	// §8: a principal demoted below "may write" keeps the history and loses the
-	// controls over it.
-	if a.ctx.commandActorRefusal(commandContext.Deps, commandContext.Access, "") != "" {
+	// controls over it. One confined to a group keeps Cancel and loses Retry.
+	allowed, groupLimited := a.ctx.commandActorAllowed(commandContext.Deps, commandContext.Access)
+	if !allowed {
 		return nil, nil
 	}
 	commands := make([]jobs.Command, 0, 2)
@@ -1326,7 +1357,7 @@ func (a *importApplyAdapter) Commands(_ context.Context, commandContext jobs.Com
 			Confirmation: "Stop applying this import? Rows it has already created stay in the library.",
 		})
 	}
-	if state == jobs.StateFailed || state == jobs.StateCancelled || state == jobs.StateInterrupted {
+	if !groupLimited && (state == jobs.StateFailed || state == jobs.StateCancelled || state == jobs.StateInterrupted) {
 		// The parse handle is carried in the validated sanitized summary. The host
 		// separately checks this Job's replay envelope before creating a successor.
 		if summary, ok := importApplySummaryOf(commandContext.Snapshot.Summary); ok {
@@ -1859,6 +1890,11 @@ func importApplyPlanBelongsToHandle(planPath, parseHandle string) bool {
 // a runtime that only bound its subtree would import on behalf of somebody who may no
 // longer write anything.
 //
+// It also answers whether the account may import at all: group import is refused to a
+// group-limited account outright (the import routes' denyScopedPrincipal), and an
+// account confined after its import was accepted is one. The role is asked first, so a
+// guest is refused for its role whatever its scope.
+//
 // It is asked before the plan is read or any staged file is touched, so a refusal costs
 // a filesystem and a database nothing.
 func importWriteRefusal(bound *MahresourcesContext, op string) string {
@@ -1867,6 +1903,9 @@ func importWriteRefusal(bound *MahresourcesContext, op string) string {
 	}
 	if err := bound.requireWriteRole(op); err != nil {
 		return "role-refused"
+	}
+	if bound.isScopedPrincipal() {
+		return "scope-refused"
 	}
 	return ""
 }

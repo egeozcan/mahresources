@@ -88,8 +88,8 @@ func (a *importParseAdapter) SelectCommandJobs(_ context.Context, request jobs.C
 	if !supported {
 		return nil, false, nil
 	}
-	allowed, _ := a.ctx.commandActorAllowed(request.Deps, request.Access)
-	if !allowed {
+	allowed, scoped := a.ctx.commandActorAllowed(request.Deps, request.Access)
+	if !allowed || (scoped && request.Key == jobs.CommandRetry) {
 		return emptyCommandSelection(request), true, nil
 	}
 	query := request.Jobs
@@ -119,8 +119,8 @@ func (a *importApplyAdapter) SelectCommandJobs(_ context.Context, request jobs.C
 	if !supported {
 		return nil, false, nil
 	}
-	allowed, _ := a.ctx.commandActorAllowed(request.Deps, request.Access)
-	if !allowed {
+	allowed, scoped := a.ctx.commandActorAllowed(request.Deps, request.Access)
+	if !allowed || (scoped && request.Key == jobs.CommandRetry) {
 		return emptyCommandSelection(request), true, nil
 	}
 	query := request.Jobs

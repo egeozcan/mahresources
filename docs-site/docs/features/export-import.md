@@ -124,7 +124,7 @@ mr group export 42 --no-tag-defs --no-group-relation-type-defs -o cats-only.tar
 
 Import is a multi-step workflow: upload the tar, review the parsed plan, supply decisions, then apply.
 
-Group-limited users and guests cannot import; every import route refuses them. Export is unaffected and works within their subtree.
+Group-limited users and guests cannot import; every import route refuses them, and so do the import Jobs: a user confined to a group after starting an import cannot retry it, its waiting import is blocked instead of run, and its import plans and reports are no longer offered on the Job page. Export is unaffected and works within their subtree.
 
 ### Workflow
 

@@ -94,6 +94,15 @@ func (p *Principal) RequiresScope() bool {
 	return p != nil && !p.SuperUser && p.Role.RequiresScopeGroup()
 }
 
+// IsGroupLimited reports whether the principal's data access is confined to a
+// group subtree: a non-admin with a scope group, or with a role that must have one.
+// Operations with no subtree-confined meaning, group import among them, refuse
+// such a principal outright. It reads only the principal's fields, so it can be
+// asked where materializing the subtree would need a query.
+func (p *Principal) IsGroupLimited() bool {
+	return p != nil && !p.IsAdmin() && (p.IsScoped() || p.RequiresScope())
+}
+
 // PrincipalMayActOnOwnedWork reports whether a principal may inspect or control work
 // recorded against one owner id: administrators (and the auth-off super-user) may act
 // on every job, every other principal only on what it submitted, and an ownerless

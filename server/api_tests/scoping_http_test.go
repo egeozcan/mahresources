@@ -1,11 +1,14 @@
 package api_tests
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 
 	"mahresources/application_context"
+	"mahresources/jobs"
 	"mahresources/models"
 )
 
@@ -332,6 +335,98 @@ func TestScopedUser_ImportRoutesDenied(t *testing.T) {
 			t.Errorf("%s %s: control invalid — an unscoped admin also got 403, so the scoped 403 "+
 				"does not demonstrate the group-limited deny", rt.method, rt.path)
 		}
+	}
+}
+
+// TestScopedUser_ImportJobPlaneDenied is the same boundary on the Job plane. An
+// import a user ran while unscoped is a Job it still owns after it is confined,
+// and the Job routes answered for it: the plan opened through
+// /v1/jobs/{id}/outputs while /v1/imports/{id}/plan answered 403, and a Retry was
+// offered and run.
+//
+// The legacy POST /v1/jobs/retry is not asserted here: for an import Job it
+// already refuses everybody, because it re-reads the Job's input as a download's.
+func TestScopedUser_ImportJobPlaneDenied(t *testing.T) {
+	tc := setupAuthEnv(t)
+	installJobControlPlane(t, tc)
+	f := buildScopingFixture(t, tc)
+	bearer, userID := plainUserBearer(t, tc, "import-job-plane-user")
+	as := map[string]string{"Accept": "application/json", "Authorization": bearer}
+
+	_, canonicalID := submitImportParseForTest(t, tc, map[string]string{"Authorization": bearer})
+	parsed := waitForCanonicalState(t, tc, canonicalID, "the parse to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if parsed.State != jobs.StateSucceeded {
+		t.Fatalf("the parse ended %s (%+v)", parsed.State, parsed.Failure)
+	}
+	planURL := "/v1/jobs/" + canonicalID + "/outputs?key=plan"
+	detail := func() (commands, outputs map[string]bool) {
+		t.Helper()
+		res := doReq(tc, http.MethodGet, "/v1/jobs/"+canonicalID, as, nil, nil)
+		if res.Code != http.StatusOK {
+			t.Fatalf("job detail answered %d: %s", res.Code, res.Body.String())
+		}
+		var body struct {
+			Commands []struct{ Key string } `json:"commands"`
+			Outputs  []struct{ Key string } `json:"outputs"`
+		}
+		if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode job detail: %v", err)
+		}
+		commands, outputs = map[string]bool{}, map[string]bool{}
+		for _, command := range body.Commands {
+			commands[command.Key] = true
+		}
+		for _, output := range body.Outputs {
+			outputs[output.Key] = true
+		}
+		return commands, outputs
+	}
+
+	// Control: unscoped, the owner opens the plan and is offered Retry of a parse
+	// that failed on this server rather than on the archive.
+	if res := doReq(tc, http.MethodGet, planURL, as, nil, nil); res.Code != http.StatusOK {
+		t.Fatalf("control: the unscoped owner opening the plan answered %d: %s", res.Code, res.Body.String())
+	}
+	if err := tc.DB.Model(&models.Job{}).Where("id = ?", canonicalID).Updates(map[string]any{
+		"state": jobs.StateFailed, "failure_code": "import-parse-failed", "failure_class": jobs.FailureClassInternal,
+	}).Error; err != nil {
+		t.Fatalf("fail the parse: %v", err)
+	}
+	commands, outputs := detail()
+	if !commands[jobs.CommandRetry] || !outputs["plan"] {
+		t.Fatalf("control: the unscoped owner is offered commands %v and outputs %v, want Retry and the plan", commands, outputs)
+	}
+
+	if _, err := tc.AppCtx.UpdateUser(userID, &application_context.UserUpdate{
+		ScopeGroupID: application_context.UserField[*uint]{Set: true, Value: &f.rootID},
+	}); err != nil {
+		t.Fatalf("confine the owner: %v", err)
+	}
+
+	if res := doReq(tc, http.MethodGet, planURL, as, nil, nil); res.Code != http.StatusNotFound {
+		t.Fatalf("a group-limited owner opening the import plan answered %d, want 404: %s", res.Code, res.Body.String())
+	}
+	commands, outputs = detail()
+	if commands[jobs.CommandRetry] || outputs["plan"] || outputs["review"] {
+		t.Fatalf("a group-limited owner is offered commands %v and outputs %v, want neither Retry nor the plan or review",
+			commands, outputs)
+	}
+	failed := waitForCanonicalState(t, tc, canonicalID, "the failed parse", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateFailed
+	})
+	retry := postJSON(tc, "/v1/jobs/"+canonicalID+"/commands/retry",
+		fmt.Sprintf(`{"expectedVersion":%d,"idempotencyKey":"confined-import-retry"}`, failed.Version), as)
+	if retry.Code != http.StatusConflict {
+		t.Fatalf("a group-limited owner's Retry of the import answered %d, want 409: %s", retry.Code, retry.Body.String())
+	}
+	var successors int64
+	if err := tc.DB.Model(&models.JobLink{}).Where("to_job_id = ?", canonicalID).Count(&successors).Error; err != nil {
+		t.Fatalf("count successors: %v", err)
+	}
+	if successors != 0 {
+		t.Fatalf("the refused Retry created %d successors", successors)
 	}
 }
 

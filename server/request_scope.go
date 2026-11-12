@@ -180,9 +180,10 @@ func scopedEditMeta[T contracts.BasicEntityReader](appCtx *application_context.M
 }
 
 // principalIsRestricted reports whether the principal is a group-limited
-// user/guest whose data access must be confined to a subtree.
+// user/guest whose data access must be confined to a subtree. It is the same
+// predicate the import Kinds ask on the Job plane (auth.Principal.IsGroupLimited).
 func principalIsRestricted(p *auth.Principal) bool {
-	return p != nil && !p.IsAdmin() && (p.IsScoped() || p.RequiresScope())
+	return p.IsGroupLimited()
 }
 
 // denyScopedPrincipal blocks group-limited (user/guest with a subtree) principals
