@@ -13,10 +13,18 @@ import (
 // account on the request (e.g. auth disabled → implicit super-user).
 var errNoAccount = errors.New("account management requires an authenticated user")
 
+// CredentialAttemptGuard runs verify (a check of a user-supplied credential)
+// under the login rate limiter for that account and the request's client IP. It
+// reports allowed=false, without running verify, when the limiter refuses the
+// attempt. Injected from package server, which owns the limiter; a nil guard
+// runs verify directly.
+type CredentialAttemptGuard func(r *http.Request, username string, verify func() error) (allowed bool, err error)
+
 // ChangeOwnPasswordHandler lets the authenticated user change their own password.
-// The current password must be supplied; on success all other sessions are
-// revoked.
-func ChangeOwnPasswordHandler(ctx AccountContext) func(http.ResponseWriter, *http.Request) {
+// The current password must be supplied and is checked under guard, so wrong
+// guesses count against the same limiter (and keys) as failed logins; on
+// success all other sessions are revoked.
+func ChangeOwnPasswordHandler(ctx AccountContext, guard CredentialAttemptGuard) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p := principalFor(r)
 		if p == nil || p.SuperUser || p.UserID == 0 {
@@ -38,7 +46,20 @@ func ChangeOwnPasswordHandler(ctx AccountContext) func(http.ResponseWriter, *htt
 				keepSessionTokenHash = &hash
 			}
 		}
-		if err := ctx.ChangeOwnPassword(p.UserID, body.CurrentPassword, body.NewPassword, keepSessionTokenHash); err != nil {
+		change := func() error {
+			return ctx.ChangeOwnPassword(p.UserID, body.CurrentPassword, body.NewPassword, keepSessionTokenHash)
+		}
+		allowed, err := true, error(nil)
+		if guard != nil {
+			allowed, err = guard(r, p.Username, change)
+		} else {
+			err = change()
+		}
+		if !allowed {
+			http_utils.HandleError(errors.New("too many failed password attempts; try again later"), w, r, http.StatusTooManyRequests)
+			return
+		}
+		if err != nil {
 			http_utils.HandleError(err, w, r, userErrorStatus(err))
 			return
 		}

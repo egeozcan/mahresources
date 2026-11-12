@@ -49,7 +49,8 @@ func (ctx *MahresourcesContext) LoginRateWindow() time.Duration {
 }
 
 // TrustProxyHeaders reports whether X-Forwarded-For should be trusted when
-// deriving the client IP. Off by default (direct-exposure safe).
+// deriving the client IP (login limiter, audit log, generation limiter keys).
+// Off by default (direct-exposure safe).
 func (ctx *MahresourcesContext) TrustProxyHeaders() bool {
-	return ctx.Config.TrustProxyHeaders
+	return ctx.Config != nil && ctx.Config.TrustProxyHeaders
 }

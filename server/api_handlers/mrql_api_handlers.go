@@ -810,7 +810,7 @@ func GetGenerateMRQLHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *http.
 			http_utils.HandleError(errors.New("MRQL generation is not configured"), writer, request, http.StatusServiceUnavailable)
 			return
 		}
-		key := application_context.ClientIP(request)
+		key := generationRateKey(ctx, request)
 		if !ctx.MRQLGenerationRateLimiter().Allow(key, time.Now()) {
 			http_utils.HandleError(errors.New("MRQL generation rate limit exceeded"), writer, request, http.StatusTooManyRequests)
 			return

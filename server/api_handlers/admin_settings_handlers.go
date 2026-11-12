@@ -47,7 +47,7 @@ func GetSetSettingHandler(ctx SettingsContext) http.HandlerFunc {
 			http_utils.HandleError(errors.New("a string setting value is required"), w, r, http.StatusBadRequest)
 			return
 		}
-		actor := application_context.ClientIP(r)
+		actor := ctx.ClientIP(r)
 		if err := ctx.Settings().Set(key, *req.Value, req.Reason, actor); err != nil {
 			http_utils.HandleError(err, w, r, classifySettingError(err))
 			return
@@ -71,7 +71,7 @@ func GetUpdateSettingsHandler(ctx SettingsContext) http.HandlerFunc {
 			}
 			values[key] = *value
 		}
-		if err := ctx.Settings().Apply(values, req.Reset, req.Reason, application_context.ClientIP(r)); err != nil {
+		if err := ctx.Settings().Apply(values, req.Reset, req.Reason, ctx.ClientIP(r)); err != nil {
 			http_utils.HandleError(err, w, r, classifySettingError(err))
 			return
 		}
@@ -97,7 +97,7 @@ func GetResetSettingHandler(ctx SettingsContext) http.HandlerFunc {
 		key := mux.Vars(r)["key"]
 		var req resetSettingRequest
 		_ = json.NewDecoder(r.Body).Decode(&req) // empty body is fine
-		actor := application_context.ClientIP(r)
+		actor := ctx.ClientIP(r)
 		if err := ctx.Settings().Reset(key, req.Reason, actor); err != nil {
 			http_utils.HandleError(err, w, r, classifySettingError(err))
 			return

@@ -227,7 +227,7 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 		}
 		// A dry run calls no provider, so it has its own limiter and reviewing
 		// does not use up generation slots.
-		key := application_context.ClientIP(request)
+		key := generationRateKey(ctx, request)
 		if req.DryRun {
 			if !ctx.TemplateDisclosureRateLimiter().Allow(key, time.Now()) {
 				http_utils.HandleError(errors.New("template generation review rate limit exceeded"), writer, request, http.StatusTooManyRequests)

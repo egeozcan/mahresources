@@ -3387,7 +3387,7 @@ openapi: 3.0.0
 paths:
     /v1/account/password:
         post:
-            description: Requires the current password. The new password requires at least 8 Unicode code points and at most 72 UTF-8 bytes. On success, other browser sessions are invalidated while the current browser session remains active. Existing API tokens remain valid.
+            description: Requires the current password. The new password requires at least 8 Unicode code points and at most 72 UTF-8 bytes. On success, other browser sessions are invalidated while the current browser session remains active. Existing API tokens remain valid. Failed current-password checks count against the login rate limit (-login-max-attempts) for the account and client IP.
             operationId: changeOwnPassword
             requestBody:
                 content:
@@ -3411,6 +3411,8 @@ paths:
                     description: Authentication required or credentials invalid
                 "403":
                     description: Insufficient permissions
+                "429":
+                    description: Too many failed attempts; try again later
             summary: Change the authenticated user's password
             tags:
                 - account

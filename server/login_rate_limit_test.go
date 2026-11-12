@@ -312,17 +312,37 @@ func TestLoginRateLimiter_CapacityRejectionsDoNotSweepEveryTime(t *testing.T) {
 	}
 }
 
-// clientIP ignores X-Forwarded-For unless trustProxy is set.
+// clientIP ignores X-Forwarded-For unless trustProxy is set, and when it is set
+// trusts only the rightmost entry (the hop the proxy itself appended), validated
+// as an IP.
 func TestClientIP_XFFTrust(t *testing.T) {
-	r := httptest.NewRequest("POST", "/login", nil)
-	r.RemoteAddr = "10.0.0.5:1111"
-	r.Header.Set("X-Forwarded-For", "1.2.3.4")
-
-	if got := clientIP(r, false); got != "10.0.0.5" {
-		t.Fatalf("untrusted clientIP should use RemoteAddr, got %q", got)
+	cases := []struct {
+		name   string
+		remote string
+		lines  []string
+		trust  bool
+		want   string
+	}{
+		{"untrusted ignores XFF", "10.0.0.5:1111", []string{"1.2.3.4"}, false, "10.0.0.5"},
+		{"single entry", "127.0.0.1:1111", []string{"1.2.3.4"}, true, "1.2.3.4"},
+		{"rightmost wins", "127.0.0.1:1111", []string{"6.6.6.6, 203.0.113.9"}, true, "203.0.113.9"},
+		{"separate header lines", "127.0.0.1:1111", []string{"6.6.6.6", "203.0.113.9"}, true, "203.0.113.9"},
+		{"trailing empty element", "127.0.0.1:1111", []string{"6.6.6.6, 203.0.113.9, "}, true, "203.0.113.9"},
+		{"ipv6", "127.0.0.1:1111", []string{"6.6.6.6, 2001:db8::1"}, true, "2001:db8::1"},
+		{"invalid only", "127.0.0.1:1111", []string{"not-an-ip"}, true, "127.0.0.1"},
+		{"invalid rightmost never walks left", "127.0.0.1:1111", []string{"6.6.6.6, garbage"}, true, "127.0.0.1"},
+		{"oversized garbage", "127.0.0.1:1111", []string{strings.Repeat("x", 5000)}, true, "127.0.0.1"},
+		{"mapped ipv4 normalised", "127.0.0.1:1111", []string{"::ffff:203.0.113.9"}, true, "203.0.113.9"},
 	}
-	if got := clientIP(r, true); got != "1.2.3.4" {
-		t.Fatalf("trusted clientIP should use X-Forwarded-For, got %q", got)
+	for _, c := range cases {
+		r := httptest.NewRequest("POST", "/login", nil)
+		r.RemoteAddr = c.remote
+		for _, l := range c.lines {
+			r.Header.Add("X-Forwarded-For", l)
+		}
+		if got := clientIP(r, c.trust); got != c.want {
+			t.Errorf("%s: got %q want %q", c.name, got, c.want)
+		}
 	}
 }
 

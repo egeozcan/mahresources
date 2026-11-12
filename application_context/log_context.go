@@ -3,7 +3,9 @@ package application_context
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -78,7 +80,7 @@ func (l *Logger) log(level, action, entityType string, entityID *uint, entityNam
 	if l.request != nil {
 		entry.RequestPath = truncateString(l.request.URL.Path, 500)
 		entry.UserAgent = truncateString(l.request.UserAgent(), 500)
-		entry.IPAddress = getClientIP(l.request)
+		entry.IPAddress = l.ctx.ClientIP(l.request)
 	}
 
 	// Save to database (fire-and-forget, errors logged to stdout)
@@ -209,40 +211,52 @@ func truncateString(s string, maxLen int) string {
 	return string(runes[:maxLen])
 }
 
-// ClientIP extracts the client IP address from the request, normalizing it
-// the same way the Logger pipeline does: prefers X-Forwarded-For (leftmost)
-// then X-Real-IP, then strips the port from RemoteAddr and un-brackets IPv6.
-// The result is truncated to LogEntry.IPAddress's 45-character column limit
-// so audit writers can store it without surprise.
-func ClientIP(r *http.Request) string { return getClientIP(r) }
-
-// getClientIP extracts the client IP address from the request.
-func getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header first (for proxied requests)
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// X-Forwarded-For can contain multiple IPs (client, proxy1, proxy2, ...)
-		// Take only the first one (the original client)
-		if idx := strings.Index(xff, ","); idx != -1 {
-			xff = strings.TrimSpace(xff[:idx])
+// ClientIP returns the request's client IP, truncated to LogEntry.IPAddress's
+// 45-character column limit. When trustProxy is set (the server sits directly
+// behind one trusted reverse proxy) the RIGHTMOST X-Forwarded-For entry is used:
+// it is the address the proxy itself saw or appended, whereas everything to its
+// left was supplied by the client and is forgeable. All header lines are
+// considered, because a proxy may add its hop as a separate line. The entry must
+// parse as an IP; otherwise (and when trustProxy is off) the host part of
+// RemoteAddr is returned. X-Real-IP is never read: proxies such as Caddy pass a
+// client-supplied one through unchanged.
+func ClientIP(r *http.Request, trustProxy bool) string {
+	if trustProxy {
+		if hop := rightmostForwardedFor(r.Header.Values("X-Forwarded-For")); hop != "" {
+			if addr, err := netip.ParseAddr(hop); err == nil {
+				return truncateString(addr.Unmap().String(), 45)
+			}
 		}
-		return truncateString(xff, 45)
 	}
-
-	// Check X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return truncateString(xri, 45)
-	}
-
-	// Fall back to RemoteAddr, stripping the port if present
 	ip := r.RemoteAddr
-	// Handle IPv6 addresses like [::1]:8080
-	if strings.HasPrefix(ip, "[") {
+	if host, _, err := net.SplitHostPort(ip); err == nil {
+		ip = host
+	} else if strings.HasPrefix(ip, "[") {
 		if idx := strings.LastIndex(ip, "]"); idx != -1 {
-			ip = ip[1:idx] // Extract IPv6 address without brackets
+			ip = ip[1:idx]
 		}
 	} else if idx := strings.LastIndex(ip, ":"); idx != -1 {
-		// Handle IPv4 addresses like 192.168.1.1:8080
 		ip = ip[:idx]
 	}
 	return truncateString(ip, 45)
+}
+
+// rightmostForwardedFor returns the last non-empty element across all
+// X-Forwarded-For header lines, or "" if there is none.
+func rightmostForwardedFor(lines []string) string {
+	for i := len(lines) - 1; i >= 0; i-- {
+		parts := strings.Split(lines[i], ",")
+		for j := len(parts) - 1; j >= 0; j-- {
+			if p := strings.TrimSpace(parts[j]); p != "" {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
+// ClientIP is ClientIP with this context's -trust-proxy-headers setting. A nil
+// Config (bare test contexts) means trust off.
+func (ctx *MahresourcesContext) ClientIP(r *http.Request) string {
+	return ClientIP(r, ctx.Config != nil && ctx.Config.TrustProxyHeaders)
 }

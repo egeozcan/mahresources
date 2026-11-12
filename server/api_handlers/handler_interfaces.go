@@ -3,6 +3,7 @@ package api_handlers
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"time"
 
 	"mahresources/application_context"
@@ -70,6 +71,7 @@ type mrqlStaticEnvProvider interface {
 // MRQLAPIContext serves the /v1/mrql surface: execution, validation,
 // completion, explain, generation, and the saved-query CRUD.
 type MRQLAPIContext interface {
+	ClientIP(r *http.Request) string
 	mrqlListRenderContext
 	// PluginAllowsScopedPrincipals reports whether a group-limited caller may
 	// reach this plugin's own surfaces. An operator decision, per plugin, so a
@@ -223,12 +225,14 @@ type AdminStatsContext interface {
 
 // SettingsContext serves the runtime-settings admin API.
 type SettingsContext interface {
+	ClientIP(r *http.Request) string
 	Settings() *application_context.RuntimeSettings
 }
 
 // TemplateGenerationContext serves the natural-language category-template
 // generation endpoints.
 type TemplateGenerationContext interface {
+	ClientIP(r *http.Request) string
 	TemplatePreviewContext
 	TemplateGenerator() application_context.TemplateGenerator
 	TemplateGenerationRateLimiter() *application_context.MRQLGenerationRateLimiter

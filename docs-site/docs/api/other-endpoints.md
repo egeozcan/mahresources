@@ -1474,7 +1474,7 @@ These act on the caller's own record and are open to any authenticated principal
 
 | Endpoint | Description |
 |----------|-------------|
-| `POST /v1/account/password` | Change own password. Takes `currentPassword` and `newPassword`; revokes the caller's other sessions. |
+| `POST /v1/account/password` | Change own password. Takes `currentPassword` and `newPassword`; revokes the caller's other sessions. Wrong `currentPassword` guesses count against the login rate limit (`-login-max-attempts`) for the account and client IP, shared with `/v1/auth/login`; once throttled it returns `429`. |
 | `GET /v1/account/tokens` | List the caller's API tokens. |
 | `POST /v1/account/tokens` | Mint an API token. Takes `name` and an optional `expiresIn` Go duration; the raw token is returned exactly once. |
 | `POST /v1/account/tokens/delete` | Revoke one of the caller's tokens by `id`. |
