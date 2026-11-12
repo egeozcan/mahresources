@@ -233,6 +233,15 @@ main filesystem is rooted at `-file-save-path`, and an alternative one at the
 path its `-alt-fs` entry names. A file staged at `<root>/incoming/photo.jpg` is
 therefore `/incoming/photo.jpg` here.
 
+With authentication enabled this endpoint is **admin only**: it reads any file
+under the storage root, outside every group subtree, so other roles get `403`.
+Paths reserved for private application storage are refused for everyone,
+admins included, with `403`: any top-level entry whose name starts with `_` or
+`.` (such as `_exports/`, `_imports/`, `_plugin_commands/` and
+`_job_replay_key`), anything that resolves into the plugin command staging
+root or one of those roots through a symlink or alternative filesystem, and
+any path with a `..` segment.
+
 ```
 POST /v1/resource/local
 ```
