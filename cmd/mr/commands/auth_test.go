@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,6 +29,49 @@ func TestLoginDoesNotReplayCredentialsCrossOrigin(t *testing.T) {
 		}
 		a.Close()
 		b.Close()
+	}
+}
+
+// loginCaptureRT replaces the network: home answers the login POST with a 307
+// to redirectTo; every request is recorded as "host body".
+type loginCaptureRT struct {
+	home, redirectTo string
+	mu               sync.Mutex
+	seen             []string
+}
+
+func (c *loginCaptureRT) RoundTrip(r *http.Request) (*http.Response, error) {
+	var body []byte
+	if r.Body != nil {
+		body, _ = io.ReadAll(r.Body)
+		r.Body.Close()
+	}
+	c.mu.Lock()
+	c.seen = append(c.seen, r.URL.Host+" "+string(body))
+	c.mu.Unlock()
+	if r.URL.Host == c.home {
+		h := http.Header{"Location": []string{c.redirectTo}}
+		return &http.Response{StatusCode: 307, Header: h, Body: http.NoBody, Request: r}, nil
+	}
+	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}")), Request: r}, nil
+}
+
+// A host that only matches the configured one under Unicode case folding
+// (U+0130 İ -> i) is a different origin; the password must not be replayed there.
+func TestLoginDoesNotReplayCredentialsToUnicodeFoldedHost(t *testing.T) {
+	rt := &loginCaptureRT{home: "mail.example.com", redirectTo: "https://maİl.example.com/collect"}
+	orig := http.DefaultTransport
+	http.DefaultTransport = rt
+	t.Cleanup(func() { http.DefaultTransport = orig })
+
+	_, err := loginAndMintToken("https://mail.example.com", "alice", "hunter2", "x")
+	if err == nil {
+		t.Fatalf("want error (seen %q)", rt.seen)
+	}
+	for _, s := range rt.seen {
+		if !strings.HasPrefix(s, "mail.example.com ") {
+			t.Fatalf("foreign host contacted: %q", s)
+		}
 	}
 }
 

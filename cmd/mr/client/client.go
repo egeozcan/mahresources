@@ -65,7 +65,22 @@ func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 // requestOrigin returns u's lowercased scheme://host[:port], the same shape
 // normalizeOrigin produces.
 func requestOrigin(u *url.URL) string {
-	return strings.ToLower(u.Scheme + "://" + u.Host)
+	return asciiLower(u.Scheme + "://" + u.Host)
+}
+
+// asciiLower lowercases only A-Z. Origins must not be compared with Unicode
+// case mapping (strings.ToLower / EqualFold): it folds U+0130 to 'i' and U+212A
+// to 'k', so a different host (dialed by its IDNA form) would compare equal to
+// the configured one. Two strings equal under ASCII-only lowering differ only in
+// ASCII case, which DNS and IDNA treat as the same name.
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return string(b)
 }
 
 // SameOriginRedirectPolicy is an http.Client CheckRedirect that refuses to
@@ -99,13 +114,13 @@ func ResolveToken(baseURL string) string {
 }
 
 // normalizeOrigin reduces a server URL to its scheme://host[:port] origin
-// (lowercased) — the key under which that server's token is stored.
+// (ASCII-lowercased) — the key under which that server's token is stored.
 func normalizeOrigin(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if u, err := url.Parse(raw); err == nil && u.Host != "" {
-		return strings.ToLower(u.Scheme + "://" + u.Host)
+		return asciiLower(u.Scheme + "://" + u.Host)
 	}
-	return strings.ToLower(strings.TrimRight(raw, "/"))
+	return asciiLower(strings.TrimRight(raw, "/"))
 }
 
 // readTokenMap loads the origin→token map from the credentials file. A legacy

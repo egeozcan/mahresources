@@ -2,12 +2,14 @@ package client
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 )
@@ -145,5 +147,91 @@ func TestStoreTokenTightensExistingFileMode(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(p); !strings.Contains(string(b), "TOK") {
 		t.Fatal("token missing")
+	}
+}
+
+// captureRT stands in for the network (the folded hosts do not resolve): the
+// configured host answers with a redirect to redirectTo, every other host with
+// 200. Each request is recorded as "host authorization".
+type captureRT struct {
+	home, redirectTo string
+	mu               sync.Mutex
+	seen             []string
+}
+
+func (c *captureRT) RoundTrip(r *http.Request) (*http.Response, error) {
+	c.mu.Lock()
+	c.seen = append(c.seen, r.URL.Host+" "+r.Header.Get("Authorization"))
+	c.mu.Unlock()
+	if r.URL.Host == c.home {
+		h := http.Header{"Location": []string{c.redirectTo}}
+		return &http.Response{StatusCode: 302, Header: h, Body: http.NoBody, Request: r}, nil
+	}
+	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}")), Request: r}, nil
+}
+
+// Unicode case mapping folds U+0130 (İ) to 'i' and U+212A (Kelvin sign) to 'k',
+// but the transport dials the IDNA form of such a host, which is a different
+// name. The origin check must not treat them as the configured host.
+func TestBearerNotSentOnUnicodeFoldedRedirect(t *testing.T) {
+	cases := []struct{ home, foreign string }{
+		{"mail.example.com", "maİl.example.com"},
+		{"kiosk.example.com", "Kiosk.example.com"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.foreign, func(t *testing.T) {
+			isolateCreds(t)
+			base := "https://" + tc.home
+			if err := StoreToken(base, "SECRET"); err != nil {
+				t.Fatal(err)
+			}
+			rt := &captureRT{home: tc.home, redirectTo: "https://" + tc.foreign + "/x"}
+			c := New(base)
+			c.httpClient.Transport.(*authTransport).base = rt
+			var out map[string]any
+			err := c.Get("/v1/resources", nil, &out)
+			if err == nil || !strings.Contains(err.Error(), "different origin") {
+				t.Fatalf("want different-origin error, got %v (seen %q)", err, rt.seen)
+			}
+			for _, s := range rt.seen {
+				if !strings.HasPrefix(s, tc.home+" ") {
+					t.Fatalf("foreign host contacted: %q", s)
+				}
+			}
+		})
+	}
+}
+
+func TestAuthTransportUnicodeFoldedHostGetsNoToken(t *testing.T) {
+	stub := &stubRT{}
+	tr := &authTransport{token: "T", origin: normalizeOrigin("https://mail.example.com"), base: stub}
+	req, _ := http.NewRequest("GET", "https://maİl.example.com/x", nil)
+	if _, err := tr.RoundTrip(req); err != nil {
+		t.Fatal(err)
+	}
+	if stub.got.Header.Get("Authorization") != "" {
+		t.Fatal("Unicode-folded host received token")
+	}
+}
+
+// ASCII case differences are still the same origin, for token lookup and for
+// redirects.
+func TestOriginComparisonIsASCIICaseInsensitive(t *testing.T) {
+	isolateCreds(t)
+	if err := StoreToken("HTTPS://Mail.Example.COM", "SECRET"); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveToken("https://mail.example.com/"); got != "SECRET" {
+		t.Fatalf("ResolveToken = %q", got)
+	}
+	// A Unicode-folded --server is a different origin and must not pick up the
+	// real host's stored token at lookup time.
+	if got := ResolveToken("https://maİl.example.com"); got != "" {
+		t.Fatalf("Unicode-folded server resolved token %q", got)
+	}
+	policy := SameOriginRedirectPolicy("https://Mail.Example.com")
+	req, _ := http.NewRequest("GET", "https://MAIL.example.com/x", nil)
+	if err := policy(req, nil); err != nil {
+		t.Fatalf("ASCII case variant refused: %v", err)
 	}
 }
