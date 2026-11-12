@@ -394,7 +394,7 @@ func (ctx *MahresourcesContext) commandActorAllowed(deps jobs.Deps, access jobs.
 	if !principal.CanWrite() {
 		return false, false
 	}
-	return true, !principal.IsAdmin() && (principal.IsScoped() || principal.RequiresScope())
+	return true, principal.IsGroupLimited()
 }
 
 func jobSummaryTextExpr(db *gorm.DB, field string) string {

@@ -1904,7 +1904,7 @@ func importWriteRefusal(bound *MahresourcesContext, op string) string {
 	if err := bound.requireWriteRole(op); err != nil {
 		return "role-refused"
 	}
-	if bound.isScopedPrincipal() {
+	if bound.principal.IsGroupLimited() {
 		return "scope-refused"
 	}
 	return ""

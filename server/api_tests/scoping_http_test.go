@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"mahresources/application_context"
+	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
 )
@@ -427,6 +429,119 @@ func TestScopedUser_ImportJobPlaneDenied(t *testing.T) {
 	}
 	if successors != 0 {
 		t.Fatalf("the refused Retry created %d successors", successors)
+	}
+}
+
+// TestImportReportsAreNotServedAsExportDownloads closes a sibling of the Job-plane
+// boundary. GET /v1/exports/{jobId}/download, for an id that names no group export,
+// fell back to the in-memory queue entry and served its result file after only an
+// owner and status check. An import parse's result file is its plan and an apply's
+// is its report, so a group-limited owner read both there while
+// /v1/imports/{id}/plan and /result answered 403. An import entry is not an export,
+// so the route answers 404 for it whoever asks.
+func TestImportReportsAreNotServedAsExportDownloads(t *testing.T) {
+	tc := setupAuthEnv(t)
+	installJobControlPlane(t, tc)
+	f := buildScopingFixture(t, tc)
+	bearer, userID := plainUserBearer(t, tc, "import-export-route-user")
+	as := map[string]string{"Accept": "application/json", "Authorization": bearer, "Content-Type": "application/json"}
+
+	// Two parses: one is applied, which consumes its plan; the other keeps its plan on
+	// disk, so its result file is there to be served.
+	parse := func() string {
+		t.Helper()
+		handle, parseID := submitImportParseForTest(t, tc, map[string]string{"Authorization": bearer})
+		if parsed := waitForCanonicalState(t, tc, parseID, "the parse to finish", func(s jobs.Snapshot) bool {
+			return s.State.Terminal()
+		}); parsed.State != jobs.StateSucceeded {
+			t.Fatalf("the parse ended %s (%+v)", parsed.State, parsed.Failure)
+		}
+		if _, ok := tc.AppCtx.DownloadManager().GetJob(handle); !ok {
+			t.Fatalf("control: the parse %s left no queue entry, so the export route would 404 for that reason alone", handle)
+		}
+		return handle
+	}
+	handle, planned := parse(), parse()
+	if res := doReq(tc, http.MethodGet, "/v1/imports/"+planned+"/plan", as, nil, nil); res.Code != http.StatusOK {
+		t.Fatalf("control: the unscoped owner reading the plan answered %d: %s", res.Code, res.Body.String())
+	}
+	applied := doReq(tc, http.MethodPost, "/v1/imports/"+handle+"/apply", as, nil, strings.NewReader(`{}`))
+	if applied.Code != http.StatusAccepted {
+		t.Fatalf("the apply answered %d: %s", applied.Code, applied.Body.String())
+	}
+	var apply struct {
+		JobID          string `json:"jobId"`
+		CanonicalJobID string `json:"canonicalJobId"`
+	}
+	if err := json.Unmarshal(applied.Body.Bytes(), &apply); err != nil || apply.JobID == "" {
+		t.Fatalf("decode the apply %s: %v", applied.Body.String(), err)
+	}
+	if done := waitForCanonicalState(t, tc, apply.CanonicalJobID, "the apply to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	}); done.State != jobs.StateSucceeded {
+		t.Fatalf("the apply ended %s (%+v)", done.State, done.Failure)
+	}
+	if res := doReq(tc, http.MethodGet, "/v1/imports/"+handle+"/result", as, nil, nil); res.Code != http.StatusOK {
+		t.Fatalf("control: the unscoped owner reading the report answered %d: %s", res.Code, res.Body.String())
+	}
+
+	ids := map[string]string{"parse": planned, "apply": apply.JobID}
+	for what, id := range ids {
+		if res := doReq(tc, http.MethodGet, "/v1/exports/"+id+"/download", as, nil, nil); res.Code != http.StatusNotFound {
+			t.Errorf("the unscoped owner downloading the import %s %s as an export answered %d, want 404: %s",
+				what, id, res.Code, res.Body.String())
+		}
+	}
+
+	if _, err := tc.AppCtx.UpdateUser(userID, &application_context.UserUpdate{
+		ScopeGroupID: application_context.UserField[*uint]{Set: true, Value: &f.rootID},
+	}); err != nil {
+		t.Fatalf("confine the owner: %v", err)
+	}
+	if res := doReq(tc, http.MethodGet, "/v1/imports/"+handle+"/result", as, nil, nil); res.Code != http.StatusForbidden {
+		t.Fatalf("control: the confined owner reading the report answered %d, want 403", res.Code)
+	}
+	for what, id := range ids {
+		if res := doReq(tc, http.MethodGet, "/v1/exports/"+id+"/download", as, nil, nil); res.Code != http.StatusNotFound {
+			t.Errorf("a group-limited owner downloading the import %s %s as an export answered %d, want 404: %s",
+				what, id, res.Code, res.Body.String())
+		}
+	}
+}
+
+// TestAGroupExportStillDownloadsThroughTheQueueFallback is the control for
+// TestImportReportsAreNotServedAsExportDownloads: with no control plane, the route
+// answers from the queue entry, and a group export's entry is still served.
+func TestAGroupExportStillDownloadsThroughTheQueueFallback(t *testing.T) {
+	tc := setupAuthEnv(t)
+	tc.AppCtx.SetJobService(nil)
+	f := buildScopingFixture(t, tc)
+	adminBearer := roleBearer(t, tc, models.RoleAdmin)
+	adminH := map[string]string{"Accept": "application/json", "Authorization": adminBearer, "Content-Type": "application/json"}
+
+	submit := doReq(tc, http.MethodPost, "/v1/groups/export", adminH, nil,
+		strings.NewReader(`{"rootGroupIds":[`+itoa(int(f.outsideID))+`]}`))
+	if submit.Code != http.StatusAccepted {
+		t.Fatalf("export submit answered %d: %s", submit.Code, submit.Body.String())
+	}
+	jobID := extractJSONString(submit.Body.String(), "jobId")
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		job, ok := tc.AppCtx.DownloadManager().GetJob(jobID)
+		if !ok {
+			t.Fatalf("the export %q has no queue entry", jobID)
+		}
+		if job.GetStatus() == download_queue.JobStatusCompleted {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the export is still %s", job.GetStatus())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	res := doReq(tc, http.MethodGet, "/v1/exports/"+jobID+"/download", map[string]string{"Authorization": adminBearer}, nil, nil)
+	if res.Code != http.StatusOK || res.Body.Len() == 0 {
+		t.Fatalf("the owner downloading the export answered %d (%d bytes): %s", res.Code, res.Body.Len(), res.Body.String())
 	}
 }
 
