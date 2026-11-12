@@ -58,8 +58,10 @@ func (g groupioScope) VisibleGroupIDs(ids []uint) map[uint]bool {
 }
 
 // groupioCarriers adapts MahresourcesContext to groupio.CarrierAuthority. It
-// asks this context's principal, so a queued apply dispatched as its stored
-// actor is answered with that actor's role at apply time, not at parse time.
+// asks this context's principal. A queued apply the adapter dispatches as its
+// stored actor is answered with that actor's role at apply time; an apply whose
+// run closes over the submitting request's context (SubmitImportApply) is
+// answered with the role at submission.
 type groupioCarriers struct{ ctx *MahresourcesContext }
 
 func (g groupioCarriers) AuthorTemplateCarrier(carrierType string) error {
