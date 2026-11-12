@@ -325,8 +325,14 @@ func postStream(t *testing.T, baseURL, path string, body map[string]any, header 
 	return resp, cancel
 }
 
+// newHarnessServer serves the router over loopback, where every request has the
+// same socket address. With accounts off a run belongs to the client address,
+// so the tests name their clients with X-Forwarded-For (sameClient and the
+// per-test headers), and that header counts only behind a trusted proxy
+// (GitHub #111): the server is configured as one.
 func newHarnessServer(t *testing.T, tc *TestContext) *httptest.Server {
 	t.Helper()
+	tc.AppCtx.Config.TrustProxyHeaders = true
 	srv := httptest.NewServer(tc.Router)
 	t.Cleanup(srv.Close)
 	return srv
@@ -348,7 +354,8 @@ func runIDOf(t *testing.T, f sseFrame) string {
 }
 
 // sameClient makes every request of a test one account when auth is off: the
-// run limit and the finish route key on the client address.
+// run limit and the finish route key on the client address. It names the client
+// only on a server that trusts proxy headers, as newHarnessServer's does.
 var sameClient = http.Header{"X-Forwarded-For": {"198.51.100.1"}}
 
 func postRunJSON(tc *TestContext, path string, body map[string]any, header http.Header) *httptest.ResponseRecorder {

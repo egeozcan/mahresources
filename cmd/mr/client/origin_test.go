@@ -72,7 +72,7 @@ func TestBearerKeptOnSameOriginRedirect(t *testing.T) {
 	var sawToken atomic.Bool
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/resource/view", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/files/x", 302)
+		http.Redirect(w, r, "/files/x", http.StatusFound)
 	})
 	mux.HandleFunc("/files/x", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer SECRET" {

@@ -77,7 +77,6 @@ func lintMessages(t *testing.T, tc *TestContext, bearer, content string) string 
 }
 
 type offerSurface struct {
-	menuHTML  []string // pages whose HTML carries the menu
 	wantOpen  bool
 	wantClose bool
 	manage    bool
