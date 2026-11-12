@@ -18,6 +18,11 @@ name. Re-running with a path a Resource already records returns that
 Resource unchanged rather than creating a second one, so a bulk import
 can be repeated safely.
 
+With authentication enabled the command needs an admin account. Paths in
+the server's private storage (a top-level entry starting with `_` or `.`,
+such as `_exports/` or `_job_replay_key`, or any path with a `..` segment)
+are refused for every account.
+
 ## Usage
 
 ```bash

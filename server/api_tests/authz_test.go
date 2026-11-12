@@ -94,6 +94,10 @@ func TestAuthorizationMatrix(t *testing.T) {
 			allowed: map[models.Role]bool{models.RoleAdmin: true, models.RoleEditor: true, models.RoleUser: true, models.RoleGuest: false},
 		},
 		{
+			name: "register a server-local file (capSystem)", method: http.MethodPost, path: "/v1/resource/local", body: `{"LocalPath":"authz-missing.txt"}`,
+			allowed: map[models.Role]bool{models.RoleAdmin: true, models.RoleEditor: false, models.RoleUser: false, models.RoleGuest: false},
+		},
+		{
 			name: "admin data-stats (capSystem)", method: http.MethodGet, path: "/v1/admin/data-stats",
 			allowed: map[models.Role]bool{models.RoleAdmin: true, models.RoleEditor: false, models.RoleUser: false, models.RoleGuest: false},
 		},
