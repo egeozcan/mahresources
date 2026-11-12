@@ -83,6 +83,8 @@ func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor
 		return nil, errors.New("block content cannot be null")
 	} else if err := bt.ValidateContent(editor.Content); err != nil {
 		return nil, err
+	} else if err := ctx.checkBlockReferencesInScope(editor.Type, editor.Content); err != nil {
+		return nil, err
 	}
 
 	// Auto-assign position after all existing blocks if none provided
@@ -203,6 +205,9 @@ func (ctx *MahresourcesContext) UpdateBlockContent(blockID uint, content json.Ra
 		return nil, errors.New("unknown block type: " + block.Type)
 	}
 	if err := bt.ValidateContent(content); err != nil {
+		return nil, err
+	}
+	if err := ctx.checkBlockReferencesInScope(block.Type, content); err != nil {
 		return nil, err
 	}
 

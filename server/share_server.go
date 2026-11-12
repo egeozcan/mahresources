@@ -408,8 +408,8 @@ func (s *ShareServer) handleCalendarEvents(w http.ResponseWriter, r *http.Reques
 	}
 	end = end.Add(24*time.Hour - time.Second)
 
-	// Fetch calendar events
-	response, err := s.appContext.GetCalendarEvents(blockId, start, end)
+	// Fetch calendar events, resolving resource sources as the sharer (issue #89)
+	response, err := s.appContext.ShareReaderFor(note).GetCalendarEvents(blockId, start, end)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -433,6 +433,9 @@ func (s *ShareServer) handleSharedResource(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Not found", http.StatusNotFound)
 		return
 	}
+
+	// Block references resolve as the account that shared the note (issue #89).
+	reader := s.appContext.ShareReaderFor(note)
 
 	// Check if resource is in note.Resources
 	resourceAllowed := false
@@ -468,7 +471,7 @@ func (s *ShareServer) handleSharedResource(w http.ResponseWriter, r *http.Reques
 			for id := range resourceIdsSet {
 				resourceIds = append(resourceIds, id)
 			}
-			if resources, err := s.appContext.GetResourcesWithIds(&resourceIds); err == nil {
+			if resources, err := reader.GetResourcesWithIds(&resourceIds); err == nil {
 				for _, resource := range resources {
 					if resource.Hash == hash {
 						resourceAllowed = true
@@ -485,7 +488,7 @@ func (s *ShareServer) handleSharedResource(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Serve the resource
-	s.appContext.ServeResourceByHash(w, r, hash)
+	reader.ServeResourceByHash(w, r, hash)
 }
 
 // renderSharedNote renders a shared note using templates
@@ -598,6 +601,9 @@ func (s *ShareServer) processShareTemplates(note *models.Note) (header, css stri
 func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note, shareToken string) {
 	template := pongo2.Must(s.templateSet.FromFile("/shared/displayNote.tpl"))
 
+	// Block references resolve as the account that shared the note (issue #89).
+	reader := s.appContext.ShareReaderFor(note)
+
 	// Collect all group IDs from references blocks and resource IDs from gallery blocks
 	groupIdsSet := make(map[uint]bool)
 	resourceIdsSet := make(map[uint]bool)
@@ -675,7 +681,7 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 					}
 				}
 				// Execute query
-				if queryData, err := s.fetchTableQueryData(queryId, params); err == nil {
+				if queryData, err := fetchTableQueryData(reader, queryId, params); err == nil {
 					tb.QueryData = queryData
 				} else {
 					log.Printf("Error fetching table query data: %v", err)
@@ -695,7 +701,7 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 		for id := range resourceIdsSet {
 			resourceIds = append(resourceIds, id)
 		}
-		if resources, err := s.appContext.GetResourcesWithIds(&resourceIds); err == nil {
+		if resources, err := reader.GetResourcesWithIds(&resourceIds); err == nil {
 			for _, resource := range resources {
 				resourceHashMap[float64(resource.ID)] = resource.Hash
 				resourceNameMap[float64(resource.ID)] = resource.Name
@@ -710,7 +716,7 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 		for id := range groupIdsSet {
 			groupIds = append(groupIds, id)
 		}
-		if groups, err := s.appContext.GetGroupsWithIds(&groupIds); err == nil {
+		if groups, err := reader.GetGroupsWithIds(&groupIds); err == nil {
 			for _, group := range groups {
 				// Use float64 key since JSON numbers come as float64
 				info := groupInfo{
@@ -756,8 +762,11 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 // value exactly as the API endpoint did — and to turn every []byte into a string,
 // so a binary column rendered as mojibake in a public page while the logged-in
 // view of the same query showed base64. One rule, one place.
-func (s *ShareServer) fetchTableQueryData(queryId uint, params map[string]any) (map[string]interface{}, error) {
-	rows, err := s.appContext.RunReadOnlyQuery(queryId, params)
+//
+// reader is the sharer-bound context (ShareReaderFor), so a scoped or deny-all
+// sharer meets RunReadOnlyQuery's group-limited deny (issue #89).
+func fetchTableQueryData(reader *application_context.MahresourcesContext, queryId uint, params map[string]any) (map[string]interface{}, error) {
+	rows, err := reader.RunReadOnlyQuery(queryId, params)
 	if err != nil {
 		return nil, err
 	}

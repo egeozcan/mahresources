@@ -31,8 +31,13 @@ type Note struct {
 	// existing rows (minted before BH-035) remain NULL; the /admin/shares UI
 	// renders "(unknown)" for them rather than back-filling with an inaccurate
 	// NOW() during migration. Set in ShareNote, cleared in UnshareNote.
-	ShareCreatedAt *time.Time   `gorm:"index" json:"shareCreatedAt,omitempty"`
-	Blocks         []*NoteBlock `gorm:"foreignKey:NoteID" json:"blocks,omitempty"`
+	ShareCreatedAt *time.Time `gorm:"index" json:"shareCreatedAt,omitempty"`
+	// ShareCreatedByUserId records the account that minted the current
+	// ShareToken. The share server resolves the note's block references as that
+	// account (issue #89). NULL for a share minted before it was recorded or by a
+	// principal-less caller; set in ShareNote, cleared in UnshareNote.
+	ShareCreatedByUserId *uint        `gorm:"index" json:"-"`
+	Blocks               []*NoteBlock `gorm:"foreignKey:NoteID" json:"blocks,omitempty"`
 
 	// RenderedHTML is a transient field populated by the API when render=1 is set.
 	RenderedHTML string `gorm:"-" json:"renderedHTML,omitempty"`

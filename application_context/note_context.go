@@ -376,14 +376,31 @@ func (ctx *MahresourcesContext) ShareNote(noteId uint) (string, error) {
 		return *note.ShareToken, nil
 	}
 
+	// Issue #89: a group-limited caller may not publish a note whose blocks
+	// reference what that caller cannot see, whoever wrote those blocks.
+	if ctx.isScopedPrincipal() {
+		var blocks []models.NoteBlock
+		if err := ctx.db.Where("note_id = ?", noteId).Find(&blocks).Error; err != nil {
+			return "", err
+		}
+		for _, block := range blocks {
+			if err := ctx.checkBlockReferencesInScope(block.Type, json.RawMessage(block.Content)); err != nil {
+				return "", err
+			}
+		}
+	}
+
 	token := auth.GenerateShareToken()
 	// BH-035: record when this token was minted so the admin /admin/shares
 	// dashboard can sort by age and operators have an audit trail. Kept in
-	// the same Updates call so either both persist or neither does.
+	// the same Updates call so either both persist or neither does. The sharer
+	// is recorded alongside: the share server resolves block references as that
+	// account (ShareReaderFor).
 	now := time.Now()
 	if err := ctx.db.Model(&note).Updates(map[string]any{
-		"share_token":      token,
-		"share_created_at": now,
+		"share_token":              token,
+		"share_created_at":         now,
+		"share_created_by_user_id": sharerID(ctx.principal),
 	}).Error; err != nil {
 		return "", err
 	}
@@ -401,8 +418,9 @@ func (ctx *MahresourcesContext) UnshareNote(noteId uint) error {
 	// BH-035: clear the ShareCreatedAt timestamp alongside the token so the
 	// admin dashboard doesn't show stale "created" dates for unshared notes.
 	if err := ctx.db.Model(&note).Updates(map[string]any{
-		"share_token":      nil,
-		"share_created_at": nil,
+		"share_token":              nil,
+		"share_created_at":         nil,
+		"share_created_by_user_id": nil,
 	}).Error; err != nil {
 		return err
 	}
