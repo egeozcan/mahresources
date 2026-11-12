@@ -371,7 +371,7 @@ func GetResourceAddLocalHandler(ctx contracts.ResourceCreator) func(writer http.
 		res, err := effectiveCtx.AddLocalResource(creator.Name, &creator)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
 		}
 

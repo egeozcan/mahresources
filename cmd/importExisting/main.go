@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/joho/godotenv"
@@ -89,6 +90,11 @@ func main() {
 			LocalPath: relPath,
 			PathName:  fileSystemKey,
 		})
+
+		if errors.Is(createErr, application_context.ErrPrivateStoragePath) {
+			fmt.Println("skipping private storage", relPath)
+			return nil
+		}
 
 		return createErr
 	})
