@@ -168,6 +168,22 @@ var templates = map[string]templateInformation{
 	"/reduction":     {adaptTemplate(template_context_providers.ResourceReductionContextProvider), "displayResourceReduction.tpl", http.MethodGet},
 }
 
+// setPrincipalTemplateFields publishes the who-is-asking fields the base layout
+// and menu guards read: authEnabled, currentUser and csrfToken. Shared by normal
+// routes and the error pages so the two cannot drift; a page missing authEnabled
+// makes the menu's `not authEnabled or ...` guards fail open.
+func setPrincipalTemplateFields(appContext *application_context.MahresourcesContext, request *http.Request, ctx pongo2.Context) {
+	// The implicit super-user used when auth is disabled is intentionally not
+	// surfaced, so the no-auth UI is unchanged.
+	ctx["authEnabled"] = appContext.AuthEnabled()
+	if p := auth.PrincipalFromContext(request.Context()); p != nil && !p.SuperUser {
+		ctx["currentUser"] = p
+	}
+	// CSRF synchronizer token for the page (meta tag + form fields). Empty
+	// when auth is off or for Bearer requests, where CSRF is not enforced.
+	ctx["csrfToken"] = auth.CSRFTokenFromContext(request.Context())
+}
+
 func wrapContextWithPlugins(appContext *application_context.MahresourcesContext, ctxFn func(request *http.Request) pongo2.Context) func(request *http.Request) pongo2.Context {
 	pm := appContext.PluginManager()
 	return func(request *http.Request) pongo2.Context {
@@ -195,13 +211,9 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		// PluginActionAccessFor delegates to PluginAccessFor for that half.
 		actionAccess := auth.PluginActionAccessFor(request.Context(), appContext.PluginAllowsScopedPrincipals)
 
-		// Expose the authenticated user to templates (nav avatar / logout). The
-		// implicit super-user used when auth is disabled is intentionally not
-		// surfaced, so the no-auth UI is unchanged.
-		ctx["authEnabled"] = appContext.AuthEnabled()
+		setPrincipalTemplateFields(appContext, request, ctx)
 		ctx["jobCenterCutoverEnabled"] = template_context_providers.JobCenterCutoverEnabled
 		if p := auth.PrincipalFromContext(request.Context()); p != nil && !p.SuperUser {
-			ctx["currentUser"] = p
 			// An administrator's Jobs drawer lists their own Jobs unless they
 			// chose every account's; rendered with the page, so the first read
 			// already has the right scope.
@@ -209,9 +221,6 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 				ctx["jobsPanelOwnerScope"] = "me"
 			}
 		}
-		// CSRF synchronizer token for the page (meta tag + form fields). Empty
-		// when auth is off or for Bearer requests, where CSRF is not enforced.
-		ctx["csrfToken"] = auth.CSRFTokenFromContext(request.Context())
 
 		// Keep the export-retention helper in the admin export template.
 		//
@@ -597,6 +606,12 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	// One shared rate limiter throttles failed logins from both the web form and
 	// the JSON API (no-op when -login-max-attempts is 0).
 	loginLimiter := newLoginRateLimiter(appContext.LoginRateLimit(), appContext.LoginRateWindow())
+	// Public (browsers probe it before login) and served as a static file, so an
+	// anonymous request never falls through to the app-shell 404 page.
+	router.Methods(http.MethodGet, http.MethodHead).Path("/favicon.ico").HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFile(w, r, "./public/favicon/favicon.ico")
+		})
 	router.Methods(http.MethodGet).Path("/login").HandlerFunc(
 		template_handlers.RenderTemplate("login.tpl", template_context_providers.LoginContextProvider(appContext)))
 	router.Methods(http.MethodPost).Path("/login").HandlerFunc(LoginSubmitHandler(appContext, loginLimiter))
