@@ -182,7 +182,7 @@ func RenderMRQLShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 
 	// Prepend each distinct category's CustomCSS (once) so inline [mrql] custom cards are styled
 	// the same way the /mrql page styles them.
-	cssPrefix := renderResultCSS(reqCtx, result, renderer, executor, depth)
+	cssPrefix := renderResultCSS(reqCtx, result, ctx, renderer, executor, depth)
 	if m.Err() != nil {
 		return ""
 	}
@@ -242,8 +242,8 @@ func renderMRQLSlot(reqCtx context.Context, slot string, result *QueryResult, ct
 // cards the same way the /mrql API path does (see mrqlCategoryCSS in mrql_api_handlers.go). Categories
 // without a custom card are skipped — a default card carries no per-category hook to target. The CSS is
 // emitted unescaped per the KAN-6 trust model, and shortcodes inside it are processed with the first
-// matching item's context.
-func renderResultCSS(reqCtx context.Context, result *QueryResult, renderer PluginRenderer, executor QueryExecutor, depth int) string {
+// matching item's context, which inherits UntrustedSource from parent.
+func renderResultCSS(reqCtx context.Context, result *QueryResult, parent MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor, depth int) string {
 	if result == nil {
 		return ""
 	}
@@ -279,6 +279,7 @@ func renderResultCSS(reqCtx context.Context, result *QueryResult, renderer Plugi
 				ScopeGroupName: it.ScopeGroupName, ScopeCategoryName: it.ScopeCategoryName,
 				ParentGroupName: it.ParentGroupName, ParentCategoryName: it.ParentCategoryName,
 				RootGroupName: it.RootGroupName, RootCategoryName: it.RootCategoryName,
+				UntrustedSource: parent.UntrustedSource,
 			}
 			css := processWithDepth(reqCtx, it.CustomCSS, childCtx, renderer, executor, depth+1)
 			wrapped := `<style data-mr-custom-css="` + key + `">` + css + `</style>`
@@ -372,7 +373,8 @@ func renderFlatWithCustom(reqCtx context.Context, items []QueryResultItem, paren
 // contextFromItem builds the shortcode context a query result renders in: the
 // result's own entity, Meta and scope chain. It inherits ForceReadOnly from the
 // context that ran the query, because a read-only render must not grow an edit
-// affordance by rendering some other entity inside itself.
+// affordance by rendering some other entity inside itself, and UntrustedSource,
+// because the item template may be the user content's own [mrql] body.
 func contextFromItem(item QueryResultItem, parent MetaShortcodeContext) MetaShortcodeContext {
 	return MetaShortcodeContext{
 		EntityType:     item.EntityType,
@@ -386,7 +388,8 @@ func contextFromItem(item QueryResultItem, parent MetaShortcodeContext) MetaShor
 		ScopeGroupName: item.ScopeGroupName, ScopeCategoryName: item.ScopeCategoryName,
 		ParentGroupName: item.ParentGroupName, ParentCategoryName: item.ParentCategoryName,
 		RootGroupName: item.RootGroupName, RootCategoryName: item.RootCategoryName,
-		ForceReadOnly: parent.ForceReadOnly,
+		ForceReadOnly:   parent.ForceReadOnly,
+		UntrustedSource: parent.UntrustedSource,
 	}
 }
 

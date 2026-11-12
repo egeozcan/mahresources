@@ -10,7 +10,7 @@ import (
 
 // fakeSigner records the arguments it was called with and returns a fixed token.
 func fakeSigner(calls *[]string) DeferredSigner {
-	return func(entityType string, entityID uint, body string) string {
+	return func(entityType string, entityID uint, body string, _ bool) string {
 		*calls = append(*calls, entityType+"|"+body)
 		_ = entityID
 		return "TOKEN-XYZ"

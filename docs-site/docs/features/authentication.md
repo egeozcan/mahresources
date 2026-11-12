@@ -87,9 +87,9 @@ With auth off, a Description or a note text block may contain raw HTML, includin
 - `<script>`, `<style>`, `<iframe>`, `<svg>`, forms and similar elements are removed with their content.
 - Event-handler attributes (`onclick`, `onerror`, ...) and Alpine.js attributes (`x-data`, `x-init`, `@click`, `:class`, ...) are removed.
 - Links and images keep only relative, `http`, `https` and `mailto` URLs (images may also use `data:image/...`).
-- Ordinary markdown output (links, images, tables, code blocks, task lists), [mentions](./mentions.md) and [shortcodes](./shortcodes.md) keep working. A shortcode placed inside an HTML attribute, such as `<a href="[property path=Name]">`, is not expanded under auth.
+- Ordinary markdown output (links, images, tables, code blocks, task lists), [mentions](./mentions.md) and [shortcodes](./shortcodes.md) keep working. A shortcode placed inside an HTML attribute, such as `<a href="[property path=Name]">`, is not expanded under auth, and `raw="true"` on `[property]`, `[meta inline="true"]` and `[item]` is ignored: the value is always HTML-escaped, including inside `[mrql]`, `[lazy]` and `[details]` blocks written there.
 
-The same rule applies on the [share server](./note-sharing.md). Category, Resource Category and Note Type templates are not affected: only admins and editors can edit them, and they still accept raw HTML.
+The same rule applies on the [share server](./note-sharing.md). Category, Resource Category and Note Type templates are not affected: only admins and editors can edit them, and they still accept raw HTML and `raw="true"`, except when a description or text block pulls them in through `[mrql]`.
 
 ## How to authenticate
 

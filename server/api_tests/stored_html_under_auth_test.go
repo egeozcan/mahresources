@@ -3,13 +3,15 @@ package api_tests
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"golang.org/x/net/html"
+	xhtml "golang.org/x/net/html"
 
 	"mahresources/application_context"
 	"mahresources/models"
@@ -38,12 +40,12 @@ const payloadCode = "window.__xss=1"
 // attribute's code, and is not reported.
 func liveStoredXSS(t *testing.T, body string) []string {
 	t.Helper()
-	doc, err := html.Parse(strings.NewReader(body))
+	doc, err := xhtml.Parse(strings.NewReader(body))
 	require.NoError(t, err)
 	var found []string
-	var walk func(n *html.Node)
-	walk = func(n *html.Node) {
-		if n.Type == html.ElementNode {
+	var walk func(n *xhtml.Node)
+	walk = func(n *xhtml.Node) {
+		if n.Type == xhtml.ElementNode {
 			if n.Data == "script" && n.FirstChild != nil && n.FirstChild.Data == payloadCode {
 				found = append(found, "<script>"+n.FirstChild.Data)
 			}
@@ -231,4 +233,135 @@ func TestStoredHTML_AuthOff_RawHTMLStillRenders(t *testing.T) {
 		require.Len(t, liveStoredXSS(t, rr.Body.String()), 3, "%s: all three raw elements render with auth off", path)
 	}
 	require.Len(t, liveStoredXSS(t, renderShare(t, tc, descNote.ID)), 3, "share page, auth off")
+}
+
+// hostileValue is entity data a scoped user controls (a Name, a Meta value, a
+// Description) carrying the payload.
+const hostileValue = `<img src=x onerror="window.__xss=1">`
+
+// deferredTokenRe finds every sealed token a rendered page carries: the
+// [lazy]/[details]/[autorefresh] bodies and the reloadable region of a slot
+// holding a [reload], all rendered later by /v1/shortcodes/deferred.
+var deferredTokenRe = regexp.MustCompile(`data-(?:token|shortcode-region)="([^"]+)"`)
+
+// renderDeferred renders every sealed token in body through the deferred
+// endpoint as the given principal and returns the rendered bodies.
+func renderDeferred(t *testing.T, tc *TestContext, headers map[string]string, body string) []string {
+	t.Helper()
+	var out []string
+	for _, m := range deferredTokenRe.FindAllStringSubmatch(body, -1) {
+		reqBody, err := json.Marshal(map[string]string{"token": html.UnescapeString(m[1])})
+		require.NoError(t, err)
+		rr := doReq(tc, http.MethodPost, "/v1/shortcodes/deferred",
+			map[string]string{"Accept": "application/json", "Content-Type": "application/json", "Authorization": headers["Authorization"]},
+			nil, strings.NewReader(string(reqBody)))
+		require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+		var resp struct{ HTML string }
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+		out = append(out, resp.HTML)
+	}
+	return out
+}
+
+// A shortcode with raw output, written in a Description or text block, must not
+// put the entity data it reads back on the page unescaped: the sanitizer ran
+// before shortcodes expanded, so whatever a raw shortcode emits is never
+// checked. Under auth, raw is ignored everywhere a render that started in user
+// content reaches, including bodies sealed for a later request.
+func TestStoredHTML_AuthOn_RawShortcodesInUserContentStayEscaped(t *testing.T) {
+	meta := fmt.Sprintf(`{"x":%q,"list":[%q]}`, hostileValue, hostileValue)
+	cases := []struct {
+		name string
+		text string
+	}{
+		{"property Description raw", hostileValue + ` [property path="Description" raw="true"]`},
+		{"property Name raw", `[property path="Name" raw="true"]`},
+		{"meta inline raw", `[meta path="x" inline="true" raw="true"]`},
+		{"item raw", `[each path="list"][item raw="true"][/each]`},
+		{"mrql item template raw", `[mrql query="type = note" format="custom"][property path="Name" raw="true"][/mrql]`},
+		{"lazy body raw", `[lazy][property path="Name" raw="true"][/lazy]`},
+		{"details body raw", `[details summary="s"][meta path="x" inline="true" raw="true"][/details]`},
+		{"autorefresh body raw", `[autorefresh][property path="Name" raw="true"][/autorefresh]`},
+		{"reload region raw", `[reload] [property path="Name" raw="true"]`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tc := setupAuthEnv(t)
+			f := newStoredXSSFixture(t, tc, c.text)
+			// The scoped user can rename and set Meta on notes in its subtree;
+			// stored directly here to keep the fixture to the rendering.
+			for _, n := range []*models.Note{f.descNote, f.blockNote} {
+				require.NoError(t, tc.DB.Model(&models.Note{}).Where("id = ?", n.ID).
+					Updates(map[string]any{"name": hostileValue, "meta": meta}).Error)
+			}
+			require.NoError(t, tc.DB.Model(&models.Note{}).Where("id = ?", f.blockNote.ID).
+				Update("description", hostileValue).Error)
+
+			pages := map[string]string{
+				"/note (Description)": adminGet(t, tc, f, fmt.Sprintf("/note?id=%d", f.descNote.ID)),
+				"/note (text block)":  adminGet(t, tc, f, fmt.Sprintf("/note?id=%d", f.blockNote.ID)),
+				"/v1/note/renderedTextBlocks": adminGet(t, tc, f,
+					fmt.Sprintf("/v1/note/renderedTextBlocks?noteId=%d", f.blockNote.ID)),
+			}
+			preview := doReq(tc, http.MethodPost, fmt.Sprintf("/v1/note/previewDescription?id=%d", f.descNote.ID),
+				map[string]string{"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded", "Authorization": f.adminHeader["Authorization"]},
+				nil, strings.NewReader(url.Values{"text": {c.text}}.Encode()))
+			require.Equal(t, http.StatusOK, preview.Code, preview.Body.String())
+			var previewResp struct{ HTML string }
+			require.NoError(t, json.Unmarshal(preview.Body.Bytes(), &previewResp))
+			pages["previewDescription"] = previewResp.HTML
+
+			for where, body := range pages {
+				assertNoLiveStoredXSS(t, where, body)
+				rendered := body
+				for i, deferred := range renderDeferred(t, tc, f.adminHeader, body) {
+					assertNoLiveStoredXSS(t, fmt.Sprintf("%s, deferred body %d", where, i), deferred)
+					rendered += deferred
+				}
+				// Positive control: the shortcode did expand, escaped. Pongo2's
+				// own escaping writes &quot;, so this form is the shortcode's.
+				require.Contains(t, rendered, html.EscapeString(hostileValue), "%s: the shortcode rendered its value escaped", where)
+			}
+		})
+	}
+}
+
+// raw keeps working where no user content is involved: with auth off, and in
+// a Note Type template (admin-authored) under auth, eagerly and in a deferred
+// body.
+func TestStoredHTML_RawShortcodeStillWorksOutsideUserContent(t *testing.T) {
+	const rawName = `<em class="raw-ok">raw-ok</em>`
+
+	t.Run("auth off, Description", func(t *testing.T) {
+		tc := SetupTestEnv(t)
+		n := &models.Note{Name: rawName, Description: `[property path="Name" raw="true"]`}
+		require.NoError(t, tc.DB.Create(n).Error)
+		rr := doReq(tc, http.MethodGet, fmt.Sprintf("/note?id=%d", n.ID), map[string]string{"Accept": "text/html"}, nil, nil)
+		require.Equal(t, http.StatusOK, rr.Code)
+		require.Contains(t, rr.Body.String(), rawName)
+	})
+
+	t.Run("auth on, Note Type template", func(t *testing.T) {
+		tc := setupAuthEnv(t)
+		f := newStoredXSSFixture(t, tc, `[property path="Name" raw="true"]`)
+		nt := &models.NoteType{
+			Name:          "raw-template-type",
+			CustomHeader:  `<div id="hdr">[property path="Name" raw="true"]</div>`,
+			CustomSidebar: `[lazy][property path="Name" raw="true"][/lazy]`,
+		}
+		require.NoError(t, tc.DB.Create(nt).Error)
+		require.NoError(t, tc.DB.Model(&models.Note{}).Where("id = ?", f.descNote.ID).
+			Updates(map[string]any{"name": rawName, "note_type_id": nt.ID}).Error)
+
+		page := adminGet(t, tc, f, fmt.Sprintf("/note?id=%d", f.descNote.ID))
+		require.Contains(t, page, `<div id="hdr">`+rawName+`</div>`, "raw in an admin template still renders raw under auth")
+		require.Contains(t, page, html.EscapeString(rawName), "the same shortcode in the Description is escaped")
+		deferred := renderDeferred(t, tc, f.adminHeader, page)
+		require.NotEmpty(t, deferred)
+		found := false
+		for _, d := range deferred {
+			found = found || strings.Contains(d, rawName)
+		}
+		require.True(t, found, "raw in an admin template's [lazy] body still renders raw: %v", deferred)
+	})
 }

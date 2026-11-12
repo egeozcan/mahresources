@@ -53,7 +53,8 @@ func descriptionEntityLoader(ctx TemplatePreviewContext, entityType string) func
 // is the request's principal-scoped context, so an entity outside a
 // group-limited principal's subtree is not found and [mrql] sees only the
 // subtree. `exists` checks an entity of a type without shortcodes.
-// authEnabled sanitizes the markup as the page does under auth (#92).
+// authEnabled sanitizes the markup and ignores raw="true" in its shortcodes, as
+// the page does under auth (#92).
 func GetPreviewDescriptionHandler(ctx TemplatePreviewContext, entityType string, exists func(uint) error, authEnabled bool) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var req descriptionPreviewRequest
@@ -86,6 +87,7 @@ func GetPreviewDescriptionHandler(ctx TemplatePreviewContext, entityType string,
 				if principal := auth.PrincipalFromContext(reqCtx); principal != nil {
 					metaCtx.ForceReadOnly = metaCtx.ForceReadOnly || !principal.CanWrite()
 				}
+				metaCtx.UntrustedSource = authEnabled
 				executor := cappedQueryExecutor(template_filters.BuildQueryExecutor(ctx), previewMRQLLimitCap)
 				html = shortcodes.Process(reqCtx, html, *metaCtx, previewPluginRenderer(reqCtx, ctx), executor)
 			}

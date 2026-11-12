@@ -47,7 +47,7 @@ func RenderLazyShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 		return `<div class="lazy-content">` + inner + `</div>`
 	}
 
-	token := signer(ctx.EntityType, ctx.EntityID, sc.InnerContent)
+	token := signer(ctx.EntityType, ctx.EntityID, sc.InnerContent, ctx.UntrustedSource)
 	return fmt.Sprintf(
 		`<lazy-shortcode data-token="%s"><noscript>This content requires JavaScript to load.</noscript></lazy-shortcode>`,
 		html.EscapeString(token),
