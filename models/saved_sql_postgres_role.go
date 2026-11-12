@@ -15,13 +15,25 @@ import (
 const SavedSQLSchema = "public"
 
 // dangerousPredefinedRoles let a member read or write server files, run
-// programs, or read or write every table whatever its grants.
+// programs, read or write every table whatever its grants, see every session's
+// queries and every setting, signal other backends, or run maintenance and
+// subscriptions. A role a server version does not have simply never shows up
+// among the memberships.
 var dangerousPredefinedRoles = []string{
 	"pg_read_server_files",
 	"pg_write_server_files",
 	"pg_execute_server_program",
 	"pg_read_all_data",
 	"pg_write_all_data",
+	"pg_monitor",
+	"pg_read_all_stats",
+	"pg_read_all_settings",
+	"pg_stat_scan_tables",
+	"pg_signal_backend",
+	"pg_maintain",
+	"pg_checkpoint",
+	"pg_create_subscription",
+	"pg_use_reserved_connections",
 }
 
 // ReadOnlyRoleCheckError is what VerifyPostgresReadOnlyRole returns when the
@@ -63,7 +75,9 @@ func listNames(names []string) string {
 //     role (a member can SET ROLE to it and use its grants);
 //   - is a superuser or bypasses row-level security;
 //   - is a member of a predefined role that reads or writes server files, runs
-//     programs, or reads or writes every table;
+//     programs, reads or writes every table, monitors other sessions, reads
+//     settings, signals backends, or runs maintenance, checkpoints or
+//     subscriptions (dangerousPredefinedRoles);
 //   - connects to a different database from the main connection;
 //   - has CREATE on any schema;
 //   - has INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES or TRIGGER on any table,
@@ -114,8 +128,8 @@ func VerifyPostgresReadOnlyRole(ctx context.Context, ro *sqlx.DB, mainRole, main
 		case isDangerousPredefinedRole(role):
 			dangerous = append(dangerous, role)
 		case strings.HasPrefix(role, "pg_"):
-			// The other predefined roles (pg_monitor, pg_database_owner, ...)
-			// grant no table access.
+			// The other predefined roles (pg_database_owner, ...) grant
+			// nothing saved SQL could use.
 		default:
 			other = append(other, role)
 		}
@@ -216,10 +230,11 @@ func PostgresReadOnlyRoleSQL(role string) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, `-- A read-only role for mahresources saved SQL queries (DB_READONLY_DSN).
 --
--- Run this connected to the mahresources database, as the role that owns its
--- tables (the DB_DSN role) or as a superuser, after the server has started at
--- least once so that every table exists. Running it again is safe, and puts the
--- role back to exactly these grants.
+-- Run this connected to the mahresources database as a superuser, after the
+-- server has started at least once so that every table exists. CREATE ROLE and
+-- the ALTER ROLE attributes below need a superuser (or at least CREATEROLE plus
+-- the attributes being set), which the DB_DSN role normally is not. Running it
+-- again is safe, and puts the role back to exactly these grants.
 --
 -- The server checks this role at startup and again at most a minute before a
 -- saved query runs. With -auth, saved SQL is refused until the check passes.

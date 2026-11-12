@@ -24,7 +24,9 @@ const savedSQLRoleCheckTTL = time.Minute
 // savedSQLRoleCheck caches the last verdict on the read-only role. It is shared
 // by pointer, because the context is copied per principal and per transaction.
 type savedSQLRoleCheck struct {
-	mu        sync.Mutex
+	mu sync.Mutex
+	// checkedAt is when the check behind err started, not when it finished: a
+	// verdict is as old as the privileges it saw.
 	checkedAt time.Time
 	err       error
 	logged    string
@@ -52,13 +54,24 @@ func (c *savedSQLRoleCheck) verdict(ctx *MahresourcesContext, fresh bool) error 
 
 	// Checked without the lock: the check takes connections from both pools,
 	// and a caller holding one while it waited on the lock would deadlock a
-	// small pool. Two callers may check at once; either verdict is current.
-	err := ctx.verifyReadOnlyRole()
+	// small pool. Two callers may check at once; store keeps whichever verdict
+	// started later.
+	started := time.Now()
+	return c.store(started, ctx.verifyReadOnlyRole(), ctx.Config.AuthEnabled)
+}
 
+// store records err as the verdict of a check that started at started, unless
+// a check that started later has already been stored: a slow check that began
+// before a GRANT must not replace the failure a later check found. It returns
+// the verdict in force afterwards.
+func (c *savedSQLRoleCheck) store(started time.Time, err error, authEnabled bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if !c.checkedAt.IsZero() && !started.After(c.checkedAt) {
+		return c.err
+	}
 	c.err = err
-	c.checkedAt = time.Now()
+	c.checkedAt = started
 
 	// Logged when the verdict changes, not on every recheck.
 	current := ""
@@ -70,7 +83,7 @@ func (c *savedSQLRoleCheck) verdict(ctx *MahresourcesContext, fresh bool) error 
 		switch {
 		case c.err == nil:
 			log.Printf("Saved SQL: the DB_READONLY_DSN role is restricted to the saved-SQL tables")
-		case ctx.Config.AuthEnabled:
+		case authEnabled:
 			log.Printf("WARNING: saved SQL queries are disabled: %v. Run `mahresources -print-readonly-role-sql=<role>` for the SQL that creates a correctly restricted role.", c.err)
 		default:
 			log.Printf("WARNING: saved SQL queries can read more than content tables: %v. They stay enabled because -auth is off; run `mahresources -print-readonly-role-sql=<role>` for the SQL that creates a correctly restricted role.", c.err)

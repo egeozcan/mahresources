@@ -94,6 +94,11 @@ var pgSensitiveQueries = []string{
 	"SELECT * FROM log_entries",
 	"SELECT * FROM plugin_kvs",
 	"SELECT * FROM jobs",
+	// USING and NATURAL join columns, which SQLite's authorizer does not see;
+	// Postgres checks the privilege on every column a join reads.
+	"SELECT password_hash FROM (SELECT NULL::text AS password_hash WHERE false) s FULL JOIN users USING (password_hash)",
+	"SELECT settings_json FROM (SELECT NULL::text AS settings_json WHERE false) s FULL JOIN plugin_states USING (settings_json)",
+	"SELECT count(*) AS n FROM (SELECT 'rb_editor'::text AS username) s NATURAL JOIN users",
 }
 
 // GitHub #87: the role the generated script creates passes the server's check,
@@ -292,6 +297,31 @@ func TestPG_ReadOnlyRoleVerificationFailures(t *testing.T) {
 			err := verifyAs(t, dsnAs(t, testDSN, role))
 			if err == nil || !models.IsReadOnlyRoleCheckFailure(err) || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err = %v, want a role check failure containing %q", err, tt.want)
+			}
+		})
+	}
+
+	// Predefined roles that grant no table access but still more than saved
+	// SQL should have. Some exist only on newer servers; those are skipped.
+	for _, predefined := range []string{"pg_monitor", "pg_read_all_stats", "pg_read_all_settings",
+		"pg_stat_scan_tables", "pg_signal_backend", "pg_maintain", "pg_checkpoint",
+		"pg_create_subscription", "pg_use_reserved_connections"} {
+		t.Run("member of "+predefined, func(t *testing.T) {
+			var exists bool
+			if err := owner.Get(&exists, `SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = $1)`, predefined); err != nil {
+				t.Fatal(err)
+			}
+			if !exists {
+				t.Skipf("%s does not exist on this server version", predefined)
+			}
+			role := pgRoleName("bad")
+			createScriptRole(t, owner, role)
+			if _, err := owner.Exec(fmt.Sprintf(`GRANT %s TO %q`, predefined, role)); err != nil {
+				t.Fatal(err)
+			}
+			err := verifyAs(t, dsnAs(t, testDSN, role))
+			if err == nil || !models.IsReadOnlyRoleCheckFailure(err) || !strings.Contains(err.Error(), predefined) {
+				t.Fatalf("err = %v, want a role check failure naming %s", err, predefined)
 			}
 		})
 	}

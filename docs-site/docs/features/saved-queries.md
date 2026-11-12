@@ -329,17 +329,18 @@ On PostgreSQL, which tables a saved query can read is decided by the grants of t
 
 ```bash
 ./mahresources -print-readonly-role-sql=mahres_readonly > readonly-role.sql
-psql "$DB_DSN" -f readonly-role.sql
-psql "$DB_DSN" -c '\password mahres_readonly'
+# as a superuser, connected to the mahresources database
+psql -U postgres -d mahresources -f readonly-role.sql
+psql -U postgres -d mahresources -c '\password mahres_readonly'
 ```
 
-Run it as the role that owns the tables (the `DB_DSN` role) or as a superuser, after the server has started once so every table exists, then point `DB_READONLY_DSN` at the new role. Running it again is safe and resets the role to exactly these grants. Tables a later version adds get no grant, so they stay unreadable.
+Run it as a superuser (creating the role and setting `NOSUPERUSER`, `NOBYPASSRLS` and the other role attributes needs one; the `DB_DSN` role normally cannot), after the server has started once so every table exists, then point `DB_READONLY_DSN` at the new role. Running it again is safe and resets the role to exactly these grants. Tables a later version adds get no grant, so they stay unreadable.
 
 The server checks the role through the read-only connection at startup and again at most a minute before a query runs, so a later `GRANT` is noticed. The check fails, and the log names which part failed, when the role:
 
 - is the `DB_DSN` role, a member of it, or a member of any other role it could `SET ROLE` to;
 - is a superuser or has `BYPASSRLS`;
-- is a member of `pg_read_server_files`, `pg_write_server_files`, `pg_execute_server_program`, `pg_read_all_data` or `pg_write_all_data`;
+- is a member of `pg_read_server_files`, `pg_write_server_files`, `pg_execute_server_program`, `pg_read_all_data`, `pg_write_all_data`, `pg_monitor`, `pg_read_all_stats`, `pg_read_all_settings`, `pg_stat_scan_tables`, `pg_signal_backend`, `pg_maintain`, `pg_checkpoint`, `pg_create_subscription` or `pg_use_reserved_connections`;
 - connects to a different database than `DB_DSN`;
 - has `CREATE` on any schema (PostgreSQL 14 and older grant it on `public` to every role; revoke it from `PUBLIC` after granting it to the `DB_DSN` role);
 - can write to, reference or trigger on any table, or use any sequence;

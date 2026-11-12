@@ -190,3 +190,60 @@ func TestSavedSQLReadsOnlyAllowListedTables(t *testing.T) {
 		}
 	}
 }
+
+// SQLite does not tell the authorizer about the right-hand table's columns in
+// a USING or NATURAL join, so before the bytecode check these returned every
+// username and bcrypt hash, session token hashes and plugin secrets to anyone
+// who could run saved SQL, answered "does this username exist", and read a
+// table the allow-list never mentions.
+func TestSavedSQLJoinColumnsCannotBypassAllowList(t *testing.T) {
+	tc := setupAuthEnv(t)
+	editor := roleBearer(t, tc, models.RoleEditor)
+	user := roleBearer(t, tc, models.RoleUser)
+	if err := tc.DB.Create(&models.PluginState{PluginName: "p", SettingsJSON: `{"api_key":"sk-leak"}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"CREATE TABLE legacy_secrets (k INTEGER PRIMARY KEY, name TEXT)",
+		"INSERT INTO legacy_secrets VALUES (7, 'hunter2')",
+	} {
+		if err := tc.DB.Exec(statement).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, text := range []string{
+		"SELECT username, password_hash FROM (SELECT 1 AS username, 1 AS password_hash WHERE 0) FULL JOIN users USING (username, password_hash)",
+		"SELECT token_hash FROM (SELECT 1 AS token_hash WHERE 0) FULL JOIN sessions USING (token_hash)",
+		"SELECT settings_json FROM (SELECT 1 AS settings_json WHERE 0) FULL JOIN plugin_states USING (settings_json)",
+		"SELECT token_hash FROM (SELECT 1 AS token_hash WHERE 0) FULL JOIN api_tokens USING (token_hash)",
+		"SELECT count(*) AS n FROM (SELECT 'rb_editor' AS username) NATURAL JOIN users",
+		"SELECT name FROM (SELECT 1 AS name WHERE 0) FULL JOIN legacy_secrets USING (name)",
+	} {
+		name := editorSavesQuery(t, tc, editor, fmt.Sprintf("join-bypass-%d", i), text)
+		for role, bearer := range map[string]string{"editor": editor, "user": user} {
+			code, body := runSavedQuery(tc, bearer, name)
+			if code == http.StatusOK {
+				t.Errorf("%s ran %q: 200 %s", role, text, body)
+			} else if !strings.Contains(body, "not authorized") {
+				t.Errorf("%s running %q failed for another reason than the allow-list: %d %s", role, text, code, body)
+			}
+			for _, leak := range []string{"$2a$", "sk-leak", "hunter2", "rb_editor"} {
+				if strings.Contains(body, leak) {
+					t.Errorf("%s running %q leaked %q: %s", role, text, leak, body)
+				}
+			}
+		}
+	}
+
+	// Positive controls: USING and NATURAL joins between allowed tables.
+	for i, text := range []string{
+		"SELECT count(*) AS n FROM resource_tags JOIN groups_related_resources USING (resource_id)",
+		"SELECT count(*) AS n FROM tags NATURAL JOIN categories",
+		"SELECT name FROM (SELECT 'x' AS name WHERE 0) FULL JOIN tags USING (name)",
+	} {
+		name := editorSavesQuery(t, tc, editor, fmt.Sprintf("join-allowed-%d", i), text)
+		if code, body := runSavedQuery(tc, user, name); code != http.StatusOK {
+			t.Errorf("positive control %q = %d, want 200: %s", text, code, body)
+		}
+	}
+}

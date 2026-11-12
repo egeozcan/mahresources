@@ -292,3 +292,187 @@ func TestSavedSQLHandleReadsOnlyAllowListedTables(t *testing.T) {
 		}
 	}
 }
+
+// joinBypassFixture adds to savedSQLFixture a table the allow-list does not
+// classify, an index on users, a second content table and a join table, so the
+// tests below can tell a read of a denied table from a read of an allowed one
+// whichever b-tree (table or index) SQLite chooses to open.
+func joinBypassFixture(t *testing.T) string {
+	t.Helper()
+	path := savedSQLFixture(t)
+	writer, err := sqlx.Open(SQLiteDriverName, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	for _, statement := range []string{
+		"CREATE TABLE legacy_secrets (k INTEGER PRIMARY KEY, name TEXT)",
+		"INSERT INTO legacy_secrets VALUES (7, 'hunter2')",
+		"CREATE INDEX idx_users_username ON users(username)",
+		"CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT)",
+		"INSERT INTO tags (id, name) VALUES (1, 'original'), (2, 'other')",
+		"CREATE INDEX idx_tags_name ON tags(name)",
+		"CREATE TABLE resource_tags (resource_id INTEGER, tag_id INTEGER, PRIMARY KEY (resource_id, tag_id))",
+		"INSERT INTO resource_tags VALUES (1, 1)",
+	} {
+		if _, err := writer.Exec(statement); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	return path
+}
+
+// A column a USING or NATURAL join merges is read without SQLite telling the
+// authorizer (SQLite 3.53: no SQLITE_READ for the right-hand table's join
+// columns, and no empty-column READ once a column of it is used), so the
+// authorizer alone let these dump users.password_hash, test a guessed username
+// and read tables the allow-list never mentions. The handle must refuse them
+// from what the compiled statement opens, not from what the authorizer saw.
+func TestSavedSQLHandleRefusesJoinColumnBypass(t *testing.T) {
+	path := joinBypassFixture(t)
+	ro := openSavedSQLHandle(t, "file:"+path+"?mode=ro")
+
+	for _, query := range []string{
+		// Dumps of a denied table.
+		"SELECT username, password_hash FROM (SELECT 1 AS username, 1 AS password_hash WHERE 0) FULL JOIN users USING (username, password_hash)",
+		"SELECT password_hash FROM (SELECT 1 AS password_hash WHERE 0) FULL JOIN users USING (password_hash)",
+		"SELECT password_hash FROM (SELECT NULL AS password_hash WHERE 0) RIGHT JOIN users USING (password_hash)",
+		"SELECT * FROM (SELECT 1 AS password_hash WHERE 0) NATURAL FULL JOIN users",
+		"SELECT password_hash FROM resources FULL JOIN users USING (id)",
+		// Oracles: does a user with this name exist?
+		"SELECT count(*) FROM (SELECT 'ed' AS username) NATURAL JOIN users",
+		"SELECT username FROM (SELECT 'ed' AS username) JOIN users USING (username)",
+		"SELECT username FROM (SELECT 'ed' AS username) JOIN users INDEXED BY idx_users_username USING (username)",
+		"SELECT 1 FROM (SELECT 1 AS id) NATURAL JOIN users",
+		// A table the allow-list does not classify.
+		"SELECT name FROM (SELECT 1 AS name WHERE 0) FULL JOIN legacy_secrets USING (name)",
+		"SELECT name FROM (SELECT 'hunter2' AS name) JOIN legacy_secrets USING (name)",
+		"SELECT count(*) FROM legacy_secrets",
+		"SELECT 1 FROM legacy_secrets",
+		"SELECT count(*) FROM resources, legacy_secrets",
+		// The catalogue, and FTS over a denied table.
+		"SELECT name FROM (SELECT 1 AS name WHERE 0) FULL JOIN sqlite_master USING (name)",
+		"SELECT sql FROM (SELECT 1 AS sql WHERE 0) FULL JOIN sqlite_temp_master USING (sql)",
+		"SELECT username FROM (SELECT 1 AS username WHERE 0) FULL JOIN users_fts USING (username)",
+		"SELECT block FROM (SELECT 1 AS block WHERE 0) FULL JOIN users_fts_data USING (block)",
+		// Modules that read pages directly are not compiled in.
+		"SELECT data FROM (SELECT 1 AS data WHERE 0) FULL JOIN sqlite_dbpage USING (data)",
+		"SELECT name FROM (SELECT 1 AS name WHERE 0) FULL JOIN dbstat USING (name)",
+		"SELECT sql FROM (SELECT 1 AS sql WHERE 0) FULL JOIN sqlite_stmt USING (sql)",
+		// The same, through a CTE and a subquery.
+		"WITH u AS (SELECT password_hash FROM (SELECT 1 AS password_hash WHERE 0) FULL JOIN users USING (password_hash)) SELECT * FROM u",
+		"SELECT (SELECT password_hash FROM (SELECT 1 AS password_hash WHERE 0) FULL JOIN users USING (password_hash) LIMIT 1)",
+		// A second statement is not run quietly either.
+		"SELECT 1; SELECT password_hash FROM (SELECT 1 AS password_hash WHERE 0) FULL JOIN users USING (password_hash)",
+		"SELECT name FROM resources; SELECT name FROM resources",
+	} {
+		rows, err := ro.Queryx(query)
+		if err == nil {
+			var leaked [][]any
+			for rows.Next() {
+				row, _ := rows.SliceScan()
+				leaked = append(leaked, row)
+			}
+			rows.Close()
+			t.Errorf("%q ran on the read-only handle: %v", query, leaked)
+			continue
+		}
+		if msg := err.Error(); !strings.Contains(msg, "not authorized") && !strings.Contains(msg, "prohibited") &&
+			!strings.Contains(msg, "vtable constructor failed") && !strings.Contains(msg, "single statement") &&
+			!strings.Contains(msg, "no such table") {
+			t.Errorf("%q failed for the wrong reason: %v", query, err)
+		}
+	}
+
+	// Positive controls: USING and NATURAL joins between allowed tables, index
+	// lookups on allowed tables, joins through a join table, bound parameters
+	// and a trailing semicolon or comment.
+	for _, query := range []string{
+		"SELECT name FROM resources JOIN tags USING (id, name)",
+		"SELECT name FROM resources NATURAL JOIN tags",
+		"SELECT name FROM (SELECT 1 AS name WHERE 0) FULL JOIN resources USING (name)",
+		"SELECT name FROM resources FULL JOIN tags USING (name) WHERE name = 'original'",
+		"SELECT name FROM tags WHERE name = 'original'",
+		"SELECT name FROM tags INDEXED BY idx_tags_name WHERE name = 'original'",
+		"SELECT r.name FROM resources r JOIN resource_tags rt ON rt.resource_id = r.id JOIN tags t ON t.id = rt.tag_id",
+		"SELECT name FROM resources WHERE id IN (SELECT resource_id FROM resource_tags)",
+		"SELECT name FROM resources WHERE id = 1;",
+		"SELECT name FROM resources WHERE id = 1; -- trailing note\n",
+		"SELECT name FROM resources WHERE id = 1 /* c */ ; /* c */ ;",
+		"SELECT r.name FROM resources r JOIN resources_fts f ON f.rowid = r.id WHERE resources_fts MATCH 'original'",
+	} {
+		var name string
+		if err := ro.Get(&name, query); err != nil || name != "original" {
+			t.Errorf("%q: name=%q err=%v", query, name, err)
+		}
+	}
+	var name string
+	if err := ro.Get(&name, "SELECT name FROM resources WHERE id = ?", 1); err != nil || name != "original" {
+		t.Errorf("positional parameter: name=%q err=%v", name, err)
+	}
+	rows, err := ro.NamedQuery("SELECT name FROM resources WHERE id = :id AND name = :name", map[string]any{"id": 1, "name": "original"})
+	if err != nil {
+		t.Fatalf("named parameters: %v", err)
+	}
+	if !rows.Next() {
+		t.Error("named parameters: no row")
+	}
+	rows.Close()
+}
+
+// The check maps the b-trees a statement opens back to tables by root page, so
+// the map must follow schema changes: a table created after the handle first
+// ran a query must be readable if allowed, and a page a dropped allowed table
+// gave back must not stay allowed once a denied table reuses it.
+func TestSavedSQLHandleFollowsSchemaChanges(t *testing.T) {
+	path := joinBypassFixture(t)
+	ro := openSavedSQLHandle(t, "file:"+path+"?mode=ro")
+	writer, err := sqlx.Open(SQLiteDriverName, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	writer.SetMaxOpenConns(1)
+
+	var n int
+	if err := ro.Get(&n, "SELECT count(*) FROM resources"); err != nil || n != 1 {
+		t.Fatalf("warm-up: n=%d err=%v", n, err)
+	}
+	for _, statement := range []string{
+		"CREATE TABLE notes (id INTEGER PRIMARY KEY, name TEXT)",
+		"INSERT INTO notes VALUES (1, 'note')",
+	} {
+		if _, err := writer.Exec(statement); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	var note string
+	if err := ro.Get(&note, "SELECT name FROM notes"); err != nil || note != "note" {
+		t.Fatalf("a table created after the first query: name=%q err=%v", note, err)
+	}
+	var notesRoot int
+	if err := writer.Get(&notesRoot, "SELECT rootpage FROM sqlite_master WHERE name = 'notes'"); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"DROP TABLE notes",
+		"CREATE TABLE plugin_states (id INTEGER PRIMARY KEY, settings_json TEXT)",
+		`INSERT INTO plugin_states VALUES (1, '{"api_key":"sk-leak"}')`,
+	} {
+		if _, err := writer.Exec(statement); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	var pluginRoot int
+	if err := writer.Get(&pluginRoot, "SELECT rootpage FROM sqlite_master WHERE name = 'plugin_states'"); err != nil {
+		t.Fatal(err)
+	}
+	if pluginRoot != notesRoot {
+		t.Logf("plugin_states did not reuse notes' root page (%d vs %d); the test still checks the refusal", pluginRoot, notesRoot)
+	}
+	var leaked string
+	err = ro.Get(&leaked, "SELECT settings_json FROM (SELECT 1 AS settings_json WHERE 0) FULL JOIN plugin_states USING (settings_json)")
+	if err == nil || strings.Contains(leaked, "sk-leak") {
+		t.Fatalf("plugin_states read after it took the place of an allowed table: %q err=%v", leaked, err)
+	}
+}
