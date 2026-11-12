@@ -454,7 +454,7 @@ func (ctx *MahresourcesContext) GetGroupByID(id uint) (*models.Group, error) {
 
 func (ctx *MahresourcesContext) GetGroups(offset, maxResults int, query *query_models.GroupQuery) ([]models.Group, error) {
 	var groups []models.Group
-	groupScope := database_scopes.GroupQuery(query, false, ctx.db)
+	groupScope := database_scopes.GroupQuery(query, false, ctx.db, ctx.listVisibility())
 
 	db := ctx.db.Scopes(groupScope)
 	db, err := ctx.applyMRQLFilter(db, mrql.EntityGroup, query.MRQL)
@@ -486,7 +486,7 @@ func (ctx *MahresourcesContext) GetGroupsCount(query *query_models.GroupQuery) (
 	var group models.Group
 	var count int64
 
-	db := ctx.db.Scopes(database_scopes.GroupQuery(query, true, ctx.db)).Model(&group)
+	db := ctx.db.Scopes(database_scopes.GroupQuery(query, true, ctx.db, ctx.listVisibility())).Model(&group)
 	db, err := ctx.applyMRQLFilter(db, mrql.EntityGroup, query.MRQL)
 	if err != nil {
 		return 0, err
@@ -499,7 +499,7 @@ func (ctx *MahresourcesContext) GetPopularGroupTags(query *query_models.GroupQue
 	var res []PopularTag
 
 	db := ctx.db.Model(&models.Group{}).
-		Scopes(database_scopes.GroupQuery(query, true, ctx.db)).
+		Scopes(database_scopes.GroupQuery(query, true, ctx.db, ctx.listVisibility())).
 		Joins("INNER JOIN group_tags pt ON pt.group_id = groups.id").
 		Joins("INNER JOIN tags t ON t.id = pt.tag_id").
 		Select("t.id AS id, t.name AS name, count(*) AS count").

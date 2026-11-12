@@ -9,6 +9,7 @@ import (
 
 	"mahresources/auth"
 	"mahresources/models"
+	"mahresources/models/database_scopes"
 
 	"gorm.io/gorm"
 )
@@ -104,6 +105,22 @@ func (ctx *MahresourcesContext) principalForcedScope() (scopeID uint, forced boo
 		return 0, false, true
 	}
 	return 0, false, false
+}
+
+// listVisibility is the subtree the list-filter builders in database_scopes may
+// read through for this principal, mirroring mrqlTranslateOptions: the scope
+// root for a group-limited principal, deny-all for one that must be scoped but
+// has no scope group, and unconfined otherwise. The scope callback confines the
+// rows a list returns; this confines the rows its filter subqueries read.
+func (ctx *MahresourcesContext) listVisibility() database_scopes.Visibility {
+	scopeID, forced, deny := ctx.principalForcedScope()
+	switch {
+	case forced:
+		return database_scopes.Visibility{Confined: true, RootID: scopeID}
+	case deny:
+		return database_scopes.Visibility{Confined: true}
+	}
+	return database_scopes.Visibility{}
 }
 
 // WithPrincipal returns a shallow copy of the context bound to the given

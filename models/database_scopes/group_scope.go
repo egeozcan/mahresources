@@ -7,10 +7,22 @@ import (
 	"mahresources/models/query_models"
 )
 
-func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gorm.DB) func(db *gorm.DB) *gorm.DB {
+// GroupQuery builds the group list filter. vis confines the rows its subqueries
+// read besides the listed group itself (see Visibility).
+//
+// For a confined caller the parent branches (SearchParentsForName,
+// SearchParentsForTags, parent.* MetaQuery) skip the scope root, whose parent
+// is the one parent outside the subtree, so that parent behaves as if it did
+// not exist, as with MRQL's VisibleRootID. The child branches need no guard: a
+// visible group's children are all visible, since the subtree is closed
+// downward. Do not instead route these subqueries through Model(&Group{}) so
+// the scope callback confines them: it appends `"groups".id IN (...)`, which
+// binds to the OUTER row, and it binds the whole allow-list a second time.
+func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gorm.DB, vis Visibility) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
 		likeOperator := GetLikeOperator(db)
 		dbQuery := db
+		parentGuard := vis.parentGuard()
 
 		if !ignoreSort {
 			dbQuery = ApplySortColumns(dbQuery, query.SortBy, "groups.", "groups.created_at desc")
@@ -26,7 +38,7 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 			groupIDConditions := []string{"gt.group_id = groups.id"}
 
 			if query.SearchParentsForTags {
-				groupIDConditions = append(groupIDConditions, "gt.group_id = groups.owner_id")
+				groupIDConditions = append(groupIDConditions, and("gt.group_id = groups.owner_id", parentGuard))
 			}
 
 			if query.SearchChildrenForTags {
@@ -53,7 +65,7 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 				// prevents counting 2 times when we are both related AND the owner
 				Where("(n.owner_id IS NULL OR n.owner_id <> grn.group_id)").
 				Where("n.id IN ?", notes).
-				Where("grn.group_id = groups.id")
+				Where(and("grn.group_id = groups.id", vis.groupVisible("n.owner_id")))
 
 			justOwnedNotesSubquery := originalDB.
 				Table("notes n").
@@ -73,7 +85,7 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 				// filter out the ones of which the group is the owner
 				// prevents counting 2 times when we are both related AND the owner
 				Where("(r.owner_id IS NULL OR grr.group_id <> r.owner_id)").
-				Where("grr.group_id = groups.id").
+				Where(and("grr.group_id = groups.id", vis.groupVisible("r.owner_id"))).
 				Where("r.id IN ?", resources)
 
 			justOwnedResourcesQuery := originalDB.
@@ -96,7 +108,7 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 					  UNION ALL
 					  SELECT id AS grp_id, owner_id AS src_group FROM groups WHERE owner_id IN ?
 					)
-					SELECT grp_id FROM cte GROUP BY grp_id HAVING count(DISTINCT src_group) = ?
+					SELECT grp_id FROM cte`+where(vis.groupVisible("src_group"))+` GROUP BY grp_id HAVING count(DISTINCT src_group) = ?
 				)`,
 				groups,
 				groups,
@@ -135,7 +147,7 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 			// and the need for DISTINCT (which breaks .Count())
 			if query.SearchParentsForName {
 				conditions = append(conditions,
-					"EXISTS (SELECT 1 FROM groups p WHERE p.id = groups.owner_id AND p.name "+operator+" ?"+likeEsc+")")
+					and("EXISTS (SELECT 1 FROM groups p WHERE p.id = groups.owner_id AND p.name "+operator+" ?"+likeEsc+")", parentGuard))
 				params = append(params, name)
 			}
 
@@ -199,7 +211,7 @@ func GroupQuery(query *query_models.GroupQuery, ignoreSort bool, originalDB *gor
 			}
 
 			// Apply parent-prefixed entries with OR grouping for same-key EQ
-			dbQuery = ApplyPrefixedMetaQuery(dbQuery, originalDB, parentMeta, "groups.owner_id = p.id", "= 1")
+			dbQuery = ApplyPrefixedMetaQuery(dbQuery, originalDB, parentMeta, and("groups.owner_id = p.id", parentGuard), "= 1")
 			// Apply child-prefixed entries with OR grouping for same-key EQ
 			dbQuery = ApplyPrefixedMetaQuery(dbQuery, originalDB, childMeta, "groups.id = p.owner_id", ">= 1")
 			// Apply regular entries

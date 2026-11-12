@@ -243,7 +243,7 @@ func (ctx *MahresourcesContext) GetNote(id uint) (*models.Note, error) {
 
 func (ctx *MahresourcesContext) GetNotes(offset, maxResults int, query *query_models.NoteQuery) ([]models.Note, error) {
 	var notes []models.Note
-	noteScope := database_scopes.NoteQuery(query, false, ctx.db)
+	noteScope := database_scopes.NoteQuery(query, false, ctx.db, ctx.listVisibility())
 
 	db := ctx.db.Scopes(noteScope)
 	db, err := ctx.applyMRQLFilter(db, mrql.EntityNote, query.MRQL)
@@ -274,7 +274,7 @@ func (ctx *MahresourcesContext) GetNoteCount(query *query_models.NoteQuery) (int
 	var note models.Note
 	var count int64
 
-	db := ctx.db.Scopes(database_scopes.NoteQuery(query, true, ctx.db)).Model(&note)
+	db := ctx.db.Scopes(database_scopes.NoteQuery(query, true, ctx.db, ctx.listVisibility())).Model(&note)
 	db, err := ctx.applyMRQLFilter(db, mrql.EntityNote, query.MRQL)
 	if err != nil {
 		return 0, err
@@ -287,7 +287,7 @@ func (ctx *MahresourcesContext) GetPopularNoteTags(query *query_models.NoteQuery
 	var res []PopularTag
 
 	db := ctx.db.Model(&models.Note{}).
-		Scopes(database_scopes.NoteQuery(query, true, ctx.db)).
+		Scopes(database_scopes.NoteQuery(query, true, ctx.db, ctx.listVisibility())).
 		Joins("INNER JOIN note_tags pt ON pt.note_id = notes.id").
 		Joins("INNER JOIN tags t ON t.id = pt.tag_id").
 		Select("t.id AS id, t.name AS name, count(*) AS count").
