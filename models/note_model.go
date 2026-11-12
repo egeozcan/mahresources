@@ -26,7 +26,12 @@ type Note struct {
 	EndDate         *time.Time  `gorm:"index"`
 	NoteType        *NoteType   `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 	NoteTypeId      *uint       `gorm:"index"`
-	ShareToken      *string     `gorm:"uniqueIndex;size:32" json:"shareToken,omitempty"`
+	// ShareToken is a bearer credential for the unauthenticated share server, so
+	// it never serializes (#107): every JSON surface that carries a note, nested
+	// ones included, would otherwise hand it to any reader, guests among them.
+	// GET /v1/note discloses it to principals that may share (CanWrite), and
+	// POST /v1/note/share returns it; everything else carries HasShare.
+	ShareToken *string `gorm:"uniqueIndex;size:32" json:"-"`
 	// ShareCreatedAt records when the current ShareToken was minted. Nullable:
 	// existing rows (minted before BH-035) remain NULL; the /admin/shares UI
 	// renders "(unknown)" for them rather than back-filling with an inaccurate
@@ -37,9 +42,9 @@ type Note struct {
 	// RenderedHTML is a transient field populated by the API when render=1 is set.
 	RenderedHTML string `gorm:"-" json:"renderedHTML,omitempty"`
 
-	// HasShare is a transient, list-only flag populated by the notes-list context
-	// provider so cards can signal "this note is shared" without ShareToken being
-	// serialized into the HTML (BH-038). It is never persisted.
+	// HasShare is a transient flag, set by AfterFind on every loaded note, so a
+	// page or client can signal "this note is shared" without the ShareToken
+	// (BH-038, #107). It is never persisted.
 	HasShare bool `gorm:"-" json:"hasShare,omitempty"`
 }
 
@@ -57,6 +62,10 @@ func (n *Note) BeforeCreate(tx *gorm.DB) error {
 // date written as 12:00 read back as 14:00+02:00: pages showed it, the edit form
 // offered it, and every save (a plugin's patch_note included) moved the date by
 // the server's offset again.
+//
+// It also derives HasShare, so every loaded note (preloads and MRQL rows
+// included) says whether it is shared without serializing the token. Scan does
+// not run AfterFind.
 func (n *Note) AfterFind(tx *gorm.DB) error {
 	if n.StartDate != nil {
 		start := n.StartDate.UTC()
@@ -66,6 +75,7 @@ func (n *Note) AfterFind(tx *gorm.DB) error {
 		end := n.EndDate.UTC()
 		n.EndDate = &end
 	}
+	n.HasShare = n.ShareToken != nil && *n.ShareToken != ""
 	return nil
 }
 

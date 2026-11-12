@@ -1663,9 +1663,6 @@ components:
                     format: date-time
                     nullable: true
                     type: string
-                shareToken:
-                    nullable: true
-                    type: string
             type: object
         NoteBlock:
             properties:
@@ -9219,6 +9216,13 @@ paths:
                 - mrql
     /v1/note:
         get:
+            description: |-
+                hasShare is true when the note is shared. The response also carries the
+                note's shareToken (omitted when it is not shared), but only for a principal that
+                may share the note: admin, editor or user, or any request with auth disabled. A
+                guest gets hasShare alone. No other note payload (lists, MRQL, notes nested in
+                groups, resources, tags and note types) carries the token; POST /v1/note/share
+                returns it too.
             operationId: getNote
             parameters:
                 - in: query

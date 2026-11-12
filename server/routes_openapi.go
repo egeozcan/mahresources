@@ -1045,10 +1045,16 @@ func registerNoteRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:               http.MethodGet,
-		Path:                 "/v1/note",
-		OperationID:          "getNote",
-		Summary:              "Get a specific note",
+		Method:      http.MethodGet,
+		Path:        "/v1/note",
+		OperationID: "getNote",
+		Summary:     "Get a specific note",
+		Description: `hasShare is true when the note is shared. The response also carries the
+note's shareToken (omitted when it is not shared), but only for a principal that
+may share the note: admin, editor or user, or any request with auth disabled. A
+guest gets hasShare alone. No other note payload (lists, MRQL, notes nested in
+groups, resources, tags and note types) carries the token; POST /v1/note/share
+returns it too.`,
 		Tags:                 []string{"notes"},
 		IDQueryParam:         "id",
 		IDRequired:           true,

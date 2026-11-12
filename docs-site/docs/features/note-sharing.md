@@ -78,6 +78,8 @@ When shared:
 - A "Shared" badge appears
 - An **Unshare** button becomes available
 
+Under `-auth`, the share URL and the Share/Unshare controls are shown only to accounts that may share (admin, editor and user). A read-only guest sees just the "Shared" badge, never the token.
+
 If `SHARE_PUBLIC_URL` is configured, the absolute share URL is copied to your clipboard automatically and displayed with a copy button. If it is unset, no clipboard copy happens: a warning is shown and only the relative `/s/<token>` path is displayed, which you must append to your server's public URL manually.
 
 ### Using the API
@@ -279,4 +281,8 @@ Without `Accept: application/json` the request redirects to `/admin/shares`.
 GET /v1/notes?Shared=1
 ```
 
-Returns all notes that have a share token.
+Returns all notes that have a share token, each with `"hasShare": true`. List responses never include the token itself; read it from `GET /v1/note?id={id}` (accounts that may share) or `POST /v1/note/share`, which returns the existing token for a note that is already shared.
+
+### Where the Token Appears
+
+The share token is a bearer credential: anyone holding it can open the note on the share server and toggle its todos, without an account. It is therefore not part of the note's JSON. Only `GET /v1/note` returns `shareToken`, and only to a principal that may share the note (admin, editor or user, or any request with auth disabled); `POST /v1/note/share` and the [shares dashboard](#auditing-shares) show it too. Every other payload that carries a note (`GET /v1/notes`, MRQL results, and notes nested in groups, resources, tags and note types) has `hasShare` instead. Tokens collected before this restriction remain valid until the note is unshared; unshare and reshare a note to rotate its token.

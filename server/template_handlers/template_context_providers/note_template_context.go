@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
+	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -348,6 +349,18 @@ func NoteContextProvider(context NotePageContext) func(request *http.Request) po
 			shareUrlConfigured = true
 		}
 
+		// #107: the share token is a bearer credential, disclosed only to a
+		// principal that may share the note (the capability POST /v1/note/share
+		// demands). Anyone else gets a copy without it, used for both note and
+		// mainEntity so a note type's custom template cannot print it either;
+		// HasShare (set by AfterFind) still drives the Shared badge.
+		canShare := auth.PrincipalFromContext(request.Context()).CanWrite()
+		if !canShare {
+			stripped := *note
+			stripped.ShareToken = nil
+			note = &stripped
+		}
+
 		var sectionConfig models.NoteSectionConfig
 		displayType := "Note"
 		if note.NoteType != nil {
@@ -378,6 +391,7 @@ func NoteContextProvider(context NotePageContext) func(request *http.Request) po
 			"shareConfigured":    shareConfigured,
 			"shareBaseUrl":       shareBaseUrl,
 			"shareUrlConfigured": shareUrlConfigured,
+			"canShare":           canShare,
 		}.Update(baseContext)
 	}
 }

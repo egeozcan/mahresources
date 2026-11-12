@@ -1,4 +1,8 @@
-{# with note=note shareEnabled=shareEnabled shareConfigured=shareConfigured shareBaseUrl=shareBaseUrl shareUrlConfigured=shareUrlConfigured #}
+{# with note=note shareEnabled=shareEnabled shareConfigured=shareConfigured shareBaseUrl=shareBaseUrl shareUrlConfigured=shareUrlConfigured canShare=canShare #}
+{# #107: the token, the URL and the Share/Unshare controls are for principals #}
+{# that may share (canShare, i.e. CanWrite). Anyone else gets the note without #}
+{# its token and sees at most the Shared badge.                                #}
+{% if canShare %}
 {# Findings 7 and 51. shareEnabled means "a /s/<token> request can succeed", so #}
 {# it is false both when no share port is configured and when the share server  #}
 {# failed to bind. The panel still renders for an ALREADY shared note in that    #}
@@ -166,6 +170,16 @@
             </div>
         </template>
         <p x-show="error" x-cloak class="mt-1 text-xs text-red-700" x-text="error"></p>
+    </div>
+</div>
+{% endif %}
+{% elif note.HasShare %}
+<div class="mt-4 pt-4 border-t border-stone-200">
+    {% include "/partials/sideTitle.tpl" with title="Sharing" %}
+    <div class="flex items-center gap-1">
+        <span class="inline-flex items-center px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-mono font-medium rounded" data-testid="note-shared-badge">
+            Shared
+        </span>
     </div>
 </div>
 {% endif %}
