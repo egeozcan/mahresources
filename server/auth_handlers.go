@@ -11,6 +11,7 @@ import (
 	"mahresources/auth"
 	"mahresources/models"
 	"mahresources/server/api_handlers"
+	"mahresources/server/http_utils"
 )
 
 // startSession authenticates a username/password pair, mints a session, and
@@ -281,13 +282,10 @@ func writeAuthJSON(w http.ResponseWriter, status int, v any) {
 // safeLocalPath returns target if it is a safe same-site relative path, else def.
 // Rejects absolute URLs and scheme-relative ("//host") redirects.
 func safeLocalPath(target, def string) string {
-	if target == "" || !strings.HasPrefix(target, "/") || strings.HasPrefix(target, "//") {
-		return def
+	if http_utils.IsSafeLocalPath(target) {
+		return target
 	}
-	if u, err := url.Parse(target); err != nil || u.Host != "" || u.Scheme != "" {
-		return def
-	}
-	return target
+	return def
 }
 
 // loginKeys returns the rate-limit keys for a login attempt: one for the source

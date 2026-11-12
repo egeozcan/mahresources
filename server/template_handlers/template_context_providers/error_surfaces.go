@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+
+	"mahresources/server/http_utils"
 )
 
 // RecoveryLink is one "where to go next" entry on an error page. Error pages
@@ -125,9 +127,9 @@ func RecoveryLinksForRequest(requestURL *url.URL, referer string) []RecoveryLink
 	}
 
 	if requestURL != nil {
-		add("Back to the page you came from", safeLocalPath(requestURL.Query().Get("redirect")))
+		add("Back to the page you came from", SafeLocalPath(requestURL.Query().Get("redirect")))
 	}
-	add("Back to the page you came from", safeLocalPath(refererPath(referer)))
+	add("Back to the page you came from", SafeLocalPath(refererPath(referer)))
 
 	if requestURL != nil {
 		// /v1/tags/merge -> Tags. An API path names the entity it acts on, so a
@@ -141,21 +143,17 @@ func RecoveryLinksForRequest(requestURL *url.URL, referer string) []RecoveryLink
 	return links
 }
 
-// safeLocalPath accepts only same-site absolute paths, so a crafted ?redirect=
+// SafeLocalPath accepts only same-site absolute paths, so a crafted ?redirect=
 // cannot turn an error page into an open redirect surface.
-func safeLocalPath(raw string) string {
-	if raw == "" || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") {
-		return ""
+func SafeLocalPath(raw string) string {
+	if http_utils.IsSafeLocalPath(raw) {
+		return raw
 	}
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme != "" || parsed.Host != "" {
-		return ""
-	}
-	return raw
+	return ""
 }
 
 // refererPath reduces a Referer header to its path and query, discarding the
-// origin. The result is checked by safeLocalPath before use.
+// origin. The result is checked by SafeLocalPath before use.
 func refererPath(referer string) string {
 	if referer == "" {
 		return ""

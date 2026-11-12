@@ -3,6 +3,7 @@ package template_handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 
 	_ "github.com/flosch/pongo2-addons"
 	"github.com/flosch/pongo2/v4"
@@ -43,8 +44,12 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 
 		// Check for redirect signal from context provider
 		if redirectURL, ok := context["_redirect"].(string); ok && redirectURL != "" {
-			http.Redirect(writer, request, redirectURL, http.StatusFound)
-			return
+			if template_context_providers.SafeLocalPath(redirectURL) != "" {
+				http.Redirect(writer, request, redirectURL, http.StatusFound)
+				return
+			}
+			log.Printf("render_template: ignoring unsafe _redirect %q", redirectURL)
+			delete(context, "_redirect")
 		}
 
 		if http_utils.TemplateRequestWantsJSON(request) {
