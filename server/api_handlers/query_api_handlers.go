@@ -166,7 +166,7 @@ func GetDatabaseSchemaHandler(ctx contracts.SchemaReader) func(writer http.Respo
 	return func(writer http.ResponseWriter, request *http.Request) {
 		schema, err := ctx.GetDatabaseSchema()
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 
@@ -242,25 +242,26 @@ func GetRunQueryHandler(ctx contracts.QueryRunner) func(writer http.ResponseWrit
 			return
 		}
 
-		var result *sqlx.Rows
-		var err error
-
-		if id != 0 {
-			result, err = ctx.RunReadOnlyQuery(id, values)
-		} else {
-			result, err = ctx.RunReadOnlyQueryByName(name, values)
+		var resultSet *contracts.SQLResultSet
+		var readErr error
+		read := func(rows *sqlx.Rows) error {
+			resultSet, readErr = SQLToResultSet(rows)
+			return readErr
 		}
 
-		if err != nil {
-			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+		var err error
+		if id != 0 {
+			err = ctx.RunReadOnlyQuery(id, values, read)
+		} else {
+			err = ctx.RunReadOnlyQueryByName(name, values, read)
+		}
+
+		if readErr != nil {
+			http_utils.HandleError(readErr, writer, request, http.StatusInternalServerError)
 			return
 		}
-		defer result.Close()
-
-		resultSet, err := SQLToResultSet(result)
-
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
 		}
 

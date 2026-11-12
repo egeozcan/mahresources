@@ -25,7 +25,7 @@ Names must be unique across all Queries.
 3. Results are returned as `{columns, rows}` -- the `SELECT` list in its own order, and one array of values per row
 4. If a `template` is defined, results render through it; otherwise a default table is used
 
-If `DB_READONLY_DSN` points to a database-enforced read-only connection, writes are blocked at the database level. Without that, queries still run, but they are not database-enforced read-only.
+Queries are read-only whatever `DB_READONLY_DSN` points at. On SQLite the connection refuses every write, DDL statement, `ATTACH`, `PRAGMA` and transaction statement, and refuses to read the credential, secret and audit tables (`users`, `sessions`, `api_tokens`, `plugin_states`, `plugin_kvs`, `runtime_settings`, `log_entries`, `user_settings`, `saved_searches`, `job_replay_envelopes`). On PostgreSQL each query runs as a single statement inside a `READ ONLY` transaction; which tables it can read depends on the role `DB_READONLY_DSN` connects as.
 
 ## Creating a Query
 
@@ -157,14 +157,14 @@ GET /v1/query/schema
 curl http://localhost:8181/v1/query/schema
 ```
 
-This returns table and column definitions for the database.
+This returns table and column definitions for the database, without the tables saved queries may not read. Group-limited accounts get `403`.
 
 ## API Endpoints
 
 :::warning
-For database-level write protection, configure `DB_READONLY_DSN` as a truly read-only connection or user. Otherwise saved queries run through a secondary connection, but that connection is not inherently read-only.
+On SQLite the server enforces read-only access and the table deny list itself, on every connection it opens for saved queries, whatever the DSN contains. With `DB_READONLY_DSN` unset on SQLite, queries run against an empty private database and answer `no such table`; point it at the main database file (for example `file:/data/mahresources.db?mode=ro`) to query your data.
 
-On SQLite the read-only DSN must contain `mode=ro` for the server to treat it as enforced. On PostgreSQL any `DB_READONLY_DSN` that differs from `DB_DSN` counts as enforced, so point it at a role that is genuinely read-only: the server does not check.
+On PostgreSQL the server refuses writes with a read-only transaction, but it cannot hide tables. Point `DB_READONLY_DSN` at a role without `SELECT` on `users`, `sessions`, `api_tokens`, `plugin_states`, `plugin_kvs`, `runtime_settings`, `log_entries`, `user_settings`, `saved_searches` and `job_replay_envelopes`; the server does not check the role's grants. Multi-statement query text is refused on PostgreSQL.
 :::
 
 ### List Queries
@@ -318,10 +318,10 @@ client that indexes rows by key.
 GET /v1/query/schema
 ```
 
-Returns table and column definitions for constructing Queries.
+Returns table and column definitions for constructing Queries, leaving out the tables saved queries may not read. Refused (`403`) to group-limited accounts.
 
 ## Security
 
-- Read-only enforcement requires `DB_READONLY_DSN` to point to a database-enforced read-only connection or user. Without that, saved queries execute through a secondary connection that is not inherently read-only.
-- Results may expose any data in the database; restrict access to the Mahresources instance accordingly
+- Saved queries cannot write. On SQLite they also cannot `ATTACH` another database, change a `PRAGMA`, or read the credential, secret and audit tables listed above. On PostgreSQL, hiding those tables is up to the role behind `DB_READONLY_DSN`.
+- Results may expose any other data in the database, unscoped by group; restrict access to the Mahresources instance accordingly
 - With `-auth` enabled, group-limited users and guests cannot run saved queries at all: the runner refuses fail-closed, because arbitrary SQL cannot be confined to a group subtree. Every unscoped principal (admin, editor, or an unscoped user) can run them, and the results are not group-scoped. Creating, editing and deleting a Query requires the editor role.

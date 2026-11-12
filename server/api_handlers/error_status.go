@@ -34,14 +34,15 @@ func statusCodeForError(err error, fallback int) int {
 		return fallback
 	}
 
-	// Typed refusals are matched first, and deliberately: both of these are
-	// authorization answers, and both carry wording the substring scan below
+	// Typed refusals are matched first, and deliberately: these are
+	// authorization answers, and they carry wording the substring scan below
 	// would claim for something else. "your role does not have permission…"
 	// and "not available to a group-limited principal…" would have to be
 	// phrased around "cannot be" and "not found" forever to keep their status,
 	// which is not a property a message should have to have.
 	if errors.Is(err, application_context.ErrRoleCapability) ||
-		errors.Is(err, application_context.ErrGlobalCascadeScoped) {
+		errors.Is(err, application_context.ErrGlobalCascadeScoped) ||
+		errors.Is(err, application_context.ErrSavedSQLScoped) {
 		return http.StatusForbidden
 	}
 

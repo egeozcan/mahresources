@@ -7,13 +7,17 @@ sidebar_label: run
 # mr query run
 
 Execute a saved query by ID and return the result set. The query
-runs on the connection `-db-readonly-dsn` names, and whether a write
-(INSERT/UPDATE/DELETE/DDL) is rejected is that connection's
-property: `mode=ro` on SQLite or a read-only role on PostgreSQL
-refuses it, a read-write DSN executes it, and with no
-`-db-readonly-dsn` at all there is no database behind the
-connection, so on SQLite every query answers `no such table`. The
-`/queries` page shows a warning banner in the middle case. Column
+runs read-only whatever `-db-readonly-dsn` names. On SQLite the
+connection refuses every write, DDL statement, `ATTACH`, `PRAGMA`
+and transaction statement, and every read of the credential, secret
+and audit tables (`users`, `sessions`, `api_tokens`,
+`plugin_states`, `plugin_kvs`, `runtime_settings`, `log_entries`,
+`user_settings`, `saved_searches`, `job_replay_envelopes`). On
+PostgreSQL the query runs as a single statement in a `READ ONLY`
+transaction; which tables it can read is up to the role
+`-db-readonly-dsn` connects as. With no `-db-readonly-dsn` on
+SQLite the connection opens an empty private database, so every
+query answers `no such table`. Column
 names come verbatim from the SELECT list, so use explicit column
 aliases (`select count(*) as n ...`) to produce predictable ones.
 
@@ -24,10 +28,11 @@ even when no rows matched. Without `--json` the columns become the
 header of a text table.
 
 Returns `400 Bad Request` if the statement fails to prepare or
-execute, `500` if it fails part-way through the result rows (which
-is how a write rejected by a read-only connection arrives), and
-`404 Not Found` if the given ID does not exist. A group-limited
-account cannot run saved SQL at all: the refusal arrives as `400`
+execute (which is how a refused write or a refused table arrives:
+`not authorized`, or `access to users.password_hash is
+prohibited`), `500` if it fails part-way through the result rows,
+and `404 Not Found` if the given ID does not exist. A group-limited
+account cannot run saved SQL at all: the refusal arrives as `403`
 with `saved SQL queries are not available for group-limited
 accounts`. Use MRQL (`mr mrql run`) there, which is scoped at the
 executor.

@@ -1,6 +1,8 @@
 package application_context
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"github.com/jmoiron/sqlx"
@@ -13,7 +15,20 @@ import (
 	"strings"
 )
 
-func (ctx *MahresourcesContext) RunReadOnlyQuery(queryId uint, params map[string]any) (*sqlx.Rows, error) {
+// ErrSavedSQLScoped refuses saved SQL, and the schema listing that supports
+// writing it, to a group-limited principal.
+var ErrSavedSQLScoped = errors.New("saved SQL queries are not available for group-limited accounts")
+
+// RunReadOnlyQuery runs a saved query on the read-only handle and hands its rows
+// to read, closing them afterwards. An error read returns is returned as is.
+//
+// The handle, not this function, is what keeps the query from writing or reading
+// credentials on SQLite (models.ReadOnlySQLiteDriverName). On Postgres the query
+// runs as one prepared statement inside a READ ONLY transaction that has already
+// taken its snapshot, so it can neither switch the transaction to read-write nor
+// end it and write after. Which tables it can read there is up to the role behind
+// DB_READONLY_DSN.
+func (ctx *MahresourcesContext) RunReadOnlyQuery(queryId uint, params map[string]any, read func(*sqlx.Rows) error) error {
 	// Saved queries are arbitrary SQL executed on the unscoped read-only DB, which
 	// the group-subtree scope callbacks cannot constrain. There is no safe way to
 	// confine arbitrary SQL to a subtree, so deny it outright to group-limited
@@ -21,30 +36,72 @@ func (ctx *MahresourcesContext) RunReadOnlyQuery(queryId uint, params map[string
 	// it as before. The MRQL saved-query path remains available to them (it is
 	// force-scoped at the executor).
 	if ctx.isScopedPrincipal() {
-		return nil, errors.New("saved SQL queries are not available for group-limited accounts")
+		return ErrSavedSQLScoped
 	}
 
 	var query models.Query
 
 	if err := ctx.db.First(&query, queryId).Error; err != nil {
-		return nil, err
+		return err
 	}
 
 	if strings.TrimSpace(query.Text) == "" {
-		return nil, errors.New("query text is empty")
+		return errors.New("query text is empty")
 	}
 
-	return ctx.readOnlyDB.NamedQuery(strings.ReplaceAll(query.Text, "::", "::::"), params)
+	text := strings.ReplaceAll(query.Text, "::", "::::")
+	if ctx.readOnlyDB.DriverName() == "postgres" {
+		return runPostgresReadOnly(ctx.readOnlyDB, text, params, read)
+	}
+
+	rows, err := ctx.readOnlyDB.NamedQuery(text, params)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	return read(rows)
 }
 
-func (ctx *MahresourcesContext) RunReadOnlyQueryByName(queryName string, params map[string]any) (*sqlx.Rows, error) {
+func runPostgresReadOnly(db *sqlx.DB, text string, params map[string]any, read func(*sqlx.Rows) error) error {
+	tx, err := db.BeginTxx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return err
+	}
+	// Nothing in a read-only transaction is kept, so it always ends by rollback.
+	defer func() { _ = tx.Rollback() }()
+
+	// Postgres accepts SET TRANSACTION READ WRITE until the transaction's first
+	// snapshot; take it before the saved text runs.
+	if _, err := tx.Exec("SELECT 1"); err != nil {
+		return err
+	}
+	// Prepared, so the extended protocol refuses more than one statement: no
+	// "COMMIT; UPDATE ..." that writes after the transaction ends.
+	stmt, err := tx.PrepareNamed(text)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	rows, err := stmt.Queryx(params)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	return read(rows)
+}
+
+func (ctx *MahresourcesContext) RunReadOnlyQueryByName(queryName string, params map[string]any, read func(*sqlx.Rows) error) error {
+	if ctx.isScopedPrincipal() {
+		return ErrSavedSQLScoped
+	}
 	var query models.Query
 
 	if err := ctx.db.Where("name = ?", queryName).First(&query).Error; err != nil {
-		return nil, err
+		return err
 	}
 
-	return ctx.RunReadOnlyQuery(query.ID, params)
+	return ctx.RunReadOnlyQuery(query.ID, params, read)
 }
 
 func (ctx *MahresourcesContext) GetQueries(offset, maxResults int, searchQuery *query_models.QueryQuery) ([]models.Query, error) {
@@ -128,7 +185,13 @@ func (ctx *MahresourcesContext) UpdateQuery(queryQuery *query_models.QueryEditor
 	return &query, nil
 }
 
+// GetDatabaseSchema lists tables and columns for the query editor. It leaves
+// out the tables saved SQL may not read (models.IsSavedSQLDeniedTable) and is
+// refused to group-limited principals, who cannot run saved SQL.
 func (ctx *MahresourcesContext) GetDatabaseSchema() (map[string][]string, error) {
+	if ctx.isScopedPrincipal() {
+		return nil, ErrSavedSQLScoped
+	}
 	schema := make(map[string][]string)
 
 	sqlDB, err := ctx.db.DB()
@@ -150,7 +213,9 @@ func (ctx *MahresourcesContext) GetDatabaseSchema() (map[string][]string, error)
 			if err := rows.Scan(&table, &column); err != nil {
 				return nil, fmt.Errorf("scanning postgres schema row: %w", err)
 			}
-			schema[table] = append(schema[table], column)
+			if !models.IsSavedSQLDeniedTable(table) {
+				schema[table] = append(schema[table], column)
+			}
 		}
 		return schema, rows.Err()
 	}
@@ -173,7 +238,9 @@ func (ctx *MahresourcesContext) GetDatabaseSchema() (map[string][]string, error)
 		if err := rows.Scan(&table, &column); err != nil {
 			return nil, fmt.Errorf("scanning sqlite schema row: %w", err)
 		}
-		schema[table] = append(schema[table], column)
+		if !models.IsSavedSQLDeniedTable(table) {
+			schema[table] = append(schema[table], column)
+		}
 	}
 
 	return schema, rows.Err()

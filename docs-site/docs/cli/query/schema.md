@@ -10,7 +10,11 @@ List every database table and its columns, for use as a reference
 when authoring query Text. The response is a single JSON object whose
 keys are table names and whose values are arrays of column name
 strings. Both user-facing tables (e.g. `resources`, `notes`,
-`groups`) and internal FTS/virtual tables appear in the output.
+`groups`) and internal FTS/virtual tables appear in the output. The
+tables saved SQL may not read (`users`, `sessions`, `api_tokens`
+and the other credential, secret and audit tables `query run`
+lists) are left out. A group-limited account, which cannot run
+saved SQL, gets `403`.
 
 Handy as a quick discovery tool before writing a new saved query.
 
