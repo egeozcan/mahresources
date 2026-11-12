@@ -113,7 +113,7 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 		// call. The pane and the editor gutter (POST /v1/shortcodes/lint) read the
 		// same buffers, so they have to reach the same verdict on them.
 		lintOpts := shortcodes.LintOptions{
-			Known:        buildKnownShortcodes(ctx),
+			Known:        buildKnownShortcodes(ctx, auth.PluginAccessFor(request.Context(), ctx.PluginAllowsScopedPrincipals)),
 			ValidateMRQL: templateMRQLValidator(ctx.MRQLStaticEnv()),
 			// Finding 155: the preview pane's issue list reports an unknown
 			// [partial] too, so the diagnostic is there whether the author is

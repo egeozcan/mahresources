@@ -51,12 +51,20 @@ type PluginManagerProvider interface {
 	PluginManager() *plugin_system.PluginManager
 }
 
+// ShortcodeDocsContext serves /v1/shortcodes/docs. The per-plugin reach
+// predicate is needed so the catalogue lists only plugins the caller may reach.
+type ShortcodeDocsContext interface {
+	PluginManagerProvider
+	PluginAllowsScopedPrincipals(pluginName string) bool
+}
+
 // ShortcodeLintContext serves /v1/shortcodes/lint. Beyond the plugin registry
 // (for the plugin shortcode catalogue) it reads the template-partial *names*, so
 // a [partial] reference to a partial that does not exist can be reported
 // (finding 155).
 type ShortcodeLintContext interface {
 	PluginManagerProvider
+	PluginAllowsScopedPrincipals(pluginName string) bool
 	partialNameResolver
 	mrqlStaticEnvProvider
 }

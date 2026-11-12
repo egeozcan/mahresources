@@ -237,6 +237,9 @@ Two consequences worth knowing:
   which is what a page renders when there is no plugin renderer at all. It is
   deliberately indistinguishable: otherwise a page would report which plugins
   exist, and which ones a given account may not use.
+- **A closed plugin is not listed.** It does not appear in the Plugins menu, nor
+  in the shortcode autocomplete, docs or lint results, for a group-limited
+  account. The "Manage Plugins" link is shown to administrators only.
 - **Actions are covered.** A group-limited account running a plugin action from
   a card or the bulk bar gets `403` unless that plugin is open to it. This is
   the one place the setting *narrows* what such an account could do before, and
