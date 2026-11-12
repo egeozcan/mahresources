@@ -328,7 +328,7 @@ The shortcode never triggers database loads by design (list pages render many ca
 [property path="Description" default="No description"]
 ```
 
-`raw=true` skips escaping, so a value that contains HTML is rendered as HTML. Use it only for text an admin or editor wrote, and never for a value that a plain `user` can edit. The linter warns on every `raw=true`.
+`raw=true` skips escaping, so a value that contains HTML is rendered as HTML. Use it only for text an admin or editor wrote, and never for a value that a plain `user` can edit. The linter warns on every `raw=true`. With [authentication](./authentication.md#raw-html-in-descriptions-and-text-blocks) on, `raw=true` is ignored in a description or note text block (and in anything those pull in), so the value is escaped there.
 
 ### Available Fields by Entity Type
 

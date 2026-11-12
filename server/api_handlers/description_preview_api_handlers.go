@@ -53,7 +53,9 @@ func descriptionEntityLoader(ctx TemplatePreviewContext, entityType string) func
 // is the request's principal-scoped context, so an entity outside a
 // group-limited principal's subtree is not found and [mrql] sees only the
 // subtree. `exists` checks an entity of a type without shortcodes.
-func GetPreviewDescriptionHandler(ctx TemplatePreviewContext, entityType string, exists func(uint) error) func(http.ResponseWriter, *http.Request) {
+// authEnabled sanitizes the markup and ignores raw="true" in its shortcodes, as
+// the page does under auth (#92).
+func GetPreviewDescriptionHandler(ctx TemplatePreviewContext, entityType string, exists func(uint) error, authEnabled bool) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var req descriptionPreviewRequest
 		if err := tryFillStructValuesFromRequest(&req, request); err != nil {
@@ -77,7 +79,7 @@ func GetPreviewDescriptionHandler(ctx TemplatePreviewContext, entityType string,
 
 		// Template comments go before markdown, which would otherwise encode
 		// what is inside them first.
-		html := template_filters.RenderDescriptionMarkup(shortcodes.StripTemplateComments(req.Text))
+		html := template_filters.RenderDescriptionMarkup(shortcodes.StripTemplateComments(req.Text), authEnabled)
 		if entity != nil && descriptionEntityLoader(ctx, entityType) != nil {
 			if metaCtx := template_filters.BuildMetaContextForEntity(entity, ctx); metaCtx != nil {
 				reqCtx, cancel := buildMRQLAPIRenderContext(request.Context(), ctx, false)
@@ -85,6 +87,7 @@ func GetPreviewDescriptionHandler(ctx TemplatePreviewContext, entityType string,
 				if principal := auth.PrincipalFromContext(reqCtx); principal != nil {
 					metaCtx.ForceReadOnly = metaCtx.ForceReadOnly || !principal.CanWrite()
 				}
+				metaCtx.UntrustedSource = authEnabled
 				executor := cappedQueryExecutor(template_filters.BuildQueryExecutor(ctx), previewMRQLLimitCap)
 				html = shortcodes.Process(reqCtx, html, *metaCtx, previewPluginRenderer(reqCtx, ctx), executor)
 			}

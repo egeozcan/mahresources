@@ -739,6 +739,9 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 		"assetVersion":    template_context_providers.AssetVersion,
 		"customHeader":    shareCustomHeader,
 		"customCSS":       shareCustomCSS,
+		// The share page renders the note's Description and text blocks, so
+		// they are sanitized under auth as on the primary server (#92).
+		"authEnabled": s.appContext.AuthEnabled(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

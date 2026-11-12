@@ -143,7 +143,7 @@ func scopedEditDescription[T contracts.BasicEntityReader](appCtx *application_co
 func scopedPreviewDescription[T contracts.BasicEntityReader](appCtx *application_context.MahresourcesContext, entityName string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := scopedCtx(appCtx, r)
-		api_handlers.GetPreviewDescriptionHandler(ctx, entityName, application_context.NewEntityWriter[T](ctx).Exists)(w, r)
+		api_handlers.GetPreviewDescriptionHandler(ctx, entityName, application_context.NewEntityWriter[T](ctx).Exists, appCtx.AuthEnabled())(w, r)
 	}
 }
 
@@ -159,7 +159,7 @@ func renderedTextBlocks(appCtx *application_context.MahresourcesContext) http.Ha
 			http_utils.HandleError(err, w, r, http.StatusNotFound)
 			return
 		}
-		html, err := template_handlers.RenderTextBlocks(ctx, r, note)
+		html, err := template_handlers.RenderTextBlocks(ctx, r, note, appCtx.AuthEnabled())
 		if err != nil {
 			http_utils.HandleError(err, w, r, http.StatusInternalServerError)
 			return

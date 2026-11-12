@@ -411,8 +411,8 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 	// [autorefresh] can be asked for again here, but [lazy]/[details] stay
 	// inline: no deferred signer is installed on this path.
 	if appCtx != nil {
-		reqCtx = shortcodes.WithRefreshSigner(reqCtx, func(entityType string, entityID uint, body string) string {
-			return deferredtoken.Seal(appCtx.DeferredSigningKey(), entityType, entityID, body)
+		reqCtx = shortcodes.WithRefreshSigner(reqCtx, func(entityType string, entityID uint, body string, untrusted bool) string {
+			return deferredtoken.SealWithTrust(appCtx.DeferredSigningKey(), entityType, entityID, body, untrusted)
 		})
 	}
 	mainEntity := ctx["mainEntity"]

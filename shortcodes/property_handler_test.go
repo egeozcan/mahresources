@@ -3,6 +3,7 @@ package shortcodes
 import (
 	"context"
 	"encoding/json"
+	"html"
 	"math"
 	"net/url"
 	"reflect"
@@ -443,4 +444,37 @@ func TestPropertyRefusesUnexportedFields(t *testing.T) {
 		got := Process(context.Background(), `[conditional field="hidden" not-empty="true"]Y[else]N[/conditional]`, ctx, nil, nil)
 		assert.Equal(t, "N", got)
 	})
+}
+
+// UntrustedSource (a render that started in a Description or text block under
+// -auth, #92) ignores raw="true" on every handler that has it, and seals the
+// flag into a deferred body's token so the later render does the same.
+func TestUntrustedSourceIgnoresRaw(t *testing.T) {
+	const v = `<img src=x onerror="alert(1)">`
+	meta := []byte(`{"x":"<img src=x onerror=\"alert(1)\">","list":["<img src=x onerror=\"alert(1)\">"]}`)
+	base := MetaShortcodeContext{EntityType: "note", EntityID: 1, Entity: struct{ Name string }{v}, Meta: meta}
+	for _, src := range []string{
+		`[property path="Name" raw="true"]`,
+		`[meta path="x" inline="true" raw="true"]`,
+		`[each path="list"][item raw="true"][/each]`,
+	} {
+		trusted := Process(context.Background(), src, base, nil, nil)
+		assert.Equal(t, v, trusted, "raw applies to a trusted render: %s", src)
+
+		untrusted := base
+		untrusted.UntrustedSource = true
+		assert.Equal(t, html.EscapeString(v), Process(context.Background(), src, untrusted, nil, nil), "raw is ignored: %s", src)
+	}
+
+	var sealed []bool
+	signer := func(_ string, _ uint, _ string, untrusted bool) string {
+		sealed = append(sealed, untrusted)
+		return "tok"
+	}
+	reqCtx := WithDeferredSigner(context.Background(), signer)
+	untrusted := base
+	untrusted.UntrustedSource = true
+	Process(reqCtx, `[lazy]x[/lazy][details]x[/details]`, base, nil, nil)
+	Process(reqCtx, `[lazy]x[/lazy][details]x[/details]`, untrusted, nil, nil)
+	assert.Equal(t, []bool{false, false, true, true}, sealed)
 }

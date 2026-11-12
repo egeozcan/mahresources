@@ -66,7 +66,7 @@ func GetDeferredRenderHandler(ctx DeferredRenderContext) func(http.ResponseWrite
 			return
 		}
 
-		entityType, entityID, body, ok := deferredtoken.Open(ctx.DeferredSigningKey(), req.Token)
+		entityType, entityID, body, untrusted, ok := deferredtoken.OpenWithTrust(ctx.DeferredSigningKey(), req.Token)
 		if !ok {
 			http_utils.HandleError(errors.New("invalid or expired deferred-render token"), writer, request, http.StatusBadRequest)
 			return
@@ -83,6 +83,9 @@ func GetDeferredRenderHandler(ctx DeferredRenderContext) func(http.ResponseWrite
 			http_utils.HandleError(errors.New("could not build render context for entity"), writer, request, http.StatusInternalServerError)
 			return
 		}
+		// A body sealed from user content renders with raw ignored, as it would
+		// have inline (#92).
+		metaCtx.UntrustedSource = untrusted
 
 		// Rebuild the same bounded render context the display page uses. The
 		// signer keeps nested deferred blocks lazy on subsequent round trips.

@@ -23,7 +23,10 @@ var textBlockTemplates struct {
 // renderer it leaves _reqCtxWithCache unset: the first process_shortcodes tag
 // then builds the page render context (MRQL cache, query budget, partial
 // resolver, deadline) once and every block shares it, as on the page.
-func RenderTextBlocks(app ListCardContext, request *http.Request, note *models.Note) (string, error) {
+//
+// authEnabled is the page's own "authEnabled", which the partial needs to
+// sanitize the blocks under auth (#92); StaticTemplateCtx does not carry it.
+func RenderTextBlocks(app ListCardContext, request *http.Request, note *models.Note, authEnabled bool) (string, error) {
 	textBlockTemplates.Do(func() {
 		textBlockTemplates.set = pongo2.NewSet("text-blocks", loaders.MustNewLocalFileSystemLoader("./templates", nil))
 	})
@@ -33,6 +36,7 @@ func RenderTextBlocks(app ListCardContext, request *http.Request, note *models.N
 	c["_customCSSSeen"] = seen
 	c["_pluginAccess"] = auth.PluginAccessFor(request.Context(), app.PluginAllowsScopedPrincipals)
 	c["note"], c["blocks"] = note, note.Blocks
+	c["authEnabled"] = authEnabled
 	tpl, err := textBlockTemplates.set.FromCache("/partials/renderedTextBlocks.tpl")
 	if err != nil {
 		return "", err

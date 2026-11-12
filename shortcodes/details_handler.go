@@ -46,7 +46,7 @@ func RenderDetailsShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortc
 		)
 	}
 
-	token := signer(ctx.EntityType, ctx.EntityID, sc.InnerContent)
+	token := signer(ctx.EntityType, ctx.EntityID, sc.InnerContent, ctx.UntrustedSource)
 	return fmt.Sprintf(
 		`<details-shortcode data-summary="%s" data-token="%s" data-open="%t"><noscript>This content requires JavaScript to load.</noscript></details-shortcode>`,
 		html.EscapeString(summary), html.EscapeString(token), open,
