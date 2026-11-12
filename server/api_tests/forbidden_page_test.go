@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"mahresources/application_context"
 	"mahresources/models"
 )
 
@@ -159,6 +160,71 @@ func TestPluginManagementEndpoints_AreAdminOnly(t *testing.T) {
 		if res.Code == http.StatusForbidden || res.Code == http.StatusNotFound {
 			t.Errorf("admin %s %s got %d; this endpoint is unreachable and the assertions above are vacuous",
 				e.method, e.path, res.Code)
+		}
+	}
+}
+
+// The shares dashboard lists every shared note in the caller's scope with its
+// public /s/<token> URL and renders revoke controls, so it is editor-only for
+// reads as well as writes (#120). Its entry in isEditorPath used to gate
+// nothing: the route is GET-only and that branch downgrades every safe method
+// to capRead. This covers the three registrations the templates map creates,
+// HTML and JSON denials, and a subtree-scoped user as well as an unscoped one.
+func TestAdminSharesPage_IsEditorOnly(t *testing.T) {
+	tc := setupAuthEnv(t)
+	shared := tc.CreateDummyNote("issue120 shared note")
+	if _, err := tc.AppCtx.ShareNote(shared.ID); err != nil {
+		t.Fatalf("share: %v", err)
+	}
+
+	scope := &models.Group{Name: "issue120-scope"}
+	if err := tc.DB.Create(scope).Error; err != nil {
+		t.Fatalf("create scope group: %v", err)
+	}
+	scopedUser, err := tc.AppCtx.CreateUser(&application_context.UserInput{
+		Username: "issue120_scoped_user", Password: "password1", Role: models.RoleUser, ScopeGroupId: &scope.ID,
+	})
+	if err != nil {
+		t.Fatalf("create scoped user: %v", err)
+	}
+	scopedRaw, _, err := tc.AppCtx.CreateApiToken(scopedUser.ID, "t", nil)
+	if err != nil {
+		t.Fatalf("token: %v", err)
+	}
+
+	denied := map[string]string{
+		"user":        roleBearer(t, tc, models.RoleUser),
+		"guest":       roleBearer(t, tc, models.RoleGuest),
+		"scoped user": "Bearer " + scopedRaw,
+	}
+	for who, bearer := range denied {
+		for _, path := range []string{"/admin/shares", "/admin/shares.json", "/admin/shares.body"} {
+			html := doReq(tc, http.MethodGet, path,
+				map[string]string{"Accept": "text/html", "Authorization": bearer}, nil, nil)
+			if html.Code != http.StatusForbidden {
+				t.Errorf("%s GET %s (HTML) = %d, want 403", who, path, html.Code)
+			} else if strings.Contains(html.Body.String(), shared.Name) {
+				t.Errorf("%s GET %s: 403 page still lists the shared note", who, path)
+			}
+			js := doReq(tc, http.MethodGet, path,
+				map[string]string{"Accept": "application/json", "Authorization": bearer}, nil, nil)
+			if js.Code != http.StatusForbidden || !strings.Contains(js.Body.String(), "insufficient permissions") {
+				t.Errorf("%s GET %s (JSON) = %d %q, want 403 insufficient permissions", who, path, js.Code, js.Body.String())
+			}
+		}
+	}
+
+	// Controls: admin and editor reach the page and see the shared note, so the
+	// denials above are not caused by a missing route or an empty page.
+	for _, role := range []models.Role{models.RoleAdmin, models.RoleEditor} {
+		bearer := roleBearer(t, tc, role)
+		res := doReq(tc, http.MethodGet, "/admin/shares",
+			map[string]string{"Accept": "text/html", "Authorization": bearer}, nil, nil)
+		if res.Code != http.StatusOK {
+			t.Fatalf("%s GET /admin/shares = %d, want 200 — this test measured nothing", role, res.Code)
+		}
+		if !strings.Contains(res.Body.String(), shared.Name) {
+			t.Errorf("%s GET /admin/shares does not list the shared note %q", role, shared.Name)
 		}
 	}
 }
