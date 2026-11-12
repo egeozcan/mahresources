@@ -228,8 +228,10 @@ including plugins that were installed before the control existed.
 
 What it does *not* do is widen the plugin. A confined caller's `mah.db` calls stay
 bound to that caller's own subtree, and taxonomy operations still require that
-caller's own role, exactly as they do everywhere else. The toggle is about the
-door, not about the room.
+caller's own role, exactly as they do everywhere else. A guest's `mah.db` is read-only: writes,
+deletes and `mah.db.transaction` return an error even on a plugin opened to
+limited users. Plugins that keep bookkeeping while a page is viewed should use
+`mah.kv`, which is unaffected. The toggle is about the door, not about the room.
 
 Two consequences worth knowing:
 

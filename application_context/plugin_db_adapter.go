@@ -149,8 +149,8 @@ func (ctx *MahresourcesContext) principalForPluginActor(actorID uint) *auth.Prin
 // is a guest. And it is deliberately not called "deny everything": global
 // taxonomy (tags, categories, note types, relation types) carries no owner and
 // is not subtree-scoped, so it stays reachable — that is a property of the scope
-// mechanism, not of this principal, and role-based capability is not enforced
-// below server/ at all.
+// mechanism, not of this principal. The principal is refused every mah.db write,
+// tags included, by the adapter's write-role guard (requireWriteRole).
 //
 // Relation *edges* were mostly taken out of that set by relationInScope
 // (relation_context.go). They are the case that shows why the list is worth
@@ -678,6 +678,9 @@ func (a *pluginDBAdapter) OpenResourceFile(id uint) (io.ReadCloser, int64, error
 }
 
 func (a *pluginDBAdapter) CreateResourceFromURL(reqCtx context.Context, url string, options map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("create resource from url"); err != nil {
+		return nil, err
+	}
 	lower := strings.ToLower(url)
 	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
 		return nil, fmt.Errorf("unsupported URL scheme (only http and https are allowed)")
@@ -707,6 +710,9 @@ func (a *pluginDBAdapter) CreateResourceFromURL(reqCtx context.Context, url stri
 }
 
 func (a *pluginDBAdapter) CreateResourceFromData(base64Data string, options map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("create resource from data"); err != nil {
+		return nil, err
+	}
 	data, err := base64.StdEncoding.DecodeString(base64Data)
 	if err != nil {
 		return nil, fmt.Errorf("invalid base64 data: %w", err)
@@ -728,6 +734,9 @@ func (a *pluginDBAdapter) CreateResourceFromData(base64Data string, options map[
 }
 
 func (a *pluginDBAdapter) AddResourceVersionFromURL(reqCtx context.Context, resourceID uint, rawURL string, comment string) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("add resource version from url"); err != nil {
+		return nil, err
+	}
 	lower := strings.ToLower(rawURL)
 	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
 		return nil, fmt.Errorf("unsupported URL scheme (only http and https are allowed)")
@@ -1264,6 +1273,9 @@ func relationTypeToMap(rt *models.GroupRelationType) map[string]any {
 // --- EntityWriter: Group CRUD ---
 
 func (a *pluginDBAdapter) CreateGroup(opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("create group"); err != nil {
+		return nil, err
+	}
 	creator := &query_models.GroupCreator{
 		Name:        getStringOpt(opts, "name"),
 		Description: getStringOpt(opts, "description"),
@@ -1282,6 +1294,9 @@ func (a *pluginDBAdapter) CreateGroup(opts map[string]any) (map[string]any, erro
 }
 
 func (a *pluginDBAdapter) UpdateGroup(id uint, opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("update group"); err != nil {
+		return nil, err
+	}
 	editor := &query_models.GroupEditor{
 		GroupCreator: query_models.GroupCreator{
 			Name:        getStringOpt(opts, "name"),
@@ -1303,10 +1318,16 @@ func (a *pluginDBAdapter) UpdateGroup(id uint, opts map[string]any) (map[string]
 }
 
 func (a *pluginDBAdapter) DeleteGroup(id uint) error {
+	if err := a.ctx.requireWriteRole("delete group"); err != nil {
+		return err
+	}
 	return a.ctx.DeleteGroup(id)
 }
 
 func (a *pluginDBAdapter) PatchGroup(id uint, opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("patch group"); err != nil {
+		return nil, err
+	}
 	group, err := a.ctx.GetGroup(id)
 	if err != nil {
 		return nil, err
@@ -1339,6 +1360,9 @@ func (a *pluginDBAdapter) PatchGroup(id uint, opts map[string]any) (map[string]a
 // --- EntityWriter: Note CRUD ---
 
 func (a *pluginDBAdapter) CreateNote(opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("create note"); err != nil {
+		return nil, err
+	}
 	editor := &query_models.NoteEditor{
 		NoteCreator: query_models.NoteCreator{
 			Name:        getStringOpt(opts, "name"),
@@ -1363,6 +1387,9 @@ func (a *pluginDBAdapter) CreateNote(opts map[string]any) (map[string]any, error
 }
 
 func (a *pluginDBAdapter) UpdateNote(id uint, opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("update note"); err != nil {
+		return nil, err
+	}
 	editor := &query_models.NoteEditor{
 		NoteCreator: query_models.NoteCreator{
 			Name:        getStringOpt(opts, "name"),
@@ -1387,10 +1414,16 @@ func (a *pluginDBAdapter) UpdateNote(id uint, opts map[string]any) (map[string]a
 }
 
 func (a *pluginDBAdapter) DeleteNote(id uint) error {
+	if err := a.ctx.requireWriteRole("delete note"); err != nil {
+		return err
+	}
 	return a.ctx.DeleteNote(id)
 }
 
 func (a *pluginDBAdapter) PatchNote(id uint, opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("patch note"); err != nil {
+		return nil, err
+	}
 	note, err := a.ctx.GetNote(id)
 	if err != nil {
 		return nil, err
@@ -1428,6 +1461,9 @@ func (a *pluginDBAdapter) PatchNote(id uint, opts map[string]any) (map[string]an
 // --- EntityWriter: Tag CRUD ---
 
 func (a *pluginDBAdapter) CreateTag(opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("create tag"); err != nil {
+		return nil, err
+	}
 	creator := &query_models.TagCreator{
 		Name:        getStringOpt(opts, "name"),
 		Description: getStringOpt(opts, "description"),
@@ -1440,6 +1476,9 @@ func (a *pluginDBAdapter) CreateTag(opts map[string]any) (map[string]any, error)
 }
 
 func (a *pluginDBAdapter) UpdateTag(id uint, opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("update tag"); err != nil {
+		return nil, err
+	}
 	creator := &query_models.TagCreator{
 		ID:          id,
 		Name:        getStringOpt(opts, "name"),
@@ -1453,10 +1492,16 @@ func (a *pluginDBAdapter) UpdateTag(id uint, opts map[string]any) (map[string]an
 }
 
 func (a *pluginDBAdapter) DeleteTag(id uint) error {
+	if err := a.ctx.requireWriteRole("delete tag"); err != nil {
+		return err
+	}
 	return a.ctx.DeleteTag(id)
 }
 
 func (a *pluginDBAdapter) PatchTag(id uint, opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("patch tag"); err != nil {
+		return nil, err
+	}
 	tag, err := a.ctx.GetTag(id)
 	if err != nil {
 		return nil, err
@@ -1476,6 +1521,9 @@ func (a *pluginDBAdapter) PatchTag(id uint, opts map[string]any) (map[string]any
 // --- EntityWriter: Category CRUD ---
 
 func (a *pluginDBAdapter) CreateCategory(opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("create category"); err != nil {
+		return nil, err
+	}
 	creator := &query_models.CategoryCreator{
 		CustomEntityPickerResult:    getStringOpt(opts, "custom_entity_picker_result"),
 		CustomEntityPickerResultCSS: getStringOpt(opts, "custom_entity_picker_result_css"),
@@ -1513,6 +1561,9 @@ func (a *pluginDBAdapter) CreateCategory(opts map[string]any) (map[string]any, e
 }
 
 func (a *pluginDBAdapter) UpdateCategory(id uint, opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("update category"); err != nil {
+		return nil, err
+	}
 	editor := &query_models.CategoryEditor{
 		CategoryCreator: query_models.CategoryCreator{
 			CustomEntityPickerResult:    getStringOpt(opts, "custom_entity_picker_result"),
@@ -1553,10 +1604,16 @@ func (a *pluginDBAdapter) UpdateCategory(id uint, opts map[string]any) (map[stri
 }
 
 func (a *pluginDBAdapter) DeleteCategory(id uint) error {
+	if err := a.ctx.requireWriteRole("delete category"); err != nil {
+		return err
+	}
 	return a.ctx.DeleteCategory(id)
 }
 
 func (a *pluginDBAdapter) PatchCategory(id uint, opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("patch category"); err != nil {
+		return nil, err
+	}
 	cat, err := a.ctx.GetCategory(id)
 	if err != nil {
 		return nil, err
@@ -1603,6 +1660,9 @@ func (a *pluginDBAdapter) PatchCategory(id uint, opts map[string]any) (map[strin
 // --- EntityWriter: ResourceCategory CRUD ---
 
 func (a *pluginDBAdapter) CreateResourceCategory(opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("create resource category"); err != nil {
+		return nil, err
+	}
 	creator := &query_models.ResourceCategoryCreator{
 		CustomEntityPickerResult:    getStringOpt(opts, "custom_entity_picker_result"),
 		CustomEntityPickerResultCSS: getStringOpt(opts, "custom_entity_picker_result_css"),
@@ -1645,6 +1705,9 @@ func (a *pluginDBAdapter) CreateResourceCategory(opts map[string]any) (map[strin
 }
 
 func (a *pluginDBAdapter) UpdateResourceCategory(id uint, opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("update resource category"); err != nil {
+		return nil, err
+	}
 	editor := &query_models.ResourceCategoryEditor{
 		ResourceCategoryCreator: query_models.ResourceCategoryCreator{
 			CustomEntityPickerResult:    getStringOpt(opts, "custom_entity_picker_result"),
@@ -1690,10 +1753,16 @@ func (a *pluginDBAdapter) UpdateResourceCategory(id uint, opts map[string]any) (
 }
 
 func (a *pluginDBAdapter) DeleteResourceCategory(id uint) error {
+	if err := a.ctx.requireWriteRole("delete resource category"); err != nil {
+		return err
+	}
 	return a.ctx.DeleteResourceCategory(id)
 }
 
 func (a *pluginDBAdapter) PatchResourceCategory(id uint, opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("patch resource category"); err != nil {
+		return nil, err
+	}
 	rc, err := a.ctx.GetResourceCategory(id)
 	if err != nil {
 		return nil, err
@@ -1745,6 +1814,9 @@ func (a *pluginDBAdapter) PatchResourceCategory(id uint, opts map[string]any) (m
 // --- EntityWriter: NoteType CRUD ---
 
 func (a *pluginDBAdapter) CreateNoteType(opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("create note type"); err != nil {
+		return nil, err
+	}
 	editor := &query_models.NoteTypeEditor{
 		ID:                          0, // ID=0 means create
 		CustomEntityPickerResult:    getStringOpt(opts, "custom_entity_picker_result"),
@@ -1782,6 +1854,9 @@ func (a *pluginDBAdapter) CreateNoteType(opts map[string]any) (map[string]any, e
 }
 
 func (a *pluginDBAdapter) UpdateNoteType(id uint, opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("update note type"); err != nil {
+		return nil, err
+	}
 	editor := &query_models.NoteTypeEditor{
 		ID:                          id,
 		CustomEntityPickerResult:    getStringOpt(opts, "custom_entity_picker_result"),
@@ -1819,10 +1894,16 @@ func (a *pluginDBAdapter) UpdateNoteType(id uint, opts map[string]any) (map[stri
 }
 
 func (a *pluginDBAdapter) DeleteNoteType(id uint) error {
+	if err := a.ctx.requireWriteRole("delete note type"); err != nil {
+		return err
+	}
 	return a.ctx.DeleteNoteType(id)
 }
 
 func (a *pluginDBAdapter) PatchNoteType(id uint, opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("patch note type"); err != nil {
+		return nil, err
+	}
 	nt, err := a.ctx.GetNoteType(id)
 	if err != nil {
 		return nil, err
@@ -1866,6 +1947,9 @@ func (a *pluginDBAdapter) PatchNoteType(id uint, opts map[string]any) (map[strin
 // --- EntityWriter: GroupRelation CRUD ---
 
 func (a *pluginDBAdapter) CreateGroupRelation(opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("create group relation"); err != nil {
+		return nil, err
+	}
 	fromGroupId := getUintOpt(opts, "from_group_id")
 	toGroupId := getUintOpt(opts, "to_group_id")
 	relationTypeId := getUintOpt(opts, "relation_type_id")
@@ -1885,6 +1969,9 @@ func (a *pluginDBAdapter) CreateGroupRelation(opts map[string]any) (map[string]a
 }
 
 func (a *pluginDBAdapter) UpdateGroupRelation(opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("update group relation"); err != nil {
+		return nil, err
+	}
 	query := query_models.GroupRelationshipQuery{
 		Id:          getUintOpt(opts, "id"),
 		Name:        getStringOpt(opts, "name"),
@@ -1901,10 +1988,16 @@ func (a *pluginDBAdapter) UpdateGroupRelation(opts map[string]any) (map[string]a
 }
 
 func (a *pluginDBAdapter) DeleteGroupRelation(id uint) error {
+	if err := a.ctx.requireWriteRole("delete group relation"); err != nil {
+		return err
+	}
 	return a.ctx.DeleteRelationship(id)
 }
 
 func (a *pluginDBAdapter) PatchGroupRelation(opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("patch group relation"); err != nil {
+		return nil, err
+	}
 	id := getUintOpt(opts, "id")
 	if id == 0 {
 		return nil, fmt.Errorf("id is required for patching a group relation")
@@ -1928,6 +2021,9 @@ func (a *pluginDBAdapter) PatchGroupRelation(opts map[string]any) (map[string]an
 // --- EntityWriter: RelationType CRUD ---
 
 func (a *pluginDBAdapter) CreateRelationType(opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("create relation type"); err != nil {
+		return nil, err
+	}
 	query := &query_models.RelationshipTypeEditorQuery{
 		Name:         getStringOpt(opts, "name"),
 		Description:  getStringOpt(opts, "description"),
@@ -1943,6 +2039,9 @@ func (a *pluginDBAdapter) CreateRelationType(opts map[string]any) (map[string]an
 }
 
 func (a *pluginDBAdapter) UpdateRelationType(opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("update relation type"); err != nil {
+		return nil, err
+	}
 	query := &query_models.RelationshipTypeEditorQuery{
 		Id:           getUintOpt(opts, "id"),
 		Name:         getStringOpt(opts, "name"),
@@ -1961,10 +2060,16 @@ func (a *pluginDBAdapter) UpdateRelationType(opts map[string]any) (map[string]an
 }
 
 func (a *pluginDBAdapter) DeleteRelationType(id uint) error {
+	if err := a.ctx.requireWriteRole("delete relation type"); err != nil {
+		return err
+	}
 	return a.ctx.DeleteRelationshipType(id)
 }
 
 func (a *pluginDBAdapter) PatchRelationType(opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("patch relation type"); err != nil {
+		return nil, err
+	}
 	id := getUintOpt(opts, "id")
 	if id == 0 {
 		return nil, fmt.Errorf("id is required for patching a relation type")
@@ -1990,6 +2095,9 @@ func (a *pluginDBAdapter) PatchRelationType(opts map[string]any) (map[string]any
 // --- EntityWriter: Series ---
 
 func (a *pluginDBAdapter) CreateSeries(opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("create series"); err != nil {
+		return nil, err
+	}
 	series, err := a.ctx.CreateSeries(&query_models.SeriesCreator{
 		Name: getStringOpt(opts, "name"),
 		Slug: getStringOpt(opts, "slug"),
@@ -2002,6 +2110,9 @@ func (a *pluginDBAdapter) CreateSeries(opts map[string]any) (map[string]any, err
 }
 
 func (a *pluginDBAdapter) PatchSeries(id uint, opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("patch series"); err != nil {
+		return nil, err
+	}
 	series, err := a.ctx.UpdateSeries(&query_models.SeriesEditor{
 		ID:   id,
 		Name: getStringOpt(opts, "name"),
@@ -2016,6 +2127,9 @@ func (a *pluginDBAdapter) PatchSeries(id uint, opts map[string]any) (map[string]
 // --- EntityWriter: Resource deletion ---
 
 func (a *pluginDBAdapter) DeleteResource(id uint) error {
+	if err := a.ctx.requireWriteRole("delete resource"); err != nil {
+		return err
+	}
 	return a.ctx.DeleteResource(id)
 }
 
@@ -2030,6 +2144,9 @@ func (a *pluginDBAdapter) DeleteResource(id uint) error {
 // here, because diverging would make the plugin writer and the form writer
 // disagree about the same resource.
 func (a *pluginDBAdapter) UpdateResource(id uint, opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("update resource"); err != nil {
+		return nil, err
+	}
 	editor := &query_models.ResourceEditor{
 		ID: id,
 		ResourceQueryBase: query_models.ResourceQueryBase{
@@ -2068,6 +2185,9 @@ var pluginPatchResourceAfterRead func()
 // presence is carried into EditResource so omitted values are ultimately
 // preserved from its post-lock snapshot rather than replayed from this read.
 func (a *pluginDBAdapter) PatchResource(id uint, opts map[string]any) (map[string]any, error) {
+	if err := a.ctx.requireWriteRole("patch resource"); err != nil {
+		return nil, err
+	}
 	current, err := a.ctx.GetResource(id)
 	if err != nil {
 		return nil, err
@@ -2133,6 +2253,9 @@ func (a *pluginDBAdapter) PatchResource(id uint, opts map[string]any) (map[strin
 // --- EntityWriter: Relationship management ---
 
 func (a *pluginDBAdapter) AddTagsToEntity(entityType string, id uint, tagIds []uint) error {
+	if err := a.ctx.requireWriteRole("add tags to entity"); err != nil {
+		return err
+	}
 	if len(tagIds) == 0 {
 		return nil
 	}
@@ -2155,6 +2278,9 @@ func (a *pluginDBAdapter) AddTagsToEntity(entityType string, id uint, tagIds []u
 }
 
 func (a *pluginDBAdapter) RemoveTagsFromEntity(entityType string, id uint, tagIds []uint) error {
+	if err := a.ctx.requireWriteRole("remove tags from entity"); err != nil {
+		return err
+	}
 	if len(tagIds) == 0 {
 		return nil
 	}
@@ -2177,6 +2303,9 @@ func (a *pluginDBAdapter) RemoveTagsFromEntity(entityType string, id uint, tagId
 }
 
 func (a *pluginDBAdapter) AddGroupsToEntity(entityType string, id uint, groupIds []uint) error {
+	if err := a.ctx.requireWriteRole("add groups to entity"); err != nil {
+		return err
+	}
 	if len(groupIds) == 0 {
 		return nil
 	}
@@ -2194,6 +2323,9 @@ func (a *pluginDBAdapter) AddGroupsToEntity(entityType string, id uint, groupIds
 }
 
 func (a *pluginDBAdapter) RemoveGroupsFromEntity(entityType string, id uint, groupIds []uint) error {
+	if err := a.ctx.requireWriteRole("remove groups from entity"); err != nil {
+		return err
+	}
 	if len(groupIds) == 0 {
 		return nil
 	}
@@ -2208,6 +2340,9 @@ func (a *pluginDBAdapter) RemoveGroupsFromEntity(entityType string, id uint, gro
 }
 
 func (a *pluginDBAdapter) AddResourcesToNote(noteId uint, resourceIds []uint) error {
+	if err := a.ctx.requireWriteRole("add resources to note"); err != nil {
+		return err
+	}
 	if len(resourceIds) == 0 {
 		return nil
 	}
@@ -2215,6 +2350,9 @@ func (a *pluginDBAdapter) AddResourcesToNote(noteId uint, resourceIds []uint) er
 }
 
 func (a *pluginDBAdapter) RemoveResourcesFromNote(noteId uint, resourceIds []uint) error {
+	if err := a.ctx.requireWriteRole("remove resources from note"); err != nil {
+		return err
+	}
 	if len(resourceIds) == 0 {
 		return nil
 	}

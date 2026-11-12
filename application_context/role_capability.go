@@ -50,6 +50,10 @@ func (ctx *MahresourcesContext) requireEditorRole(op string) error {
 // answer it either -- a guest's own subtree is exactly where the write would
 // land.
 //
+// Every pluginDBAdapter writer and RunInTransaction carry it, so a guest or the
+// deny-all principal gets a read-only mah.db
+// (TestPluginDBAdapterWritersCarryAWriteRoleGuard pins that).
+//
 // It is on the operations a plugin surface reaches directly rather than on
 // every write in the tree: the ones below server/ that only a request can
 // reach are already covered by the path rule.
