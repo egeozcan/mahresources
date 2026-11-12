@@ -80,6 +80,17 @@ Tags, Categories, Note Types, Series, Saved Queries and Relation Types carry no 
 
 Group-limited accounts are also refused a plugin's own surfaces by default: its pages, its `/v1/plugins/...` endpoints, and block and display rendering. An operator opens one plugin at a time with **Allow limited users** on `/plugins/manage`, or `mr plugin scoped-access <name> --allowed=true`. Opening a plugin does not widen it, because a confined caller's `mah.db` stays bound to that caller's own subtree and role. Unscoped roles (admin, editor, and an unscoped user) are unaffected. See [Plugin Permissions](./plugin-permissions.md).
 
+### Raw HTML in descriptions and text blocks
+
+With auth off, a Description or a note text block may contain raw HTML, including scripts and Alpine.js markup, and it renders as written. With auth on, those fields are written by accounts that are less trusted than the people who read them, so their rendered markdown is **sanitized for every role, admins included**:
+
+- `<script>`, `<style>`, `<iframe>`, `<svg>`, forms and similar elements are removed with their content.
+- Event-handler attributes (`onclick`, `onerror`, ...) and Alpine.js attributes (`x-data`, `x-init`, `@click`, `:class`, ...) are removed.
+- Links and images keep only relative, `http`, `https` and `mailto` URLs (images may also use `data:image/...`).
+- Ordinary markdown output (links, images, tables, code blocks, task lists), [mentions](./mentions.md) and [shortcodes](./shortcodes.md) keep working. A shortcode placed inside an HTML attribute, such as `<a href="[property path=Name]">`, is not expanded under auth.
+
+The same rule applies on the [share server](./note-sharing.md). Category, Resource Category and Note Type templates are not affected: only admins and editors can edit them, and they still accept raw HTML.
+
 ## How to authenticate
 
 There are two ways to present an identity.

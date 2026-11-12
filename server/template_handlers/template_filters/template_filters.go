@@ -82,6 +82,12 @@ func init() {
 		fmt.Println("error when registering render_mentions filter", mentionsErr)
 	}
 
+	sanitizeErr := pongo2.RegisterFilter("sanitize_under_auth", sanitizeUnderAuthFilter)
+
+	if sanitizeErr != nil {
+		fmt.Println("error when registering sanitize_under_auth filter", sanitizeErr)
+	}
+
 	// Replaces pongo2's built-in escapejs, which corrupts every character
 	// outside the BMP. See escapeJsFilter.
 	escapejsErr := pongo2.ReplaceFilter("escapejs", escapeJsFilter)
