@@ -50,6 +50,17 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 		if err := altCtx.lockGroupTreeMutation(altCtx.db); err != nil {
 			return err
 		}
+		// A merge pulls the losers' children and content under the winner, so
+		// winner and losers must be inside the subtree as it is now, not as the
+		// request's allow-list snapshot remembers it. After both locks, before
+		// any group row is read.
+		if altCtx.isScopedPrincipal() {
+			rescoped, err := altCtx.rescopeTx(altCtx.db)
+			if err != nil {
+				return err
+			}
+			altCtx.db = rescoped
+		}
 		// Group rows follow the shared security-boundary mutation lock. Lock the complete merge
 		// set in ID order so concurrent merges agree with each other, and so scope
 		// updates (which also lock their target group before users) cannot form the
