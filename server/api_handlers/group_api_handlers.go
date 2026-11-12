@@ -363,7 +363,11 @@ func GetMergeGroupsHandler(ctx contracts.GroupMerger) func(writer http.ResponseW
 		err = effectiveCtx.MergeGroups(editor.Winner, editor.Losers)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+			status := statusCodeForError(err, http.StatusBadRequest)
+			if errors.Is(err, application_context.ErrGroupIsUserScope) {
+				status = http.StatusConflict
+			}
+			http_utils.HandleError(err, writer, request, status)
 			return
 		}
 

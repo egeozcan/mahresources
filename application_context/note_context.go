@@ -92,6 +92,23 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 	// CreateGroup for the one deliberate behaviour change — a panic now
 	// propagates instead of being swallowed into a (nil, nil) return.
 	if err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		// Every note write sets the owner, so for a group-limited principal it
+		// is a containment change: judge the note and its owner against the
+		// current tree, not the request's allow-list snapshot, which can predate
+		// an admin moving either out of the subtree. The owner check above ran
+		// on that snapshot, so it is repeated here.
+		if ctx.isScopedPrincipal() {
+			var err error
+			if tx, err = ctx.rescopeTx(tx); err != nil {
+				return err
+			}
+			if ownerId != nil {
+				var ownerCheck models.Group
+				if err := tx.Select("id").First(&ownerCheck, *ownerId).Error; err != nil {
+					return errors.New("owner group not found")
+				}
+			}
+		}
 		if noteQuery.ID == 0 {
 
 			note = models.Note{

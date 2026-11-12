@@ -404,6 +404,19 @@ func (ctx *MahresourcesContext) massEdit(spec massEditSpec, q *query_models.Mass
 			}
 		}
 
+		// The request's allow-list is a snapshot that can predate an admin
+		// moving a target or the owner out of the subtree. Re-derive it on the
+		// transaction, after the tree lock, so the lock-and-verify phase below
+		// refuses a row that has left the subtree (with its not-found error)
+		// rather than re-owning it back in.
+		if txCtx.isScopedPrincipal() {
+			rescoped, rescopeErr := txCtx.rescopeTx(txCtx.db)
+			if rescopeErr != nil {
+				return rescopeErr
+			}
+			txCtx.db = rescoped
+		}
+
 		// Phase 1 — lock and verify every row the edit depends on. Requirements
 		// are UNIONED BY MODEL and taken in one fixed model order, ids ascending
 		// within each model: a global total order that two mass edits cannot
@@ -432,8 +445,9 @@ func (ctx *MahresourcesContext) massEdit(spec massEditSpec, q *query_models.Mass
 
 		// Phase 3 — apply. Ops OUTER, chunks INNER, and the owner op is parsed
 		// last: re-parenting changes subtree membership, and the scope allow-list
-		// on the db context is a snapshot from request start, so no scoped read
-		// after the owner UPDATE may be expected to see fresh membership.
+		// on the db context is a snapshot taken at the start of this transaction,
+		// so no scoped read after the owner UPDATE may be expected to see fresh
+		// membership.
 		for _, op := range ops {
 			for _, chunk := range chunkUints(ids, massEditChunkSize) {
 				n, err := op.apply(txCtx, chunk)

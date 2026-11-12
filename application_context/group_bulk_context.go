@@ -50,6 +50,17 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 		if err := altCtx.lockGroupTreeMutation(altCtx.db); err != nil {
 			return err
 		}
+		// A merge pulls the losers' children and content under the winner, so
+		// winner and losers must be inside the subtree as it is now, not as the
+		// request's allow-list snapshot remembers it. After both locks, before
+		// any group row is read.
+		if altCtx.isScopedPrincipal() {
+			rescoped, err := altCtx.rescopeTx(altCtx.db)
+			if err != nil {
+				return err
+			}
+			altCtx.db = rescoped
+		}
 		// Group rows follow the shared security-boundary mutation lock. Lock the complete merge
 		// set in ID order so concurrent merges agree with each other, and so scope
 		// updates (which also lock their target group before users) cannot form the
@@ -69,6 +80,20 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 				return lockErr
 			}
 			lockedGroups[id] = group
+		}
+
+		// A merge moves every account scoped to a loser onto the winner
+		// (transferUserScopeReferences below). Assigning a scope is admin-only,
+		// so only an admin or the system may cause that move; anyone else gets
+		// the refusal a delete of that group already gives. Checked here, under
+		// the user-management lock and the loser row locks, and before any
+		// transfer or before_group_delete hook runs.
+		if !altCtx.Principal().IsAdmin() {
+			for _, id := range loserIds {
+				if err := rejectGroupDeletionIfUserScope(altCtx.db, id); err != nil {
+					return err
+				}
+			}
 		}
 
 		winner := *lockedGroups[winnerId]
@@ -257,6 +282,8 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 		}
 
 		for _, loser := range losers {
+			// Moves rows only for an admin or system caller; any other caller
+			// was refused above if a loser is someone's scope.
 			if err := transferUserScopeReferences(altCtx.db, loser.ID, winner.ID); err != nil {
 				return err
 			}
