@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
@@ -406,6 +407,201 @@ func TestImport_StampsActingUserOnCreatedRows(t *testing.T) {
 	}
 	assertStamped(&models.Group{}, "groups")
 	assertStamped(&models.Note{}, "notes")
+}
+
+// exportTemplateCarriers exports a tree that references one Category, one Note
+// Type and one Resource Category, each carrying template payload, and returns
+// the archive. The carriers are inserted with db.Create so the save validation
+// is skipped and an invalid schema or rule set can be put in an archive.
+func exportTemplateCarriers(t *testing.T, name, categorySchema, rules string) []byte {
+	t.Helper()
+	src := createFacadeContext(t, name+"_src")
+
+	cat := &models.Category{Name: "GateCat", Description: "cat desc", CustomHeader: "<h1>x</h1>",
+		CustomCSS: "body{}", MetaSchema: categorySchema, MetadataIndexes: `[{"key":"score","kind":"numeric"}]`}
+	nt := &models.NoteType{Name: "GateNoteType", Description: "nt desc", CustomSidebar: "<b>side</b>",
+		CustomCSS: "body{}", ApplyTemplatesToShares: true}
+	rc := &models.ResourceCategory{Name: "GateRC", Description: "rc desc", CustomHeader: "<h1>rc</h1>",
+		CustomCSS: "body{}", AutoDetectRules: rules}
+	for _, m := range []any{cat, nt, rc} {
+		mustCreateFacade(t, src, m)
+	}
+	root := &models.Group{Name: "gate-root", CategoryId: &cat.ID}
+	mustCreateFacade(t, src, root)
+	mustCreateFacade(t, src, &models.Note{Name: "gate-note", OwnerId: &root.ID, NoteTypeId: &nt.ID})
+	mustCreateFacade(t, src, &models.Resource{Name: "gate-res", OwnerId: &root.ID, Hash: "cafe0100",
+		FileSize: 3, ResourceCategoryId: rc.ID})
+
+	var buf bytes.Buffer
+	if err := src.StreamExport(context.Background(), &ExportRequest{
+		RootGroupIDs: []uint{root.ID},
+		Scope:        archive.ExportScope{Subtree: true, OwnedResources: true, OwnedNotes: true},
+		SchemaDefs:   archive.ExportSchemaDefs{CategoriesAndTypes: true},
+	}, &buf, func(ev ProgressEvent) {}); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// importFacadeArchive stages tar and runs parse then apply on importer,
+// accepting every suggestion as the review UI's defaults do.
+func importFacadeArchive(t *testing.T, importer *MahresourcesContext, jobID string, tar []byte) (*ImportApplyResult, error) {
+	t.Helper()
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	if err := importer.fs.MkdirAll("_imports", 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := afero.WriteFile(importer.fs, tarPath, tar, 0644); err != nil {
+		t.Fatalf("stage tar: %v", err)
+	}
+	plan, err := importer.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("ParseImport: %v", err)
+	}
+	return importer.ApplyImport(context.Background(), jobID, importPlanPathFor(jobID), facadeDecisions(plan), facadeSink{})
+}
+
+// Issue #100. Group import is capWrite, but a Category or Resource Category's
+// templates, schema and auto-detect rules are admin-only content and a Note
+// Type's are editor-only. Import creates the rows at capWrite and keeps their
+// payload only at the carrier's edit role; whatever it keeps passes the save
+// path's validation.
+func TestImport_CarrierTemplatesNeedTheCarriersEditRole(t *testing.T) {
+	const schema = `{"type":"object","properties":{"x":{"type":"string"}}}`
+	const rules = `{"contentTypes":["image/png"],"priority":1000000}`
+	tar := exportTemplateCarriers(t, "carrier_gate", schema, rules)
+
+	type kept struct{ category, noteType, resourceCategory bool }
+	for _, tc := range []struct {
+		name      string
+		principal *auth.Principal
+		keep      kept
+	}{
+		{"user", &auth.Principal{UserID: 501, Role: models.RoleUser}, kept{}},
+		{"editor", &auth.Principal{UserID: 502, Role: models.RoleEditor}, kept{noteType: true}},
+		{"admin", &auth.Principal{UserID: 503, Role: models.RoleAdmin}, kept{true, true, true}},
+		{"no_principal", nil, kept{true, true, true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dst := createFacadeContext(t, "carrier_gate_dst_"+tc.name)
+			importer := dst
+			if tc.principal != nil {
+				importer = dst.WithPrincipal(tc.principal)
+			}
+			result, err := importFacadeArchive(t, importer, "carrier-gate-"+tc.name, tar)
+			if err != nil {
+				t.Fatalf("ApplyImport: %v", err)
+			}
+
+			var cat models.Category
+			var nt models.NoteType
+			var rc models.ResourceCategory
+			if err := dst.db.Where("name = ?", "GateCat").First(&cat).Error; err != nil {
+				t.Fatalf("category row was not created: %v", err)
+			}
+			if err := dst.db.Where("name = ?", "GateNoteType").First(&nt).Error; err != nil {
+				t.Fatalf("note type row was not created: %v", err)
+			}
+			if err := dst.db.Where("name = ?", "GateRC").First(&rc).Error; err != nil {
+				t.Fatalf("resource category row was not created: %v", err)
+			}
+
+			check := func(carrierType string, carrier any, id uint, name, desc, gotDesc, metadataIndexes string, keep bool) {
+				t.Helper()
+				if gotDesc != desc {
+					t.Errorf("%s description = %q, want %q: the row itself is capWrite", name, gotDesc, desc)
+				}
+				warned := false
+				for _, w := range result.Warnings {
+					if strings.Contains(w, name) && strings.Contains(w, "without its templates") {
+						warned = true
+					}
+				}
+				var revs []models.TemplateRevision
+				dst.db.Where("carrier_type = ? AND carrier_id = ?", carrierType, id).Order("number").Find(&revs)
+				if len(revs) != 1 {
+					t.Fatalf("%s has %d revisions, want the import revision #1", name, len(revs))
+				}
+				revSnap, err := models.ParseTemplateSnapshot(revs[0].Snapshot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				snap := models.NewTemplateSnapshot(carrierType, carrier)
+				if keep {
+					if models.TemplateSnapshotsEqual(carrierType, snap, models.TemplateSnapshot{}) {
+						t.Errorf("%s lost its templates although this role may author them", name)
+					}
+					if warned {
+						t.Errorf("%s: unexpected stripped-templates warning %v", name, result.Warnings)
+					}
+					return
+				}
+				for field, v := range snap {
+					if v != "" && v != false {
+						t.Errorf("%s.%s = %v, want empty: this role may not author it", name, field, v)
+					}
+				}
+				for field, v := range revSnap {
+					if v != "" && v != false {
+						t.Errorf("%s revision #1 %s = %v, want empty: the payload must not reach history", name, field, v)
+					}
+				}
+				if metadataIndexes != "" {
+					t.Errorf("%s.MetadataIndexes = %q, want empty", name, metadataIndexes)
+				}
+				if !warned {
+					t.Errorf("%s was stripped without a warning; warnings = %v", name, result.Warnings)
+				}
+			}
+			check(models.TemplateCarrierCategory, &cat, cat.ID, "GateCat", "cat desc", cat.Description, cat.MetadataIndexes, tc.keep.category)
+			check(models.TemplateCarrierNoteType, &nt, nt.ID, "GateNoteType", "nt desc", nt.Description, nt.MetadataIndexes, tc.keep.noteType)
+			check(models.TemplateCarrierResourceCategory, &rc, rc.ID, "GateRC", "rc desc", rc.Description, rc.MetadataIndexes, tc.keep.resourceCategory)
+
+			if tc.keep.noteType && !nt.ApplyTemplatesToShares {
+				t.Errorf("note type lost ApplyTemplatesToShares although this role may author it")
+			}
+
+			// The rules are what gives an imported Resource Category its reach:
+			// they claim every upload that names no category.
+			want := dst.DefaultResourceCategoryID
+			if tc.keep.resourceCategory {
+				want = rc.ID
+			}
+			if got := dst.detectResourceCategory("image/png", 10, 10, 100); got != want {
+				t.Errorf("an upload of image/png was detected as category %d, want %d", got, want)
+			}
+		})
+	}
+}
+
+// Whatever an import keeps passes the same validation as a save: an archive
+// cannot carry rules or a schema the editor would refuse, even for an admin.
+func TestImport_CarrierTemplatesAreValidatedLikeASave(t *testing.T) {
+	const okSchema = `{"type":"object"}`
+	const okRules = `{"contentTypes":["image/png"]}`
+	for _, tc := range []struct {
+		name, schema, rules, carrier string
+		model                        any
+	}{
+		{"invalid_rules", okSchema, `{"bogus":1}`, "GateRC", &models.ResourceCategory{}},
+		{"external_schema_ref", `{"$ref":"file:///etc/passwd"}`, okRules, "GateCat", &models.Category{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tar := exportTemplateCarriers(t, "carrier_validate_"+tc.name, tc.schema, tc.rules)
+			dst := createFacadeContext(t, "carrier_validate_dst_"+tc.name)
+			admin := dst.WithPrincipal(&auth.Principal{UserID: 601, Role: models.RoleAdmin})
+
+			_, err := importFacadeArchive(t, admin, "carrier-validate-"+tc.name, tar)
+			if err == nil || !strings.Contains(err.Error(), tc.carrier) {
+				t.Fatalf("ApplyImport err = %v, want a refusal naming %s", err, tc.carrier)
+			}
+			var n int64
+			dst.db.Model(tc.model).Where("name = ?", tc.carrier).Count(&n)
+			if n != 0 {
+				t.Errorf("%s was created with content the save path refuses", tc.carrier)
+			}
+		})
+	}
 }
 
 // (4) Begin() inherits the derived context. apply_import.go opens its batch

@@ -12,6 +12,8 @@ Custom templates execute arbitrary HTML and JavaScript. Only use them on **trust
 
 Do not allow untrusted users to create or edit Categories, Resource Categories, and Note Types with custom templates, as they could inject malicious scripts.
 
+Only an admin can author the templates of Categories and Resource Categories, and only an editor or admin those of Note Types. That includes [group import](./export-import.md): a lower role's import creates these carriers without their templates, schema or rules.
+
 :::
 
 ## Template Locations
