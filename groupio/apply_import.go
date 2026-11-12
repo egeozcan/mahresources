@@ -521,13 +521,22 @@ func (s *applyState) gateCarrierPayload(carrierType, label string, carrier any, 
 	}
 	snap := models.NewTemplateSnapshot(carrierType, carrier)
 	if s.ctx.carriers.AuthorTemplateCarrier(carrierType) != nil {
-		if models.TemplateSnapshotsEqual(carrierType, snap, models.TemplateSnapshot{}) && *metadataIndexes == "" {
-			return nil
+		// Emptiness is judged on the raw values, not with TemplateSnapshotsEqual:
+		// its canonical view resolves a SectionConfig that does not unmarshal, or
+		// carries unknown keys, to the defaults, yet the raw column is what is
+		// stored and what the edit page loads.
+		carries := *metadataIndexes != ""
+		for _, v := range snap {
+			if v != "" && v != false {
+				carries = true
+			}
 		}
 		models.ApplyTemplateSnapshot(carrierType, carrier, models.TemplateSnapshot{})
 		*metadataIndexes = ""
-		s.result.Warnings = append(s.result.Warnings, fmt.Sprintf(
-			"%s %q was created without its templates, schema or rules: your role may not author them", label, name))
+		if carries {
+			s.result.Warnings = append(s.result.Warnings, fmt.Sprintf(
+				"%s %q was created without its templates, schema or rules: your role may not author them", label, name))
+		}
 		return nil
 	}
 	if err := s.ctx.carriers.ValidateTemplateCarrier(carrierType, snap); err != nil {

@@ -17,6 +17,7 @@ import (
 	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/models"
+	"mahresources/models/types"
 )
 
 // Tests for the transaction, scope, and actor semantics of the import/export
@@ -599,6 +600,89 @@ func TestImport_CarrierTemplatesAreValidatedLikeASave(t *testing.T) {
 			dst.db.Model(tc.model).Where("name = ?", tc.carrier).Count(&n)
 			if n != 0 {
 				t.Errorf("%s was created with content the save path refuses", tc.carrier)
+			}
+		})
+	}
+}
+
+// A SectionConfig is payload even when the section config resolver reads it as
+// the defaults: a config that does not unmarshal, unknown keys, or restated
+// defaults all resolve to the defaults, but the raw column is what the edit
+// page hands to sectionConfigForm.js. A carrier whose only payload is such a
+// config must still be stripped below its edit role, with the warning.
+func TestImport_SectionConfigOnlyCarriersAreStrippedBelowTheEditRole(t *testing.T) {
+	for _, tc := range []struct{ name, sectionConfig string }{
+		{"proto_key", `{"__proto__":{"polluted":"yes"}}`},
+		{"wrong_type", `{"tags":false,"timestamps":"x","evil":"<script>alert(1)</script>"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := createFacadeContext(t, "sc_only_src_"+tc.name)
+			sc := types.JSON(tc.sectionConfig)
+			cat := &models.Category{Name: "ScCat", SectionConfig: sc}
+			nt := &models.NoteType{Name: "ScNoteType", SectionConfig: sc}
+			rc := &models.ResourceCategory{Name: "ScRC", SectionConfig: sc}
+			for _, m := range []any{cat, nt, rc} {
+				mustCreateFacade(t, src, m)
+			}
+			root := &models.Group{Name: "sc-root", CategoryId: &cat.ID}
+			mustCreateFacade(t, src, root)
+			mustCreateFacade(t, src, &models.Note{Name: "sc-note", OwnerId: &root.ID, NoteTypeId: &nt.ID})
+			mustCreateFacade(t, src, &models.Resource{Name: "sc-res", OwnerId: &root.ID, Hash: "cafe0101",
+				FileSize: 3, ResourceCategoryId: rc.ID})
+			var buf bytes.Buffer
+			if err := src.StreamExport(context.Background(), &ExportRequest{
+				RootGroupIDs: []uint{root.ID},
+				Scope:        archive.ExportScope{Subtree: true, OwnedResources: true, OwnedNotes: true},
+				SchemaDefs:   archive.ExportSchemaDefs{CategoriesAndTypes: true},
+			}, &buf, func(ev ProgressEvent) {}); err != nil {
+				t.Fatalf("export: %v", err)
+			}
+
+			dst := createFacadeContext(t, "sc_only_dst_"+tc.name)
+			user := dst.WithPrincipal(&auth.Principal{UserID: 701, Role: models.RoleUser})
+			result, err := importFacadeArchive(t, user, "sc-only-"+tc.name, buf.Bytes())
+			if err != nil {
+				t.Fatalf("ApplyImport: %v", err)
+			}
+
+			for _, c := range []struct {
+				carrierType, name, table string
+			}{
+				{models.TemplateCarrierCategory, "ScCat", "categories"},
+				{models.TemplateCarrierNoteType, "ScNoteType", "note_types"},
+				{models.TemplateCarrierResourceCategory, "ScRC", "resource_categories"},
+			} {
+				var row struct {
+					ID            uint
+					SectionConfig *string
+				}
+				if err := dst.db.Table(c.table).Select("id, section_config").Where("name = ?", c.name).Take(&row).Error; err != nil {
+					t.Fatalf("%s row was not created: %v", c.name, err)
+				}
+				if row.SectionConfig != nil && *row.SectionConfig != "" {
+					t.Errorf("%s.SectionConfig = %q, want empty: a user may not author it", c.name, *row.SectionConfig)
+				}
+				var revs []models.TemplateRevision
+				dst.db.Where("carrier_type = ? AND carrier_id = ?", c.carrierType, row.ID).Find(&revs)
+				if len(revs) != 1 {
+					t.Fatalf("%s has %d revisions, want the import revision #1", c.name, len(revs))
+				}
+				revSnap, err := models.ParseTemplateSnapshot(revs[0].Snapshot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if v, _ := revSnap["SectionConfig"].(string); v != "" {
+					t.Errorf("%s revision #1 SectionConfig = %q, want empty", c.name, v)
+				}
+				warned := false
+				for _, w := range result.Warnings {
+					if strings.Contains(w, c.name) && strings.Contains(w, "without its templates") {
+						warned = true
+					}
+				}
+				if !warned {
+					t.Errorf("%s was imported without a stripped-templates warning; warnings = %v", c.name, result.Warnings)
+				}
 			}
 		})
 	}
