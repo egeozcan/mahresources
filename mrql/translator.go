@@ -2002,6 +2002,10 @@ func (tc *translateContext) resolveOrderByColumn(f *FieldExpr) (string, error) {
 		return tc.metaJsonOrderExpr(segments), nil
 	}
 
+	if expr, ok := tc.sharedPresenceExpr(fieldName); ok {
+		return expr, nil
+	}
+
 	fd, ok := LookupField(tc.entityType, fieldName)
 	if !ok {
 		// Fallback: use the field name as-is (validation should have caught this)
@@ -2368,6 +2372,10 @@ func (tc *translateContext) groupByFieldExprs(fieldName string) (string, string)
 		return expr, expr
 	}
 
+	if expr, ok := tc.sharedPresenceExpr(fieldName); ok {
+		return expr, expr
+	}
+
 	fd, ok := LookupField(tc.entityType, fieldName)
 	if !ok {
 		return tc.tableName + "." + fieldName, tc.tableName + "." + fieldName
@@ -2375,6 +2383,19 @@ func (tc *translateContext) groupByFieldExprs(fieldName string) (string, string)
 
 	col := tc.qualifiedColumn(fd.Column)
 	return col, col
+}
+
+// sharedPresenceExpr returns the expression that stands in for the note-only
+// `shared` field wherever a field becomes a SELECT, GROUP BY or ORDER BY
+// expression. share_token is a bearer credential (#107): a GROUP BY key comes
+// back as a plain row value, out of reach of the Note model's json:"-", so the
+// raw column must never be selected. 1 when the note is shared, 0 otherwise,
+// on both dialects; the presence test matches translateComparisonExpr's.
+func (tc *translateContext) sharedPresenceExpr(fieldName string) (string, bool) {
+	if fieldName != "shared" || tc.entityType != EntityNote {
+		return "", false
+	}
+	return "(CASE WHEN " + tc.qualifiedColumn("share_token") + " IS NOT NULL THEN 1 ELSE 0 END)", true
 }
 
 // dateBucketFieldExpr returns the bucket expression for a dotted field name

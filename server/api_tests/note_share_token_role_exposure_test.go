@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -100,6 +101,10 @@ func TestNoteShareToken_HiddenFromGuests(t *testing.T) {
 	guest := scopedRoleBearer(t, tc, models.RoleGuest, f.group.ID, "st107_guest")
 
 	id := func(u uint) string { return fmt.Sprint(u) }
+	saved, err := tc.AppCtx.CreateSavedMRQLQuery("st107-group-by-shared", "type = note GROUP BY shared COUNT()", "")
+	if err != nil {
+		t.Fatalf("save mrql query: %v", err)
+	}
 	surfaces := []struct {
 		name, method, path, accept, body string
 		// want is text proving the response actually carries the note (or its
@@ -113,7 +118,12 @@ func TestNoteShareToken_HiddenFromGuests(t *testing.T) {
 		{"note html", http.MethodGet, "/note?id=" + id(f.note.ID), "text/html", "", f.note.Name},
 		{"hovercard", http.MethodGet, "/hovercard?type=note&id=" + id(f.note.ID), "text/html", "", f.note.Name},
 		{"mrql", http.MethodPost, "/v1/mrql", "application/json", `{"query":"type = note"}`, f.note.Name},
-		{"v1 group", http.MethodGet, "/v1/group?id=" + id(f.group.ID), "application/json", "", f.note.Name},
+		// GROUP BY returns its keys as plain rows, not models.Note, so json:"-"
+		// does not reach them: `shared` must group on presence, not the column.
+		{"mrql group by shared aggregated", http.MethodPost, "/v1/mrql", "application/json", `{"query":"type = note GROUP BY shared COUNT()"}`, `"shared"`},
+		{"mrql group by shared bucketed", http.MethodPost, "/v1/mrql", "application/json", `{"query":"type = note GROUP BY shared"}`, f.note.Name},
+		{"mrql export group by shared", http.MethodGet, "/v1/mrql/export?format=csv&query=" + url.QueryEscape("type = note GROUP BY shared COUNT()"), "text/csv", "", "shared"},
+		{"mrql saved run group by shared", http.MethodPost, "/v1/mrql/saved/run?id=" + id(saved.ID), "application/json", "", `"shared"`},		{"v1 group", http.MethodGet, "/v1/group?id=" + id(f.group.ID), "application/json", "", f.note.Name},
 		{"group json", http.MethodGet, "/group.json?id=" + id(f.group.ID), "application/json", "", f.note.Name},
 		{"group html", http.MethodGet, "/group?id=" + id(f.group.ID), "text/html", "", f.note.Name},
 		{"v1 resource", http.MethodGet, "/v1/resource?id=" + id(f.resource.ID), "application/json", "", f.note.Name},
@@ -170,6 +180,21 @@ func TestNoteShareToken_HiddenFromGuests(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("GET /v1/notes does not list note %d", f.note.ID)
+		}
+	})
+
+	t.Run("mrql group by shared keys on presence", func(t *testing.T) {
+		res := doReq(tc, http.MethodPost, "/v1/mrql",
+			map[string]string{"Accept": "application/json", "Content-Type": "application/json", "Authorization": guest},
+			nil, strings.NewReader(`{"query":"type = note GROUP BY shared COUNT()"}`))
+		var out struct {
+			Rows []map[string]any `json:"rows"`
+		}
+		if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode mrql: %v: %s", err, res.Body.String())
+		}
+		if len(out.Rows) != 1 || fmt.Sprint(out.Rows[0]["shared"]) != "1" || fmt.Sprint(out.Rows[0]["count"]) != "1" {
+			t.Errorf("GROUP BY shared rows = %v, want one row {shared: 1, count: 1}", out.Rows)
 		}
 	})
 

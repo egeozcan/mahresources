@@ -29,6 +29,16 @@ func TestSharedBooleanTranslation(t *testing.T) {
 	}
 }
 
+// share_token is a bearer credential (#107), so `shared` sorts on whether the
+// note is shared, never on the token itself.
+func TestSharedOrderByUsesPresenceNotToken(t *testing.T) {
+	db := setupTestDB(t)
+	sql := dryRunSQL(t, db, `type = note ORDER BY shared DESC`, EntityNote)
+	if !containsSQL(sql, "ORDER BY (CASE WHEN notes.share_token IS NOT NULL THEN 1 ELSE 0 END) DESC") {
+		t.Fatalf("ORDER BY shared SQL = %s", sql)
+	}
+}
+
 func containsSQL(sql, want string) bool {
 	for i := 0; i+len(want) <= len(sql); i++ {
 		if sql[i:i+len(want)] == want {
