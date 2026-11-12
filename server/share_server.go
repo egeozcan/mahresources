@@ -411,8 +411,16 @@ func (s *ShareServer) handleCalendarEvents(w http.ResponseWriter, r *http.Reques
 	// Fetch calendar events
 	response, err := s.appContext.GetCalendarEvents(blockId, start, end)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("Shared calendar block %d: failed to load events: %v", blockId, err)
+		http.Error(w, "Failed to load calendar", http.StatusInternalServerError)
 		return
+	}
+
+	// Per-calendar errors carry Go error text, which includes the private feed
+	// URL and resource lookups. The operator's copy is logged by
+	// GetCalendarEvents, so anonymous visitors get a fixed message instead.
+	for i := range response.Errors {
+		response.Errors[i].Error = "calendar unavailable"
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -595,6 +603,36 @@ func (s *ShareServer) processShareTemplates(note *models.Note) (header, css stri
 	return header, css
 }
 
+// sharedCalendarContent projects a calendar block's Content to the fields an
+// anonymous visitor needs: each calendar's id, name and color. The source
+// (private ICS URL or resource ID) is dropped. The typed decode means any
+// field added later is dropped by default. On a decode error it returns an
+// empty list, never the raw content.
+func sharedCalendarContent(raw []byte) map[string]interface{} {
+	out := []interface{}{}
+	if len(raw) > 0 {
+		var typed struct {
+			Calendars []struct {
+				ID    string `json:"id"`
+				Name  string `json:"name"`
+				Color string `json:"color"`
+			} `json:"calendars"`
+		}
+		if err := json.Unmarshal(raw, &typed); err != nil {
+			log.Printf("Error decoding calendar block content for share page: %v", err)
+		} else {
+			for _, cal := range typed.Calendars {
+				out = append(out, map[string]interface{}{
+					"id":    cal.ID,
+					"name":  cal.Name,
+					"color": cal.Color,
+				})
+			}
+		}
+	}
+	return map[string]interface{}{"calendars": out}
+}
+
 func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note, shareToken string) {
 	template := pongo2.Must(s.templateSet.FromFile("/shared/displayNote.tpl"))
 
@@ -624,6 +662,12 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 			if err := json.Unmarshal(block.State, &tb.State); err != nil {
 				log.Printf("Error decoding block state: %v", err)
 			}
+		}
+
+		// A calendar block's stored Content holds private ICS feed URLs and
+		// resource IDs. Publish only the display fields the page reads.
+		if block.Type == "calendar" {
+			tb.Content = sharedCalendarContent(block.Content)
 		}
 
 		// Heading level decodes from JSON as float64, which pongo2 does not treat

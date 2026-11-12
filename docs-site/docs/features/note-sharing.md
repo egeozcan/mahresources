@@ -24,7 +24,7 @@ The share URL is unguessable. Knowing one token does not help discover others. T
 When a note is shared, visitors can see:
 
 - **Note content** - The note's name, description, and text content
-- **Block content** - Every block type renders on the share page. Text, headings, dividers, todos, galleries, and calendars show their own content. A **references block** publishes the name, description, and category of each group it references. A **table block** backed by a saved query executes that query on the share server and renders the result rows (see [Interactive Blocks](#interactive-blocks-on-shared-notes)).
+- **Block content** - Every block type renders on the share page. Text, headings, dividers, todos, and galleries show their own content. A **calendar block** publishes only each calendar's id, name and colour, plus its proxied events (see [Shared Calendars](#shared-calendars)). A **references block** publishes the name, description, and category of each group it references. A **table block** backed by a saved query executes that query on the share server and renders the result rows (see [Interactive Blocks](#interactive-blocks-on-shared-notes)).
 - **Embedded resources** - Images and files attached to the note
 
 What remains private:
@@ -32,6 +32,7 @@ What remains private:
 - Tags and categories
 - The note's own group memberships (a references block, however, publishes the name, description, and category of the specific groups it references)
 - Metadata, **unless** the note's type opts into [applying templates to shares](#note-type-templates-on-shared-pages): a `[meta]` shortcode in a shared Custom Header renders the real metadata value (read-only) onto the public page
+- Calendar feed URLs and resource IDs. A calendar block's subscription address is never sent to visitors
 - Other notes and resources
 
 ## Enabling Note Sharing
@@ -155,7 +156,7 @@ Adding, removing, or editing todo items is not allowed on shared views -- only t
 
 ### Shared Calendars
 
-Calendar blocks on shared notes are view-only. Visitors can browse month and agenda views and see events sourced from the block's ICS feed, but they cannot create, edit, or delete events. The share server rejects state writes for every block type except todos (HTTP 403, BH-031), so calendar changes never persist. `GET /s/{token}/block/{blockId}/calendar/events` serves the events for display only.
+Calendar blocks on shared notes are view-only. Visitors can browse month and agenda views and see events sourced from the block's ICS feed, but they cannot create, edit, or delete events. The share server rejects state writes for every block type except todos (HTTP 403, BH-031), so calendar changes never persist. `GET /s/{token}/block/{blockId}/calendar/events` serves the events for display only. Visitors see each calendar's id, name and colour, but never its feed URL or resource ID. If a calendar fails to load, the page shows a generic "calendar unavailable" message. The detailed error is written to the server log for the operator.
 
 ### Shared Block Constraints
 
