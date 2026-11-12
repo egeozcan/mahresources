@@ -172,3 +172,9 @@ func TestPG_MRQL(t *testing.T) {
 		t.Fatalf("MRQL query: expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
+
+// TestPG_EditMeta_ScopedPrincipalConfined covers issue #93 on the Postgres
+// branch of UpdateMetaAtPath (the scoped SELECT ... FOR UPDATE).
+func TestPG_EditMeta_ScopedPrincipalConfined(t *testing.T) {
+	assertScopedUpdateMetaAtPathConfined(t, SetupPostgresTestEnv(t))
+}
