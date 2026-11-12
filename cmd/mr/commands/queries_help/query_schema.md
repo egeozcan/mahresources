@@ -6,15 +6,15 @@ relatedCmds: query create, query run, mrql
 
 # Long
 
-List every database table and its columns, for use as a reference
-when authoring query Text. The response is a single JSON object whose
-keys are table names and whose values are arrays of column name
-strings. Both user-facing tables (e.g. `resources`, `notes`,
-`groups`) and internal FTS/virtual tables appear in the output. The
-tables saved SQL may not read (`users`, `sessions`, `api_tokens`
-and the other credential, secret and audit tables `query run`
-lists) are left out. A group-limited account, which cannot run
-saved SQL, gets `403`.
+List the tables saved SQL may read and their columns, for use as a
+reference when authoring query Text. The response is a single JSON
+object whose keys are table names and whose values are arrays of
+column name strings. The content tables (e.g. `resources`, `notes`,
+`groups`), their join tables and, on SQLite, their FTS tables
+appear; `users`, `sessions`, `api_tokens` and every other table
+`query run` cannot read are left out. A group-limited account,
+which cannot run saved SQL, gets `403`; on PostgreSQL with `-auth`,
+a read-only role that fails the server's check gets `503`.
 
 Handy as a quick discovery tool before writing a new saved query.
 

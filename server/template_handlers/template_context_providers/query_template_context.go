@@ -52,6 +52,7 @@ func QueryListContextProvider(context QueryPageContext) func(request *http.Reque
 			"queries":          queries,
 			"pagination":       pagination,
 			"readOnlyEnforced": context.IsReadOnlyDBEnforced(),
+			"readOnlyProblem":  context.ReadOnlyDBProblem(),
 			"action": template_entities.Entry{
 				Name: "Add",
 				Url:  "/query/new",
@@ -84,6 +85,7 @@ func QueryCreateContextProvider(context QueryPageContext) func(request *http.Req
 			"pageTitle":        "Create Query",
 			"dbType":           context.DatabaseType(),
 			"readOnlyEnforced": context.IsReadOnlyDBEnforced(),
+			"readOnlyProblem":  context.ReadOnlyDBProblem(),
 		}.Update(StaticTemplateCtx(request))
 
 		var entityId query_models.EntityIdQuery
@@ -129,6 +131,7 @@ func QueryContextProvider(context QueryPageContext) func(request *http.Request) 
 			"prefix":           "Query",
 			"query":            query,
 			"readOnlyEnforced": context.IsReadOnlyDBEnforced(),
+			"readOnlyProblem":  context.ReadOnlyDBProblem(),
 			"action": template_entities.Entry{
 				Name: "Edit",
 				Url:  "/query/edit?id=" + strconv.Itoa(int(query.ID)),

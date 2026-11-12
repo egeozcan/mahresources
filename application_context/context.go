@@ -432,6 +432,9 @@ type MahresourcesContext struct {
 	db *gorm.DB
 	// the db readonly connection to the main db
 	readOnlyDB *sqlx.DB
+	// savedSQLRoleCheck caches whether the PostgreSQL role behind readOnlyDB is
+	// restricted to the saved-SQL tables.
+	savedSQLRoleCheck *savedSQLRoleCheck
 	// ephemeralDB is the scratch file behind -memory-db, released at shutdown by
 	// ReleaseEphemeralDatabase; nil for every other database.
 	ephemeralDB *ephemeralDatabase
@@ -979,6 +982,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		fs:                        filesystem,
 		db:                        db,
 		readOnlyDB:                readOnlyDB,
+		savedSQLRoleCheck:         &savedSQLRoleCheck{},
 		Config:                    config,
 		hostFetchPolicy:           hostFetchPolicy,
 		altFileSystems:            altFileSystems,
@@ -1576,21 +1580,16 @@ func (ctx *MahresourcesContext) EnsureForeignKeysActive(db *gorm.DB) {
 	}
 }
 
-// IsReadOnlyDBEnforced reports whether saved SQL is refused writes by what this
-// code installed on the read-only handle, not by what its DSN appears to say: on
-// SQLite, the handle was opened with models.ReadOnlySQLiteDriverName (whose
-// authorizer refuses every write, ATTACH and PRAGMA); on Postgres, RunReadOnlyQuery
-// runs every query in a READ ONLY transaction. A handle built any other way, such
-// as a test wrapping the main pool, is not enforced.
+// IsReadOnlyDBEnforced reports whether saved SQL is held to read-only access to
+// the saved-SQL tables by what this code installed or verified, not by what the
+// DSN appears to say: on SQLite, the handle was opened with
+// models.ReadOnlySQLiteDriverName (whose authorizer refuses every write, ATTACH,
+// PRAGMA and read of a table outside the allow-list); on PostgreSQL, the role
+// behind the handle passed models.VerifyPostgresReadOnlyRole (and every query
+// runs in a READ ONLY transaction). A handle built any other way, such as a test
+// wrapping the main pool, is not enforced.
 func (ctx *MahresourcesContext) IsReadOnlyDBEnforced() bool {
-	if ctx.readOnlyDB == nil {
-		return false
-	}
-	switch ctx.readOnlyDB.DriverName() {
-	case models.ReadOnlySQLiteDriverName, "postgres":
-		return true
-	}
-	return false
+	return ctx.ReadOnlyDBProblem() == ""
 }
 
 func (ctx *MahresourcesContext) WithTransaction(txFn func(transactionCtx *MahresourcesContext) error) error {

@@ -176,6 +176,7 @@ type QueryPageContext interface {
 	contracts.QueryReader
 	GetQueriesCount(queryQ *query_models.QueryQuery) (int64, error)
 	IsReadOnlyDBEnforced() bool
+	ReadOnlyDBProblem() string
 	DatabaseType() string
 }
 

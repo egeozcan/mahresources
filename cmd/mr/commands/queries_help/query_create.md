@@ -11,8 +11,8 @@ Create a new saved query. Requires `--name` (unique label) and
 that the query's page renders under the results table once the query
 has run. Result rows reach it in the browser as the Alpine variable
 `results` and as `window.results`, not as template variables. Query
-Text runs on the connection `-db-readonly-dsn` names; writes are
-rejected only when that DSN is itself read-only (see `query run`).
+Text runs on the connection `-db-readonly-dsn` names, read-only and
+limited to the content tables (see `query run`).
 
 # Example
 

@@ -25,7 +25,10 @@ Names must be unique across all Queries.
 3. Results are returned as `{columns, rows}` -- the `SELECT` list in its own order, and one array of values per row
 4. If a `template` is defined, results render through it; otherwise a default table is used
 
-Queries are read-only whatever `DB_READONLY_DSN` points at. On SQLite the connection refuses every write, DDL statement, `ATTACH`, `PRAGMA` (bar the read of `data_version` that full-text `MATCH` queries make internally) and transaction statement, and refuses to read the credential, secret and audit tables (`users`, `sessions`, `api_tokens`, `plugin_states`, `plugin_kvs`, `runtime_settings`, `log_entries`, `user_settings`, `saved_searches`, `job_replay_envelopes`). On PostgreSQL each query runs as a single statement inside a `READ ONLY` transaction; which tables it can read depends on the role `DB_READONLY_DSN` connects as.
+Queries are read-only whatever `DB_READONLY_DSN` points at, and they read only **content tables**: Resources, Notes, Groups, Tags, Categories, Resource Categories, Note Types, Series, Queries, saved MRQL queries, template partials, versions, previews, hashes and similarities, relations, the tables that join them, and their full-text indexes. Every other table is off limits: accounts, sessions and API tokens, runtime settings, the audit log, per-user settings and saved searches, plugin state, Jobs, downloads, Reductions and template history. A table added in a future version is off limits until it is explicitly put on the list.
+
+- **SQLite:** the connection refuses every write, DDL statement, `ATTACH`, `PRAGMA` (bar the read of `data_version` that full-text `MATCH` queries make internally) and transaction statement, refuses to read any table outside the list (and the `sqlite_master` catalogue), and refuses views. CTEs, subqueries and `json_each`/`json_tree` work.
+- **PostgreSQL:** each query runs as a single statement inside a `READ ONLY` transaction, as the role `DB_READONLY_DSN` connects as. The server checks that role at startup and at most a minute before each run; see [the read-only role](#the-postgresql-read-only-role) below.
 
 ## Creating a Query
 
@@ -157,14 +160,14 @@ GET /v1/query/schema
 curl http://localhost:8181/v1/query/schema
 ```
 
-This returns table and column definitions for the database, without the tables saved queries may not read. Group-limited accounts get `403`.
+This returns table and column definitions for the tables saved queries may read. Group-limited accounts get `403`; on PostgreSQL with `-auth`, a read-only role that fails the server's check gets `503`.
 
 ## API Endpoints
 
 :::warning
 On SQLite the server enforces read-only access and the table deny list itself, on every connection it opens for saved queries, whatever the DSN contains. With `DB_READONLY_DSN` unset on SQLite, queries run against an empty private database and answer `no such table`; point it at the main database file (for example `file:/data/mahresources.db?mode=ro`) to query your data.
 
-On PostgreSQL the server refuses writes with a read-only transaction, but it cannot hide tables. Point `DB_READONLY_DSN` at a role without `SELECT` on `users`, `sessions`, `api_tokens`, `plugin_states`, `plugin_kvs`, `runtime_settings`, `log_entries`, `user_settings`, `saved_searches` and `job_replay_envelopes`; the server does not check the role's grants. Multi-statement query text is refused on PostgreSQL.
+On PostgreSQL the server refuses writes with a read-only transaction, and checks that the role behind `DB_READONLY_DSN` can read the content tables and nothing else. With `-auth` on, running a query and `GET /v1/query/schema` answer `503` with the failed check while it does not; see [the read-only role](#the-postgresql-read-only-role). Multi-statement query text is refused on PostgreSQL.
 :::
 
 ### List Queries
@@ -318,10 +321,38 @@ client that indexes rows by key.
 GET /v1/query/schema
 ```
 
-Returns table and column definitions for constructing Queries, leaving out the tables saved queries may not read. Refused (`403`) to group-limited accounts.
+Returns table and column definitions for constructing Queries, listing only the tables saved queries may read. Refused (`403`) to group-limited accounts, and (`503`) on PostgreSQL with `-auth` while the read-only role fails the server's check.
+
+## The PostgreSQL read-only role
+
+On PostgreSQL, which tables a saved query can read is decided by the grants of the role `DB_READONLY_DSN` connects as. The server prints the SQL that creates a correctly restricted role:
+
+```bash
+./mahresources -print-readonly-role-sql=mahres_readonly > readonly-role.sql
+# as a superuser, connected to the mahresources database
+psql -U postgres -d mahresources -f readonly-role.sql
+psql -U postgres -d mahresources -c '\password mahres_readonly'
+```
+
+Run it as a superuser (creating the role and setting `NOSUPERUSER`, `NOBYPASSRLS` and the other role attributes needs one; the `DB_DSN` role normally cannot), after the server has started once so every table exists, then point `DB_READONLY_DSN` at the new role. Running it again is safe and resets the role to exactly these grants. Tables a later version adds get no grant, so they stay unreadable.
+
+The server checks the role through the read-only connection at startup and again at most a minute before a query runs, so a later `GRANT` is noticed. The check fails, and the log names which part failed, when the role:
+
+- is the `DB_DSN` role, a member of it, or a member of any other role it could `SET ROLE` to;
+- is a superuser or has `BYPASSRLS`;
+- is a member of `pg_read_server_files`, `pg_write_server_files`, `pg_execute_server_program`, `pg_read_all_data`, `pg_write_all_data`, `pg_monitor`, `pg_read_all_stats`, `pg_read_all_settings`, `pg_stat_scan_tables`, `pg_signal_backend`, `pg_maintain`, `pg_checkpoint`, `pg_create_subscription` or `pg_use_reserved_connections`;
+- connects to a different database than `DB_DSN`;
+- has `CREATE` on any schema (PostgreSQL 14 and older grant it on `public` to every role; revoke it from `PUBLIC` after granting it to the `DB_DSN` role);
+- can write to, reference or trigger on any table, or use any sequence;
+- can `SELECT` any column of a table or view outside the content tables, including through a grant to `PUBLIC`.
+
+While the check fails:
+
+- **with `-auth`**, saved queries and the schema listing are disabled (`503`, naming the failed check), and the Queries pages show a warning;
+- **without `-auth`**, every request already acts as the administrator, so queries keep running; the server logs a warning at startup and the Queries pages show it.
 
 ## Security
 
-- Saved queries cannot write. On SQLite they also cannot `ATTACH` another database, change a `PRAGMA`, or read the credential, secret and audit tables listed above. On PostgreSQL, hiding those tables is up to the role behind `DB_READONLY_DSN`.
-- Results may expose any other data in the database, unscoped by group; restrict access to the Mahresources instance accordingly
+- Saved queries cannot write, and they read only the content tables listed above. On SQLite the server enforces that itself; on PostgreSQL it enforces read-only transactions and refuses (under `-auth`) to run on a role that can read more.
+- The content tables are not scoped by group: whoever can run a saved query sees every row of them. Restrict access to the Mahresources instance accordingly.
 - With `-auth` enabled, group-limited users and guests cannot run saved queries at all: the runner refuses fail-closed, because arbitrary SQL cannot be confined to a group subtree. Every unscoped principal (admin, editor, or an unscoped user) can run them, and the results are not group-scoped. Creating, editing and deleting a Query requires the editor role.
