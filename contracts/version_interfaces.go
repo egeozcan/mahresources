@@ -41,6 +41,9 @@ type VersionComparer interface {
 type VersionFileServer interface {
 	VersionReader
 	GetFsForStorageLocation(storageLocation *string) (afero.Fs, error)
+	// StoredLocationIsPrivate reports whether a stored location resolves into
+	// application-private storage, which is never served by resource ID.
+	StoredLocationIsPrivate(storageLocation *string, location string) bool
 }
 
 // VersionThumbnailLoader renders version bytes without persisting previews.
