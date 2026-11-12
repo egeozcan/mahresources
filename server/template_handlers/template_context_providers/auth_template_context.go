@@ -6,6 +6,7 @@ import (
 	"github.com/flosch/pongo2/v4"
 
 	"mahresources/auth"
+	"mahresources/server/http_utils"
 )
 
 // LoginContextProvider builds the context for the standalone login page. It does
@@ -15,7 +16,9 @@ func LoginContextProvider(_ any) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		ctx := StaticTemplateCtx(request)
 		ctx["pageTitle"] = "Sign in"
-		ctx["next"] = request.URL.Query().Get("next")
+		if next := request.URL.Query().Get("next"); http_utils.IsSafeLocalPath(next) {
+			ctx["next"] = next
+		}
 		switch request.URL.Query().Get("error") {
 		case "":
 			// no error

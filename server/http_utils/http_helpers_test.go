@@ -421,7 +421,7 @@ func TestGetUIntQueryParameter(t *testing.T) {
 	}
 }
 
-func TestIsSafeRedirect(t *testing.T) {
+func TestIsSafeLocalPath(t *testing.T) {
 	tests := []struct {
 		name string
 		url  string
@@ -477,6 +477,13 @@ func TestIsSafeRedirect(t *testing.T) {
 			url:  "relative/path",
 			want: false,
 		},
+		{name: "slash-backslash host", url: "/\\evil.example/x", want: false},
+		{name: "slash-backslash-slash host", url: "/\\/evil.example", want: false},
+		{name: "inner backslash", url: "/foo\\bar", want: false},
+		{name: "tab", url: "/\t/evil.example", want: false},
+		{name: "newline", url: "/\n/evil", want: false},
+		{name: "percent-encoded backslash ok", url: "/%5cevil.example", want: true},
+		{name: "fragment ok", url: "/notes#section", want: true},
 		{
 			name: "backslash path rejected",
 			url:  "\\evil.com",
@@ -486,9 +493,9 @@ func TestIsSafeRedirect(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isSafeRedirect(tt.url)
+			got := IsSafeLocalPath(tt.url)
 			if got != tt.want {
-				t.Errorf("isSafeRedirect(%q) = %v, want %v", tt.url, got, tt.want)
+				t.Errorf("IsSafeLocalPath(%q) = %v, want %v", tt.url, got, tt.want)
 			}
 		})
 	}
