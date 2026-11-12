@@ -651,7 +651,7 @@ func (spec *massEditSpec) massEditScope(filter string, base *gorm.DB, vis databa
 		if err != nil {
 			return "", nil, err
 		}
-		return nq.MRQL, database_scopes.NoteQuery(nq, true, base), nil
+		return nq.MRQL, database_scopes.NoteQuery(nq, true, base, vis), nil
 	case "group":
 		gq, err := query_models.DecodeGroupFilter(filter)
 		if err != nil {
@@ -663,7 +663,7 @@ func (spec *massEditSpec) massEditScope(filter string, base *gorm.DB, vis databa
 		if err != nil {
 			return "", nil, err
 		}
-		return rq.MRQL, database_scopes.ResourceQuery(rq, true, base), nil
+		return rq.MRQL, database_scopes.ResourceQuery(rq, true, base, vis), nil
 	}
 }
 

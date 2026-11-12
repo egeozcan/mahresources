@@ -56,7 +56,7 @@ func TestNoteScope_NoteTypeIds_AllowsListedTypes(t *testing.T) {
 	err := db.Model(&models.Note{}).
 		Scopes(NoteQuery(&query_models.NoteQuery{
 			NoteTypeIds: []uint{nt1.ID, nt2.ID},
-		}, true, db)).
+		}, true, db, Visibility{})).
 		Find(&got).Error
 	if err != nil {
 		t.Fatalf("query failed: %v", err)

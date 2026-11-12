@@ -421,14 +421,14 @@ func (ctx *MahresourcesContext) EditRelationType(query *query_models.Relationshi
 func (ctx *MahresourcesContext) GetRelationTypes(offset int, maxResults int, query *query_models.RelationshipTypeQuery) ([]*models.GroupRelationType, error) {
 	var groupRelationTypes []*models.GroupRelationType
 
-	return groupRelationTypes, ctx.db.Scopes(database_scopes.RelationTypeQuery(query)).Limit(maxResults).Offset(offset).Find(&groupRelationTypes).Error
+	return groupRelationTypes, ctx.db.Scopes(database_scopes.RelationTypeQuery(query, ctx.listVisibility())).Limit(maxResults).Offset(offset).Find(&groupRelationTypes).Error
 }
 
 func (ctx *MahresourcesContext) GetRelationTypesCount(query *query_models.RelationshipTypeQuery) (int64, error) {
 	var relationType models.GroupRelationType
 	var count int64
 
-	return count, ctx.db.Scopes(database_scopes.RelationTypeQuery(query)).Model(&relationType).Count(&count).Error
+	return count, ctx.db.Scopes(database_scopes.RelationTypeQuery(query, ctx.listVisibility())).Model(&relationType).Count(&count).Error
 }
 
 func (ctx *MahresourcesContext) GetRelations(offset int, maxResults int, query *query_models.GroupRelationshipQuery) ([]*models.GroupRelation, error) {

@@ -1,6 +1,7 @@
 package database_scopes
 
 import (
+	"strings"
 	"testing"
 
 	"mahresources/models"
@@ -43,7 +44,7 @@ func TestResourceScope_ContentTypes_AllowsListedTypes(t *testing.T) {
 	err := db.Model(&models.Resource{}).
 		Scopes(ResourceQuery(&query_models.ResourceSearchQuery{
 			ContentTypes: []string{"image/png", "image/jpeg"},
-		}, true, db)).
+		}, true, db, Visibility{})).
 		Find(&got).Error
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
@@ -55,5 +56,37 @@ func TestResourceScope_ContentTypes_AllowsListedTypes(t *testing.T) {
 		if r.ContentType == "application/pdf" {
 			t.Errorf("pdf should not be in results")
 		}
+	}
+}
+
+// A confined ShowWithSimilar counts only a duplicate the caller can see, and
+// says so without binding anything: the scope callback already binds the whole
+// allow-list into a scoped statement, and mass edit's bind budget subtracts it
+// exactly once.
+func TestResourceScope_ShowWithSimilarConfinesTheDuplicateWithoutBinding(t *testing.T) {
+	db := newResourceTestDB(t)
+	statement := func(vis Visibility) *gorm.Statement {
+		var n int64
+		return db.Session(&gorm.Session{DryRun: true}).Model(&models.Resource{}).
+			Scopes(ResourceQuery(&query_models.ResourceSearchQuery{ShowWithSimilar: true}, true, db, vis)).
+			Count(&n).Statement
+	}
+	open := statement(Visibility{})
+	confined := statement(Visibility{Confined: true, RootID: 7})
+	denied := statement(Visibility{Confined: true})
+
+	if len(confined.Vars) != len(open.Vars) || len(denied.Vars) != len(open.Vars) {
+		t.Fatalf("binds: open %d, confined %d, denied %d", len(open.Vars), len(confined.Vars), len(denied.Vars))
+	}
+	if sql := open.SQL.String(); strings.Contains(sql, "group_subtree") {
+		t.Errorf("an unconfined caller's SQL must not change: %s", sql)
+	}
+	sql := confined.SQL.String()
+	inner := "ih.id <> i.id AND i.resource_id IN (SELECT v.id FROM resources v WHERE v.owner_id IN (WITH RECURSIVE group_subtree"
+	if !strings.Contains(sql, inner) || !strings.Contains(sql, "WHERE id = 7") {
+		t.Errorf("the duplicate is not confined inside the inner EXISTS: %s", sql)
+	}
+	if sql := denied.SQL.String(); !strings.Contains(sql, "ih.id <> i.id AND 1 = 0") {
+		t.Errorf("deny-all must match no duplicate: %s", sql)
 	}
 }

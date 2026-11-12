@@ -5,7 +5,10 @@ import (
 	"mahresources/models/query_models"
 )
 
-func RelationTypeQuery(query *query_models.RelationshipTypeQuery) func(db *gorm.DB) *gorm.DB {
+// RelationTypeQuery builds the relation type list filter. ForFromGroup and
+// ForToGroup read a group's category; under vis a group the caller cannot see
+// resolves to no category, exactly like a group that does not exist.
+func RelationTypeQuery(query *query_models.RelationshipTypeQuery, vis Visibility) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
 		likeOperator := GetLikeOperator(db)
 		dbQuery := db
@@ -28,7 +31,7 @@ func RelationTypeQuery(query *query_models.RelationshipTypeQuery) func(db *gorm.
 					FROM 
 						groups 
 					WHERE 
-						groups.id = ?
+						`+and("groups.id = ?", vis.groupVisible("groups.id"))+`
 				)
 			`, query.ForFromGroup)
 		}
@@ -41,7 +44,7 @@ func RelationTypeQuery(query *query_models.RelationshipTypeQuery) func(db *gorm.
 					FROM 
 						groups 
 					WHERE 
-						groups.id = ?
+						`+and("groups.id = ?", vis.groupVisible("groups.id"))+`
 				)
 			`, query.ForToGroup)
 		}

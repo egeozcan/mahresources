@@ -40,6 +40,17 @@ func (v Visibility) groupVisible(col string) string {
 	return col + " IN (" + v.visibleGroupIDs() + ")"
 }
 
+// ownedRowVisible is a predicate that holds when col names a resource or note
+// (table) owned by a visible group, or "" when the caller is not confined.
+// This is the rule the scope callback applies to those tables.
+func (v Visibility) ownedRowVisible(col, table string) string {
+	owner := v.groupVisible("v.owner_id")
+	if owner == "" || owner == "1 = 0" {
+		return owner
+	}
+	return col + " IN (SELECT v.id FROM " + table + " v WHERE " + owner + ")"
+}
+
 // parentGuard is a predicate a group row must meet for its parent to be read,
 // or "" when the caller is not confined. The scope root is the one visible
 // group whose parent lies outside the subtree, so excluding it is enough;

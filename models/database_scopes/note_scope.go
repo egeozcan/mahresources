@@ -7,7 +7,9 @@ import (
 	"mahresources/models/query_models"
 )
 
-func NoteQuery(query *query_models.NoteQuery, ignoreSort bool, originalDB *gorm.DB) func(db *gorm.DB) *gorm.DB {
+// NoteQuery builds the note list filter. vis confines the rows its subqueries
+// read besides the listed note itself (see Visibility).
+func NoteQuery(query *query_models.NoteQuery, ignoreSort bool, originalDB *gorm.DB, vis Visibility) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
 		likeOperator := GetLikeOperator(db)
 		dbQuery := db
@@ -42,7 +44,7 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool, originalDB *gorm.
 						FROM
 							groups_related_notes grn
 						WHERE
-							grn.group_id IN ?
+							`+and("grn.group_id IN ?", vis.groupVisible("grn.group_id"))+`
 							AND grn.note_id = notes.id
 							AND (notes.owner_id IS NULL OR notes.owner_id <> grn.group_id)
 					) + (
