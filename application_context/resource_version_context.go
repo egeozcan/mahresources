@@ -101,7 +101,15 @@ var resourceFileRemovalGap func()
 // The count does not inherit the caller's cancellation. The delete has already
 // committed; a request that disconnects now would otherwise fail the count, keep
 // the file, and leave it with no row pointing at it and nothing to retry.
-func (ctx *MahresourcesContext) removeIfUnreferenced(hash string, storageLocation *string, remove func()) {
+//
+// A location in private application storage is never removed, nor handed to
+// remove (which may first copy the file somewhere servable): no resource owns
+// such a file, whatever its row says.
+func (ctx *MahresourcesContext) removeIfUnreferenced(hash string, storageLocation *string, location string, remove func()) {
+	if ctx.StoredLocationIsPrivate(storageLocation, location) {
+		ctx.Logger().Warning(models.LogActionDelete, "resource", nil, "Refusing to remove a file in private storage", location, nil)
+		return
+	}
 	if resourceFileRemovalGap != nil {
 		resourceFileRemovalGap()
 	}
@@ -509,7 +517,7 @@ func (ctx *MahresourcesContext) DeleteVersion(resourceID, versionID uint) error 
 	}
 
 	if fs, _ := ctx.GetFsForStorageLocation(storageLocation); fs != nil {
-		ctx.removeIfUnreferenced(hash, storageLocation, func() { _ = fs.Remove(location) })
+		ctx.removeIfUnreferenced(hash, storageLocation, location, func() { _ = fs.Remove(location) })
 	}
 
 	ctx.Logger().Info(models.LogActionDelete, "resource_version", &versionID, fmt.Sprintf("v%d of resource %d", version.VersionNumber, resourceID), "", nil)

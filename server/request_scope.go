@@ -3,9 +3,6 @@ package server
 import (
 	"errors"
 	"net/http"
-	"os"
-	"path"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -212,7 +209,7 @@ func denyScopedPrincipal(next http.HandlerFunc) http.HandlerFunc {
 func guardedFileServer(appCtx *application_context.MahresourcesContext, prefix, storage, mountRoot string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rel := strings.TrimPrefix(r.URL.Path, prefix)
-		if privateRawStoragePath(rel) || privateRawPhysicalStoragePath(appCtx, mountRoot, rel) {
+		if appCtx.IsPrivateStoragePath(mountRoot, rel) {
 			http.NotFound(w, r)
 			return
 		}
@@ -228,178 +225,6 @@ func guardedFileServer(appCtx *application_context.MahresourcesContext, prefix, 
 		}
 		http.NotFound(w, r)
 	})
-}
-
-// privateRawStoragePath reserves hidden root names for application-managed
-// private storage. Dedicated handlers enforce ownership and output-specific
-// checks for these paths. URL.Path is decoded by net/http; normalize separators
-// and dot segments before checking because FileServer applies the same semantics.
-func privateRawStoragePath(rel string) bool {
-	normalized := normalizedRawStoragePath(rel)
-	root := strings.TrimPrefix(normalized, "/")
-	root, _, _ = strings.Cut(root, "/")
-	return strings.HasPrefix(root, "_") || strings.HasPrefix(root, ".")
-}
-
-func privateRawPhysicalStoragePath(appCtx *application_context.MahresourcesContext, mountRoot, rel string) bool {
-	target := rawMountedPath(mountRoot, rel)
-	if target == "" || appCtx == nil || appCtx.Config == nil {
-		return false
-	}
-	fileSavePath := appCtx.Config.FileSavePath
-	privateRoots := []string{appCtx.Config.PluginCommandStagingPath}
-	if strings.TrimSpace(fileSavePath) != "" {
-		privateRoots = append(privateRoots,
-			filepath.Join(fileSavePath, "_exports"),
-			filepath.Join(fileSavePath, "_imports"),
-			filepath.Join(fileSavePath, jobs.JobReplayKeyFileName),
-			filepath.Join(fileSavePath, "_plugin_commands"),
-		)
-	}
-	for _, root := range privateRoots {
-		if root != "" && rawPathIsWithin(target, canonicalRawPath(root)) {
-			return true
-		}
-	}
-	return rawReplayKeyPublicationTempPath(target, fileSavePath)
-}
-
-func rawReplayKeyPublicationTempPath(target, fileSavePath string) bool {
-	if strings.TrimSpace(fileSavePath) == "" {
-		return false
-	}
-	root := canonicalRawPath(fileSavePath)
-	if root == "" {
-		return false
-	}
-	rel, ok := rawRelativePathWithin(target, root)
-	if !ok || rel == "." {
-		return false
-	}
-	tempPrefix := "." + jobs.JobReplayKeyFileName + "-"
-	for _, component := range strings.Split(rel, string(filepath.Separator)) {
-		if rawPathHasPrefixFold(component, tempPrefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func normalizedRawStoragePath(rel string) string {
-	rel = strings.ReplaceAll(rel, `\`, "/")
-	return path.Clean("/" + strings.TrimLeft(rel, "/"))
-}
-
-func rawMountedPath(mountRoot, rel string) string {
-	if strings.TrimSpace(mountRoot) == "" {
-		return ""
-	}
-	root := canonicalRawPath(mountRoot)
-	if root == "" {
-		return ""
-	}
-	cleanRel := strings.TrimPrefix(normalizedRawStoragePath(rel), "/")
-	return canonicalRawPath(filepath.Join(root, filepath.FromSlash(cleanRel)))
-}
-
-// canonicalRawPath resolves existing symlinks and preserves any missing suffix.
-// Resolving the longest existing prefix also handles directory requests below a
-// symlink without granting a raw alias to a configured private root.
-func canonicalRawPath(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return ""
-	}
-	abs, err := filepath.Abs(filepath.Clean(value))
-	if err != nil {
-		return filepath.Clean(value)
-	}
-	abs = filepath.Clean(abs)
-	current := abs
-	var suffix []string
-	for {
-		resolved, resolveErr := filepath.EvalSymlinks(current)
-		if resolveErr == nil {
-			for i := len(suffix) - 1; i >= 0; i-- {
-				resolved = filepath.Join(resolved, suffix[i])
-			}
-			return filepath.Clean(resolved)
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return abs
-		}
-		suffix = append(suffix, filepath.Base(current))
-		current = parent
-	}
-}
-
-func rawPathIsWithin(target, root string) bool {
-	_, ok := rawRelativePathWithin(target, root)
-	return ok
-}
-
-// rawRelativePathWithin compares path components without case sensitivity.
-// macOS filesystems commonly resolve case variants to the same file, while
-// filepath.Rel compares spelling on some platforms and could miss that alias.
-func rawRelativePathWithin(target, root string) (string, bool) {
-	target = filepath.Clean(target)
-	root = filepath.Clean(root)
-	targetVolume := filepath.VolumeName(target)
-	rootVolume := filepath.VolumeName(root)
-	if !strings.EqualFold(targetVolume, rootVolume) {
-		return rawRelativePathByIdentity(target, root)
-	}
-	targetComponents := rawPathComponents(strings.TrimPrefix(target, targetVolume))
-	rootComponents := rawPathComponents(strings.TrimPrefix(root, rootVolume))
-	if len(targetComponents) < len(rootComponents) {
-		return rawRelativePathByIdentity(target, root)
-	}
-	for i, component := range rootComponents {
-		if !strings.EqualFold(targetComponents[i], component) {
-			return rawRelativePathByIdentity(target, root)
-		}
-	}
-	if len(targetComponents) == len(rootComponents) {
-		return ".", true
-	}
-	return filepath.Join(targetComponents[len(rootComponents):]...), true
-}
-
-func rawRelativePathByIdentity(target, root string) (string, bool) {
-	rootInfo, err := os.Stat(root)
-	if err != nil {
-		return "", false
-	}
-	var suffix []string
-	for current := target; ; current = filepath.Dir(current) {
-		if currentInfo, statErr := os.Stat(current); statErr == nil && os.SameFile(currentInfo, rootInfo) {
-			if len(suffix) == 0 {
-				return ".", true
-			}
-			for left, right := 0, len(suffix)-1; left < right; left, right = left+1, right-1 {
-				suffix[left], suffix[right] = suffix[right], suffix[left]
-			}
-			return filepath.Join(suffix...), true
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", false
-		}
-		suffix = append(suffix, filepath.Base(current))
-	}
-}
-
-func rawPathComponents(value string) []string {
-	return strings.FieldsFunc(value, func(r rune) bool { return r == '/' || r == '\\' })
-}
-
-func rawPathHasPrefixFold(value, prefix string) bool {
-	valueRunes := []rune(value)
-	prefixRunes := []rune(prefix)
-	if len(valueRunes) < len(prefixRunes) {
-		return false
-	}
-	return strings.EqualFold(string(valueRunes[:len(prefixRunes)]), prefix)
 }
 
 // scopedCtx returns the application context bound to the current request's
