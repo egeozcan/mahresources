@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -136,4 +137,115 @@ func TestShareBlockState_RejectsTextBlocks(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, rr.Code,
 		"BH-031: text block state write via share token must be rejected with 403, got %d body=%s",
 		rr.Code, rr.Body.String())
+}
+
+// createSharedTodosBlock shares a fresh note and adds a todos block with items
+// "a" and "b" to it. It returns the share token and the block ID.
+func createSharedTodosBlock(t *testing.T, tc *TestContext, name string) (string, uint) {
+	t.Helper()
+	note := tc.CreateDummyNote(name)
+	token := shareNote(t, tc, note.ID)
+
+	todos := &models.NoteBlock{
+		NoteID:   note.ID,
+		Type:     "todos",
+		Position: "a",
+		Content:  []byte(`{"items":[{"id":"a","label":"A"},{"id":"b","label":"B"}]}`),
+		State:    []byte(`{"checked":[]}`),
+	}
+	require.NoError(t, tc.DB.Create(todos).Error)
+	return token, todos.ID
+}
+
+// postShareBlockState posts body to the share server's block state endpoint.
+// contentType is set on the request only when non-empty.
+func postShareBlockState(shareRouter http.Handler, token string, blockID uint, contentType string, body []byte) *httptest.ResponseRecorder {
+	url := fmt.Sprintf("/s/%s/block/%d/state", token, blockID)
+	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	rr := httptest.NewRecorder()
+	shareRouter.ServeHTTP(rr, req)
+	return rr
+}
+
+// storedBlockState re-reads a block's State from the database.
+func storedBlockState(t *testing.T, tc *TestContext, blockID uint) string {
+	t.Helper()
+	var block models.NoteBlock
+	require.NoError(t, tc.DB.First(&block, blockID).Error)
+	return string(block.State)
+}
+
+// TestShareBlockState_RejectsOversizedBody verifies that a share-token state
+// write larger than the 64 KiB cap is refused with 413 and nothing is stored.
+// The body is sent with and without a JSON Content-Type, because the cap must
+// not depend on either.
+func TestShareBlockState_RejectsOversizedBody(t *testing.T) {
+	for _, contentType := range []string{"", "application/json"} {
+		t.Run("contentType="+contentType, func(t *testing.T) {
+			tc := setupShareEnabledTestEnv(t)
+			shareRouter := setupShareServer(t, tc)
+			token, blockID := createSharedTodosBlock(t, tc, "oversized-body")
+
+			junk := strings.Repeat("A", 1<<20)
+			body := []byte(`{"checked":["a"],"junk":"` + junk + `"}`)
+			rr := postShareBlockState(shareRouter, token, blockID, contentType, body)
+
+			assert.Equal(t, http.StatusRequestEntityTooLarge, rr.Code,
+				"oversized share state write must be rejected with 413, got %d body=%s",
+				rr.Code, rr.Body.String())
+			assert.JSONEq(t, `{"checked":[]}`, storedBlockState(t, tc, blockID),
+				"a rejected write must not change the stored state")
+		})
+	}
+}
+
+// TestShareBlockState_NormalizesUnknownKeysAndForeignIDs verifies that the
+// stored state is rebuilt as {"checked": [...]} holding only the block's own
+// item IDs, de-duplicated, not the raw client bytes.
+func TestShareBlockState_NormalizesUnknownKeysAndForeignIDs(t *testing.T) {
+	tc := setupShareEnabledTestEnv(t)
+	shareRouter := setupShareServer(t, tc)
+	token, blockID := createSharedTodosBlock(t, tc, "normalize-state")
+
+	body := []byte(`{"checked":["a","not-an-item","a"],"junk":"x"}`)
+	rr := postShareBlockState(shareRouter, token, blockID, "application/json", body)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	assert.JSONEq(t, `{"checked":["a"]}`, storedBlockState(t, tc, blockID))
+}
+
+// TestShareBlockState_ValidToggleStillPersists is the positive path: checking
+// and then unchecking items persists, and an empty list is stored as [] not null.
+func TestShareBlockState_ValidToggleStillPersists(t *testing.T) {
+	tc := setupShareEnabledTestEnv(t)
+	shareRouter := setupShareServer(t, tc)
+	token, blockID := createSharedTodosBlock(t, tc, "valid-toggle")
+
+	rr := postShareBlockState(shareRouter, token, blockID, "application/json", []byte(`{"checked":["a","b"]}`))
+	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	assert.JSONEq(t, `{"checked":["a","b"]}`, storedBlockState(t, tc, blockID))
+
+	rr = postShareBlockState(shareRouter, token, blockID, "application/json", []byte(`{"checked":[]}`))
+	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	assert.JSONEq(t, `{"checked":[]}`, storedBlockState(t, tc, blockID))
+	assert.Contains(t, storedBlockState(t, tc, blockID), `"checked":[]`, "empty state must marshal as an array, not null")
+}
+
+// TestShareBlockState_AcceptsBodyUnderCap checks that the cap is not so tight
+// that a large but legal body is refused: 60 KiB of padding is accepted and
+// stored normalised.
+func TestShareBlockState_AcceptsBodyUnderCap(t *testing.T) {
+	tc := setupShareEnabledTestEnv(t)
+	shareRouter := setupShareServer(t, tc)
+	token, blockID := createSharedTodosBlock(t, tc, "under-cap")
+
+	padding := strings.Repeat("A", 60<<10)
+	body := []byte(`{"checked":["b"],"pad":"` + padding + `"}`)
+	rr := postShareBlockState(shareRouter, token, blockID, "", body)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	assert.JSONEq(t, `{"checked":["b"]}`, storedBlockState(t, tc, blockID))
 }
