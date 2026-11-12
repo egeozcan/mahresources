@@ -1,5 +1,5 @@
 ---
-outputShape: Note object with ID (uint), Name (string), Description (string), Meta (object), Tags ([]Tag), Groups ([]Group), Resources ([]Resource), OwnerId (*uint), NoteTypeId (*uint), shareToken (*string, omitempty)
+outputShape: Note object with ID (uint), Name (string), Description (string), Meta (object), Tags ([]Tag), Groups ([]Group), Resources ([]Resource), OwnerId (*uint), NoteTypeId (*uint), hasShare (bool, omitempty), shareToken (*string, omitempty; only when the account may share the note: admin, editor or user, or auth disabled)
 exitCodes: 0 on success; 1 on any error
 relatedCmds: note create, note edit-name, notes list
 ---
@@ -9,7 +9,8 @@ relatedCmds: note create, note edit-name, notes list
 Get a note by ID and print its metadata. Fetches the full record
 including name, description, meta JSON, attached tags/groups/resources,
 owner group, note type, optional start/end dates, and the share token
-(when the note is currently shared). The default key/value table prints
+(when the note is currently shared and your account may share it; a
+read-only guest account sees only `hasShare`). The default key/value table prints
 ID, name, description and the created and updated timestamps, plus owner,
 note type and share token when they are set; pass the global `--json`
 flag for the full record.

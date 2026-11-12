@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"mahresources/models"
 )
 
 // TestNotesListDoesNotLeakShareTokens verifies BH-038: the /notes listing
@@ -66,5 +68,40 @@ func TestNotesListJSONDoesNotLeakShareTokens(t *testing.T) {
 	}
 	if strings.Contains(body, `"shareToken":"`) {
 		t.Fatalf("shareToken field appears in /notes.json response; should be stripped")
+	}
+}
+
+// The same two list surfaces, read by a guest confined to the note's group
+// under auth (#107). A guest may not share, so it must not see the token on
+// any surface; this is the role-bound case the BH-038 tests above (auth off,
+// super-user) do not reach.
+func TestNotesListDoesNotLeakShareTokens_Guest(t *testing.T) {
+	tc := setupAuthEnv(t)
+	g := &models.Group{Name: "BH-038 guest scope"}
+	if err := tc.DB.Create(g).Error; err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	note := &models.Note{Name: "BH-038 guest shared note", OwnerId: &g.ID}
+	if err := tc.DB.Create(note).Error; err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	token, err := tc.AppCtx.ShareNote(note.ID)
+	if err != nil {
+		t.Fatalf("share note: %v", err)
+	}
+	guest := scopedRoleBearer(t, tc, models.RoleGuest, g.ID, "bh038_guest")
+
+	for _, path := range []string{"/notes", "/notes.json"} {
+		res := doReq(tc, http.MethodGet, path, map[string]string{"Authorization": guest}, nil, nil)
+		if res.Code != http.StatusOK {
+			t.Fatalf("guest GET %s = %d", path, res.Code)
+		}
+		body := res.Body.String()
+		if !strings.Contains(body, note.Name) {
+			t.Fatalf("guest GET %s does not list the note, so the check below proves nothing", path)
+		}
+		if strings.Contains(body, token) {
+			t.Errorf("share token leaked into guest GET %s", path)
+		}
 	}
 }

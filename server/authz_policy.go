@@ -91,6 +91,12 @@ func requiredCapability(method, rawPath string) capability {
 	case path == "/admin/export" || path == "/admin/import":
 		return capWrite
 
+	// The shares dashboard lists every shared note with its public token and is
+	// an editor surface for reads and writes alike; a GET must not reach
+	// isEditorPath's safe downgrade below, which made this page capRead (#120).
+	case path == "/admin/shares":
+		return capEditor
+
 	// Category / Resource Category management — admin-only writes, open reads.
 	case isTaxonomyPath(path):
 		if safe {
@@ -206,8 +212,10 @@ func isTaxonomyPath(path string) bool {
 // (subject to group-subtree scoping), so they fall through to capWrite.
 func isEditorPath(path string) bool {
 	switch {
-	// Admin shares dashboard (bulk management view), distinct from per-note sharing.
-	case path == "/admin/shares", path == "/v1/admin/shares/bulk-revoke":
+	// Bulk revoke from the admin shares dashboard, distinct from per-note sharing.
+	// The dashboard page itself is gated in requiredCapability, because a GET page
+	// listed here would be downgraded to capRead.
+	case path == "/v1/admin/shares/bulk-revoke":
 		return true
 	// Relations and relation types.
 	case strings.HasPrefix(path, "/v1/relation"):

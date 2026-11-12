@@ -98,7 +98,7 @@
 
     {% if sc.Share %}
     <div class="sidebar-group">
-        {% include "/partials/noteShare.tpl" with note=note shareEnabled=shareEnabled shareConfigured=shareConfigured shareBaseUrl=shareBaseUrl shareUrlConfigured=shareUrlConfigured %}
+        {% include "/partials/noteShare.tpl" with note=note shareEnabled=shareEnabled shareConfigured=shareConfigured shareBaseUrl=shareBaseUrl shareUrlConfigured=shareUrlConfigured canShare=canShare %}
     </div>
     {% endif %}
 

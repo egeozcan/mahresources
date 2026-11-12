@@ -19,7 +19,8 @@ A Note stores text content with optional start and end dates, a type classificat
 | `startDate` | datetime | Optional start date for temporal filtering |
 | `endDate` | datetime | Optional end date for temporal filtering |
 | `noteTypeId` | integer | Optional FK to a Note Type for categorization |
-| `shareToken` | string (nullable) | Optional 32-character token for public sharing, generated on demand (unique across all Notes) |
+| `shareToken` | string (nullable) | Optional 32-character token for public sharing, generated on demand (unique across all Notes). A bearer credential: returned only by `GET /v1/note` to accounts that may share (admin, editor, user, or any request with auth off) and by `POST /v1/note/share`; every other note payload omits it |
+| `hasShare` | boolean | `true` when the Note has a share token; omitted when false. Note payloads carry it in place of the token |
 | `shareCreatedAt` | datetime (nullable) | When the current share token was minted; NULL for tokens created before this was recorded |
 | `ownerId` | integer | FK to owning Group |
 | `createdAt` | datetime | Creation timestamp |
