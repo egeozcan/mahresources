@@ -125,7 +125,7 @@ To slow down password guessing, you can throttle failed logins:
 Throttling is keyed on **both** the client IP **and** the target username, so neither a single IP nor a single account can be brute-forced past the limit. Counters are in-memory and per-process: they reset when the server restarts.
 
 :::warning Only trust proxy headers behind a trusted proxy
-By default Mahresources derives the client IP from the connection itself. If it sits behind a reverse proxy, the connection IP is the proxy, so per-IP throttling needs the real client IP from `X-Forwarded-For`. Set **`-trust-proxy-headers`** (`TRUST_PROXY_HEADERS=1`) to use that header.
+By default Mahresources derives the client IP from the connection itself. If it sits behind a reverse proxy, the connection IP is the proxy, so per-IP throttling needs the real client IP from `X-Forwarded-For`. Set **`-trust-proxy-headers`** (`TRUST_PROXY_HEADERS=1`) to use that header. The flag governs every client-IP use: login throttling, the IP recorded in the audit log (`/logs`), and the AI-generation rate-limit key when auth is off. Without it, a proxied deployment records the proxy address in `/logs`.
 
 Do **not** enable it on a directly-exposed server: a client can forge `X-Forwarded-For` to give itself a fresh apparent IP on every request and defeat per-IP throttling entirely. Turn it on only when a trusted proxy sets the header for you.
 :::
@@ -170,7 +170,7 @@ A newly created API token is shown exactly once. Copy it before dismissing the s
 | `-session-cookie-secure` | `SESSION_COOKIE_SECURE=1` | Mark the session cookie `Secure` (HTTPS-only) | `false` |
 | `-login-max-attempts` | `LOGIN_MAX_ATTEMPTS` | Failed logins per window before HTTP 429; `0` disables | `0` (disabled) |
 | `-login-attempt-window` | `LOGIN_ATTEMPT_WINDOW` | Sliding window for failed logins, and the lockout duration | `15m` |
-| `-trust-proxy-headers` | `TRUST_PROXY_HEADERS=1` | Trust `X-Forwarded-For` for the client IP in login rate-limiting (only behind a trusted proxy) | `false` |
+| `-trust-proxy-headers` | `TRUST_PROXY_HEADERS=1` | Trust `X-Forwarded-For` for the client IP: login rate-limiting, audit-log IP, generation limiter keys (only behind a trusted proxy) | `false` |
 | `-max-user-tokens` | `MAX_USER_TOKENS` | Maximum API tokens a single user may hold; `0` disables the cap | `100` |
 | `-max-json-body` | `MAX_JSON_BODY` | Maximum `application/json` request body size in bytes; `0` disables the limit | `0` (unlimited) |
 

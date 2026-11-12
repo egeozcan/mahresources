@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -303,21 +302,9 @@ func loginKeys(ip, username string) []string {
 	return keys
 }
 
-// clientIP returns the request's source IP. X-Forwarded-For is honored only when
-// trustProxy is set (the server is behind a trusted reverse proxy); otherwise it
-// is ignored, because a directly-exposed server lets a client forge XFF to defeat
-// per-IP login rate-limiting. Falls back to the TCP peer address.
+// clientIP returns the request's source IP via the single shared derivation in
+// application_context, so login keys, session IPs, audit rows and generation
+// limiter keys all agree on what is trusted.
 func clientIP(r *http.Request, trustProxy bool) string {
-	if trustProxy {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			if i := strings.IndexByte(xff, ','); i >= 0 {
-				return strings.TrimSpace(xff[:i])
-			}
-			return strings.TrimSpace(xff)
-		}
-	}
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return host
-	}
-	return r.RemoteAddr
+	return application_context.ClientIP(r, trustProxy)
 }
