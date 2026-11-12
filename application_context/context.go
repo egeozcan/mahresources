@@ -234,7 +234,8 @@ type MahresourcesConfig struct {
 	LoginRateWindow time.Duration
 	// TrustProxyHeaders controls whether X-Forwarded-For is trusted when deriving
 	// the client IP (login rate-limiting, audit-log IP, AI-generation limiter
-	// keys). Off by default: when the server is
+	// keys). The rightmost X-Forwarded-For entry (the address the proxy in front
+	// of Mahresources appended) is the one trusted. Off by default: when the server is
 	// exposed directly, a client controls XFF and could otherwise spoof it to
 	// defeat the per-IP limiter. Enable only when behind a trusted reverse proxy.
 	TrustProxyHeaders bool
@@ -407,7 +408,8 @@ type MahresourcesInputConfig struct {
 	// LoginRateWindow is the sliding window for LoginRateLimit.
 	LoginRateWindow time.Duration
 	// TrustProxyHeaders trusts X-Forwarded-For for the client IP (login
-	// rate-limiting, audit-log IP, generation limiter keys). Off by default; enable only behind a trusted proxy.
+	// rate-limiting, audit-log IP, generation limiter keys). The rightmost X-Forwarded-For entry is
+	// trusted. Off by default; enable only behind a trusted proxy.
 	TrustProxyHeaders bool
 	// CreateAdminUser/CreateAdminPassword bootstrap an admin account at startup
 	// when set. Idempotent: an existing account with that username is reset to an

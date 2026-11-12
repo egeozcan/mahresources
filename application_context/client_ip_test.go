@@ -35,9 +35,13 @@ func TestClientIP_TrustGating(t *testing.T) {
 		}
 	}
 
-	long := clientIPReq("203.0.113.7:1", map[string]string{"X-Forwarded-For": strings.Repeat("a", 60)})
-	if got := ClientIP(long, true); len(got) != 45 {
-		t.Errorf("want 45 chars, got %d", len(got))
+	junk := clientIPReq("203.0.113.7:1", map[string]string{"X-Forwarded-For": strings.Repeat("a", 60)})
+	if got := ClientIP(junk, true); got != "203.0.113.7" {
+		t.Errorf("unparseable XFF must fall back to the peer, got %q", got)
+	}
+	multi := clientIPReq("203.0.113.7:1", map[string]string{"X-Forwarded-For": "6.6.6.6, 10.9.9.9"})
+	if got := ClientIP(multi, true); got != "10.9.9.9" {
+		t.Errorf("rightmost XFF entry expected, got %q", got)
 	}
 
 	r := clientIPReq("203.0.113.7:5555", both)

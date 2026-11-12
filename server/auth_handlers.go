@@ -303,7 +303,8 @@ func loginKeys(ip, username string) []string {
 }
 
 // clientIP returns the request's source IP via the single shared derivation in
-// application_context, so login keys, session IPs, audit rows and generation
+// application_context (rightmost X-Forwarded-For entry when proxy headers are
+// trusted, validated as an IP), so login keys, session IPs, audit rows and generation
 // limiter keys all agree on what is trusted.
 func clientIP(r *http.Request, trustProxy bool) string {
 	return application_context.ClientIP(r, trustProxy)

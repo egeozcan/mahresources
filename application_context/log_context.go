@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -211,17 +212,20 @@ func truncateString(s string, maxLen int) string {
 }
 
 // ClientIP returns the request's client IP, truncated to LogEntry.IPAddress's
-// 45-character column limit. X-Forwarded-For (leftmost entry) is honored only
-// when trustProxy is set, i.e. the server is behind a trusted reverse proxy;
-// otherwise a directly connected client could forge it. Falls back to the host
-// part of RemoteAddr.
+// 45-character column limit. When trustProxy is set (the server sits directly
+// behind one trusted reverse proxy) the RIGHTMOST X-Forwarded-For entry is used:
+// it is the address the proxy itself saw or appended, whereas everything to its
+// left was supplied by the client and is forgeable. All header lines are
+// considered, because a proxy may add its hop as a separate line. The entry must
+// parse as an IP; otherwise (and when trustProxy is off) the host part of
+// RemoteAddr is returned. X-Real-IP is never read: proxies such as Caddy pass a
+// client-supplied one through unchanged.
 func ClientIP(r *http.Request, trustProxy bool) string {
 	if trustProxy {
-		if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
-			if idx := strings.Index(xff, ","); idx != -1 {
-				xff = strings.TrimSpace(xff[:idx])
+		if hop := rightmostForwardedFor(r.Header.Values("X-Forwarded-For")); hop != "" {
+			if addr, err := netip.ParseAddr(hop); err == nil {
+				return truncateString(addr.Unmap().String(), 45)
 			}
-			return truncateString(xff, 45)
 		}
 	}
 	ip := r.RemoteAddr
@@ -235,6 +239,20 @@ func ClientIP(r *http.Request, trustProxy bool) string {
 		ip = ip[:idx]
 	}
 	return truncateString(ip, 45)
+}
+
+// rightmostForwardedFor returns the last non-empty element across all
+// X-Forwarded-For header lines, or "" if there is none.
+func rightmostForwardedFor(lines []string) string {
+	for i := len(lines) - 1; i >= 0; i-- {
+		parts := strings.Split(lines[i], ",")
+		for j := len(parts) - 1; j >= 0; j-- {
+			if p := strings.TrimSpace(parts[j]); p != "" {
+				return p
+			}
+		}
+	}
+	return ""
 }
 
 // ClientIP is ClientIP with this context's -trust-proxy-headers setting. A nil

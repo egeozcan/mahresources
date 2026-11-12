@@ -66,7 +66,7 @@ server {
         proxy_pass http://127.0.0.1:8181;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
 
         # Timeouts for large file uploads
@@ -200,7 +200,7 @@ location ~ ^/v1/(jobs|download)/events$ {
     proxy_pass http://127.0.0.1:8181;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
 
     # Disable buffering for SSE
@@ -255,7 +255,7 @@ For self-hosted SSO, [Authelia](https://www.authelia.com/) provides two-factor a
 If you enable built-in [Authentication & RBAC](../features/authentication.md) (`-auth`) behind a TLS-terminating proxy like the examples above, set two extra flags:
 
 - **`-session-cookie-secure`** -- marks the session cookie `Secure` so the browser only sends it over HTTPS. Set this whenever users reach Mahresources over TLS.
-- **`-trust-proxy-headers`** -- needed if you use login rate-limiting (`-login-max-attempts`) or want the real client address in the audit log (`/logs`). Behind a proxy, the connection IP is the proxy, so both must read the real client IP from `X-Forwarded-For`; without the flag, the audit log records the proxy address. The Nginx, Caddy, and Traefik examples above all set that header.
+- **`-trust-proxy-headers`** -- needed if you use login rate-limiting (`-login-max-attempts`) or want the real client address in the audit log (`/logs`). Behind a proxy, the connection IP is the proxy, so both must read the real client IP from `X-Forwarded-For`; without the flag, the audit log records the proxy address. The Nginx, Caddy, and Traefik examples above all set that header. Mahresources uses the **rightmost** `X-Forwarded-For` entry, which is the address the proxy directly in front of it saw, so exactly one trusted proxy must sit directly in front and either overwrite the header (as the Nginx examples do with `$remote_addr`) or append the peer address. Behind a chain (for example a CDN, then Nginx), the edge proxy must resolve the real client address, for instance with Nginx `real_ip`/`set_real_ip_from`, and overwrite the header; otherwise every client behind the same edge shares one per-IP bucket.
 
 :::warning Never trust proxy headers on a directly-exposed server
 `-trust-proxy-headers` is off by default for a reason: if the server is reachable directly (not strictly behind a proxy that overwrites the header), a client can forge `X-Forwarded-For` to get a fresh apparent IP on every request and defeat per-IP throttling. Enable it only when a trusted proxy sets the header for you.
