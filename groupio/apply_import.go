@@ -532,6 +532,45 @@ func (s *applyState) findGRTByCompositeKey(grt *models.GroupRelationType) (uint,
 	return id, true
 }
 
+// gateCarrierPayload decides how much of an archived carrier's template payload
+// a create may keep. Import creates carrier rows at capWrite, but their payload
+// is the carrier's edit role's to author (admin for Categories and Resource
+// Categories, editor for Note Types), as on every other surface. Below that role
+// the payload is cleared and the import warns; at it the payload must pass the
+// save path's validation, or the apply fails.
+//
+// It runs before CreateTemplateCarrierWithRevision, which snapshots the carrier
+// into revision #1: clearing afterwards would leave the payload in history.
+func (s *applyState) gateCarrierPayload(carrierType, label string, carrier any, metadataIndexes *string, name string) error {
+	if s.ctx.carriers == nil {
+		return nil
+	}
+	snap := models.NewTemplateSnapshot(carrierType, carrier)
+	if s.ctx.carriers.AuthorTemplateCarrier(carrierType) != nil {
+		// Emptiness is judged on the raw values, not with TemplateSnapshotsEqual:
+		// its canonical view resolves a SectionConfig that does not unmarshal, or
+		// carries unknown keys, to the defaults, yet the raw column is what is
+		// stored and what the edit page loads.
+		carries := *metadataIndexes != ""
+		for _, v := range snap {
+			if v != "" && v != false {
+				carries = true
+			}
+		}
+		models.ApplyTemplateSnapshot(carrierType, carrier, models.TemplateSnapshot{})
+		*metadataIndexes = ""
+		if carries {
+			s.result.Warnings = append(s.result.Warnings, fmt.Sprintf(
+				"%s %q was created without its templates, schema or rules: your role may not author them", label, name))
+		}
+		return nil
+	}
+	if err := s.ctx.carriers.ValidateTemplateCarrier(carrierType, snap); err != nil {
+		return fmt.Errorf("invalid %s %q: %w", label, name, err)
+	}
+	return nil
+}
+
 // applySchemaDefDecisions resolves categories, note types, resource categories,
 // tags, and group relation types according to the user's mapping decisions.
 // For each entry: "map" reuses an existing DB row, "create" inserts a new one.
@@ -627,6 +666,9 @@ func (s *applyState) applySchemaDefDecisions() error {
 			}
 			continue
 		}
+		if err := s.gateCarrierPayload(models.TemplateCarrierCategory, "category", &cat, &cat.MetadataIndexes, cat.Name); err != nil {
+			return err
+		}
 		if err := models.CreateTemplateCarrierWithRevision(s.ctx.db, models.TemplateCarrierCategory, &cat, models.RevisionKindImport); err != nil {
 			return fmt.Errorf("create category %q: %w", cat.Name, err)
 		}
@@ -720,6 +762,9 @@ func (s *applyState) applySchemaDefDecisions() error {
 				s.idMap[entry.SourceExportID] = id
 			}
 			continue
+		}
+		if err := s.gateCarrierPayload(models.TemplateCarrierNoteType, "note type", &nt, &nt.MetadataIndexes, nt.Name); err != nil {
+			return err
 		}
 		if err := models.CreateTemplateCarrierWithRevision(s.ctx.db, models.TemplateCarrierNoteType, &nt, models.RevisionKindImport); err != nil {
 			return fmt.Errorf("create note type %q: %w", nt.Name, err)
@@ -821,6 +866,9 @@ func (s *applyState) applySchemaDefDecisions() error {
 				s.idMap[entry.SourceExportID] = id
 			}
 			continue
+		}
+		if err := s.gateCarrierPayload(models.TemplateCarrierResourceCategory, "resource category", &rc, &rc.MetadataIndexes, rc.Name); err != nil {
+			return err
 		}
 		if err := models.CreateTemplateCarrierWithRevision(s.ctx.db, models.TemplateCarrierResourceCategory, &rc, models.RevisionKindImport); err != nil {
 			return fmt.Errorf("create resource category %q: %w", rc.Name, err)

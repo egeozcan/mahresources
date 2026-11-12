@@ -166,6 +166,8 @@ For each schema definition in the archive (categories, note types, resource cate
 
 The `--auto-map` CLI flag (on by default) accepts all unambiguous suggestions automatically. Set `--auto-map=false` to require a `--decisions` file with explicit choices for every mapping.
 
+A `create` of a Category or Resource Category keeps its templates, CSS, Meta schema, section config, indexed metadata keys and auto-detect rules only when an admin applies the import; a Note Type keeps them, and its "apply templates to shares" setting, when an editor or admin does. For any other role the definition is created with its name and description only, and the apply result lists a warning for it. Kept content is validated as it would be in the editor, and an invalid schema or rule set fails the apply. See [Authentication](./authentication.md#the-four-roles).
+
 ### Manifest-Only Imports
 
 When an archive was exported with `resource_blobs` off, resources have metadata but no file bytes. The plan flags these as "missing hashes." To proceed, you must explicitly acknowledge this:

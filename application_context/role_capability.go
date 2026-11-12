@@ -93,7 +93,10 @@ func (ctx *MahresourcesContext) requireAdminRole(op string) error {
 // which. A plain user's upload find-or-creates a Category
 // (AddRemoteResource), and group import creates and renames them in bulk; both
 // are legitimate at capWrite and neither goes through the operations guarded
-// here.
+// here. The rows are capWrite, their template payload is not: group import
+// keeps a new carrier's templates, schema and rules only when
+// requireTemplateCarrierEdit allows them (groupioCarriers), and creates the row
+// bare otherwise.
 func (ctx *MahresourcesContext) requireRole(op string, allowed func() bool) error {
 	if ctx.principal == nil {
 		return nil

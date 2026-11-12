@@ -128,6 +128,112 @@ func TestApplyImport_CreatedCarriersGetAnImportRevision_ReusedGetNone(t *testing
 	}
 }
 
+// fakeCarrierAuthority refuses the carrier types in deny and records which
+// carrier types it was asked to validate, failing those in invalid.
+type fakeCarrierAuthority struct {
+	deny      map[string]bool
+	invalid   map[string]bool
+	validated []string
+}
+
+func (f *fakeCarrierAuthority) AuthorTemplateCarrier(carrierType string) error {
+	if f.deny[carrierType] {
+		return errors.New("denied")
+	}
+	return nil
+}
+
+func (f *fakeCarrierAuthority) ValidateTemplateCarrier(carrierType string, snap models.TemplateSnapshot) error {
+	f.validated = append(f.validated, carrierType)
+	if f.invalid[carrierType] {
+		return errors.New("bad payload")
+	}
+	return nil
+}
+
+func applyArchiveResult(t *testing.T, dst *opCtx, jobID string, tar []byte) (*ImportApplyResult, error) {
+	t.Helper()
+	tarPath := filepath.Join("_imports", jobID+".tar")
+	dst.fs.MkdirAll("_imports", 0755)
+	afero.WriteFile(dst.fs, tarPath, tar, 0644)
+	plan, err := dst.ParseImport(context.Background(), jobID, tarPath)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	return dst.ApplyImport(context.Background(), jobID, importPlanPath(jobID), buildDefaultDecisions(plan), noopSink{})
+}
+
+// A carrier whose template payload the principal may not author is created
+// bare, before its import revision is taken, with a warning; one it may author
+// keeps its payload and is validated. (Issue #100; the role answers come from
+// application_context, so a fake stands in for them here.)
+func TestApplyImport_CarrierPayloadFollowsTheCarrierAuthority(t *testing.T) {
+	tar := exportSchemaDefs(t, "carrier_authority")
+	dst := newRevisionImportCtx(t, "carrier_authority_dst")
+	fake := &fakeCarrierAuthority{deny: map[string]bool{
+		models.TemplateCarrierCategory:         true,
+		models.TemplateCarrierResourceCategory: true,
+	}}
+	dst.carriers = fake
+
+	result, err := applyArchiveResult(t, dst, "carrier-authority-1", tar)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var cat models.Category
+	var nt models.NoteType
+	var rc models.ResourceCategory
+	dst.db.Where("name = ?", "RevCat").First(&cat)
+	dst.db.Where("name = ?", "RevNoteType").First(&nt)
+	dst.db.Where("name = ?", "RevRC").First(&rc)
+	if cat.ID == 0 || nt.ID == 0 || rc.ID == 0 {
+		t.Fatalf("a carrier row was not created: cat=%d nt=%d rc=%d", cat.ID, nt.ID, rc.ID)
+	}
+	if cat.CustomHeader != "" || rc.CustomSummary != "" {
+		t.Errorf("denied carriers kept their templates: cat=%q rc=%q", cat.CustomHeader, rc.CustomSummary)
+	}
+	if nt.CustomSidebar != "side" {
+		t.Errorf("allowed note type lost its template: %q", nt.CustomSidebar)
+	}
+	snap, _ := models.ParseTemplateSnapshot(revisionsOf(t, dst.db, models.TemplateCarrierCategory, "RevCat")[0].Snapshot)
+	if snap["CustomHeader"] != "" {
+		t.Errorf("the stripped template reached the import revision: %v", snap["CustomHeader"])
+	}
+	for _, name := range []string{"RevCat", "RevRC"} {
+		found := false
+		for _, w := range result.Warnings {
+			if strings.Contains(w, name) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no warning names stripped carrier %s: %v", name, result.Warnings)
+		}
+	}
+	if len(fake.validated) != 1 || fake.validated[0] != models.TemplateCarrierNoteType {
+		t.Errorf("validated %v, want only the note type the principal may author", fake.validated)
+	}
+}
+
+// A payload the authority refuses to validate fails the apply, and the carrier
+// is not created.
+func TestApplyImport_InvalidCarrierPayloadFailsTheApply(t *testing.T) {
+	tar := exportSchemaDefs(t, "carrier_invalid")
+	dst := newRevisionImportCtx(t, "carrier_invalid_dst")
+	dst.carriers = &fakeCarrierAuthority{invalid: map[string]bool{models.TemplateCarrierResourceCategory: true}}
+
+	_, err := applyArchiveResult(t, dst, "carrier-invalid-1", tar)
+	if err == nil || !strings.Contains(err.Error(), "RevRC") {
+		t.Fatalf("apply err = %v, want a refusal naming RevRC", err)
+	}
+	var n int64
+	dst.db.Model(&models.ResourceCategory{}).Where("name = ?", "RevRC").Count(&n)
+	if n != 0 {
+		t.Errorf("the invalid resource category was created")
+	}
+}
+
 // If the revision insert fails after the carrier insert, neither may commit:
 // otherwise a retry would reuse the carrier by GUID and never record it. The
 // failure is injected by a GORM callback between the two inserts, not by a race.

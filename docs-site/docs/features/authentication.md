@@ -70,6 +70,8 @@ Every account has exactly one role. Capabilities are cumulative from guest up to
 | **user** | CRUD on resources and notes, plus subgroups, tagging, note sharing, group import/export, and running plugin actions (for a group-limited user, only for plugins an operator has opened to scoped accounts). May optionally be confined to a single Group's subtree. | Edit Categories or Resource Categories; edit note types, relations, series, or saved queries; system administration. |
 | **guest** | Read-only access. Always confined to a single Group's subtree. | Any write. Anything outside its scope group. |
 
+Group import is open to every role that may write, and it creates the Categories, Resource Categories and Note Types an archive references. It keeps their templates, CSS, Meta schema, section config, indexed metadata keys, auto-detect rules and the "apply templates to shares" setting only for an account that may edit that kind of carrier: an admin for Categories and Resource Categories, an editor or admin for Note Types. For anyone else the row is created with its name and description only, and the import result carries a warning naming it. Whatever an import keeps must pass the same validation as saving it in the editor, or the import fails. A carrier created bare keeps the archive's GUID, so importing the same archive again later, even as an admin, reuses the bare row; an admin adds its templates in the editor.
+
 ### Group-subtree scoping
 
 Accounts with the **user** or **guest** role can be confined to a single Group and everything beneath it. A guest is *always* scoped; a user is scoped *optionally*. The scope is set per account via the `ScopeGroupId` field on the user.

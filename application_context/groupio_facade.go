@@ -6,6 +6,7 @@ import (
 
 	"mahresources/download_queue"
 	"mahresources/groupio"
+	"mahresources/models"
 )
 
 // Facade over the groupio package, which owns group import/export. It exists so
@@ -56,6 +57,21 @@ func (g groupioScope) VisibleGroupIDs(ids []uint) map[uint]bool {
 	return g.ctx.visibleGroupIDs(ids)
 }
 
+// groupioCarriers adapts MahresourcesContext to groupio.CarrierAuthority. It
+// asks this context's principal. A queued apply the adapter dispatches as its
+// stored actor is answered with that actor's role at apply time; an apply whose
+// run closes over the submitting request's context (SubmitImportApply) is
+// answered with the role at submission.
+type groupioCarriers struct{ ctx *MahresourcesContext }
+
+func (g groupioCarriers) AuthorTemplateCarrier(carrierType string) error {
+	return g.ctx.requireTemplateCarrierEdit(carrierType, "importing "+carrierType+" templates")
+}
+
+func (g groupioCarriers) ValidateTemplateCarrier(carrierType string, snap models.TemplateSnapshot) error {
+	return validateCarrierTemplates(carrierType, snap)
+}
+
 // groupioDeps rebuilds the per-call dependencies every time, so it always
 // reflects THIS context's db — the transactional and/or subtree-scoped handle on
 // a derived copy. Never cache the result.
@@ -66,7 +82,7 @@ func (g groupioScope) VisibleGroupIDs(ids []uint) map[uint]bool {
 // Service that had captured db at construction would silently run outside the
 // transaction and outside the subtree. See groupio's package comment.
 func (ctx *MahresourcesContext) groupioDeps() groupio.Deps {
-	return groupio.Deps{DB: ctx.db, Scope: groupioScope{ctx: ctx}}
+	return groupio.Deps{DB: ctx.db, Scope: groupioScope{ctx: ctx}, Carriers: groupioCarriers{ctx: ctx}}
 }
 
 // EstimateExport walks the requested scope and returns counts without
