@@ -31,7 +31,7 @@ func TestStreamExport_PrivateStorageLocationIsNeverArchived(t *testing.T) {
 				t.Fatal(err)
 			}
 			r := models.Resource{
-				Name: "planted", OwnerId: &root.ID, Hash: "plantedhash", HashType: "SHA1",
+				Name: "planted", OwnerId: &root.ID, Hash: "0123456789abcdef0123456789abcdef01234567", HashType: "SHA1",
 				FileSize: int64(len(secret)), Location: location, ResourceCategoryId: testDefaultResourceCategoryID,
 			}
 			if err := ctx.db.Create(&r).Error; err != nil {
