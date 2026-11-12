@@ -9,7 +9,7 @@
         {% if cardSc.PreviewImage %}
         <div class="card-image">
             <a href="/v1/resource/view?id={{ entity.ID }}&v={{ entity.Hash }}#{{ entity.ContentType }}"
-               @click.prevent="$store.lightbox.openFromClick($event, {{ entity.ID }}, '{{ entity.ContentType }}')"
+               @click.prevent="$store.lightbox.openFromClick($event, {{ entity.ID }}, '{{ entity.ContentType|escapejs }}')"
                data-lightbox-item
                data-resource-id="{{ entity.ID }}"
                data-content-type="{{ entity.ContentType }}"
