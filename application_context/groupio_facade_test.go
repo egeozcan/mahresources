@@ -419,19 +419,24 @@ func exportTemplateCarriers(t *testing.T, name, categorySchema, rules string) []
 	t.Helper()
 	src := createFacadeContext(t, name+"_src")
 
+	// CustomPanelSummary is set on each so the newest archived slot is covered
+	// by the gate, not only the ones that predate it.
 	cat := &models.Category{Name: "GateCat", Description: "cat desc", CustomHeader: "<h1>x</h1>",
-		CustomCSS: "body{}", MetaSchema: categorySchema, MetadataIndexes: `[{"key":"score","kind":"numeric"}]`}
+		CustomPanelSummary: "<p>cat panel</p>",
+		CustomCSS:          "body{}", MetaSchema: categorySchema, MetadataIndexes: `[{"key":"score","kind":"numeric"}]`}
 	nt := &models.NoteType{Name: "GateNoteType", Description: "nt desc", CustomSidebar: "<b>side</b>",
-		CustomCSS: "body{}", ApplyTemplatesToShares: true}
+		CustomPanelSummary: "<p>nt panel</p>",
+		CustomCSS:          "body{}", ApplyTemplatesToShares: true}
 	rc := &models.ResourceCategory{Name: "GateRC", Description: "rc desc", CustomHeader: "<h1>rc</h1>",
-		CustomCSS: "body{}", AutoDetectRules: rules}
+		CustomPanelSummary: "<p>rc panel</p>",
+		CustomCSS:          "body{}", AutoDetectRules: rules}
 	for _, m := range []any{cat, nt, rc} {
 		mustCreateFacade(t, src, m)
 	}
 	root := &models.Group{Name: "gate-root", CategoryId: &cat.ID}
 	mustCreateFacade(t, src, root)
 	mustCreateFacade(t, src, &models.Note{Name: "gate-note", OwnerId: &root.ID, NoteTypeId: &nt.ID})
-	mustCreateFacade(t, src, &models.Resource{Name: "gate-res", OwnerId: &root.ID, Hash: "cafe0100",
+	mustCreateFacade(t, src, &models.Resource{Name: "gate-res", OwnerId: &root.ID, Hash: "cafe010000000000000000000000000000000000",
 		FileSize: 3, ResourceCategoryId: rc.ID})
 
 	var buf bytes.Buffer
@@ -628,7 +633,7 @@ func TestImport_SectionConfigOnlyCarriersAreStrippedBelowTheEditRole(t *testing.
 			root := &models.Group{Name: "sc-root", CategoryId: &cat.ID}
 			mustCreateFacade(t, src, root)
 			mustCreateFacade(t, src, &models.Note{Name: "sc-note", OwnerId: &root.ID, NoteTypeId: &nt.ID})
-			mustCreateFacade(t, src, &models.Resource{Name: "sc-res", OwnerId: &root.ID, Hash: "cafe0101",
+			mustCreateFacade(t, src, &models.Resource{Name: "sc-res", OwnerId: &root.ID, Hash: "cafe010100000000000000000000000000000000",
 				FileSize: 3, ResourceCategoryId: rc.ID})
 			var buf bytes.Buffer
 			if err := src.StreamExport(context.Background(), &ExportRequest{
