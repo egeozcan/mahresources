@@ -1,0 +1,149 @@
+package client
+
+import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync/atomic"
+	"testing"
+)
+
+func isolateCreds(t *testing.T) {
+	t.Helper()
+	t.Setenv("MR_TOKEN", "")
+	t.Setenv("MR_TOKEN_FILE", filepath.Join(t.TempDir(), "creds.json"))
+}
+
+func TestBearerNotSentOnCrossOriginRedirect(t *testing.T) {
+	otherHost := func(u string) string { return strings.Replace(u, "127.0.0.1", "localhost", 1) }
+	cases := []struct {
+		name   string
+		status int
+		host   func(bURL string) string
+		env    bool
+	}{
+		{"302 other host", 302, otherHost, false},
+		{"307 other host", 307, otherHost, false},
+		{"302 same host other port", 302, func(u string) string { return u }, false},
+		{"302 env token", 302, otherHost, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateCreds(t)
+			var hits int32
+			var gotAuth atomic.Value
+			gotAuth.Store("")
+			b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&hits, 1)
+				gotAuth.Store(r.Header.Get("Authorization"))
+				w.Write([]byte("{}"))
+			}))
+			defer b.Close()
+			target := tc.host(b.URL)
+			a := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, target+"/x", tc.status)
+			}))
+			defer a.Close()
+			if tc.env {
+				t.Setenv("MR_TOKEN", "ENVSECRET")
+			} else if err := StoreToken(a.URL, "SECRET"); err != nil {
+				t.Fatal(err)
+			}
+			var out map[string]any
+			err := New(a.URL).Get("/v1/resources", nil, &out)
+			if err == nil || !strings.Contains(err.Error(), "different origin") {
+				t.Fatalf("want different-origin error, got %v", err)
+			}
+			if atomic.LoadInt32(&hits) != 0 || strings.Contains(gotAuth.Load().(string), "SECRET") {
+				t.Fatalf("foreign origin was contacted (hits=%d auth=%q)", hits, gotAuth.Load())
+			}
+		})
+	}
+}
+
+func TestBearerKeptOnSameOriginRedirect(t *testing.T) {
+	isolateCreds(t)
+	var sawToken atomic.Bool
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/resource/view", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/files/x", 302)
+	})
+	mux.HandleFunc("/files/x", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer SECRET" {
+			w.WriteHeader(401)
+			return
+		}
+		sawToken.Store(true)
+		fmt.Fprint(w, "data")
+	})
+	a := httptest.NewServer(mux)
+	defer a.Close()
+	if err := StoreToken(a.URL, "SECRET"); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "out")
+	if _, err := New(a.URL).DownloadFile("/v1/resource/view", nil, dest); err != nil {
+		t.Fatalf("download: %v", err)
+	}
+	if !sawToken.Load() {
+		t.Fatal("token not sent on same-origin redirect")
+	}
+}
+
+type stubRT struct{ got *http.Request }
+
+func (s *stubRT) RoundTrip(r *http.Request) (*http.Response, error) {
+	s.got = r
+	return &http.Response{StatusCode: 200, Body: http.NoBody, Request: r}, nil
+}
+
+func TestAuthTransportDoesNotMutateRequest(t *testing.T) {
+	stub := &stubRT{}
+	tr := &authTransport{token: "T", origin: "http://a.example", base: stub}
+	req, _ := http.NewRequest("GET", "http://a.example/x", nil)
+	if _, err := tr.RoundTrip(req); err != nil {
+		t.Fatal(err)
+	}
+	if req.Header.Get("Authorization") != "" {
+		t.Fatal("caller's request was mutated")
+	}
+	if stub.got.Header.Get("Authorization") != "Bearer T" {
+		t.Fatal("same-origin request missing token")
+	}
+	req2, _ := http.NewRequest("GET", "http://evil.example/x", nil)
+	if _, err := tr.RoundTrip(req2); err != nil {
+		t.Fatal(err)
+	}
+	if stub.got.Header.Get("Authorization") != "" {
+		t.Fatal("foreign origin received token")
+	}
+}
+
+func TestStoreTokenTightensExistingFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod semantics")
+	}
+	p := filepath.Join(t.TempDir(), "creds.json")
+	t.Setenv("MR_TOKEN", "")
+	t.Setenv("MR_TOKEN_FILE", p)
+	if err := os.WriteFile(p, []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := StoreToken("http://a.example", "TOK"); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := os.Stat(p)
+	if st.Mode().Perm() != 0600 {
+		t.Fatalf("mode = %v", st.Mode().Perm())
+	}
+	if b, _ := os.ReadFile(p); !strings.Contains(string(b), "TOK") {
+		t.Fatal("token missing")
+	}
+}

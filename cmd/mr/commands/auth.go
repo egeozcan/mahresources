@@ -42,7 +42,7 @@ func newAuthLoginCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Authenticate and store an API token",
-		Long:  "Authenticate with a username and password, mint a personal API token, and store it in the credentials file. The server must be running with `-auth`; with authentication disabled every caller is already an implicit administrator with no account of its own, and the mint step answers HTTP 400. The token is written to `$MR_TOKEN_FILE`, or `$XDG_CONFIG_HOME/mahresources/token`, or `~/.config/mahresources/token`, mode 0600 and keyed by the server's origin, so a token stored for one server is never sent to another. Subsequent mr commands read that token automatically; override it any time with the MR_TOKEN environment variable.",
+		Long:  "Authenticate with a username and password, mint a personal API token, and store it in the credentials file. The server must be running with `-auth`; with authentication disabled every caller is already an implicit administrator with no account of its own, and the mint step answers HTTP 400. The token is written to `$MR_TOKEN_FILE`, or `$XDG_CONFIG_HOME/mahresources/token`, or `~/.config/mahresources/token`, mode 0600 and keyed by the server's origin, so a token stored for one server is never sent to another (a redirect to a different origin is refused). The temporary login session is signed out once the token is minted; the token itself stays valid. Subsequent mr commands read that token automatically; override it any time with the MR_TOKEN environment variable.",
 		Example: strings.Join([]string{
 			"  # Log in to the default server",
 			"  mr auth login --username alice --password password1",
@@ -184,8 +184,8 @@ func loginAndMintToken(baseURL, username, password, name string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	hc := &http.Client{Jar: jar}
 	base := strings.TrimRight(baseURL, "/")
+	hc := &http.Client{Jar: jar, CheckRedirect: client.SameOriginRedirectPolicy(base)}
 
 	loginBody, _ := json.Marshal(map[string]string{"username": username, "password": password})
 	resp, err := hc.Post(base+"/v1/auth/login", "application/json", bytes.NewReader(loginBody))
@@ -202,7 +202,10 @@ func loginAndMintToken(baseURL, username, password, name string) (string, error)
 	// from /v1/auth/me (which echoes csrfToken for the current session) and send
 	// it as the X-CSRF-Token header. With auth disabled the token is empty and
 	// the header is simply ignored.
-	csrfToken, err := fetchCSRFToken(hc, base)
+	// Best-effort: sign the temporary cookie session out on every exit path.
+	var csrfToken string
+	defer func() { logoutSession(hc, base, csrfToken) }()
+	csrfToken, err = fetchCSRFToken(hc, base)
 	if err != nil {
 		return "", err
 	}
@@ -237,6 +240,22 @@ func loginAndMintToken(baseURL, username, password, name string) (string, error)
 		return "", fmt.Errorf("server did not return a token")
 	}
 	return out.Token, nil
+}
+
+// logoutSession signs the temporary login session out. Best-effort: every
+// error is ignored and it never affects the minted token.
+func logoutSession(hc *http.Client, base, csrf string) {
+	req, err := http.NewRequest(http.MethodPost, base+"/v1/auth/logout", nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Accept", "application/json")
+	if csrf != "" {
+		req.Header.Set("X-CSRF-Token", csrf)
+	}
+	if resp, err := hc.Do(req); err == nil {
+		resp.Body.Close()
+	}
 }
 
 // fetchCSRFToken reads the current session's CSRF token from /v1/auth/me using
