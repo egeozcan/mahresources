@@ -291,6 +291,10 @@ func (s *ShareServer) handleSharedNote(w http.ResponseWriter, r *http.Request) {
 	s.renderSharedNote(w, note, token)
 }
 
+// maxShareBlockStateBodyBytes caps the anonymous block state write body. A todos
+// state is a short list of item IDs, so 64 KiB is far above legitimate use.
+const maxShareBlockStateBodyBytes = 64 << 10
+
 // handleBlockStateUpdate updates a block's state (e.g., todo checkbox)
 // It validates that the token is valid and the block belongs to the note
 func (s *ShareServer) handleBlockStateUpdate(w http.ResponseWriter, r *http.Request) {
@@ -342,9 +346,16 @@ func (s *ShareServer) handleBlockStateUpdate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Update block state
+	// Update block state. The body is capped here, independent of the primary
+	// server's JSON limit and of Content-Type, because this route is anonymous.
+	r.Body = http.MaxBytesReader(w, r.Body, maxShareBlockStateBodyBytes)
 	err = s.appContext.UpdateBlockStateFromRequest(blockId, r)
 	if err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

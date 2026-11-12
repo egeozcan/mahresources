@@ -111,7 +111,7 @@ http://your-share-server:8383/s/{token}
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/s/{token}` | View the shared Note |
-| `POST` | `/s/{token}/block/{blockId}/state` | Update block state (todo checkboxes only; other block types are rejected with HTTP 403) |
+| `POST` | `/s/{token}/block/{blockId}/state` | Update block state (todo checkboxes only; other block types are rejected with HTTP 403; bodies over 64 KiB are rejected with HTTP 413) |
 | `GET` | `/s/{token}/block/{blockId}/calendar/events` | Get calendar events for a calendar block |
 | `GET` | `/s/{token}/resource/{hash}` | Access a Resource file by its hash |
 
@@ -150,6 +150,8 @@ A table block backed by a saved query runs that query on the share server for ev
 Visitors can check and uncheck todo items on shared notes. Changes are visible to all viewers because state is global. The shared todos component performs optimistic updates with rollback on server error, syncing state to `POST /s/{token}/block/{blockId}/state`.
 
 Adding, removing, or editing todo items is not allowed on shared views -- only toggling the checked state.
+
+The state request body is capped at 64 KiB regardless of `Content-Type`; larger bodies get HTTP 413. The server does not store the body as sent. It stores only `{"checked": [...]}`, filtered to the block's own item IDs with duplicates removed, so unknown keys and IDs that are not items are dropped. A visitor's toggle on a page that is out of date (an item was deleted) still succeeds, and the dead ID is simply not stored.
 
 ### Shared Calendars
 
