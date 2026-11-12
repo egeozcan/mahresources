@@ -1,11 +1,16 @@
 package api_tests
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"mahresources/application_context"
+	"mahresources/download_queue"
+	"mahresources/jobs"
 	"mahresources/models"
 )
 
@@ -332,6 +337,211 @@ func TestScopedUser_ImportRoutesDenied(t *testing.T) {
 			t.Errorf("%s %s: control invalid — an unscoped admin also got 403, so the scoped 403 "+
 				"does not demonstrate the group-limited deny", rt.method, rt.path)
 		}
+	}
+}
+
+// TestScopedUser_ImportJobPlaneDenied is the same boundary on the Job plane. An
+// import a user ran while unscoped is a Job it still owns after it is confined,
+// and the Job routes answered for it: the plan opened through
+// /v1/jobs/{id}/outputs while /v1/imports/{id}/plan answered 403, and a Retry was
+// offered and run.
+//
+// The legacy POST /v1/jobs/retry is not asserted here: for an import Job it
+// already refuses everybody, because it re-reads the Job's input as a download's.
+func TestScopedUser_ImportJobPlaneDenied(t *testing.T) {
+	tc := setupAuthEnv(t)
+	installJobControlPlane(t, tc)
+	f := buildScopingFixture(t, tc)
+	bearer, userID := plainUserBearer(t, tc, "import-job-plane-user")
+	as := map[string]string{"Accept": "application/json", "Authorization": bearer}
+
+	_, canonicalID := submitImportParseForTest(t, tc, map[string]string{"Authorization": bearer})
+	parsed := waitForCanonicalState(t, tc, canonicalID, "the parse to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	})
+	if parsed.State != jobs.StateSucceeded {
+		t.Fatalf("the parse ended %s (%+v)", parsed.State, parsed.Failure)
+	}
+	planURL := "/v1/jobs/" + canonicalID + "/outputs?key=plan"
+	detail := func() (commands, outputs map[string]bool) {
+		t.Helper()
+		res := doReq(tc, http.MethodGet, "/v1/jobs/"+canonicalID, as, nil, nil)
+		if res.Code != http.StatusOK {
+			t.Fatalf("job detail answered %d: %s", res.Code, res.Body.String())
+		}
+		var body struct {
+			Commands []struct{ Key string } `json:"commands"`
+			Outputs  []struct{ Key string } `json:"outputs"`
+		}
+		if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode job detail: %v", err)
+		}
+		commands, outputs = map[string]bool{}, map[string]bool{}
+		for _, command := range body.Commands {
+			commands[command.Key] = true
+		}
+		for _, output := range body.Outputs {
+			outputs[output.Key] = true
+		}
+		return commands, outputs
+	}
+
+	// Control: unscoped, the owner opens the plan and is offered Retry of a parse
+	// that failed on this server rather than on the archive.
+	if res := doReq(tc, http.MethodGet, planURL, as, nil, nil); res.Code != http.StatusOK {
+		t.Fatalf("control: the unscoped owner opening the plan answered %d: %s", res.Code, res.Body.String())
+	}
+	if err := tc.DB.Model(&models.Job{}).Where("id = ?", canonicalID).Updates(map[string]any{
+		"state": jobs.StateFailed, "failure_code": "import-parse-failed", "failure_class": jobs.FailureClassInternal,
+	}).Error; err != nil {
+		t.Fatalf("fail the parse: %v", err)
+	}
+	commands, outputs := detail()
+	if !commands[jobs.CommandRetry] || !outputs["plan"] {
+		t.Fatalf("control: the unscoped owner is offered commands %v and outputs %v, want Retry and the plan", commands, outputs)
+	}
+
+	if _, err := tc.AppCtx.UpdateUser(userID, &application_context.UserUpdate{
+		ScopeGroupID: application_context.UserField[*uint]{Set: true, Value: &f.rootID},
+	}); err != nil {
+		t.Fatalf("confine the owner: %v", err)
+	}
+
+	if res := doReq(tc, http.MethodGet, planURL, as, nil, nil); res.Code != http.StatusNotFound {
+		t.Fatalf("a group-limited owner opening the import plan answered %d, want 404: %s", res.Code, res.Body.String())
+	}
+	commands, outputs = detail()
+	if commands[jobs.CommandRetry] || outputs["plan"] || outputs["review"] {
+		t.Fatalf("a group-limited owner is offered commands %v and outputs %v, want neither Retry nor the plan or review",
+			commands, outputs)
+	}
+	failed := waitForCanonicalState(t, tc, canonicalID, "the failed parse", func(s jobs.Snapshot) bool {
+		return s.State == jobs.StateFailed
+	})
+	retry := postJSON(tc, "/v1/jobs/"+canonicalID+"/commands/retry",
+		fmt.Sprintf(`{"expectedVersion":%d,"idempotencyKey":"confined-import-retry"}`, failed.Version), as)
+	if retry.Code != http.StatusConflict {
+		t.Fatalf("a group-limited owner's Retry of the import answered %d, want 409: %s", retry.Code, retry.Body.String())
+	}
+	var successors int64
+	if err := tc.DB.Model(&models.JobLink{}).Where("to_job_id = ?", canonicalID).Count(&successors).Error; err != nil {
+		t.Fatalf("count successors: %v", err)
+	}
+	if successors != 0 {
+		t.Fatalf("the refused Retry created %d successors", successors)
+	}
+}
+
+// TestImportReportsAreNotServedAsExportDownloads closes a sibling of the Job-plane
+// boundary. GET /v1/exports/{jobId}/download, for an id that names no group export,
+// fell back to the in-memory queue entry and served its result file after only an
+// owner and status check. An import parse's result file is its plan and an apply's
+// is its report, so a group-limited owner read both there while
+// /v1/imports/{id}/plan and /result answered 403. An import entry is not an export,
+// so the route answers 404 for it whoever asks.
+func TestImportReportsAreNotServedAsExportDownloads(t *testing.T) {
+	tc := setupAuthEnv(t)
+	installJobControlPlane(t, tc)
+	f := buildScopingFixture(t, tc)
+	bearer, userID := plainUserBearer(t, tc, "import-export-route-user")
+	as := map[string]string{"Accept": "application/json", "Authorization": bearer, "Content-Type": "application/json"}
+
+	// Two parses: one is applied, which consumes its plan; the other keeps its plan on
+	// disk, so its result file is there to be served.
+	parse := func() string {
+		t.Helper()
+		handle, parseID := submitImportParseForTest(t, tc, map[string]string{"Authorization": bearer})
+		if parsed := waitForCanonicalState(t, tc, parseID, "the parse to finish", func(s jobs.Snapshot) bool {
+			return s.State.Terminal()
+		}); parsed.State != jobs.StateSucceeded {
+			t.Fatalf("the parse ended %s (%+v)", parsed.State, parsed.Failure)
+		}
+		if _, ok := tc.AppCtx.DownloadManager().GetJob(handle); !ok {
+			t.Fatalf("control: the parse %s left no queue entry, so the export route would 404 for that reason alone", handle)
+		}
+		return handle
+	}
+	handle, planned := parse(), parse()
+	if res := doReq(tc, http.MethodGet, "/v1/imports/"+planned+"/plan", as, nil, nil); res.Code != http.StatusOK {
+		t.Fatalf("control: the unscoped owner reading the plan answered %d: %s", res.Code, res.Body.String())
+	}
+	applied := doReq(tc, http.MethodPost, "/v1/imports/"+handle+"/apply", as, nil, strings.NewReader(`{}`))
+	if applied.Code != http.StatusAccepted {
+		t.Fatalf("the apply answered %d: %s", applied.Code, applied.Body.String())
+	}
+	var apply struct {
+		JobID          string `json:"jobId"`
+		CanonicalJobID string `json:"canonicalJobId"`
+	}
+	if err := json.Unmarshal(applied.Body.Bytes(), &apply); err != nil || apply.JobID == "" {
+		t.Fatalf("decode the apply %s: %v", applied.Body.String(), err)
+	}
+	if done := waitForCanonicalState(t, tc, apply.CanonicalJobID, "the apply to finish", func(s jobs.Snapshot) bool {
+		return s.State.Terminal()
+	}); done.State != jobs.StateSucceeded {
+		t.Fatalf("the apply ended %s (%+v)", done.State, done.Failure)
+	}
+	if res := doReq(tc, http.MethodGet, "/v1/imports/"+handle+"/result", as, nil, nil); res.Code != http.StatusOK {
+		t.Fatalf("control: the unscoped owner reading the report answered %d: %s", res.Code, res.Body.String())
+	}
+
+	ids := map[string]string{"parse": planned, "apply": apply.JobID}
+	for what, id := range ids {
+		if res := doReq(tc, http.MethodGet, "/v1/exports/"+id+"/download", as, nil, nil); res.Code != http.StatusNotFound {
+			t.Errorf("the unscoped owner downloading the import %s %s as an export answered %d, want 404: %s",
+				what, id, res.Code, res.Body.String())
+		}
+	}
+
+	if _, err := tc.AppCtx.UpdateUser(userID, &application_context.UserUpdate{
+		ScopeGroupID: application_context.UserField[*uint]{Set: true, Value: &f.rootID},
+	}); err != nil {
+		t.Fatalf("confine the owner: %v", err)
+	}
+	if res := doReq(tc, http.MethodGet, "/v1/imports/"+handle+"/result", as, nil, nil); res.Code != http.StatusForbidden {
+		t.Fatalf("control: the confined owner reading the report answered %d, want 403", res.Code)
+	}
+	for what, id := range ids {
+		if res := doReq(tc, http.MethodGet, "/v1/exports/"+id+"/download", as, nil, nil); res.Code != http.StatusNotFound {
+			t.Errorf("a group-limited owner downloading the import %s %s as an export answered %d, want 404: %s",
+				what, id, res.Code, res.Body.String())
+		}
+	}
+}
+
+// TestAGroupExportStillDownloadsThroughTheQueueFallback is the control for
+// TestImportReportsAreNotServedAsExportDownloads: with no control plane, the route
+// answers from the queue entry, and a group export's entry is still served.
+func TestAGroupExportStillDownloadsThroughTheQueueFallback(t *testing.T) {
+	tc := setupAuthEnv(t)
+	tc.AppCtx.SetJobService(nil)
+	f := buildScopingFixture(t, tc)
+	adminBearer := roleBearer(t, tc, models.RoleAdmin)
+	adminH := map[string]string{"Accept": "application/json", "Authorization": adminBearer, "Content-Type": "application/json"}
+
+	submit := doReq(tc, http.MethodPost, "/v1/groups/export", adminH, nil,
+		strings.NewReader(`{"rootGroupIds":[`+itoa(int(f.outsideID))+`]}`))
+	if submit.Code != http.StatusAccepted {
+		t.Fatalf("export submit answered %d: %s", submit.Code, submit.Body.String())
+	}
+	jobID := extractJSONString(submit.Body.String(), "jobId")
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		job, ok := tc.AppCtx.DownloadManager().GetJob(jobID)
+		if !ok {
+			t.Fatalf("the export %q has no queue entry", jobID)
+		}
+		if job.GetStatus() == download_queue.JobStatusCompleted {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the export is still %s", job.GetStatus())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	res := doReq(tc, http.MethodGet, "/v1/exports/"+jobID+"/download", map[string]string{"Authorization": adminBearer}, nil, nil)
+	if res.Code != http.StatusOK || res.Body.Len() == 0 {
+		t.Fatalf("the owner downloading the export answered %d (%d bytes): %s", res.Code, res.Body.Len(), res.Body.String())
 	}
 }
 

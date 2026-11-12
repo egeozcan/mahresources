@@ -207,6 +207,49 @@ func (ctx *MahresourcesContext) exportRefusalAsBound(rootGroupIDs []uint) (jobs.
 	return jobs.CommandRefusal{}, nil
 }
 
+// PreflightCommand refuses a Retry or Resume of a parse that importWriteRefusal
+// would block: the account it would run as can no longer write, or is confined to
+// a group, and group-limited accounts cannot import.
+func (a *importParseAdapter) PreflightCommand(_ context.Context, command jobs.CommandContext, key string) (jobs.CommandRefusal, error) {
+	return importPrincipalRefusal(command, key)
+}
+
+// PreflightCommand refuses a Retry or Resume of an apply that importWriteRefusal
+// would block, for the same two reasons as a parse's.
+func (a *importApplyAdapter) PreflightCommand(_ context.Context, command jobs.CommandContext, key string) (jobs.CommandRefusal, error) {
+	return importPrincipalRefusal(command, key)
+}
+
+// importPrincipalRefusal is importWriteRefusal asked of the account a command's work
+// would run as, before the work exists. It reads only the account's fields on the
+// command's own handle: the import refusal turns on the scope being set, not on what
+// the subtree holds, so no subtree is materialized inside the command's transaction.
+// A read that failed comes back as it does from downloadPrincipalRefusal.
+func importPrincipalRefusal(command jobs.CommandContext, key string) (jobs.CommandRefusal, error) {
+	principalID, applies := preflightPrincipal(command, key)
+	if !applies || principalID == 0 {
+		return jobs.CommandRefusal{}, nil
+	}
+	principal, err := commandActorLookup(command.Deps.DB, principalID)
+	if err != nil {
+		return jobs.CommandRefusal{}, fmt.Errorf("check the account an import would run as: %w", err)
+	}
+	if !principal.CanWrite() {
+		return importRoleRefused, nil
+	}
+	if principal.IsGroupLimited() {
+		return importScopeRefused, nil
+	}
+	return jobs.CommandRefusal{}, nil
+}
+
+var (
+	importRoleRefused = jobs.CommandRefusal{Reason: "role-refused",
+		Message: "The account this import would run as can no longer import groups."}
+	importScopeRefused = jobs.CommandRefusal{Reason: "scope-refused",
+		Message: "Group-limited accounts cannot import."}
+)
+
 // sentence makes an error's text read as a sentence: capitalized, with a full stop.
 func sentence(text string) string {
 	text = strings.TrimSpace(text)
@@ -223,4 +266,6 @@ func sentence(text string) string {
 var (
 	_ jobs.CommandPreflight = (*downloadJobAdapter)(nil)
 	_ jobs.CommandPreflight = (*groupExportAdapter)(nil)
+	_ jobs.CommandPreflight = (*importParseAdapter)(nil)
+	_ jobs.CommandPreflight = (*importApplyAdapter)(nil)
 )
