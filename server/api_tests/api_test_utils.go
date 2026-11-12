@@ -83,6 +83,30 @@ func openSharedCacheTestDatabase(t *testing.T) *gorm.DB {
 	return db
 }
 
+// openTestReadOnlyDB opens the saved-SQL handle the way the server does
+// (models.CreateReadOnlyDatabaseConnection, mode=ro), so saved queries in the
+// suite run under the same refusals as in production. A database with no file
+// behind it (a shared-cache memory database) cannot be reopened by name from a
+// second pool; it falls back to wrapping the main pool, which is not enforced.
+func openTestReadOnlyDB(t *testing.T, db *gorm.DB) *sqlx.DB {
+	t.Helper()
+	var file string
+	if err := db.Raw("SELECT file FROM pragma_database_list WHERE name = 'main'").Scan(&file).Error; err != nil {
+		t.Fatalf("locate the test database file: %v", err)
+	}
+	if file == "" {
+		sqlDB, _ := db.DB()
+		return sqlx.NewDb(sqlDB, "sqlite3")
+	}
+	readOnlyDB, err := models.CreateReadOnlyDatabaseConnection("sqlite",
+		(&url.URL{Scheme: "file", Path: file, RawQuery: "mode=ro"}).String())
+	if err != nil {
+		t.Fatalf("open the read-only test handle: %v", err)
+	}
+	t.Cleanup(func() { _ = readOnlyDB.Close() })
+	return readOnlyDB
+}
+
 // TestContext holds the application context and the router for testing
 type TestContext struct {
 	AppCtx *application_context.MahresourcesContext
@@ -201,8 +225,7 @@ func setupTestEnvOn(t *testing.T, db *gorm.DB, mutate func(*application_context.
 		mutate(config)
 	}
 
-	sqlDB, _ := db.DB()
-	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
+	readOnlyDB := openTestReadOnlyDB(t, db)
 
 	appCtx := application_context.NewMahresourcesContext(fs, db, readOnlyDB, config)
 	// Registered after the database's own cleanup, so it runs first. A queue-backed

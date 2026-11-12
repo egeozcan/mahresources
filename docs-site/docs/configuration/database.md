@@ -111,6 +111,8 @@ Point saved SQL Queries at a replica or a read-only role so their arbitrary SQL 
   -db-readonly-dsn="host=replica.db user=app password=secret dbname=mahresources"
 ```
 
+On PostgreSQL the server runs each saved query in a read-only transaction but does not restrict which tables it reads, so give this role no `SELECT` on the credential, secret and audit tables listed in [Saved Queries](../features/saved-queries.md). On SQLite the server enforces read-only access and that table deny list itself, whatever this DSN contains.
+
 This connection is used by exactly one code path: executing a saved SQL Query at `/query`. Ordinary reads (lists, single-item fetches, search, MRQL) all go through the `-db-dsn` connection, so this setting offloads no general read traffic.
 
 ## Database Logging

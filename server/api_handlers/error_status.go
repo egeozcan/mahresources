@@ -42,6 +42,7 @@ func statusCodeForError(err error, fallback int) int {
 	// which is not a property a message should have to have.
 	if errors.Is(err, application_context.ErrRoleCapability) ||
 		errors.Is(err, application_context.ErrGlobalCascadeScoped) ||
+		errors.Is(err, application_context.ErrSavedSQLScoped) ||
 		errors.Is(err, application_context.ErrPrivateStoragePath) {
 		return http.StatusForbidden
 	}
