@@ -267,7 +267,10 @@ func (v *collectBlobVisitor) OnBlob(hash string, body io.Reader, size int64) err
 	}
 
 	ct := v.hashContentType[hash]
-	loc := importBlobLocation(hash, ct)
+	loc, err := importBlobLocation(hash, ct)
+	if err != nil {
+		return err
+	}
 	v.blobPaths[hash] = loc
 
 	// Skip if already on disk (content-addressed, idempotent)
@@ -305,12 +308,21 @@ func (v *collectBlobVisitor) OnPreview(previewExportID string, body io.Reader, s
 
 // importBlobLocation computes the filesystem path for a blob based on hash
 // and content type. Uses "resources/" folder to match the normal upload path.
-func importBlobLocation(hash, contentType string) string {
+//
+// The hash comes from the archive, so it is refused unless it is a digest
+// (issue #94): path.Join only cleans, and "../_job_replay_key" would leave
+// resources/. The archive reader already refuses such an archive; this keeps
+// the path safe if a hash ever reaches here another way. An empty hash keeps
+// its old location, which names no attacker-chosen file.
+func importBlobLocation(hash, contentType string) (string, error) {
+	if hash != "" && !archive.IsDigest(hash) {
+		return "", fmt.Errorf("blob hash %q is not a content digest", hash)
+	}
 	ext := ""
 	if exts, _ := mime.ExtensionsByType(contentType); len(exts) > 0 {
 		ext = exts[0]
 	}
-	return path.Join("resources", hash+ext)
+	return path.Join("resources", hash+ext), nil
 }
 
 func (s *applyState) isExcluded(exportID string) bool {
@@ -1422,7 +1434,10 @@ func (s *applyState) applyOneResource(tx *gorm.DB, exportID string, rp *archive.
 	// (b) Blob location
 	loc := s.blobPaths[rp.Hash]
 	if loc == "" {
-		loc = importBlobLocation(rp.Hash, rp.ContentType)
+		var err error
+		if loc, err = importBlobLocation(rp.Hash, rp.ContentType); err != nil {
+			return fmt.Errorf("resource %s: %w", exportID, err)
+		}
 	}
 
 	// (c) Create resource row
@@ -1501,7 +1516,10 @@ func (s *applyState) applyOneResource(tx *gorm.DB, exportID string, rp *archive.
 	for _, vp := range rp.Versions {
 		vLoc := s.blobPaths[vp.Hash]
 		if vLoc == "" {
-			vLoc = importBlobLocation(vp.Hash, vp.ContentType)
+			var err error
+			if vLoc, err = importBlobLocation(vp.Hash, vp.ContentType); err != nil {
+				return fmt.Errorf("version %s: %w", vp.VersionExportID, err)
+			}
 		}
 
 		ver := models.ResourceVersion{
@@ -1738,7 +1756,10 @@ func (s *applyState) replaceResource(tx *gorm.DB, existing *models.Resource, rp 
 		for _, vp := range rp.Versions {
 			vLoc := s.blobPaths[vp.Hash]
 			if vLoc == "" {
-				vLoc = importBlobLocation(vp.Hash, vp.ContentType)
+				var err error
+				if vLoc, err = importBlobLocation(vp.Hash, vp.ContentType); err != nil {
+					return fmt.Errorf("version %s: %w", vp.VersionExportID, err)
+				}
 			}
 			ver := models.ResourceVersion{
 				ResourceID:    existing.ID,

@@ -22,12 +22,12 @@ func writeFixtureArchive(t *testing.T) *bytes.Buffer {
 		Counts:        Counts{Groups: 1, Resources: 1, Blobs: 1},
 		Entries: Entries{
 			Groups:    []GroupEntry{{ExportID: "g0001", Name: "Books", SourceID: 17, Path: "groups/g0001.json"}},
-			Resources: []ResourceEntry{{ExportID: "r0001", Name: "cover.jpg", SourceID: 9001, Owner: "g0001", Hash: "abc", Path: "resources/r0001.json"}},
+			Resources: []ResourceEntry{{ExportID: "r0001", Name: "cover.jpg", SourceID: 9001, Owner: "g0001", Hash: testDigest, Path: "resources/r0001.json"}},
 		},
 	})
 	_ = w.WriteGroup(&GroupPayload{ExportID: "g0001", SourceID: 17, Name: "Books"})
-	_ = w.WriteResource(&ResourcePayload{ExportID: "r0001", SourceID: 9001, Name: "cover.jpg", Hash: "abc", BlobRef: "abc"})
-	_ = w.WriteBlob("abc", strings.NewReader("PNGDATA"), 7)
+	_ = w.WriteResource(&ResourcePayload{ExportID: "r0001", SourceID: 9001, Name: "cover.jpg", Hash: testDigest, BlobRef: testDigest})
+	_ = w.WriteBlob(testDigest, strings.NewReader("PNGDATA"), 7)
 	_ = w.Close()
 	return &buf
 }
@@ -197,11 +197,11 @@ func TestReader_WalkDispatchesToVisitor(t *testing.T) {
 	}
 
 	res, ok := c.resources["r0001"]
-	if !ok || res.Hash != "abc" {
+	if !ok || res.Hash != testDigest {
 		t.Fatalf("resources = %+v", c.resources)
 	}
 
-	blob, ok := c.blobs["abc"]
+	blob, ok := c.blobs[testDigest]
 	if !ok {
 		t.Fatalf("blob missing")
 	}

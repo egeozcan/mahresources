@@ -294,6 +294,9 @@ func (r *Reader) dispatch(hdr *tar.Header, v any) error {
 			if err := r.decodeEntry(name, &p); err != nil {
 				return err
 			}
+			if err := checkResourceDigests(name, &p); err != nil {
+				return err
+			}
 			return rv.OnResource(&p)
 		}
 	case strings.HasPrefix(name, "series/") && strings.HasSuffix(name, ".json"):
@@ -305,8 +308,13 @@ func (r *Reader) dispatch(hdr *tar.Header, v any) error {
 			return sv.OnSeries(&p)
 		}
 	case strings.HasPrefix(name, "blobs/"):
+		// Checked whether or not v takes blobs: the parse pass, which does
+		// not, must refuse the archive the apply pass would.
+		hash := name[len("blobs/"):]
+		if !IsDigest(hash) {
+			return &FormatError{Err: fmt.Errorf("archive: blob entry %q is not named by a lowercase hex content digest", name)}
+		}
 		if bv, ok := v.(BlobVisitor); ok {
-			hash := name[len("blobs/"):]
 			return bv.OnBlob(hash, entryReader{r.tr}, hdr.Size)
 		}
 	case strings.HasPrefix(name, "previews/"):

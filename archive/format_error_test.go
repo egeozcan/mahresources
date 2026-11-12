@@ -181,7 +181,7 @@ func TestAGzipArchiveReadFailureIsNotAnArchiveVerdict(t *testing.T) {
 	if err := w.WriteManifest(&Manifest{SchemaVersion: SchemaVersion, CreatedBy: "mahresources"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.WriteBlob("abc", bytes.NewReader(bytes.Repeat([]byte("x"), 4096)), 4096); err != nil {
+	if err := w.WriteBlob(testDigest, bytes.NewReader(bytes.Repeat([]byte("x"), 4096)), 4096); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Close(); err != nil {

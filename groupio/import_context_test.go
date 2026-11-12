@@ -40,7 +40,7 @@ func buildTestImportTar(t *testing.T) []byte {
 				{ExportID: "n0001", Name: "Test Note", SourceID: 1, Owner: "g0002", Path: "notes/n0001.json"},
 			},
 			Resources: []archive.ResourceEntry{
-				{ExportID: "r0001", Name: "Test Resource", SourceID: 1, Owner: "g0002", Hash: "abc123", Path: "resources/r0001.json"},
+				{ExportID: "r0001", Name: "Test Resource", SourceID: 1, Owner: "g0002", Hash: "abc1230000000000000000000000000000000000", Path: "resources/r0001.json"},
 			},
 		},
 	})
@@ -107,7 +107,7 @@ func buildTestImportTar(t *testing.T) []byte {
 		ExportID:  "r0001",
 		SourceID:  1,
 		Name:      "Test Resource",
-		Hash:      "abc123",
+		Hash:      "abc1230000000000000000000000000000000000",
 		HashType:  "SHA1",
 		FileSize:  100,
 		OwnerRef:  "g0002",
@@ -366,7 +366,7 @@ func TestParseImport_ManifestOnlyMissingHashes(t *testing.T) {
 				{ExportID: "g0001", Name: "Root Group", SourceID: 1, Path: "groups/g0001.json"},
 			},
 			Resources: []archive.ResourceEntry{
-				{ExportID: "r0001", Name: "Missing Resource", SourceID: 1, Hash: "deadbeef", Path: "resources/r0001.json"},
+				{ExportID: "r0001", Name: "Missing Resource", SourceID: 1, Hash: "deadbeef00000000000000000000000000000000", Path: "resources/r0001.json"},
 			},
 		},
 	})
@@ -389,7 +389,7 @@ func TestParseImport_ManifestOnlyMissingHashes(t *testing.T) {
 		ExportID:    "r0001",
 		SourceID:    1,
 		Name:        "Missing Resource",
-		Hash:        "deadbeef",
+		Hash:        "deadbeef00000000000000000000000000000000",
 		BlobRef:     "",
 		BlobMissing: true,
 		OwnerRef:    "g0001",
