@@ -178,7 +178,7 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 	// File operations after successful commit (no DB lock held). Whether the
 	// file is still needed is counted then, not inside the transaction: see
 	// removeIfUnreferenced.
-	ctx.removeIfUnreferenced(resource.Hash, resource.StorageLocation, func() {
+	ctx.removeIfUnreferenced(resource.Hash, resource.StorageLocation, resource.GetCleanLocation(), func() {
 		_ = fs.Remove(resource.GetCleanLocation())
 	})
 
@@ -577,7 +577,7 @@ func metaWithoutBackups(meta types.JSON) types.JSON {
 // thing worse than a redundant backup.
 func (ctx *MahresourcesContext) runFileCleanupActions(cleanupActions []*FileCleanupAction) {
 	for _, action := range cleanupActions {
-		ctx.removeIfUnreferenced(action.Hash, action.StorageLocation, func() {
+		ctx.removeIfUnreferenced(action.Hash, action.StorageLocation, action.SourcePath, func() {
 			ctx.backUpAndRemove(action)
 		})
 	}

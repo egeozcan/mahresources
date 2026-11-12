@@ -65,8 +65,8 @@ Every account has exactly one role. Capabilities are cumulative from guest up to
 
 | Role | Can do | Cannot do |
 |------|--------|-----------|
-| **admin** | Everything: full CRUD, plus system settings, plugin management, Categories, Resource Categories and Template Partials, and user administration (`/admin/users`). | -- |
-| **editor** | Full CRUD on entities (resources, notes, groups, tags, note types, series, relations, saved queries). | Create or edit Categories, Resource Categories or Template Partials; change system settings; manage users or plugins. |
+| **admin** | Everything: full CRUD, plus system settings, plugin management, Categories, Resource Categories and Template Partials, user administration (`/admin/users`), and registering a file already on the server's disk as a resource (`POST /v1/resource/local`, `mr resource from-local`). | -- |
+| **editor** | Full CRUD on entities (resources, notes, groups, tags, note types, series, relations, saved queries). | Create or edit Categories, Resource Categories or Template Partials; change system settings; manage users or plugins; register server-local files. |
 | **user** | CRUD on resources and notes, plus subgroups, tagging, note sharing, group import/export, and running plugin actions (for a group-limited user, only for plugins an operator has opened to scoped accounts). May optionally be confined to a single Group's subtree. | Edit Categories or Resource Categories; edit note types, relations, series, or saved queries; system administration. |
 | **guest** | Read-only access. Always confined to a single Group's subtree. | Any write. Anything outside its scope group. |
 

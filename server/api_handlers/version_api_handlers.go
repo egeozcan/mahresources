@@ -200,6 +200,13 @@ func GetVersionFileHandler(ctx contracts.VersionFileServer) func(http.ResponseWr
 			return
 		}
 
+		// A row pointing into private storage is not a resource's file, however
+		// it was stored, so it is answered as a missing one.
+		if ctx.StoredLocationIsPrivate(version.StorageLocation, version.Location) {
+			http_utils.HandleError(fmt.Errorf("version file not found"), w, r, http.StatusNotFound)
+			return
+		}
+
 		fs, err := ctx.GetFsForStorageLocation(version.StorageLocation)
 		if err != nil {
 			http_utils.HandleError(err, w, r, http.StatusInternalServerError)

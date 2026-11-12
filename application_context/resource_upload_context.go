@@ -477,6 +477,23 @@ func (ctx *MahresourcesContext) AddRemoteResource(reqCtx context.Context, resour
 }
 
 func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery *query_models.ResourceFromLocalCreator) (*models.Resource, error) {
+	// Registering a file that is already on the server's disk reads any path
+	// under the storage root, outside every subtree, so it is the deployment's
+	// own tool rather than an ordinary write.
+	if err := ctx.requireAdminRole("register a server-local file"); err != nil {
+		return nil, err
+	}
+
+	var storageLocation *string
+	if resourceQuery.PathName != "" {
+		storageLocation = &resourceQuery.PathName
+	}
+	// Checked before the dedupe lookup, which would otherwise hand back a row
+	// already stored over a private path.
+	if ctx.StoredLocationIsPrivate(storageLocation, resourceQuery.LocalPath) {
+		return nil, fmt.Errorf("%q: %w", resourceQuery.LocalPath, ErrPrivateStoragePath)
+	}
+
 	var existingResource models.Resource
 
 	// BH-023: an empty PathName means the default filesystem, which is stored
@@ -505,12 +522,8 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	// altFileSystems with an empty key and failed with "alt fs is not
 	// attached" for every caller that named no alt filesystem -- which is the
 	// ordinary case, and the only one `mr resource from-local` can produce,
-	// since that command has no --path-name flag to set.
-	var storageLocation *string
-	if resourceQuery.PathName != "" {
-		storageLocation = &resourceQuery.PathName
-	}
-
+	// since that command has no --path-name flag to set. storageLocation is
+	// built that way above.
 	fs, err := ctx.GetFsForStorageLocation(storageLocation)
 
 	if err != nil {
