@@ -25,6 +25,12 @@ func savedSQLFixture(t *testing.T) string {
 		"INSERT INTO resources (id, name) VALUES (1, 'original')",
 		"CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, role TEXT, password_hash TEXT)",
 		"INSERT INTO users (id, username, role, password_hash) VALUES (1, 'ed', 'editor', '$2a$10$secret')",
+		// An external-content FTS5 index, as fts/sqlite.go creates them.
+		"CREATE VIRTUAL TABLE resources_fts USING fts5(name, content='resources', content_rowid='id')",
+		"INSERT INTO resources_fts(resources_fts) VALUES('rebuild')",
+		// A full-text index over a denied table; none exists in the app today.
+		"CREATE VIRTUAL TABLE users_fts USING fts5(username, password_hash)",
+		"INSERT INTO users_fts(username, password_hash) VALUES ('ed', 'secret')",
 	} {
 		if err := db.Exec(statement).Error; err != nil {
 			t.Fatalf("%s: %v", statement, err)
@@ -95,8 +101,24 @@ func TestSavedSQLHandleCannotTurnQueryOnlyOff(t *testing.T) {
 	// No mode=ro, and no file: prefix either: the handle alone must refuse writes.
 	ro := openSavedSQLHandle(t, path)
 
-	if _, err := ro.Exec("PRAGMA query_only = 0"); err == nil {
-		t.Fatal("PRAGMA query_only = 0 succeeded on the read-only handle")
+	// The authorizer lets FTS5's internal read of data_version through; no
+	// other pragma, and no pragma that sets a value, may run.
+	for _, statement := range []string{
+		"PRAGMA query_only = 0",
+		"PRAGMA query_only = OFF",
+		"PRAGMA main.query_only = 0",
+		"PRAGMA data_version = 1",
+		"PRAGMA main.data_version = 1",
+		"PRAGMA data_version(1)",
+		"PRAGMA query_only",
+		"PRAGMA table_info(users)",
+		"SELECT * FROM pragma_table_info('users')",
+		"PRAGMA journal_mode = DELETE",
+		"PRAGMA writable_schema = ON",
+	} {
+		if _, err := ro.Exec(statement); err == nil {
+			t.Errorf("%q succeeded on the read-only handle", statement)
+		}
 	}
 	for _, statement := range []string{
 		"UPDATE resources SET name = 'pwned' WHERE id = 1",
@@ -127,6 +149,9 @@ func TestSavedSQLHandleCannotReadSensitiveTables(t *testing.T) {
 		"SELECT r.name FROM resources r JOIN users u ON u.id = r.id",
 		"WITH x AS (SELECT password_hash FROM users) SELECT * FROM x",
 		"SELECT (SELECT password_hash FROM main.users LIMIT 1)",
+		"SELECT * FROM users_fts WHERE users_fts MATCH 'ed'",
+		"SELECT * FROM users_fts_content",
+		"SELECT * FROM users_fts_data",
 	} {
 		rows, err := ro.Queryx(query)
 		if err == nil {
@@ -135,8 +160,11 @@ func TestSavedSQLHandleCannotReadSensitiveTables(t *testing.T) {
 			continue
 		}
 		// SQLite says "access to users.<column> is prohibited" for a column it
-		// was refused and "not authorized" for a bare table reference.
-		if msg := err.Error(); !strings.Contains(msg, "prohibited") && !strings.Contains(msg, "not authorized") {
+		// was refused and "not authorized" for a bare table reference; an FTS5
+		// table over a denied table fails to construct because its own read of
+		// <name>_fts_config is refused.
+		if msg := err.Error(); !strings.Contains(msg, "prohibited") && !strings.Contains(msg, "not authorized") &&
+			!strings.Contains(msg, "vtable constructor failed") {
 			t.Errorf("%q failed for the wrong reason: %v", query, err)
 		}
 	}
@@ -150,6 +178,28 @@ func TestSavedSQLHandleCannotReadSensitiveTables(t *testing.T) {
 	if err := ro.Get(&name, "SELECT upper(name) FROM resources WHERE id = 1"); err != nil || name != "ORIGINAL" {
 		t.Fatalf("function call: name=%q err=%v", name, err)
 	}
+	// FTS5 MATCH issues PRAGMA main.data_version internally while filtering;
+	// the authorizer must let that read through or every full-text query fails
+	// at row iteration.
+	var rowid int
+	if err := ro.Get(&rowid, "SELECT rowid FROM resources_fts WHERE resources_fts MATCH 'original'"); err != nil || rowid != 1 {
+		t.Fatalf("FTS5 MATCH: rowid=%d err=%v", rowid, err)
+	}
+	var hit struct {
+		Score     float64 `db:"score"`
+		Highlight string  `db:"hl"`
+		Snippet   string  `db:"sn"`
+	}
+	if err := ro.Get(&hit, `SELECT bm25(resources_fts) AS score,
+		highlight(resources_fts, 0, '[', ']') AS hl,
+		snippet(resources_fts, 0, '[', ']', '...', 5) AS sn
+		FROM resources_fts WHERE resources_fts MATCH 'original' ORDER BY rank`); err != nil || hit.Highlight != "[original]" {
+		t.Fatalf("FTS5 bm25/highlight/snippet: %+v err=%v", hit, err)
+	}
+	var total int
+	if err := ro.Get(&total, `SELECT (SELECT count(*) FROM json_each('[1,2]')) + (SELECT count(*) FROM json_tree('{"a":[1]}'))`); err != nil || total != 5 {
+		t.Fatalf("json_each/json_tree: total=%d err=%v", total, err)
+	}
 }
 
 func TestSavedSQLDeniedTablesCoverEveryAuthAndSecretTable(t *testing.T) {
@@ -161,7 +211,14 @@ func TestSavedSQLDeniedTablesCoverEveryAuthAndSecretTable(t *testing.T) {
 			t.Errorf("%s is readable by saved SQL", table)
 		}
 	}
-	if IsSavedSQLDeniedTable("resources") {
-		t.Error("resources must stay readable by saved SQL")
+	for _, table := range []string{"users_fts", "users_fts_data", "SESSIONS_FTS_content", "api_tokens_fts_idx"} {
+		if !IsSavedSQLDeniedTable(table) {
+			t.Errorf("full-text index table %s over a denied table is readable by saved SQL", table)
+		}
+	}
+	for _, table := range []string{"resources", "resources_fts", "resources_fts_data", "notes_fts", "tags_fts"} {
+		if IsSavedSQLDeniedTable(table) {
+			t.Errorf("%s must stay readable by saved SQL", table)
+		}
 	}
 }

@@ -25,7 +25,7 @@ Names must be unique across all Queries.
 3. Results are returned as `{columns, rows}` -- the `SELECT` list in its own order, and one array of values per row
 4. If a `template` is defined, results render through it; otherwise a default table is used
 
-Queries are read-only whatever `DB_READONLY_DSN` points at. On SQLite the connection refuses every write, DDL statement, `ATTACH`, `PRAGMA` and transaction statement, and refuses to read the credential, secret and audit tables (`users`, `sessions`, `api_tokens`, `plugin_states`, `plugin_kvs`, `runtime_settings`, `log_entries`, `user_settings`, `saved_searches`, `job_replay_envelopes`). On PostgreSQL each query runs as a single statement inside a `READ ONLY` transaction; which tables it can read depends on the role `DB_READONLY_DSN` connects as.
+Queries are read-only whatever `DB_READONLY_DSN` points at. On SQLite the connection refuses every write, DDL statement, `ATTACH`, `PRAGMA` (bar the read of `data_version` that full-text `MATCH` queries make internally) and transaction statement, and refuses to read the credential, secret and audit tables (`users`, `sessions`, `api_tokens`, `plugin_states`, `plugin_kvs`, `runtime_settings`, `log_entries`, `user_settings`, `saved_searches`, `job_replay_envelopes`). On PostgreSQL each query runs as a single statement inside a `READ ONLY` transaction; which tables it can read depends on the role `DB_READONLY_DSN` connects as.
 
 ## Creating a Query
 

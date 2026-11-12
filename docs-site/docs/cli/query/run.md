@@ -9,7 +9,8 @@ sidebar_label: run
 Execute a saved query by ID and return the result set. The query
 runs read-only whatever `-db-readonly-dsn` names. On SQLite the
 connection refuses every write, DDL statement, `ATTACH`, `PRAGMA`
-and transaction statement, and every read of the credential, secret
+(bar the read of `data_version` full-text search makes) and
+transaction statement, and every read of the credential, secret
 and audit tables (`users`, `sessions`, `api_tokens`,
 `plugin_states`, `plugin_kvs`, `runtime_settings`, `log_entries`,
 `user_settings`, `saved_searches`, `job_replay_envelopes`). On

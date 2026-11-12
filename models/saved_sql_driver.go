@@ -20,9 +20,11 @@ import (
 //
 //   - may attach no database (SQLITE_LIMIT_ATTACHED = 0);
 //   - runs with PRAGMA query_only = ON;
-//   - has an authorizer that allows only SELECT, reads, function calls and
-//     recursive CTEs, and denies everything else (writes, DDL, ATTACH/DETACH,
-//     PRAGMA, transactions), so query_only cannot be switched off again;
+//   - has an authorizer that allows only SELECT, reads, function calls,
+//     recursive CTEs and the one PRAGMA FTS5 issues internally (reading
+//     data_version), and denies everything else (writes, DDL, ATTACH/DETACH,
+//     every other PRAGMA, transactions), so query_only cannot be switched off
+//     again;
 //   - may not read the tables IsSavedSQLDeniedTable names.
 const ReadOnlySQLiteDriverName = "sqlite3_saved_sql"
 
@@ -49,9 +51,19 @@ var savedSQLDeniedTables = map[string]bool{
 }
 
 // IsSavedSQLDeniedTable reports whether saved SQL may not read table, and whether
-// the schema listing offered to query authors leaves it out.
+// the schema listing offered to query authors leaves it out. A full-text index
+// over a denied table (<table>_fts, as fts/provider.go names them) and its FTS5
+// shadow tables (<table>_fts_data, _content, ...) hold the same data and are
+// denied with it, should one ever be created.
 func IsSavedSQLDeniedTable(table string) bool {
-	return savedSQLDeniedTables[strings.ToLower(table)]
+	table = strings.ToLower(table)
+	if savedSQLDeniedTables[table] {
+		return true
+	}
+	if i := strings.Index(table, "_fts"); i > 0 {
+		return savedSQLDeniedTables[table[:i]]
+	}
+	return false
 }
 
 func registerReadOnlySQLiteDriver() {
@@ -75,8 +87,16 @@ func registerReadOnlySQLiteDriver() {
 }
 
 // savedSQLAuthorizer is an allow-list; see ReadOnlySQLiteDriverName.
-func savedSQLAuthorizer(action int, arg1, _, _ string) int {
+func savedSQLAuthorizer(action int, arg1, arg2, _ string) int {
 	switch action {
+	case sqlite3.SQLITE_PRAGMA:
+		// FTS5 reads PRAGMA main.data_version from inside every MATCH query to
+		// tell whether its cached index structure is stale. Reading it is
+		// harmless; setting a value, or any other pragma, is not allowed.
+		if strings.EqualFold(arg1, "data_version") && arg2 == "" {
+			return sqlite3.SQLITE_OK
+		}
+		return sqlite3.SQLITE_DENY
 	case sqlite3.SQLITE_SELECT, sqlite3.SQLITE_FUNCTION, sqliteRecursive:
 		return sqlite3.SQLITE_OK
 	case sqlite3.SQLITE_READ:
