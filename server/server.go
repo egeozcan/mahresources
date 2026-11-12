@@ -122,8 +122,9 @@ func errorPageEnricher(appContext *application_context.MahresourcesContext, r *h
 		}
 		ctx["_pluginManager"] = pm
 		ctx["_requestContext"] = r.Context()
-		ctx["_pluginAccess"] = auth.PluginAccessFor(r.Context(), appContext.PluginAllowsScopedPrincipals)
-		ctx["pluginMenuItems"] = pm.GetMenuItems()
+		access := auth.PluginAccessFor(r.Context(), appContext.PluginAllowsScopedPrincipals)
+		ctx["_pluginAccess"] = access
+		ctx["pluginMenuItems"] = offeredMenuItems(access, pm.GetMenuItems())
 		ctx["hasPluginManager"] = true
 		return ctx
 	}

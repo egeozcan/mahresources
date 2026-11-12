@@ -261,7 +261,7 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 
 		ctx["_pluginManager"] = pm
 		ctx["currentPath"] = request.URL.Path
-		ctx["pluginMenuItems"] = pm.GetMenuItems()
+		ctx["pluginMenuItems"] = offeredMenuItems(pluginAccess, pm.GetMenuItems())
 		ctx["hasPluginManager"] = true
 
 		// Compute plugin actions for detail pages
@@ -345,6 +345,20 @@ func offeredActions(access auth.PluginAccess, actions []plugin_system.ActionRegi
 	for _, action := range actions {
 		if access(action.PluginName) {
 			offered = append(offered, action)
+		}
+	}
+	return offered
+}
+
+// offeredMenuItems keeps the nav menu items of the plugins the caller may reach.
+// Same shape and rule as offeredActions ("what is offered follows what is
+// allowed"), but with the reach predicate: a plugin page is a read, so a guest
+// is offered the page of a plugin the operator opened to it.
+func offeredMenuItems(access auth.PluginAccess, items []plugin_system.MenuRegistration) []plugin_system.MenuRegistration {
+	offered := make([]plugin_system.MenuRegistration, 0, len(items))
+	for _, item := range items {
+		if access(item.PluginName) {
+			offered = append(offered, item)
 		}
 	}
 	return offered
