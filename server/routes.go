@@ -595,7 +595,8 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	// Authentication routes. The login page is a standalone template (it must be
 	// reachable when logged out, so it is not wrapped with plugin context).
 	// One shared rate limiter throttles failed logins from both the web form and
-	// the JSON API (no-op when -login-max-attempts is 0).
+	// the JSON API, and failed current-password checks on POST
+	// /v1/account/password (no-op when -login-max-attempts is 0).
 	loginLimiter := newLoginRateLimiter(appContext.LoginRateLimit(), appContext.LoginRateWindow())
 	router.Methods(http.MethodGet).Path("/login").HandlerFunc(
 		template_handlers.RenderTemplate("login.tpl", template_context_providers.LoginContextProvider(appContext)))
@@ -618,7 +619,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/user/delete").HandlerFunc(api_handlers.DeleteUserHandler(appContext))
 
 	// Self-service account management (any authenticated user, including guests).
-	router.Methods(http.MethodPost).Path("/v1/account/password").HandlerFunc(api_handlers.ChangeOwnPasswordHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/account/password").HandlerFunc(api_handlers.ChangeOwnPasswordHandler(appContext, credentialAttemptGuard(appContext, loginLimiter)))
 	router.Methods(http.MethodGet).Path("/v1/account/tokens").HandlerFunc(api_handlers.ListOwnTokensHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/account/tokens").HandlerFunc(api_handlers.CreateOwnTokenHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/account/tokens/delete").HandlerFunc(api_handlers.RevokeOwnTokenHandler(appContext))

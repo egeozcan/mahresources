@@ -10,6 +10,7 @@ import (
 	"mahresources/application_context"
 	"mahresources/auth"
 	"mahresources/models"
+	"mahresources/server/api_handlers"
 )
 
 // startSession authenticates a username/password pair, mints a session, and
@@ -300,6 +301,19 @@ func loginKeys(ip, username string) []string {
 		keys = append(keys, "user:"+u)
 	}
 	return keys
+}
+
+// credentialAttemptGuard adapts the login limiter to the password-change
+// endpoint, which lives in api_handlers and cannot import this package. It runs
+// the same runLoginAttempt/loginKeys as login, so a wrong current password is
+// charged to the same ip: and user: keys, a success clears the account's
+// failures, and errors that are not a verdict (validation, database) are
+// abandoned rather than charged.
+func credentialAttemptGuard(appCtx *application_context.MahresourcesContext, limiter *loginRateLimiter) api_handlers.CredentialAttemptGuard {
+	return func(r *http.Request, username string, verify func() error) (bool, error) {
+		_, reserved, err := runLoginAttempt(limiter, loginKeys(clientIP(r, appCtx.TrustProxyHeaders()), username), verify)
+		return reserved, err
+	}
 }
 
 // clientIP returns the request's source IP via the single shared derivation in

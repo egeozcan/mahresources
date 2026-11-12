@@ -295,7 +295,7 @@ func main() {
 	sessionCookieSecure := flag.Bool("session-cookie-secure", os.Getenv("SESSION_COOKIE_SECURE") == "1", "Mark the session cookie Secure (HTTPS-only) (env: SESSION_COOKIE_SECURE=1)")
 	createAdminUser := flag.String("create-admin-user", os.Getenv("CREATE_ADMIN_USER"), "Bootstrap: create or reset this admin username at startup (env: CREATE_ADMIN_USER)")
 	createAdminPassword := flag.String("create-admin-password", os.Getenv("CREATE_ADMIN_PASSWORD"), "Bootstrap: password for -create-admin-user (env: CREATE_ADMIN_PASSWORD)")
-	loginMaxAttempts := flag.Int("login-max-attempts", parseIntEnv("LOGIN_MAX_ATTEMPTS", 0), "Max failed login attempts per client IP within -login-attempt-window before throttling with HTTP 429; 0 disables (env: LOGIN_MAX_ATTEMPTS)")
+	loginMaxAttempts := flag.Int("login-max-attempts", parseIntEnv("LOGIN_MAX_ATTEMPTS", 0), "Max failed login or current-password attempts per client IP and per account within -login-attempt-window before throttling with HTTP 429; 0 disables (env: LOGIN_MAX_ATTEMPTS)")
 	loginAttemptWindow := flag.Duration("login-attempt-window", parseDurationEnv("LOGIN_ATTEMPT_WINDOW", 15*time.Minute), "Sliding window for -login-max-attempts and the lockout duration once it is hit (env: LOGIN_ATTEMPT_WINDOW)")
 	trustProxyHeaders := flag.Bool("trust-proxy-headers", os.Getenv("TRUST_PROXY_HEADERS") == "1", "Trust the rightmost X-Forwarded-For entry (appended by the proxy in front of this server) for the client IP (login rate-limiting, audit-log IP, AI-generation limiter keys); enable only behind a trusted reverse proxy (env: TRUST_PROXY_HEADERS=1)")
 
