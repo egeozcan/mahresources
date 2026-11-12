@@ -27,11 +27,6 @@ type CalendarSource struct {
 	Source SourceConfig `json:"source"`
 }
 
-// calendarContent represents the content schema for calendar blocks.
-type calendarContent struct {
-	Calendars []CalendarSource `json:"calendars"`
-}
-
 // CustomCalendarEvent represents a user-created event stored in block state.
 type CustomCalendarEvent struct {
 	ID          string `json:"id"`
@@ -62,12 +57,18 @@ func (c CalendarBlockType) Type() string {
 }
 
 func (c CalendarBlockType) ValidateContent(content json.RawMessage) error {
-	var cal calendarContent
-	if err := json.Unmarshal(content, &cal); err != nil {
+	// Calendar sources are read by exact key (ReadCalendarSources), and no
+	// object in the content may hold two keys that only differ under
+	// encoding/json's folding, at any level (issue #89).
+	if err := RejectAmbiguousBlockKeys(c.Type(), content); err != nil {
+		return err
+	}
+	cals, err := ReadCalendarSources(content)
+	if err != nil {
 		return err
 	}
 
-	for i, source := range cal.Calendars {
+	for i, source := range cals {
 		if source.ID == "" {
 			return fmt.Errorf("calendar at index %d must have an id", i)
 		}

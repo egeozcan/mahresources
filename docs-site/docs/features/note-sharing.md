@@ -145,6 +145,18 @@ Two block types respond to visitor interaction on shared notes: **todos**, which
 
 A table block backed by a saved query runs that query on the share server for every visitor, unauthenticated, and renders the result rows. This is **not** gated by the note type's **Apply templates to public share pages** setting, so it happens on any shared note that contains such a block. Only share notes whose backing queries are safe to expose publicly. Manual (non-query) table blocks simply render their stored cells.
 
+### Referenced Items Follow the Sharer's Access
+
+Gallery, references, saved-query table and calendar blocks point at other items by ID. With `-auth` enabled, the share server looks those items up **as the account that shared the note**, as that account stands when the page is viewed:
+
+- An administrator, editor or unrestricted user's share shows every item the blocks reference.
+- A group-limited user's share shows only items inside that user's group. A referenced resource, group or ICS file outside it is left out of the page, and its file is not served. Saved-query tables render no rows, because saved SQL queries are not available to group-limited accounts.
+- If the sharing account is deleted or disabled, the share page still opens, but no referenced item resolves.
+
+A group-limited user also cannot add such a reference in the first place: adding or editing a gallery, references or calendar block that points outside their group, or a table backed by a saved query, is refused. Sharing a note whose blocks already contain one is refused with HTTP 403.
+
+A share minted before the sharing account was recorded (before this rule existed) keeps resolving references as it always did, with no restriction. To apply the rule to such a share, unshare the note and share it again. Without `-auth`, nothing changes.
+
 ### Shared Todos
 
 Visitors can check and uncheck todo items on shared notes. Changes are visible to all viewers because state is global. The shared todos component performs optimistic updates with rollback on server error, syncing state to `POST /s/{token}/block/{blockId}/state`.
@@ -239,7 +251,7 @@ Response:
 }
 ```
 
-If the note is already shared, returns the existing token.
+If the note is already shared, returns the existing token. Under `-auth`, a group-limited caller gets HTTP 403 when a block of the note references an item outside the caller's group or a saved query (see [Referenced Items Follow the Sharer's Access](#referenced-items-follow-the-sharers-access)).
 
 ### Unshare Note
 

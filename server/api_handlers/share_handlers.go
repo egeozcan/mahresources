@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/contracts"
 	"mahresources/server/http_utils"
@@ -55,6 +56,10 @@ func GetShareNoteHandler(ctx contracts.NoteSharer) func(writer http.ResponseWrit
 		if err != nil {
 			if err.Error() == "record not found" {
 				http_utils.HandleError(err, writer, request, http.StatusNotFound)
+				return
+			}
+			if errors.Is(err, application_context.ErrBlockReferenceOutOfScope) {
+				http_utils.HandleError(err, writer, request, http.StatusForbidden)
 				return
 			}
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
