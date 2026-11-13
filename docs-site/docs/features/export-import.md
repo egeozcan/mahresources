@@ -143,6 +143,8 @@ Groups, notes, and resources each carry a stable GUID assigned on create and wri
 | `skip` | Leave the existing row untouched, including its many-to-many links |
 | `replace` | Replace the existing row's content from the archive payload |
 
+A note's blocks are written when the note is created and when it is replaced (`merge` and `skip` leave them alone), and each block is validated as the block editor would validate it. A block whose state fails validation keeps its content and gets its type's default state, with a warning. A block of an unknown type (its plugin is not enabled) or whose content its type rejects fails the apply, before the replaced note's existing blocks are deleted; enable the plugin, or fix the block at the source and export again.
+
 GUID matching is what makes re-importing the same archive idempotent. The plan reports `guid_match` per item, `guid_conflict` per schema mapping, and `conflicts.resource_guid_matches` for the resources this policy decides. The CLI flag is `--guid-collision-policy`.
 
 ### Resource Collision Policy

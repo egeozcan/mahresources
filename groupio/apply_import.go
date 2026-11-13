@@ -2060,7 +2060,11 @@ func (s *applyState) applyOneNote(tx *gorm.DB, exportID string, np *archive.Note
 	batch.createdNoteIDs = append(batch.createdNoteIDs, n.ID)
 
 	// Create NoteBlock rows (validated like every live block writer)
-	if err := s.createImportedBlocks(tx, n.ID, n.Name, np.Blocks, "create"); err != nil {
+	blocks, err := s.importedBlocks(n.ID, n.Name, np.Blocks)
+	if err != nil {
+		return err
+	}
+	if err := insertImportedBlocks(tx, n.Name, blocks, "create"); err != nil {
 		return err
 	}
 
@@ -2657,11 +2661,17 @@ func (s *applyState) replaceNote(tx *gorm.DB, existing *models.Note, np *archive
 		}
 	}
 
-	// Blocks: delete existing, create incoming
+	// Blocks: delete existing, create incoming. The incoming set is built and
+	// validated first, so a block that cannot be stored refuses the replace
+	// before anything is deleted.
+	blocks, err := s.importedBlocks(existing.ID, np.Name, np.Blocks)
+	if err != nil {
+		return err
+	}
 	if err := tx.Where("note_id = ?", existing.ID).Delete(&models.NoteBlock{}).Error; err != nil {
 		return fmt.Errorf("delete existing blocks: %w", err)
 	}
-	if err := s.createImportedBlocks(tx, existing.ID, np.Name, np.Blocks, "create replaced"); err != nil {
+	if err := insertImportedBlocks(tx, np.Name, blocks, "create replaced"); err != nil {
 		return err
 	}
 
@@ -2715,23 +2725,30 @@ func findGRTDef(defs []archive.GroupRelationTypeDef, exportID string) *archive.G
 	return nil
 }
 
-// createImportedBlocks writes imported NoteBlock rows, running the registered
-// BlockType validators (built-in and plugin types share one registry) so import
-// cannot store content that CreateBlock/UpdateBlockContent would reject.
-// Invalid or unknown-type blocks are skipped with a warning.
-func (s *applyState) createImportedBlocks(tx *gorm.DB, noteID uint, noteName string, blocks []archive.NoteBlockPayload, verb string) error {
+// importedBlocks builds the NoteBlock rows for a note's archive blocks, running
+// the registered BlockType validators (built-in and plugin types share one
+// registry) so import cannot store content that CreateBlock/UpdateBlockContent
+// would reject.
+//
+// Nothing is dropped. A block whose state fails validation keeps its content
+// and gets the type's default state, with a warning: state is UI state and the
+// default is always valid. A block of an unknown type (its plugin is not
+// loaded) or with content its type rejects (saved under older rules) is an
+// error, which fails the note's transaction. Skipping it instead would lose it:
+// a replace deletes the note's existing blocks, so a self-restore would destroy
+// the very block the archive carries.
+func (s *applyState) importedBlocks(noteID uint, noteName string, blocks []archive.NoteBlockPayload) ([]models.NoteBlock, error) {
+	rows := make([]models.NoteBlock, 0, len(blocks))
 	for _, bp := range blocks {
 		bt := block_types.GetBlockType(bp.Type)
 		if bt == nil {
-			s.result.Warnings = append(s.result.Warnings,
-				fmt.Sprintf("skipped block %q at position %s of note %q: unknown block type", bp.Type, bp.Position, noteName))
-			continue
+			return nil, fmt.Errorf("block %q at position %s of note %q: unknown block type (enable the plugin that provides it and import again)", bp.Type, bp.Position, noteName)
 		}
 		content := bt.DefaultContent()
 		if bp.Content != nil {
 			c, err := json.Marshal(bp.Content)
 			if err != nil {
-				return fmt.Errorf("marshal block content: %w", err)
+				return nil, fmt.Errorf("marshal block content: %w", err)
 			}
 			content = c
 		}
@@ -2739,29 +2756,34 @@ func (s *applyState) createImportedBlocks(tx *gorm.DB, noteID uint, noteName str
 		if bp.State != nil {
 			st, err := json.Marshal(bp.State)
 			if err != nil {
-				return fmt.Errorf("marshal block state: %w", err)
+				return nil, fmt.Errorf("marshal block state: %w", err)
 			}
 			state = st
 		}
 		if err := bt.ValidateContent(content); err != nil {
-			s.result.Warnings = append(s.result.Warnings,
-				fmt.Sprintf("skipped block %q at position %s of note %q: invalid content: %v", bp.Type, bp.Position, noteName, err))
-			continue
+			return nil, fmt.Errorf("block %q at position %s of note %q: invalid content: %w", bp.Type, bp.Position, noteName, err)
 		}
 		if err := bt.ValidateState(state); err != nil {
 			s.result.Warnings = append(s.result.Warnings,
-				fmt.Sprintf("skipped block %q at position %s of note %q: invalid state: %v", bp.Type, bp.Position, noteName, err))
-			continue
+				fmt.Sprintf("reset the state of block %q at position %s of note %q to its default: invalid state: %v", bp.Type, bp.Position, noteName, err))
+			state = bt.DefaultState()
 		}
-		block := models.NoteBlock{
+		rows = append(rows, models.NoteBlock{
 			NoteID:   noteID,
 			Type:     bp.Type,
 			Position: bp.Position,
 			Content:  types.JSON(content),
 			State:    types.JSON(state),
-		}
-		if err := tx.Create(&block).Error; err != nil {
-			return fmt.Errorf("%s note block (note %q, pos %s): %w", verb, noteName, bp.Position, err)
+		})
+	}
+	return rows, nil
+}
+
+// insertImportedBlocks writes the rows importedBlocks built.
+func insertImportedBlocks(tx *gorm.DB, noteName string, rows []models.NoteBlock, verb string) error {
+	for i := range rows {
+		if err := tx.Create(&rows[i]).Error; err != nil {
+			return fmt.Errorf("%s note block (note %q, pos %s): %w", verb, noteName, rows[i].Position, err)
 		}
 	}
 	return nil
