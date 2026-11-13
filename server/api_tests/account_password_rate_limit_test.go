@@ -3,6 +3,7 @@ package api_tests
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -158,5 +159,35 @@ func TestChangeOwnPasswordAuthOffStillRejected(t *testing.T) {
 		strings.NewReader(`{"currentPassword":"a","newPassword":"newpassword1"}`))
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d", rr.Code)
+	}
+}
+
+// With -trust-proxy-headers off (the default) the guard must key wrong
+// current-password guesses on the socket address, never on X-Forwarded-For:
+// otherwise any account could fill the ip: bucket of an address it names, locking
+// logins out from there, or spread its guesses over forged per-IP buckets.
+func TestChangeOwnPasswordRateLimit_UntrustedXFFIgnored(t *testing.T) {
+	tc := setupRateLimitedAuthEnv(t, 3)
+	bearer := newPasswordUser(t, tc, "victim", "password1", models.RoleUser)
+	for n := 0; n < 3; n++ {
+		if code := changePassword(tc, bearer, "203.0.113.50", "wrong", "attackerpw1"); code != http.StatusUnauthorized {
+			t.Fatalf("wrong attempt %d: want 401, got %d", n+1, code)
+		}
+	}
+	login := func(remoteAddr string) int {
+		req := httptest.NewRequest(http.MethodPost, "/v1/auth/login",
+			strings.NewReader(`{"username":"admin","password":"adminpw1"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = remoteAddr
+		rr := httptest.NewRecorder()
+		tc.Router.ServeHTTP(rr, req)
+		return rr.Code
+	}
+	if code := login("203.0.113.50:4444"); code != http.StatusOK {
+		t.Fatalf("login from the forged address: want 200, got %d", code)
+	}
+	// The guesses were charged to the socket address httptest requests carry.
+	if code := login("192.0.2.1:1234"); code != http.StatusTooManyRequests {
+		t.Fatalf("login from the socket address: want 429, got %d", code)
 	}
 }
