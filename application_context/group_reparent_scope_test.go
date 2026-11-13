@@ -319,6 +319,46 @@ func TestCreateOrUpdateNote_StaleScopeCannotReownANoteOfARevokedGroup(t *testing
 	}
 }
 
+// The note stays inside, but its new owner left the subtree after the binding
+// was taken. The rescoped transaction finds the note, so only the in-transaction
+// owner recheck refuses it; the pre-check ran on the stale allow-list.
+func TestCreateOrUpdateNote_StaleScopeCannotReownUnderARevokedOwner(t *testing.T) {
+	f := newReparentScopeFixture(t)
+	note := &models.Note{Name: "B-note", OwnerId: &f.b.ID}
+	if err := f.ctx.db.Create(note).Error; err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	stale := f.ctx.WithPrincipal(f.p)
+
+	if err := f.move(t, f.ctx, f.a.ID, f.out.ID); err != nil {
+		t.Fatalf("admin move of A out of S: %v", err)
+	}
+
+	_, err := stale.CreateOrUpdateNote(&query_models.NoteEditor{
+		ID:          note.ID,
+		NoteCreator: query_models.NoteCreator{Name: "B-note", OwnerId: f.a.ID},
+	})
+	if err == nil || err.Error() != "owner group not found" {
+		t.Fatalf("stale binding re-owned a note under a revoked owner: err=%v", err)
+	}
+	var n models.Note
+	if err := f.ctx.db.First(&n, note.ID).Error; err != nil {
+		t.Fatalf("reload note: %v", err)
+	}
+	if n.OwnerId == nil || *n.OwnerId != f.b.ID {
+		t.Fatalf("note owner = %v, want %d", n.OwnerId, f.b.ID)
+	}
+
+	// Control: the same stale binding may still re-own it under an owner that
+	// stayed inside.
+	if _, err := stale.CreateOrUpdateNote(&query_models.NoteEditor{
+		ID:          note.ID,
+		NoteCreator: query_models.NoteCreator{Name: "B-note", OwnerId: f.s.ID},
+	}); err != nil {
+		t.Fatalf("re-own inside the subtree: %v", err)
+	}
+}
+
 // accountChangeWrites are the containment writes rescopeTx guards, each
 // pulling B (or B's content) under A. s, a and b are S, A under S and B under
 // S, as in newReparentScopeFixture.

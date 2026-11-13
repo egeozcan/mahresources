@@ -17,8 +17,14 @@ import (
 // returned func sends the rest of the body and returns the finished response.
 func parkGroupPost(t *testing.T, tc *TestContext, bearer string) func(rest string) *httptest.ResponseRecorder {
 	t.Helper()
+	return parkPost(t, tc, bearer, "/v1/group")
+}
+
+// parkPost is parkGroupPost for any JSON POST route.
+func parkPost(t *testing.T, tc *TestContext, bearer, path string) func(rest string) *httptest.ResponseRecorder {
+	t.Helper()
 	pr, pw := io.Pipe()
-	req := httptest.NewRequest(http.MethodPost, "/v1/group", pr)
+	req := httptest.NewRequest(http.MethodPost, path, pr)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", bearer)
@@ -266,5 +272,33 @@ func TestScopedReparent_RoleControls(t *testing.T) {
 	}
 	if got.OwnerId == nil || *got.OwnerId != other.ID {
 		t.Fatalf("owner = %v, want %d", got.OwnerId, other.ID)
+	}
+}
+
+// The note twin of the parked re-parent: the note stays inside, but the owner
+// the parked body names was moved out of the subtree after the request bound
+// its scope. POST /v1/note must refuse to put the note under it.
+func TestScopedNoteReown_ParkedRequestCannotUseARevokedOwner(t *testing.T) {
+	tc := setupAuthEnv(t)
+	f := buildStaleReparentFixture(t, tc)
+	out := f.mk("stale-Out", nil)
+	note := &models.Note{Name: "stale-note", OwnerId: &f.b.ID}
+	if err := tc.DB.Create(note).Error; err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+
+	send := parkPost(t, tc, f.scoped, "/v1/note")
+	adminPost(t, tc, f.admin, "/v1/group", fmt.Sprintf(`{"ID":%d,"Name":"stale-A","OwnerId":%d}`, f.a.ID, out.ID))
+	rec := send(fmt.Sprintf(`"ID":%d,"Name":"stale-note","OwnerId":%d}`, note.ID, f.a.ID))
+
+	if rec.Code == http.StatusOK {
+		t.Fatalf("parked note re-own under a revoked owner: status 200 (%s)", rec.Body.String())
+	}
+	var got models.Note
+	if err := tc.DB.First(&got, note.ID).Error; err != nil {
+		t.Fatalf("reload note: %v", err)
+	}
+	if got.OwnerId == nil || *got.OwnerId != f.b.ID {
+		t.Fatalf("note owner = %v, want %d: the parked request used a revoked owner", got.OwnerId, f.b.ID)
 	}
 }
