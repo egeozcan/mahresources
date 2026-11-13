@@ -408,14 +408,13 @@ func (ctx *MahresourcesContext) massEdit(spec massEditSpec, q *query_models.Mass
 		// moving a target or the owner out of the subtree. Re-derive it on the
 		// transaction, after the tree lock, so the lock-and-verify phase below
 		// refuses a row that has left the subtree (with its not-found error)
-		// rather than re-owning it back in.
-		if txCtx.isScopedPrincipal() {
-			rescoped, rescopeErr := txCtx.rescopeTx(txCtx.db)
-			if rescopeErr != nil {
-				return rescopeErr
-			}
-			txCtx.db = rescoped
+		// rather than re-owning it back in. The account is re-read for every
+		// principal (see rescopeTx).
+		rescoped, rescopeErr := txCtx.rescopeTx(txCtx.db)
+		if rescopeErr != nil {
+			return rescopeErr
 		}
+		txCtx.db = rescoped
 
 		// Phase 1 — lock and verify every row the edit depends on. Requirements
 		// are UNIONED BY MODEL and taken in one fixed model order, ids ascending

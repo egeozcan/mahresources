@@ -183,6 +183,42 @@ func TestScopedReparent_ParkedRequestCannotOutliveAnAccountChange(t *testing.T) 
 	}
 }
 
+// The same parked request by an account that was unscoped when the request was
+// bound. An admin then confines it to A. The parked write must not run
+// unconfined and pull an arbitrary root group X into the account's new scope.
+func TestScopedReparent_ParkedUnscopedRequestCannotOutliveConfinement(t *testing.T) {
+	for _, role := range []models.Role{models.RoleUser, models.RoleEditor} {
+		t.Run(string(role), func(t *testing.T) {
+			tc := setupAuthEnv(t)
+			f := buildStaleReparentFixture(t, tc)
+			x := f.mk("stale-X", nil)
+			bearer := roleBearer(t, tc, role)
+			var u models.User
+			if err := tc.DB.Where("username = ?", "rb_"+string(role)).First(&u).Error; err != nil {
+				t.Fatalf("load %s account: %v", role, err)
+			}
+
+			send := parkGroupPost(t, tc, bearer)
+			adminPost(t, tc, f.admin, "/v1/user", fmt.Sprintf(`{"id":%d,"role":"user","scopeGroupId":%d}`, u.ID, f.a.ID))
+			rec := send(fmt.Sprintf(`"ID":%d,"Name":"stale-X","OwnerId":%d}`, x.ID, f.a.ID))
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("parked re-parent: status %d (%s), want 400", rec.Code, rec.Body.String())
+			}
+			var got models.Group
+			if err := tc.DB.First(&got, x.ID).Error; err != nil {
+				t.Fatalf("reload X: %v", err)
+			}
+			if got.OwnerId != nil {
+				t.Fatalf("X owner = %d, want none: the parked request outlived the confinement", *got.OwnerId)
+			}
+			if code := scopedGetGroupStatus(tc, bearer, x.ID); code != http.StatusNotFound {
+				t.Fatalf("fresh GET of X: status %d, want 404", code)
+			}
+		})
+	}
+}
+
 // Control: a parked re-parent inside an unchanged subtree, across an admin
 // change that does not touch the account's role, scope or enabled state, still
 // lands.

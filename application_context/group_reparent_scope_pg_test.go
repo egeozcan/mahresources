@@ -45,6 +45,13 @@ func TestStaleAccountCannotWriteContainment_Postgres(t *testing.T) {
 	})
 }
 
+func TestStaleUnscopedAccountCannotWriteContainment_Postgres(t *testing.T) {
+	runStaleUnscopedAccountCannotWriteContainment(t, func(t *testing.T) (*MahresourcesContext, *models.Group, *models.Group, *models.Group) {
+		ctx, s, a, b, _, _ := newReparentScopePGFixture(t)
+		return ctx, s, a, b
+	})
+}
+
 func pgGroupOwner(t *testing.T, ctx *MahresourcesContext, id uint) *uint {
 	t.Helper()
 	var g models.Group

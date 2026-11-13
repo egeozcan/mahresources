@@ -250,14 +250,25 @@ func (ctx *MahresourcesContext) unscopedDB() *gorm.DB {
 // scope group (or disabling it, or changing its role) mid-request would leave
 // the fresh subtree rooted at the old group. The account is re-read on tx first,
 // and the write is refused unless its role, scope group and enabled state are
-// still the ones the principal was built from (see accountStillBound).
+// still the ones the principal was built from (see accountStillBound). That
+// holds for every account, unscoped ones included: an admin confining an
+// account that was unscoped when the request was bound is the largest
+// narrowing there is, and the stale binding carries no filter at all. Callers
+// therefore call this for every principal, not only a group-limited one.
 //
 // The lookup runs on tx, never on the outer handle: inside a transaction a
 // second connection waits on the transaction's own SQLite writer lock. It fails
-// closed by returning the error. Admins, unscoped users, the system principal
-// and a handle with no filter get tx back unchanged.
+// closed by returning the error. Once the account checks out, admins, unscoped
+// users, the system principal and a handle with no filter get tx back
+// unchanged.
 func (ctx *MahresourcesContext) rescopeTx(tx *gorm.DB) (*gorm.DB, error) {
-	if tx == nil || tx.Statement == nil || scopeFromContext(tx.Statement.Context) == nil {
+	if tx == nil || tx.Statement == nil {
+		return tx, nil
+	}
+	if err := ctx.accountStillBound(tx); err != nil {
+		return nil, err
+	}
+	if scopeFromContext(tx.Statement.Context) == nil {
 		return tx, nil
 	}
 	scopeID, forced, deny := ctx.principalForcedScope()
@@ -266,9 +277,6 @@ func (ctx *MahresourcesContext) rescopeTx(tx *gorm.DB) (*gorm.DB, error) {
 	case deny:
 		// allowed stays empty: deny-all.
 	case forced:
-		if err := ctx.accountStillBound(tx); err != nil {
-			return nil, err
-		}
 		lookup := *ctx
 		lookup.db = tx
 		ids, err := lookup.collectSubtreeGroupIDs(scopeID)
@@ -290,7 +298,10 @@ var errAccountChanged = fmt.Errorf("the account changed during this request: %w"
 
 // accountStillBound re-reads the principal's account on tx and refuses unless
 // it still exists, is enabled, and has the role and scope group the principal
-// was built from. A principal with no account (UserID 0) has nothing to re-read.
+// was built from (no scope group on both sides counts as the same). A principal
+// with no account (UserID 0) has nothing to re-read, and neither has the
+// no-auth root principal (SuperUser): with authentication off there is no
+// account an admin could narrow.
 //
 // The read takes no row lock. On SQLite it needs none: tx holds the writer lock
 // from BEGIN, so an account change either committed before it or waits for it.
@@ -302,7 +313,7 @@ var errAccountChanged = fmt.Errorf("the account changed during this request: %w"
 // check on that same group would deadlock against it.
 func (ctx *MahresourcesContext) accountStillBound(tx *gorm.DB) error {
 	p := ctx.principal
-	if p == nil || p.UserID == 0 {
+	if p == nil || p.UserID == 0 || p.SuperUser {
 		return nil
 	}
 	var rows []struct {
@@ -317,8 +328,9 @@ func (ctx *MahresourcesContext) accountStillBound(tx *gorm.DB) error {
 		return errAccountChanged
 	}
 	stored := rows[0]
-	if stored.Disabled || stored.Role != p.Role || stored.ScopeGroupId == nil || p.ScopeGroupID == nil ||
-		*stored.ScopeGroupId != *p.ScopeGroupID {
+	sameScope := (stored.ScopeGroupId == nil) == (p.ScopeGroupID == nil) &&
+		(stored.ScopeGroupId == nil || *stored.ScopeGroupId == *p.ScopeGroupID)
+	if stored.Disabled || stored.Role != p.Role || !sameScope {
 		return errAccountChanged
 	}
 	return nil

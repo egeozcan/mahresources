@@ -248,12 +248,14 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		// the current tree, after the lock, and run everything below against
 		// it. The explicit refusal matters: on a stale target the UPDATE would
 		// merely match no row, while the id-keyed tag and relation writes
-		// after it would still run.
+		// after it would still run. The account itself is re-read for every
+		// principal: one bound while unscoped and confined since must not
+		// write unconfined.
+		var err error
+		if tx, err = ctx.rescopeTx(tx); err != nil {
+			return err
+		}
 		if ctx.isScopedPrincipal() {
-			var err error
-			if tx, err = ctx.rescopeTx(tx); err != nil {
-				return err
-			}
 			var n int64
 			if err := tx.Model(&models.Group{}).Where("id = ?", groupQuery.ID).Limit(1).Count(&n).Error; err != nil {
 				return err

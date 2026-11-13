@@ -292,8 +292,9 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		// A re-own is a containment change, so for a group-limited principal
 		// the resource and its new owner are judged against the current tree
 		// rather than the request's allow-list snapshot, which can predate an
-		// admin moving the resource's group out of the subtree.
-		if fieldProvided("owner_id") && altCtx.isScopedPrincipal() {
+		// admin moving the resource's group out of the subtree. The account is
+		// re-read for every principal (see rescopeTx).
+		if fieldProvided("owner_id") {
 			rescoped, err := altCtx.rescopeTx(altCtx.db)
 			if err != nil {
 				return err

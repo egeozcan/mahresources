@@ -175,7 +175,7 @@ func TestUpdateGroup_ReparentControls(t *testing.T) {
 		if err := f.move(t, f.ctx, f.b.ID, f.out.ID); err != nil {
 			t.Fatalf("unscoped re-parent: %v", err)
 		}
-		editor := f.ctx.WithPrincipal(&auth.Principal{UserID: 2, Username: "e", Role: models.RoleEditor})
+		editor := f.ctx.WithPrincipal(accountPrincipal(t, f.ctx, "e", models.RoleEditor, nil))
 		if err := f.move(t, editor, f.a.ID, f.out.ID); err != nil {
 			t.Fatalf("editor re-parent: %v", err)
 		}
@@ -433,5 +433,57 @@ func TestStaleAccountCannotWriteContainment(t *testing.T) {
 	runStaleAccountCannotWriteContainment(t, func(t *testing.T) (*MahresourcesContext, *models.Group, *models.Group, *models.Group, *auth.Principal) {
 		f := newReparentScopeFixture(t)
 		return f.ctx, f.s, f.a, f.b, f.p
+	})
+}
+
+// runStaleUnscopedAccountCannotWriteContainment: the principal was bound while
+// its account was unscoped (a user, an editor or an admin). An admin then
+// confines the account to A, which leaves B outside it. Confinement is the
+// largest narrowing there is, so a containment write through the stale,
+// unconfined binding must be refused rather than run unconfined and pull B
+// into the account's new scope.
+func runStaleUnscopedAccountCannotWriteContainment(t *testing.T, newFixture func(t *testing.T) (ctx *MahresourcesContext, s, a, b *models.Group)) {
+	writes := []string{"UpdateGroup", "MassEditGroups", "MergeGroups", "EditResource", "CreateOrUpdateNote"}
+	for _, role := range []models.Role{models.RoleUser, models.RoleEditor, models.RoleAdmin} {
+		for _, write := range writes {
+			t.Run("confined "+string(role)+"/"+write, func(t *testing.T) {
+				ctx, s, a, b := newFixture(t)
+				// Another administrator, so confining an admin does not
+				// remove the last one.
+				accountPrincipal(t, ctx, "other-admin", models.RoleAdmin, nil)
+				p := accountPrincipal(t, ctx, "free", role, nil)
+				ops := accountChangeWrites(t, ctx, a, b)
+				stale := ctx.WithPrincipal(p)
+				if _, err := ctx.UpdateUser(p.UserID, &UserUpdate{
+					Role:         UserField[models.Role]{Set: true, Value: models.RoleUser},
+					ScopeGroupID: UserField[*uint]{Set: true, Value: &a.ID},
+				}); err != nil {
+					t.Fatalf("admin confines the account: %v", err)
+				}
+				if err := ops[write](stale); !errors.Is(err, gorm.ErrRecordNotFound) {
+					t.Fatalf("stale unscoped binding wrote after the account was confined: err=%v", err)
+				}
+				assertBUntouched(t, ctx, s, b)
+			})
+		}
+		// Control: an unscoped account that nobody changed still writes
+		// across trees.
+		for _, write := range writes {
+			t.Run("unchanged "+string(role)+"/"+write, func(t *testing.T) {
+				ctx, _, a, b := newFixture(t)
+				p := accountPrincipal(t, ctx, "free", role, nil)
+				ops := accountChangeWrites(t, ctx, a, b)
+				if err := ops[write](ctx.WithPrincipal(p)); err != nil {
+					t.Fatalf("unscoped write with an unchanged account: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestStaleUnscopedAccountCannotWriteContainment(t *testing.T) {
+	runStaleUnscopedAccountCannotWriteContainment(t, func(t *testing.T) (*MahresourcesContext, *models.Group, *models.Group, *models.Group) {
+		f := newReparentScopeFixture(t)
+		return f.ctx, f.s, f.a, f.b
 	})
 }

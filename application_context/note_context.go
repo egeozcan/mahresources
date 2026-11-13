@@ -96,12 +96,13 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		// is a containment change: judge the note and its owner against the
 		// current tree, not the request's allow-list snapshot, which can predate
 		// an admin moving either out of the subtree. The owner check above ran
-		// on that snapshot, so it is repeated here.
+		// on that snapshot, so it is repeated here. The account is re-read for
+		// every principal (see rescopeTx).
+		var err error
+		if tx, err = ctx.rescopeTx(tx); err != nil {
+			return err
+		}
 		if ctx.isScopedPrincipal() {
-			var err error
-			if tx, err = ctx.rescopeTx(tx); err != nil {
-				return err
-			}
 			if ownerId != nil {
 				var ownerCheck models.Group
 				if err := tx.Select("id").First(&ownerCheck, *ownerId).Error; err != nil {
