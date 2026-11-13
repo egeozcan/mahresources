@@ -60,7 +60,7 @@ func buildListFilterLeakFixture(t *testing.T, tc *TestContext) listFilterLeakFix
 	insideRes := &models.Resource{Name: "inside-res", OwnerId: &root.ID, Hash: "lf-in", Location: "lf-in",
 		Tags: []*models.Tag{tag}, Groups: []*models.Group{outside}, Notes: []*models.Note{outsideNote}}
 	create(insideRes)
-	insideNote := &models.Note{Name: "inside-note", OwnerId: &root.ID, Groups: []*models.Group{outside}}
+	insideNote := &models.Note{Name: "inside-note", OwnerId: &root.ID, Groups: []*models.Group{outside}, Tags: []*models.Tag{tag}}
 	create(insideNote)
 	create(&models.ImageHash{ResourceId: &insideRes.ID, DHash: "dup"})
 	create(&models.ImageHash{ResourceId: &outsideRes.ID, DHash: "dup"})
@@ -273,6 +273,13 @@ func runListFiltersDoNotReadOutsideTheSubtree(t *testing.T, tc *TestContext) {
 	created, updated = timelineTotals(buckets)
 	assert.Equal(t, int64(2), created, "admin note timeline created")
 	assert.Equal(t, int64(2), updated, "admin note timeline updated")
+	tags, err := scoped.GetPopularNoteTags(&query_models.NoteQuery{Groups: []uint{f.outside}})
+	require.NoError(t, err)
+	assert.Empty(t, tags, "scoped popular note tags")
+	tags, err = tc.AppCtx.GetPopularNoteTags(&query_models.NoteQuery{Groups: []uint{f.outside}})
+	require.NoError(t, err)
+	require.Len(t, tags, 1, "admin popular note tags")
+	assert.Equal(t, "lf-tag", tags[0].Name, "admin popular note tags")
 }
 
 func TestRelationTypeGroupFiltersHideInvisibleGroups(t *testing.T) {
@@ -429,4 +436,21 @@ func TestListFilterTimelinesOverHTTP(t *testing.T) {
 	created, updated = totals(adminBearer, path)
 	assert.Equal(t, int64(2), created, "admin %s created", path)
 	assert.Equal(t, int64(2), updated, "admin %s updated", path)
+
+	// The /notes tag sidebar counts tags over the same filter.
+	path = fmt.Sprintf("/notes.json?Groups=%d", f.outside)
+	sidebar := func(bearer string) []application_context.PopularTag {
+		t.Helper()
+		rr := doReq(tc, http.MethodGet, path, map[string]string{"Accept": "application/json", "Authorization": bearer}, nil, nil)
+		require.Equal(t, http.StatusOK, rr.Code, "%s: %s", path, rr.Body.String())
+		var page struct {
+			PopularTags []application_context.PopularTag `json:"popularTags"`
+		}
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &page))
+		return page.PopularTags
+	}
+	assert.Empty(t, sidebar(guestBearer), "guest %s popularTags", path)
+	adminTags := sidebar(adminBearer)
+	require.Len(t, adminTags, 1, "admin %s popularTags", path)
+	assert.Equal(t, "lf-tag", adminTags[0].Name, "admin %s popularTags", path)
 }
