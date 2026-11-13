@@ -64,6 +64,8 @@ func buildListFilterLeakFixture(t *testing.T, tc *TestContext) listFilterLeakFix
 	create(insideNote)
 	create(&models.ImageHash{ResourceId: &insideRes.ID, DHash: "dup"})
 	create(&models.ImageHash{ResourceId: &outsideRes.ID, DHash: "dup"})
+	// A row's timeline "updated" bucket needs updated_at after created_at.
+	backdateCreation(t, tc, "resources", insideRes.ID, outsideRes.ID)
 
 	return listFilterLeakFixture{
 		catA: catA.ID, catB: catB.ID, typeA: typeA.ID, typeB: typeB.ID,
@@ -71,6 +73,28 @@ func buildListFilterLeakFixture(t *testing.T, tc *TestContext) listFilterLeakFix
 		insideRes: insideRes.ID, outsideRes: outsideRes.ID,
 		insideNote: insideNote.ID, outsideNote: outsideNote.ID, tagT: tag.ID,
 	}
+}
+
+// backdateCreation moves the rows' creation two hours back and their last
+// edit one hour back, so each counts in both timeline buckets.
+func backdateCreation(t *testing.T, tc *TestContext, table string, ids ...uint) {
+	t.Helper()
+	now := time.Now().UTC()
+	require.NoError(t, tc.DB.Table(table).Where("id IN ?", ids).UpdateColumns(map[string]any{
+		"created_at": now.Add(-2 * time.Hour), "updated_at": now.Add(-time.Hour),
+	}).Error)
+}
+
+func threeYears() []application_context.BucketBoundary {
+	return application_context.GenerateBucketBoundaries("yearly", time.Now(), 3)
+}
+
+func timelineTotals(buckets []models.TimelineBucket) (created, updated int64) {
+	for _, b := range buckets {
+		created += b.Created
+		updated += b.Updated
+	}
+	return created, updated
 }
 
 func listedResourceNames(t *testing.T, ctx *application_context.MahresourcesContext, q *query_models.ResourceSearchQuery) []string {
@@ -112,7 +136,7 @@ func assertResourceFilterFindsNothing(t *testing.T, ctx *application_context.Mah
 	require.NoError(t, err, label)
 	assert.Empty(t, tags, "%s: GetPopularResourceTags", label)
 
-	buckets, err := ctx.GetResourceTimelineCounts(q(), application_context.GenerateBucketBoundaries("yearly", time.Now(), 3))
+	buckets, err := ctx.GetResourceTimelineCounts(q(), threeYears())
 	require.NoError(t, err, label)
 	for _, b := range buckets {
 		assert.Zero(t, b.Created, "%s: timeline created %s", label, b.Label)
@@ -190,6 +214,11 @@ func runListFiltersDoNotReadOutsideTheSubtree(t *testing.T, tc *TestContext) {
 	for who, ctx := range unrestricted {
 		for _, l := range leaks {
 			assert.Equal(t, l.admin, listedResourceNames(t, ctx, l.query()), "%s/%s", who, l.name)
+			buckets, err := ctx.GetResourceTimelineCounts(l.query(), threeYears())
+			require.NoError(t, err)
+			created, updated := timelineTotals(buckets)
+			assert.Equal(t, int64(len(l.admin)), created, "%s/%s: timeline created", who, l.name)
+			assert.Equal(t, int64(len(l.admin)), updated, "%s/%s: timeline updated", who, l.name)
 		}
 	}
 
@@ -346,4 +375,39 @@ func TestRelationTypeGroupFiltersOverHTTP(t *testing.T) {
 		assert.NotContains(t, get(guestBearer, path), "type-A", "guest %s", path)
 		assert.Contains(t, get(adminBearer, path), "type-A", "admin %s", path)
 	}
+}
+
+// Over the wire, as a guest confined to inside-root: the timeline API answers
+// a filter that reads a hidden row as if nothing matched, while the same
+// request as admin shows the filter does match.
+func TestListFilterTimelinesOverHTTP(t *testing.T) {
+	tc := setupAuthEnv(t)
+	f := buildListFilterLeakFixture(t, tc)
+
+	guest, err := tc.AppCtx.CreateUser(&application_context.UserInput{
+		Username: "lft-guest", Password: "password1", Role: models.RoleGuest, ScopeGroupId: &f.root,
+	})
+	require.NoError(t, err)
+	raw, _, err := tc.AppCtx.CreateApiToken(guest.ID, "t", nil)
+	require.NoError(t, err)
+	guestBearer := "Bearer " + raw
+	adminBearer := unscopedAdminBearer(t, tc)
+
+	totals := func(bearer, path string) (int64, int64) {
+		t.Helper()
+		rr := doReq(tc, http.MethodGet, path+"&granularity=yearly&columns=3",
+			map[string]string{"Accept": "application/json", "Authorization": bearer}, nil, nil)
+		require.Equal(t, http.StatusOK, rr.Code, "%s: %s", path, rr.Body.String())
+		var resp models.TimelineResponse
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+		return timelineTotals(resp.Buckets)
+	}
+
+	path := "/v1/resources/timeline?ShowWithSimilar=1"
+	created, updated := totals(guestBearer, path)
+	assert.Zero(t, created, "guest %s created", path)
+	assert.Zero(t, updated, "guest %s updated", path)
+	created, updated = totals(adminBearer, path)
+	assert.Equal(t, int64(2), created, "admin %s created", path)
+	assert.Equal(t, int64(2), updated, "admin %s updated", path)
 }
