@@ -168,7 +168,7 @@ For each schema definition in the archive (categories, note types, resource cate
 
 The `--auto-map` CLI flag (on by default) accepts all unambiguous suggestions automatically. Set `--auto-map=false` to require a `--decisions` file with explicit choices for every mapping.
 
-A `create` of a Category or Resource Category keeps its templates, CSS, Meta schema, section config, indexed metadata keys and auto-detect rules only when an admin applies the import; a Note Type keeps them, and its "apply templates to shares" setting, when an editor or admin does. For any other role the definition is created with its name and description only, and the apply result lists a warning for it. Kept content is validated as it would be in the editor, and an invalid schema or rule set fails the apply. See [Authentication](./authentication.md#the-four-roles).
+A `create` of a Category or Resource Category keeps its templates, CSS, Meta schema, section config, indexed metadata keys and auto-detect rules only when an admin applies the import; a Note Type keeps them, and its "apply templates to shares" setting, when an editor or admin does. For any other role the definition is created with its name and description only, and the apply result lists a warning for it. Kept content is validated as it would be in the editor. A Meta schema or rule set that fails (one saved before the editor validated it this strictly, for instance) is cleared on the created definition, with a warning naming the definition and the field, and the rest of the archive imports normally; fix it in the editor afterwards. See [Authentication](./authentication.md#the-four-roles).
 
 ### Manifest-Only Imports
 

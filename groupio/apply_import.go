@@ -548,8 +548,8 @@ func (s *applyState) findGRTByCompositeKey(grt *models.GroupRelationType) (uint,
 // a create may keep. Import creates carrier rows at capWrite, but their payload
 // is the carrier's edit role's to author (admin for Categories and Resource
 // Categories, editor for Note Types), as on every other surface. Below that role
-// the payload is cleared and the import warns; at it the payload must pass the
-// save path's validation, or the apply fails.
+// the payload is cleared and the import warns; at it each field must pass the
+// save path's validation, and one that does not is cleared with a warning.
 //
 // It runs before CreateTemplateCarrierWithRevision, which snapshots the carrier
 // into revision #1: clearing afterwards would leave the payload in history.
@@ -577,6 +577,28 @@ func (s *applyState) gateCarrierPayload(carrierType, label string, carrier any, 
 		}
 		return nil
 	}
+	if s.ctx.carriers.ValidateTemplateCarrier(carrierType, snap) == nil {
+		return nil
+	}
+	// A field the save path refuses is cleared, not fatal. Archives carry such
+	// fields legitimately (a MetaSchema saved before the validator tightened,
+	// rules from an import that never validated, both exported verbatim), and
+	// phase 2 is not one transaction: failing here left every carrier before
+	// this one committed and nothing else imported.
+	for _, f := range models.TemplateFields(carrierType) {
+		v, _ := snap[f.Name].(string)
+		if v == "" {
+			continue
+		}
+		ferr := s.ctx.carriers.ValidateTemplateCarrier(carrierType, models.TemplateSnapshot{f.Name: v})
+		if ferr == nil {
+			continue
+		}
+		snap[f.Name] = ""
+		s.result.Warnings = append(s.result.Warnings, fmt.Sprintf(
+			"%s %q was created with its %s cleared: %v", label, name, f.Name, ferr))
+	}
+	models.ApplyTemplateSnapshot(carrierType, carrier, snap)
 	if err := s.ctx.carriers.ValidateTemplateCarrier(carrierType, snap); err != nil {
 		return fmt.Errorf("invalid %s %q: %w", label, name, err)
 	}

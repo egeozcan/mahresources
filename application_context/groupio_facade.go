@@ -69,7 +69,7 @@ func (g groupioCarriers) AuthorTemplateCarrier(carrierType string) error {
 }
 
 func (g groupioCarriers) ValidateTemplateCarrier(carrierType string, snap models.TemplateSnapshot) error {
-	return validateCarrierTemplates(carrierType, snap)
+	return validateCarrierFields(carrierType, snap)
 }
 
 // groupioDeps rebuilds the per-call dependencies every time, so it always

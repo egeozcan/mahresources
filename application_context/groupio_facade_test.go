@@ -583,31 +583,102 @@ func TestImport_CarrierTemplatesNeedTheCarriersEditRole(t *testing.T) {
 
 // Whatever an import keeps passes the same validation as a save: an archive
 // cannot carry rules or a schema the editor would refuse, even for an admin.
+// Such a field is not a reason to abort the apply, though: it exists in real
+// archives (a schema saved before the validator tightened, rules created by an
+// import that never validated, both exported verbatim), and phase 2 is not one
+// transaction, so failing left the carriers before it committed and nothing
+// else imported. The carrier is created with that field cleared, everything
+// else in the archive imports, and the import warns naming carrier and field.
 func TestImport_CarrierTemplatesAreValidatedLikeASave(t *testing.T) {
 	const okSchema = `{"type":"object"}`
 	const okRules = `{"contentTypes":["image/png"]}`
 	for _, tc := range []struct {
-		name, schema, rules, carrier string
-		model                        any
+		name, schema, rules string
+		// the carrier whose field is invalid, and the valid field of the other
+		// carrier, which is kept
+		carrier, field, table, column string
+		keptTable, keptColumn, kept   string
 	}{
-		{"invalid_rules", okSchema, `{"bogus":1}`, "GateRC", &models.ResourceCategory{}},
-		{"external_schema_ref", `{"$ref":"file:///etc/passwd"}`, okRules, "GateCat", &models.Category{}},
+		{"invalid_rules", okSchema, `{"contentTypes":["image/png"],"legacyKey":true}`,
+			"GateRC", "AutoDetectRules", "resource_categories", "auto_detect_rules",
+			"categories", "meta_schema", okSchema},
+		{"external_schema_ref", `{"$ref":"file:///etc/passwd"}`, okRules,
+			"GateCat", "MetaSchema", "categories", "meta_schema",
+			"resource_categories", "auto_detect_rules", okRules},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			tar := exportTemplateCarriers(t, "carrier_validate_"+tc.name, tc.schema, tc.rules)
-			dst := createFacadeContext(t, "carrier_validate_dst_"+tc.name)
-			admin := dst.WithPrincipal(&auth.Principal{UserID: 601, Role: models.RoleAdmin})
+		for _, who := range []struct {
+			name      string
+			principal *auth.Principal
+		}{
+			{"admin", &auth.Principal{UserID: 601, Role: models.RoleAdmin}},
+			{"no_principal", nil},
+		} {
+			t.Run(tc.name+"_"+who.name, func(t *testing.T) {
+				tar := exportTemplateCarriers(t, "carrier_validate_"+tc.name+"_"+who.name, tc.schema, tc.rules)
+				dst := createFacadeContext(t, "carrier_validate_dst_"+tc.name+"_"+who.name)
+				importer := dst
+				if who.principal != nil {
+					importer = dst.WithPrincipal(who.principal)
+				}
 
-			_, err := importFacadeArchive(t, admin, "carrier-validate-"+tc.name, tar)
-			if err == nil || !strings.Contains(err.Error(), tc.carrier) {
-				t.Fatalf("ApplyImport err = %v, want a refusal naming %s", err, tc.carrier)
-			}
-			var n int64
-			dst.db.Model(tc.model).Where("name = ?", tc.carrier).Count(&n)
-			if n != 0 {
-				t.Errorf("%s was created with content the save path refuses", tc.carrier)
-			}
-		})
+				result, err := importFacadeArchive(t, importer, "carrier-validate-"+tc.name+"-"+who.name, tar)
+				if err != nil {
+					t.Fatalf("ApplyImport: %v", err)
+				}
+				if result.CreatedCategories != 1 || result.CreatedNoteTypes != 1 || result.CreatedResourceCategories != 1 || result.CreatedGroups != 1 {
+					t.Errorf("created cats=%d nts=%d rcs=%d groups=%d, want 1 each: the rest of the archive imports",
+						result.CreatedCategories, result.CreatedNoteTypes, result.CreatedResourceCategories, result.CreatedGroups)
+				}
+
+				var row struct {
+					ID           uint
+					Value        string
+					CustomHeader string
+				}
+				if err := dst.db.Table(tc.table).Select("id, "+tc.column+" AS value, custom_header").
+					Where("name = ?", tc.carrier).Take(&row).Error; err != nil {
+					t.Fatalf("%s was not created: %v", tc.carrier, err)
+				}
+				if row.Value != "" {
+					t.Errorf("%s.%s = %q, want empty: the save path refuses it", tc.carrier, tc.field, row.Value)
+				}
+				if row.CustomHeader == "" {
+					t.Errorf("%s lost its CustomHeader: only the invalid field is cleared", tc.carrier)
+				}
+				var rev models.TemplateRevision
+				if err := dst.db.Where("carrier_id = ? AND number = 1", row.ID).
+					Where("carrier_type = ?", map[string]string{"categories": models.TemplateCarrierCategory, "resource_categories": models.TemplateCarrierResourceCategory}[tc.table]).
+					Take(&rev).Error; err != nil {
+					t.Fatalf("%s has no import revision: %v", tc.carrier, err)
+				}
+				revSnap, err := models.ParseTemplateSnapshot(rev.Snapshot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if v, _ := revSnap[tc.field].(string); v != "" {
+					t.Errorf("%s revision #1 %s = %q, want empty: the refused value must not reach history", tc.carrier, tc.field, v)
+				}
+
+				var kept string
+				dst.db.Table(tc.keptTable).Select(tc.keptColumn).Where("name IN ?", []string{"GateCat", "GateRC"}).Take(&kept)
+				if kept != tc.kept {
+					t.Errorf("%s.%s = %q, want the valid %q kept", tc.keptTable, tc.keptColumn, kept, tc.kept)
+				}
+
+				warned := false
+				for _, w := range result.Warnings {
+					if strings.Contains(w, tc.carrier) && strings.Contains(w, tc.field) {
+						warned = true
+						if strings.Contains(w, "template revision") {
+							t.Errorf("warning speaks of a template revision in an import: %q", w)
+						}
+					}
+				}
+				if !warned {
+					t.Errorf("no warning names %s and %s; warnings = %v", tc.carrier, tc.field, result.Warnings)
+				}
+			})
+		}
 	}
 }
 

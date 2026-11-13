@@ -113,15 +113,24 @@ func (ctx *MahresourcesContext) recordTemplateRevision(tx *gorm.DB, kind, carrie
 // state. Restore never bypasses it: a revision whose raw content no longer
 // validates is refused, naming the field, and the user repairs it in the editor.
 func validateCarrierTemplates(carrierType string, snap models.TemplateSnapshot) error {
+	if err := validateCarrierFields(carrierType, snap); err != nil {
+		return fmt.Errorf("%w: %v", ErrTemplateRevisionInvalid, err)
+	}
+	return nil
+}
+
+// validateCarrierFields is that validation without the revision framing, for a
+// caller that is not saving or restoring a revision (group import).
+func validateCarrierFields(carrierType string, snap models.TemplateSnapshot) error {
 	if s, _ := snap["MetaSchema"].(string); s != "" {
 		if err := ValidateMetaSchema(s); err != nil {
-			return fmt.Errorf("%w: MetaSchema is invalid: %v", ErrTemplateRevisionInvalid, err)
+			return fmt.Errorf("MetaSchema is invalid: %v", err)
 		}
 	}
 	if carrierType == models.TemplateCarrierResourceCategory {
 		if s, _ := snap["AutoDetectRules"].(string); s != "" {
 			if err := ValidateAutoDetectRules(s); err != nil {
-				return fmt.Errorf("%w: AutoDetectRules is invalid: %v", ErrTemplateRevisionInvalid, err)
+				return fmt.Errorf("AutoDetectRules is invalid: %v", err)
 			}
 		}
 	}

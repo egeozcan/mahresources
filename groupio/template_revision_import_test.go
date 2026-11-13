@@ -216,8 +216,10 @@ func TestApplyImport_CarrierPayloadFollowsTheCarrierAuthority(t *testing.T) {
 	}
 }
 
-// A payload the authority refuses to validate fails the apply, and the carrier
-// is not created.
+// A field the authority refuses is cleared with a warning
+// (TestImport_CarrierTemplatesAreValidatedLikeASave). A payload it still
+// refuses once every refused field is cleared fails the apply, and the carrier
+// is not created: what is stored always passes.
 func TestApplyImport_InvalidCarrierPayloadFailsTheApply(t *testing.T) {
 	tar := exportSchemaDefs(t, "carrier_invalid")
 	dst := newRevisionImportCtx(t, "carrier_invalid_dst")
