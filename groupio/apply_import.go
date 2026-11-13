@@ -2060,7 +2060,7 @@ func (s *applyState) applyOneNote(tx *gorm.DB, exportID string, np *archive.Note
 	batch.createdNoteIDs = append(batch.createdNoteIDs, n.ID)
 
 	// Create NoteBlock rows (validated like every live block writer)
-	blocks, err := s.importedBlocks(n.ID, n.Name, np.Blocks)
+	blocks, err := s.importedBlocks(n.ID, n.Name, np.Blocks, false)
 	if err != nil {
 		return err
 	}
@@ -2664,7 +2664,7 @@ func (s *applyState) replaceNote(tx *gorm.DB, existing *models.Note, np *archive
 	// Blocks: delete existing, create incoming. The incoming set is built and
 	// validated first, so a block that cannot be stored refuses the replace
 	// before anything is deleted.
-	blocks, err := s.importedBlocks(existing.ID, np.Name, np.Blocks)
+	blocks, err := s.importedBlocks(existing.ID, np.Name, np.Blocks, true)
 	if err != nil {
 		return err
 	}
@@ -2730,19 +2730,32 @@ func findGRTDef(defs []archive.GroupRelationTypeDef, exportID string) *archive.G
 // registry) so import cannot store content that CreateBlock/UpdateBlockContent
 // would reject.
 //
-// Nothing is dropped. A block whose state fails validation keeps its content
-// and gets the type's default state, with a warning: state is UI state and the
-// default is always valid. A block of an unknown type (its plugin is not
-// loaded) or with content its type rejects (saved under older rules) is an
-// error, which fails the note's transaction. Skipping it instead would lose it:
-// a replace deletes the note's existing blocks, so a self-restore would destroy
-// the very block the archive carries.
-func (s *applyState) importedBlocks(noteID uint, noteName string, blocks []archive.NoteBlockPayload) ([]models.NoteBlock, error) {
+// A block whose state fails validation keeps its content and gets the type's
+// default state, with a warning: state is UI state and the default is always
+// valid. A block of an unknown type (its plugin is not loaded) or with content
+// its type rejects (saved under older rules) is never stored. What happens to
+// it depends on replacing:
+//   - replacing an existing note: an error, which fails the note's transaction.
+//     A replace deletes the note's existing blocks, so skipping the block would
+//     let a self-restore destroy the very block the archive carries.
+//   - creating a note: skipped with a warning. There is nothing to protect, and
+//     failing would stop the apply after groups and resources are committed,
+//     rolling back every other note in the batch.
+func (s *applyState) importedBlocks(noteID uint, noteName string, blocks []archive.NoteBlockPayload, replacing bool) ([]models.NoteBlock, error) {
 	rows := make([]models.NoteBlock, 0, len(blocks))
 	for _, bp := range blocks {
 		bt := block_types.GetBlockType(bp.Type)
 		if bt == nil {
-			return nil, fmt.Errorf("block %q at position %s of note %q: unknown block type (enable the plugin that provides it and import again)", bp.Type, bp.Position, noteName)
+			err := fmt.Errorf("block %q at position %s of note %q: unknown block type (enable the plugin that provides it and import again)", bp.Type, bp.Position, noteName)
+			if replacing {
+				return nil, err
+			}
+			// merge leaves an existing note's blocks alone, so only a replace
+			// re-import restores the block.
+			s.result.Warnings = append(s.result.Warnings, fmt.Sprintf(
+				"skipped block %q at position %s of note %q: unknown block type (enable the plugin that provides it, then import again with the replace GUID collision policy)",
+				bp.Type, bp.Position, noteName))
+			continue
 		}
 		content := bt.DefaultContent()
 		if bp.Content != nil {
@@ -2761,7 +2774,13 @@ func (s *applyState) importedBlocks(noteID uint, noteName string, blocks []archi
 			state = st
 		}
 		if err := bt.ValidateContent(content); err != nil {
-			return nil, fmt.Errorf("block %q at position %s of note %q: invalid content: %w", bp.Type, bp.Position, noteName, err)
+			err = fmt.Errorf("block %q at position %s of note %q: invalid content: %w", bp.Type, bp.Position, noteName, err)
+			if replacing {
+				return nil, err
+			}
+			s.result.Warnings = append(s.result.Warnings, "skipped "+err.Error()+
+				" (fix the block at the source, export again, then import with the replace GUID collision policy)")
+			continue
 		}
 		if err := bt.ValidateState(state); err != nil {
 			s.result.Warnings = append(s.result.Warnings,

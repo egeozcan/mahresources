@@ -131,11 +131,10 @@ func TestApplyImport_ResetsAnInvalidBlockState(t *testing.T) {
 	check("blocks-state-replace", f.ctx, "replace")
 }
 
-// A block the destination cannot store as it is (an unknown type, or content
-// its type rejects) fails the import rather than being dropped. Dropping it
-// silently loses it: on a replace the note's existing blocks are deleted
-// first, so a self-restore would destroy them for good.
-func TestApplyImport_RefusesABlockItCannotStore(t *testing.T) {
+// A replace that cannot store an archive block (an unknown type, or content its
+// type rejects) fails rather than dropping it: the note's existing blocks are
+// deleted first, so a self-restore would destroy them for good.
+func TestApplyImport_ReplaceRefusesABlockItCannotStore(t *testing.T) {
 	block_types.RegisterBlockType(strictBlockType{})
 	t.Cleanup(func() { block_types.UnregisterBlockType("test:strict") })
 
@@ -155,7 +154,6 @@ func TestApplyImport_RefusesABlockItCannotStore(t *testing.T) {
 			})
 			before := blocksOf(t, f.ctx)
 
-			// Replace into the instance the archive came from: nothing is lost.
 			if _, err := importBlockArchive(t, f.ctx, f.tar, "replace", "refuse-replace-"+src); err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("replace: want an error mentioning %q, got %v", c.want, err)
 			}
@@ -168,14 +166,77 @@ func TestApplyImport_RefusesABlockItCannotStore(t *testing.T) {
 					t.Fatalf("replace changed block %d: before %+v, after %+v", i, before[i], after[i])
 				}
 			}
+		})
+	}
+}
 
-			// Create into a fresh instance: refused, not silently short a block.
-			dst := createGUIDIsolatedContext(t, "blocks_refuse_dst_"+src)
-			if _, err := importBlockArchive(t, dst, f.tar, "", "refuse-create-"+src); err == nil || !strings.Contains(err.Error(), c.want) {
-				t.Fatalf("create: want an error mentioning %q, got %v", c.want, err)
+// Creating a note has no existing blocks to protect, so an archive block the
+// destination cannot store (its plugin is not enabled there, or it was saved
+// under older content rules) is skipped with a warning. The note, its other
+// blocks, the other notes and the rest of the archive still import. Refusing
+// here stopped the apply after groups and resources were committed and rolled
+// back the whole note batch, for an archive that is ordinary manifest v1
+// traffic between instances with different plugin sets.
+func TestApplyImport_CreateSkipsABlockItCannotStore(t *testing.T) {
+	block_types.RegisterBlockType(strictBlockType{})
+	t.Cleanup(func() { block_types.UnregisterBlockType("test:strict") })
+
+	cases := map[string]models.NoteBlock{
+		"invalid content": {Type: "test:strict", Position: "b", Content: types.JSON(`{"n":"<img>"}`), State: types.JSON(`{}`)},
+		"unknown type":    {Type: "plugin:project-management:subtasks", Position: "b", Content: types.JSON(`{}`), State: types.JSON(`{}`)},
+		"legacy calendar": {Type: "calendar", Position: "b", Content: types.JSON(`{"calendars":[{"id":"c1","name":"Work","source":{"type":"url","url":"webcal://example.com/x.ics"}}]}`), State: types.JSON(`{}`)},
+	}
+	for name, bad := range cases {
+		t.Run(name, func(t *testing.T) {
+			src := strings.ReplaceAll(name, " ", "_")
+			// A plain note beside the blocky one: it shares the note batch.
+			srcCtx := createGUIDIsolatedContext(t, "blocks_skip_"+src)
+			root := mustCreateGroup(t, srcCtx, "Root", nil)
+			mustCreateNote(t, srcCtx, "Plain", &root.ID)
+			blocky := mustCreateNote(t, srcCtx, "Blocky", &root.ID)
+			for _, b := range []models.NoteBlock{
+				{Type: "text", Position: "a", Content: types.JSON(`{"text":"keep"}`), State: types.JSON(`{}`)},
+				bad,
+			} {
+				b.NoteID = blocky.ID
+				if err := srcCtx.db.Create(&b).Error; err != nil {
+					t.Fatal(err)
+				}
 			}
-			if got := blocksOf(t, dst); len(got) != 0 {
-				t.Fatalf("create stored blocks of a refused note: %+v", got)
+			var tarBuf bytes.Buffer
+			if err := srcCtx.StreamExport(context.Background(), &ExportRequest{
+				RootGroupIDs: []uint{root.ID},
+				Scope:        archive.ExportScope{Subtree: true, OwnedNotes: true},
+			}, &tarBuf, func(ProgressEvent) {}); err != nil {
+				t.Fatalf("export: %v", err)
+			}
+
+			dst := createGUIDIsolatedContext(t, "blocks_skip_dst_"+src)
+			result, err := importBlockArchive(t, dst, tarBuf.Bytes(), "", "skip-create-"+src)
+			if err != nil {
+				t.Fatalf("create: want the import to succeed, got %v", err)
+			}
+			var notes []models.Note
+			if err := dst.db.Order("name").Find(&notes).Error; err != nil {
+				t.Fatal(err)
+			}
+			if len(notes) != 2 || notes[0].Name != "Blocky" || notes[1].Name != "Plain" {
+				t.Fatalf("create: want both notes imported, got %+v", notes)
+			}
+			got := blocksOf(t, dst)
+			if len(got) != 1 || got[0].Type != "text" || got[0].NoteID != notes[0].ID || !strings.Contains(string(got[0].Content), "keep") {
+				t.Fatalf("create: want only the storable block, got %+v", got)
+			}
+			skipped := 0
+			for _, w := range result.Warnings {
+				// merge never rewrites an existing note's blocks, so the
+				// warning must point at a replace re-import.
+				if strings.Contains(w, "skipped block") && strings.Contains(w, bad.Type) && strings.Contains(w, "replace GUID collision policy") {
+					skipped++
+				}
+			}
+			if skipped != 1 {
+				t.Errorf("create: want 1 skipped-block warning for %s, got %v", bad.Type, result.Warnings)
 			}
 		})
 	}
