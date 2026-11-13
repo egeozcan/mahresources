@@ -66,6 +66,7 @@ func buildListFilterLeakFixture(t *testing.T, tc *TestContext) listFilterLeakFix
 	create(&models.ImageHash{ResourceId: &outsideRes.ID, DHash: "dup"})
 	// A row's timeline "updated" bucket needs updated_at after created_at.
 	backdateCreation(t, tc, "resources", insideRes.ID, outsideRes.ID)
+	backdateCreation(t, tc, "notes", insideNote.ID, outsideNote.ID)
 
 	return listFilterLeakFixture{
 		catA: catA.ID, catB: catB.ID, typeA: typeA.ID, typeB: typeB.ID,
@@ -264,12 +265,14 @@ func runListFiltersDoNotReadOutsideTheSubtree(t *testing.T, tc *TestContext) {
 	assert.Empty(t, page.Items, "scoped note picker Groups filter")
 	buckets, err := scoped.GetNoteTimelineCounts(&query_models.NoteQuery{Groups: []uint{f.outside}}, threeYears())
 	require.NoError(t, err)
-	created, _ := timelineTotals(buckets)
+	created, updated := timelineTotals(buckets)
 	assert.Zero(t, created, "scoped note timeline created")
+	assert.Zero(t, updated, "scoped note timeline updated")
 	buckets, err = tc.AppCtx.GetNoteTimelineCounts(&query_models.NoteQuery{Groups: []uint{f.outside}}, threeYears())
 	require.NoError(t, err)
-	created, _ = timelineTotals(buckets)
+	created, updated = timelineTotals(buckets)
 	assert.Equal(t, int64(2), created, "admin note timeline created")
+	assert.Equal(t, int64(2), updated, "admin note timeline updated")
 }
 
 func TestRelationTypeGroupFiltersHideInvisibleGroups(t *testing.T) {
@@ -420,8 +423,10 @@ func TestListFilterTimelinesOverHTTP(t *testing.T) {
 	assert.Equal(t, int64(2), updated, "admin %s updated", path)
 
 	path = fmt.Sprintf("/v1/notes/timeline?Groups=%d", f.outside)
-	created, _ = totals(guestBearer, path)
+	created, updated = totals(guestBearer, path)
 	assert.Zero(t, created, "guest %s created", path)
-	created, _ = totals(adminBearer, path)
+	assert.Zero(t, updated, "guest %s updated", path)
+	created, updated = totals(adminBearer, path)
 	assert.Equal(t, int64(2), created, "admin %s created", path)
+	assert.Equal(t, int64(2), updated, "admin %s updated", path)
 }
