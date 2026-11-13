@@ -262,6 +262,14 @@ func runListFiltersDoNotReadOutsideTheSubtree(t *testing.T, tc *TestContext) {
 	page, err := scoped.BrowseEntities(&query_models.EntityPickerQuery{Entity: "note", Filter: fmt.Sprintf("Groups=%d", f.outside)})
 	require.NoError(t, err)
 	assert.Empty(t, page.Items, "scoped note picker Groups filter")
+	buckets, err := scoped.GetNoteTimelineCounts(&query_models.NoteQuery{Groups: []uint{f.outside}}, threeYears())
+	require.NoError(t, err)
+	created, _ := timelineTotals(buckets)
+	assert.Zero(t, created, "scoped note timeline created")
+	buckets, err = tc.AppCtx.GetNoteTimelineCounts(&query_models.NoteQuery{Groups: []uint{f.outside}}, threeYears())
+	require.NoError(t, err)
+	created, _ = timelineTotals(buckets)
+	assert.Equal(t, int64(2), created, "admin note timeline created")
 }
 
 func TestRelationTypeGroupFiltersHideInvisibleGroups(t *testing.T) {
@@ -410,4 +418,10 @@ func TestListFilterTimelinesOverHTTP(t *testing.T) {
 	created, updated = totals(adminBearer, path)
 	assert.Equal(t, int64(2), created, "admin %s created", path)
 	assert.Equal(t, int64(2), updated, "admin %s updated", path)
+
+	path = fmt.Sprintf("/v1/notes/timeline?Groups=%d", f.outside)
+	created, _ = totals(guestBearer, path)
+	assert.Zero(t, created, "guest %s created", path)
+	created, _ = totals(adminBearer, path)
+	assert.Equal(t, int64(2), created, "admin %s created", path)
 }
