@@ -280,6 +280,18 @@ func runListFiltersDoNotReadOutsideTheSubtree(t *testing.T, tc *TestContext) {
 	require.NoError(t, err)
 	require.Len(t, tags, 1, "admin popular note tags")
 	assert.Equal(t, "lf-tag", tags[0].Name, "admin popular note tags")
+	// Mass edit's filter target counts through the same note builder; a guest
+	// cannot mass-edit, so the scoped user stands in for it.
+	noteMassEdit := func(ctx *application_context.MahresourcesContext) int64 {
+		t.Helper()
+		result, err := ctx.MassEditNotes(&query_models.MassEditQuery{
+			Target: "filter", Filter: fmt.Sprintf("Groups=%d", f.outside), DryRun: true, TagsOp: "add", TagIds: []uint{f.tagT},
+		})
+		require.NoError(t, err)
+		return result.Matched
+	}
+	assert.Zero(t, noteMassEdit(principalCtx(tc, models.RoleUser, &root)), "scoped user note mass-edit filter count")
+	assert.Equal(t, int64(2), noteMassEdit(tc.AppCtx), "admin note mass-edit filter count")
 }
 
 func TestRelationTypeGroupFiltersHideInvisibleGroups(t *testing.T) {
