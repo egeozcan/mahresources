@@ -138,6 +138,81 @@ func isContextMethod(fn *ast.FuncDecl) bool {
 	return ok && id.Name == "MahresourcesContext"
 }
 
+// TestUpdateGroupTakesTheTreeLockFirstAndUnconditionally pins part of the #113
+// fix that no SQLite test can see, because lockGroupTreeMutation is a no-op
+// there and CI runs no Postgres tests. UpdateGroup clears the owner when
+// OwnerId is 0, and that is a re-parent to the root. If the lock is taken only
+// when OwnerId != 0 (the upstream shape), a stale scoped re-parent on Postgres
+// can queue on the row behind an admin's uncommitted owner clear, still match
+// its constant allow-list once the clear commits, and put the group back
+// under the scoped user's subtree. The lock must therefore be the first
+// statement of UpdateGroup's transaction, outside any branch.
+// TestUpdateGroup_OwnerClearTakesTheTreeLock_Postgres and
+// TestUpdateGroup_ScopedReparentQueuedBehindAdminOwnerClear_Postgres in
+// application_context check the behaviour.
+func TestUpdateGroupTakesTheTreeLockFirstAndUnconditionally(t *testing.T) {
+	path := filepath.Join(moduleRoot(t), "application_context", "group_crud_context.go")
+	file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+
+	var update *ast.FuncDecl
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "UpdateGroup" && isContextMethod(fn) && fn.Body != nil {
+			update = fn
+		}
+	}
+	if update == nil {
+		t.Fatal("UpdateGroup not found in application_context/group_crud_context.go (moved? update this test)")
+	}
+
+	var txBodies []*ast.BlockStmt
+	ast.Inspect(update.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "Transaction" || len(call.Args) == 0 {
+			return true
+		}
+		if lit, ok := call.Args[0].(*ast.FuncLit); ok {
+			txBodies = append(txBodies, lit.Body)
+		}
+		return true
+	})
+	if len(txBodies) != 1 {
+		t.Fatalf("UpdateGroup opens %d transactions with a function literal, want 1 (restructured? update this test)", len(txBodies))
+	}
+
+	body := txBodies[0]
+	if len(body.List) == 0 || !isTreeLockStmt(body.List[0]) {
+		t.Fatal("UpdateGroup's transaction does not start with an unconditional " +
+			"`if err := ctx.lockGroupTreeMutation(tx); err != nil { ... }`.\n" +
+			"An owner clear (OwnerId 0) is a re-parent to the root and must take the tree lock " +
+			"before any group row is read, or a parked scoped re-parent can undo it on Postgres (#113).")
+	}
+}
+
+// isTreeLockStmt reports whether stmt is `if err := <x>.lockGroupTreeMutation(...); ...`.
+func isTreeLockStmt(stmt ast.Stmt) bool {
+	ifStmt, ok := stmt.(*ast.IfStmt)
+	if !ok {
+		return false
+	}
+	assign, ok := ifStmt.Init.(*ast.AssignStmt)
+	if !ok || len(assign.Rhs) != 1 {
+		return false
+	}
+	call, ok := assign.Rhs[0].(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	return ok && sel.Sel.Name == "lockGroupTreeMutation"
+}
+
 func containsAll(s string, subs []string) bool {
 	for _, sub := range subs {
 		if !strings.Contains(s, sub) {

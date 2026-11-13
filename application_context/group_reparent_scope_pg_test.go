@@ -156,3 +156,119 @@ func TestUpdateGroup_ScopedReparentQueuedBehindAdminMove_Postgres(t *testing.T) 
 		t.Fatalf("B's owner = %v, want %d", got, out.ID)
 	}
 }
+
+// Clearing the owner is a re-parent to the root, so an admin's owner clear
+// must take the tree lock like any other re-parent (#113). Without it a stale
+// scoped re-parent takes the free lock, passes its target recheck while the
+// clear is uncommitted, queues on B's row lock and, once the clear commits,
+// still matches its constant allow-list predicate: B goes back under A.
+func TestUpdateGroup_OwnerClearTakesTheTreeLock_Postgres(t *testing.T) {
+	ctx, _, _, b, _, _ := newReparentScopePGFixture(t)
+
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- ctx.db.Transaction(func(tx *gorm.DB) error {
+			if err := ctx.lockGroupTreeMutation(tx); err != nil {
+				return err
+			}
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-locked:
+	case <-time.After(10 * time.Second):
+		t.Fatal("holder never took the tree lock")
+	}
+
+	clearDone := make(chan error, 1)
+	go func() {
+		clear := query_models.GroupEditor{}
+		clear.ID, clear.Name, clear.OwnerId = b.ID, "B", 0
+		_, err := ctx.UpdateGroup(&clear)
+		clearDone <- err
+	}()
+	select {
+	case err := <-clearDone:
+		close(release)
+		<-holderDone
+		t.Fatalf("admin owner clear did not wait for the tree lock: err=%v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	close(release)
+	if err := <-holderDone; err != nil {
+		t.Fatalf("lock holder: %v", err)
+	}
+	select {
+	case err := <-clearDone:
+		if err != nil {
+			t.Fatalf("admin owner clear: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("admin owner clear never finished")
+	}
+	if got := pgGroupOwner(t, ctx, b.ID); got != nil {
+		t.Fatalf("B's owner = %d, want none", *got)
+	}
+}
+
+// The race the lock above closes, through the real UpdateGroup on both sides:
+// a stale scoped re-parent arriving while an admin's owner clear is in flight
+// must not undo the clear.
+func TestUpdateGroup_ScopedReparentQueuedBehindAdminOwnerClear_Postgres(t *testing.T) {
+	ctx, _, a, b, _, p := newReparentScopePGFixture(t)
+	stale := ctx.WithPrincipal(p)
+
+	cleared := make(chan struct{})
+	release := make(chan struct{})
+	adminDone := make(chan error, 1)
+	go func() {
+		adminDone <- ctx.WithTransaction(func(txc *MahresourcesContext) error {
+			clear := query_models.GroupEditor{}
+			clear.ID, clear.Name, clear.OwnerId = b.ID, "B", 0
+			if _, err := txc.UpdateGroup(&clear); err != nil {
+				return err
+			}
+			close(cleared)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-cleared:
+	case err := <-adminDone:
+		t.Fatalf("admin owner clear: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("admin owner clear never ran")
+	}
+
+	scopedDone := make(chan error, 1)
+	go func() {
+		back := query_models.GroupEditor{}
+		back.ID, back.Name, back.OwnerId = b.ID, "B", a.ID
+		_, err := stale.UpdateGroup(&back)
+		scopedDone <- err
+	}()
+	// Let the scoped write reach whatever it blocks on before the admin
+	// commits: the tree lock with the fix, B's row lock without it.
+	time.Sleep(500 * time.Millisecond)
+	close(release)
+	if err := <-adminDone; err != nil {
+		t.Fatalf("admin owner clear: %v", err)
+	}
+
+	select {
+	case err := <-scopedDone:
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			t.Fatalf("queued scoped re-parent: err=%v, want ErrRecordNotFound", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("queued scoped re-parent never finished")
+	}
+	if got := pgGroupOwner(t, ctx, b.ID); got != nil {
+		t.Fatalf("admin owner clear undone: B's owner = %d, want none", *got)
+	}
+}
