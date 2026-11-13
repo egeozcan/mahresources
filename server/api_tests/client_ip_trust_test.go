@@ -139,13 +139,26 @@ func TestAuditClientIP_AdminSettingsActor(t *testing.T) {
 	tc := setupAuthEnv(t)
 	tc.AppCtx.Settings().SetAuditor(application_context.NewContextAuditor(tc.AppCtx))
 	admin := roleBearer(t, tc, models.RoleAdmin)
-	rr := doReq(tc, http.MethodPut, "/v1/admin/settings/max_upload_size",
-		map[string]string{"Content-Type": "application/json", "Authorization": admin, "X-Forwarded-For": "6.6.6.6"}, nil,
-		strings.NewReader(`{"value":"1048576"}`))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("set: %d %s", rr.Code, rr.Body.String())
+	hdr := map[string]string{"Content-Type": "application/json", "Authorization": admin, "X-Forwarded-For": "6.6.6.6"}
+	var lastID uint
+	// Each settings write path (single set, bulk apply) passes its own
+	// actor IP to the auditor, so each must write a fresh audit row that
+	// records the socket address rather than the forged header.
+	step := func(name, method, path, body string) {
+		t.Helper()
+		rr := doReq(tc, method, path, hdr, nil, strings.NewReader(body))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", name, rr.Code, rr.Body.String())
+		}
+		e := newestLog(t, tc, "runtime_setting")
+		if e.ID == lastID {
+			t.Fatalf("%s: no new runtime_setting audit row", name)
+		}
+		lastID = e.ID
+		if e.IPAddress != "192.0.2.1" {
+			t.Fatalf("%s: forged XFF recorded: %q", name, e.IPAddress)
+		}
 	}
-	if got := newestLog(t, tc, "runtime_setting").IPAddress; got != "192.0.2.1" {
-		t.Fatalf("forged XFF recorded: %q", got)
-	}
+	step("set", http.MethodPut, "/v1/admin/settings/max_upload_size", `{"value":"1048576"}`)
+	step("apply", http.MethodPut, "/v1/admin/settings", `{"values":{"max_upload_size":"2097152"}}`)
 }
