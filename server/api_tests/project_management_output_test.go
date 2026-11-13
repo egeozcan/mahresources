@@ -9,8 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"mahresources/auth"
 	"mahresources/models"
 	"mahresources/models/types"
+	"mahresources/plugin_system"
 	"mahresources/shortcodes"
 
 	"github.com/stretchr/testify/assert"
@@ -88,4 +90,30 @@ func TestProjectManagementSubtaskLinkRejectsForgedTaskID(t *testing.T) {
 	for _, mode := range []string{"view", "edit"} {
 		assert.Contains(t, get(good, mode), `href="/note?id=7"`, mode)
 	}
+
+	// The router runs with auth off, so every request above can write and the
+	// view shows a toggle button. A reader who cannot write gets the label as
+	// a task link instead, which is a third task_id sink.
+	note, err := tc.AppCtx.GetNote(task)
+	require.NoError(t, err)
+	pm := tc.AppCtx.PluginManager()
+	readOnly := auth.WithPrincipal(context.Background(), &auth.Principal{Role: models.RoleGuest})
+	viewAsGuest := func(id uint) string {
+		var b models.NoteBlock
+		require.NoError(t, tc.DB.First(&b, id).Error)
+		var content, state map[string]any
+		require.NoError(t, json.Unmarshal(b.Content, &content))
+		require.NoError(t, json.Unmarshal(b.State, &state))
+		html, err := pm.RenderBlock(readOnly, "project-management", b.Type, "view", plugin_system.BlockRenderContext{
+			Block: plugin_system.BlockRenderData{ID: b.ID, Content: content, State: state, Position: b.Position},
+			Note:  plugin_system.NoteRenderData{ID: note.ID, Name: note.Name},
+		})
+		require.NoError(t, err)
+		return html
+	}
+	body := viewAsGuest(bad)
+	assert.NotContains(t, body, "<img", "read-only view")
+	assert.NotContains(t, body, "onerror", "read-only view")
+	assert.NotContains(t, body, `href="/note?id="`, "read-only view")
+	assert.Contains(t, viewAsGuest(good), `<a href="/note?id=7">x</a>`, "read-only view links the label to the task")
 }
