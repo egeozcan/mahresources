@@ -39,6 +39,18 @@ func TestClientIP_TrustGating(t *testing.T) {
 	if got := ClientIP(junk, true); got != "203.0.113.7" {
 		t.Errorf("unparseable XFF must fall back to the peer, got %q", got)
 	}
+	// Proxies such as Azure Application Gateway append the client as ip:port.
+	for xff, want := range map[string]string{
+		"1.2.3.4:5678":       "1.2.3.4",
+		"[2001:db8::1]:443":  "2001:db8::1",
+		"evil.example:80":    "203.0.113.7",
+		"6.6.6.6, garbage:1": "203.0.113.7",
+	} {
+		r := clientIPReq("203.0.113.7:1", map[string]string{"X-Forwarded-For": xff})
+		if got := ClientIP(r, true); got != want {
+			t.Errorf("XFF %q: got %q want %q", xff, got, want)
+		}
+	}
 	multi := clientIPReq("203.0.113.7:1", map[string]string{"X-Forwarded-For": "6.6.6.6, 10.9.9.9"})
 	if got := ClientIP(multi, true); got != "10.9.9.9" {
 		t.Errorf("rightmost XFF entry expected, got %q", got)

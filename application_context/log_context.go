@@ -217,13 +217,13 @@ func truncateString(s string, maxLen int) string {
 // it is the address the proxy itself saw or appended, whereas everything to its
 // left was supplied by the client and is forgeable. All header lines are
 // considered, because a proxy may add its hop as a separate line. The entry must
-// parse as an IP; otherwise (and when trustProxy is off) the host part of
+// parse as an IP, optionally with a port; otherwise (and when trustProxy is off) the host part of
 // RemoteAddr is returned. X-Real-IP is never read: proxies such as Caddy pass a
 // client-supplied one through unchanged.
 func ClientIP(r *http.Request, trustProxy bool) string {
 	if trustProxy {
 		if hop := rightmostForwardedFor(r.Header.Values("X-Forwarded-For")); hop != "" {
-			if addr, err := netip.ParseAddr(hop); err == nil {
+			if addr, ok := parseForwardedHop(hop); ok {
 				return truncateString(addr.Unmap().String(), 45)
 			}
 		}
@@ -239,6 +239,22 @@ func ClientIP(r *http.Request, trustProxy bool) string {
 		ip = ip[:idx]
 	}
 	return truncateString(ip, 45)
+}
+
+// parseForwardedHop parses one X-Forwarded-For entry as an IP. Some proxies
+// (Azure Application Gateway by default, IIS ARR when configured) append the
+// client as "ip:port" or "[v6]:port", so when the entry is not a bare IP its
+// host part is tried; it must still be a valid IP.
+func parseForwardedHop(hop string) (netip.Addr, bool) {
+	if addr, err := netip.ParseAddr(hop); err == nil {
+		return addr, true
+	}
+	if host, _, err := net.SplitHostPort(hop); err == nil {
+		if addr, err := netip.ParseAddr(host); err == nil {
+			return addr, true
+		}
+	}
+	return netip.Addr{}, false
 }
 
 // rightmostForwardedFor returns the last non-empty element across all

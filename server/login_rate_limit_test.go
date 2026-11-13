@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -333,6 +334,10 @@ func TestClientIP_XFFTrust(t *testing.T) {
 		{"invalid rightmost never walks left", "127.0.0.1:1111", []string{"6.6.6.6, garbage"}, true, "127.0.0.1"},
 		{"oversized garbage", "127.0.0.1:1111", []string{strings.Repeat("x", 5000)}, true, "127.0.0.1"},
 		{"mapped ipv4 normalised", "127.0.0.1:1111", []string{"::ffff:203.0.113.9"}, true, "203.0.113.9"},
+		// Proxies such as Azure Application Gateway append the client as ip:port.
+		{"ipv4 with port", "127.0.0.1:1111", []string{"6.6.6.6, 203.0.113.7:51234"}, true, "203.0.113.7"},
+		{"bracketed ipv6 with port", "127.0.0.1:1111", []string{"[2001:db8::1]:443"}, true, "2001:db8::1"},
+		{"invalid host with port", "127.0.0.1:1111", []string{"6.6.6.6, evil.example:80"}, true, "127.0.0.1"},
 	}
 	for _, c := range cases {
 		r := httptest.NewRequest("POST", "/login", nil)
@@ -344,6 +349,35 @@ func TestClientIP_XFFTrust(t *testing.T) {
 			t.Errorf("%s: got %q want %q", c.name, got, c.want)
 		}
 	}
+}
+
+// Behind a trusted proxy that appends ip:port, one client's failed logins must
+// not fill the ip: bucket that every other client behind the proxy is charged
+// to: each client keeps its own key.
+func TestLoginRateLimiter_ProxyPortClientsKeepSeparateBuckets(t *testing.T) {
+	l := newLoginRateLimiter(3, time.Minute)
+	req := func(xff string) *http.Request {
+		r := httptest.NewRequest("POST", "/login", nil)
+		r.RemoteAddr = "127.0.0.1:1111"
+		r.Header.Set("X-Forwarded-For", xff)
+		return r
+	}
+	attacker := loginKeys(clientIP(req("203.0.113.7:51234"), true), "attacker")
+	for i := 0; i < 3; i++ {
+		attempt, ok := l.reserve(attacker)
+		if !ok {
+			t.Fatalf("attempt %d should be allowed", i+1)
+		}
+		attempt.complete(false)
+	}
+	if _, ok := l.reserve(attacker); ok {
+		t.Fatalf("the failing client itself must be throttled")
+	}
+	attempt, ok := l.reserve(loginKeys(clientIP(req("198.51.100.9:40000"), true), "bob"))
+	if !ok {
+		t.Fatalf("a different client behind the same proxy must not share the failing client's ip: bucket")
+	}
+	attempt.complete(true)
 }
 
 func TestLoginRateLimiter_BlocksAfterLimit(t *testing.T) {
