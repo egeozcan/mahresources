@@ -141,7 +141,7 @@ func TestAuditClientIP_AdminSettingsActor(t *testing.T) {
 	admin := roleBearer(t, tc, models.RoleAdmin)
 	hdr := map[string]string{"Content-Type": "application/json", "Authorization": admin, "X-Forwarded-For": "6.6.6.6"}
 	var lastID uint
-	// Each settings write path (single set, bulk apply) passes its own
+	// Each settings write path (single set, bulk apply, reset) passes its own
 	// actor IP to the auditor, so each must write a fresh audit row that
 	// records the socket address rather than the forged header.
 	step := func(name, method, path, body string) {
@@ -161,4 +161,5 @@ func TestAuditClientIP_AdminSettingsActor(t *testing.T) {
 	}
 	step("set", http.MethodPut, "/v1/admin/settings/max_upload_size", `{"value":"1048576"}`)
 	step("apply", http.MethodPut, "/v1/admin/settings", `{"values":{"max_upload_size":"2097152"}}`)
+	step("reset", http.MethodDelete, "/v1/admin/settings/max_upload_size", ``)
 }
