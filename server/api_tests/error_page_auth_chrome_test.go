@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"mahresources/application_context"
 	"mahresources/models"
 )
 
@@ -131,16 +133,48 @@ func TestErrorPages_RespectRole(t *testing.T) {
 	errorPageRoleChecks(t, setupPluginEnv(t, true, writeMenuPlugin, "menuplug"))
 }
 
-func TestErrorPages_RespectRole_NoPluginManager(t *testing.T) {
-	errorPageRoleChecks(t, setupAuthEnv(t))
+// setupAuthEnvNoPluginManager is setupAuthEnv on a -plugins-disabled server, where
+// PluginManager() is nil. Upstream built no error-page enricher at all in that
+// case, so the 404/403 pages lost authEnabled and the menu's role guards failed
+// open (#117). It fails the test if a manager is configured after all, so the
+// tests using it cannot silently drift back onto the plugin-manager path.
+func setupAuthEnvNoPluginManager(t *testing.T) *TestContext {
+	t.Helper()
+	tc := setupTestEnvWithConfig(t, func(c *application_context.MahresourcesConfig) {
+		c.AuthEnabled = true
+		c.SessionTTL = time.Hour
+		c.PluginsDisabled = true
+	})
+	if sqlDB, err := tc.DB.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(1)
+	}
+	if _, err := tc.AppCtx.EnsureAdminUser("admin", "adminpw1"); err != nil {
+		t.Fatalf("bootstrap admin: %v", err)
+	}
+	if tc.AppCtx.PluginManager() != nil {
+		t.Fatalf("PluginsDisabled server still has a plugin manager; the test would not exercise the nil-manager error pages")
+	}
+	return tc
 }
 
-func TestErrorPages_CarryCSRFToken(t *testing.T) {
-	tc := setupAuthEnv(t)
+func TestErrorPages_RespectRole_NoPluginManager(t *testing.T) {
+	errorPageRoleChecks(t, setupAuthEnvNoPluginManager(t))
+}
+
+func csrfOnErrorPage(t *testing.T, tc *TestContext) {
+	t.Helper()
 	cookie, token := loginCookieAndCSRF(t, tc)
 	rr := doReq(tc, http.MethodGet, "/no-such-page", htmlAccept, []*http.Cookie{cookie}, nil)
 	want := `<meta name="csrf-token" content="` + token + `">`
 	if !strings.Contains(rr.Body.String(), want) {
 		t.Fatalf("error page lacks session csrf token meta")
 	}
+}
+
+func TestErrorPages_CarryCSRFToken(t *testing.T) {
+	csrfOnErrorPage(t, setupAuthEnv(t))
+}
+
+func TestErrorPages_CarryCSRFToken_NoPluginManager(t *testing.T) {
+	csrfOnErrorPage(t, setupAuthEnvNoPluginManager(t))
 }
