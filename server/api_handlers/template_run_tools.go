@@ -768,6 +768,7 @@ func (e *templateToolExecutor) preview(ctx context.Context, mc *application_cont
 	defer cancel()
 	if e.cfg.Principal != nil {
 		renderCtx = auth.WithPrincipal(renderCtx, e.cfg.Principal)
+		renderCtx = shortcodes.WithCredentialFieldsVisible(renderCtx, e.cfg.Principal.CanWrite())
 	}
 	renderCtx = shortcodes.WithRenderBudget(renderCtx, shortcodes.RenderBudget{
 		OutputBytes: templateRunRenderOutputBytes, ParsedSourceBytes: templateRunRenderParsedBytes,

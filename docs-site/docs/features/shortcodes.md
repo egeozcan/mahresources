@@ -334,6 +334,8 @@ The shortcode never triggers database loads by design (list pages render many ca
 
 `[property]` reflects over the model, so any exported field resolves. These are the commonly used ones rather than an allow-list.
 
+The exception is a credential field: a note's `ShareToken` (and `TokenHash`, `CsrfToken` and `PasswordHash`, wherever a path reaches one). It resolves, in `[property]` and in `[conditional field=]`, only for a reader that may share the note (admin, editor or user, or any request with authentication off). For a guest it renders as empty (or as `default=`) on every page, the deferred `[lazy]` body and text blocks included. The public share page shows it, because its visitor already holds the token.
+
 **Group:** `ID`, `Name`, `Description`, `URL`, `CreatedAt`, `UpdatedAt`, `CategoryId`, `OwnerId`, `Meta`
 
 **Resource:** `ID`, `Name`, `Description`, `CreatedAt`, `UpdatedAt`, `ContentType`, `OriginalName`, `OriginalLocation`, `FileSize`, `Width`, `Height`, `Hash`, `ResourceCategoryId`, `OwnerId`, `Meta`

@@ -105,6 +105,27 @@ func TestShareServer_NoteTemplates_NoNoteType(t *testing.T) {
 	assertNotContains(t, body, "custom-note-header", "typeless note has no custom header")
 }
 
+// The share page's visitor arrived with the note's share token, so a header
+// that prints it (a "copy this link" line) keeps working there, although the
+// resolver withholds the field from an unmarked render (#107).
+func TestShareServer_NoteTemplates_HeaderMayPrintTheShareToken(t *testing.T) {
+	tc := SetupTestEnv(t)
+	nt := &models.NoteType{Name: "ShareLink", ApplyTemplatesToShares: true, CustomHeader: `LINK=[property path="ShareToken"]:END`}
+	if err := tc.DB.Create(nt).Error; err != nil {
+		t.Fatalf("create note type: %v", err)
+	}
+	note := &models.Note{Name: "SharedNote", NoteTypeId: &nt.ID}
+	if err := tc.DB.Create(note).Error; err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	body := renderShare(t, tc, note.ID)
+	var stored models.Note
+	if err := tc.DB.First(&stored, note.ID).Error; err != nil || stored.ShareToken == nil {
+		t.Fatalf("reload shared note: %v", err)
+	}
+	assertContains(t, body, "LINK="+*stored.ShareToken+":END", "share page header prints the token its visitor holds")
+}
+
 func assertContains(t *testing.T, haystack, needle, msg string) {
 	t.Helper()
 	if !strings.Contains(haystack, needle) {

@@ -56,6 +56,9 @@ func resolveConditionalValue(reqCtx context.Context, attrs map[string]string, su
 		if v.Kind() != reflect.Struct {
 			return nil, nil
 		}
+		if credentialFields[fieldName] && !ctx.credentialsVisible {
+			return nil, nil
+		}
 		field := v.FieldByName(fieldName)
 		if !field.IsValid() || !field.CanInterface() {
 			return nil, nil

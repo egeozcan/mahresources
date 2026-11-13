@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -11,7 +12,18 @@ import (
 	"mahresources/application_context"
 	"mahresources/auth"
 	"mahresources/server/http_utils"
+	"mahresources/shortcodes"
 )
+
+// withRequestPrincipal stores the principal on ctx, and with it what a template
+// rendered for that principal may print: a credential field such as a note's
+// share token only for a principal that may share (CanWrite), the capability
+// POST /v1/note/share demands (#107). Every template surface renders from this
+// context, so the shortcode resolver answers the same on all of them.
+func withRequestPrincipal(ctx context.Context, p *auth.Principal) context.Context {
+	ctx = auth.WithPrincipal(ctx, p)
+	return shortcodes.WithCredentialFieldsVisible(ctx, p.CanWrite())
+}
 
 // withAuthentication resolves the request principal (from a Bearer API token or
 // the session cookie) and stores it on the request context. When auth is
@@ -34,14 +46,14 @@ func withAuthentication(appCtx *application_context.MahresourcesContext, next ht
 					"falling back to anonymous system principal", err)
 				principal = auth.SystemPrincipal()
 			}
-			r = r.WithContext(auth.WithPrincipal(r.Context(), principal))
+			r = r.WithContext(withRequestPrincipal(r.Context(), principal))
 			next.ServeHTTP(w, r)
 			return
 		}
 
 		principal, csrfToken, mechanism := resolvePrincipal(appCtx, r)
 		if principal != nil {
-			ctx := auth.WithPrincipal(r.Context(), principal)
+			ctx := withRequestPrincipal(r.Context(), principal)
 			ctx = auth.WithAuthenticationMechanism(ctx, mechanism)
 			if csrfToken != "" {
 				ctx = auth.WithCSRFToken(ctx, csrfToken)

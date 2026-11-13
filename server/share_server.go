@@ -601,6 +601,9 @@ func (s *ShareServer) processShareTemplates(note *models.Note) (header, css stri
 	metaCtx.ForceReadOnly = true
 
 	reqCtx := shortcodes.WithPartialResolver(context.Background(), template_filters.BuildPartialResolver(s.appContext))
+	// The visitor reached this page with the note's share token, and nothing
+	// here renders another entity, so a header that prints it discloses nothing.
+	reqCtx = shortcodes.WithCredentialFieldsVisible(reqCtx, true)
 	if note.NoteType.CustomHeader != "" {
 		header = shortcodes.Process(reqCtx, note.NoteType.CustomHeader, *metaCtx, nil, nil)
 	}

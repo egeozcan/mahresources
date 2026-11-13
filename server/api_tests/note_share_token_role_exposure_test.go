@@ -3,14 +3,17 @@ package api_tests
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
 	"mahresources/application_context"
 	"mahresources/models"
+	"mahresources/models/types"
 )
 
 // A note's share token is a bearer credential for the unauthenticated share
@@ -269,11 +272,12 @@ func TestNoteShareToken_DisclosedToWriters(t *testing.T) {
 
 // A note type's templates render against the note itself, and the built-in
 // [property] shortcode reads the Go field by reflection, so json:"-" does not
-// keep ShareToken out of them. The note detail provider's strip is the only
-// thing between such a template and a reader that may not share the note: the
-// default share panel is gated on canShare on its own, so the other tests here
-// stay green without the strip. Here every detail-page slot prints the field
-// between markers, and the markers prove the slot rendered.
+// keep ShareToken out of them. The note detail provider's strip and the
+// resolver's own credential gate stand between such a template and a reader
+// that may not share the note: the default share panel is gated on canShare on
+// its own, so the other tests here stay green without them. Here every
+// detail-page slot prints the field between markers, and the markers prove the
+// slot rendered.
 func TestNoteShareToken_NoteTypeTemplateCannotPrintIt(t *testing.T) {
 	tc := setupAuthEnv(t)
 	f := buildShareTokenFixture(t, tc)
@@ -343,4 +347,111 @@ func TestNoteShareToken_AuthOffStillDisclosed(t *testing.T) {
 	if got, _ := shareTokenOfJSONNote(t, res.Body.Bytes()); got != token {
 		t.Errorf("auth-off GET /v1/note shareToken = %q, want %q", got, token)
 	}
+}
+
+var lazyTokenRe = regexp.MustCompile(`<lazy-shortcode data-token="([^"]+)"`)
+
+type shareTokenReader struct {
+	bearer    string
+	wantToken bool
+}
+
+// shareTokenReaders are the principals the template tests below render for: a
+// guest may not share the note, so no template may hand it the token; a scoped
+// user and an editor may, and keep seeing what their template prints.
+func shareTokenReaders(t *testing.T, tc *TestContext, f shareTokenFixture, prefix string) map[string]shareTokenReader {
+	t.Helper()
+	return map[string]shareTokenReader{
+		"scoped guest": {scopedRoleBearer(t, tc, models.RoleGuest, f.group.ID, prefix+"_guest"), false},
+		"scoped user":  {scopedRoleBearer(t, tc, models.RoleUser, f.group.ID, prefix+"_user"), true},
+		"editor":       {roleBearer(t, tc, models.RoleEditor), true},
+	}
+}
+
+// assertTemplateTokenDisclosure checks that body rendered the marker (so the
+// absence check proves something) and printed the token after it exactly when
+// the reader may share.
+func assertTemplateTokenDisclosure(t *testing.T, where, body, marker, token string, wantToken bool) {
+	t.Helper()
+	if !strings.Contains(body, marker) {
+		t.Fatalf("%s did not render %q, so the token check proves nothing: %s", where, marker, body)
+	}
+	if printed := strings.Contains(body, marker+token+":END107"); printed != wantToken {
+		t.Errorf("%s printed the share token = %v, want %v", where, printed, wantToken)
+	}
+	if !wantToken && strings.Contains(body, token) {
+		t.Errorf("%s leaks the share token to a reader that may not share", where)
+	}
+}
+
+// The note page strips the token from the guest's copy, but two routes render
+// that same page's content against the note as loaded: a [lazy] body is
+// rendered later by POST /v1/shortcodes/deferred, and text blocks are fetched
+// rendered from GET /v1/note/renderedTextBlocks. Both must withhold the field
+// from a reader that may not share, as the page does.
+func TestNoteShareToken_DeferredAndTextBlockRendersCannotPrintIt(t *testing.T) {
+	tc := setupAuthEnv(t)
+	f := buildShareTokenFixture(t, tc)
+	if err := tc.DB.Model(&models.NoteType{}).Where("id = ?", f.noteType.ID).
+		Update("custom_header", `[lazy]LAZY107:[property path="ShareToken"]:END107[/lazy]`).Error; err != nil {
+		t.Fatalf("set custom_header: %v", err)
+	}
+	block := &models.NoteBlock{NoteID: f.note.ID, Type: "text", Position: "a",
+		Content: types.JSON(textBlockJSON(t, `TB107:[property path="ShareToken"]:END107`))}
+	if err := tc.DB.Create(block).Error; err != nil {
+		t.Fatalf("create text block: %v", err)
+	}
+	for who, r := range shareTokenReaders(t, tc, f, "st107_defer") {
+		t.Run(who, func(t *testing.T) {
+			page := doReq(tc, http.MethodGet, fmt.Sprintf("/note?id=%d", f.note.ID),
+				map[string]string{"Accept": "text/html", "Authorization": r.bearer}, nil, nil)
+			if page.Code != http.StatusOK {
+				t.Fatalf("GET /note = %d", page.Code)
+			}
+			m := lazyTokenRe.FindStringSubmatch(page.Body.String())
+			if m == nil {
+				t.Fatalf("note page carries no [lazy] token: %s", page.Body.String())
+			}
+			body, _ := json.Marshal(map[string]string{"token": html.UnescapeString(m[1])})
+			deferred := doReq(tc, http.MethodPost, "/v1/shortcodes/deferred",
+				map[string]string{"Accept": "application/json", "Content-Type": "application/json", "Authorization": r.bearer},
+				nil, strings.NewReader(string(body)))
+			if deferred.Code != http.StatusOK {
+				t.Fatalf("POST /v1/shortcodes/deferred = %d: %s", deferred.Code, deferred.Body.String())
+			}
+			var out struct {
+				HTML string `json:"html"`
+			}
+			if err := json.Unmarshal(deferred.Body.Bytes(), &out); err != nil {
+				t.Fatalf("decode deferred: %v", err)
+			}
+			assertTemplateTokenDisclosure(t, "POST /v1/shortcodes/deferred", out.HTML, "LAZY107:", f.token, r.wantToken)
+
+			blocks := getRenderedTextBlocks(tc, r.bearer, f.note.ID)
+			if blocks.Code != http.StatusOK {
+				t.Fatalf("GET /v1/note/renderedTextBlocks = %d: %s", blocks.Code, blocks.Body.String())
+			}
+			assertTemplateTokenDisclosure(t, "GET /v1/note/renderedTextBlocks", blocks.Body.String(), "TB107:", f.token, r.wantToken)
+		})
+	}
+}
+
+// With auth off every request runs as the root admin, which may share, so a
+// template that prints the token keeps printing it.
+func TestNoteShareToken_AuthOffTemplateStillPrintsIt(t *testing.T) {
+	tc := SetupTestEnv(t)
+	f := buildShareTokenFixture(t, tc)
+	if err := tc.DB.Model(&models.NoteType{}).Where("id = ?", f.noteType.ID).
+		Update("custom_summary", `X107:[property path="ShareToken"]:END107`).Error; err != nil {
+		t.Fatalf("set custom_summary: %v", err)
+	}
+	block := &models.NoteBlock{NoteID: f.note.ID, Type: "text", Position: "a",
+		Content: types.JSON(textBlockJSON(t, `TB107:[property path="ShareToken"]:END107`))}
+	if err := tc.DB.Create(block).Error; err != nil {
+		t.Fatalf("create text block: %v", err)
+	}
+	page := doReq(tc, http.MethodGet, fmt.Sprintf("/group?id=%d", f.group.ID), map[string]string{"Accept": "text/html"}, nil, nil)
+	assertTemplateTokenDisclosure(t, "auth-off GET /group", page.Body.String(), "X107:", f.token, true)
+	blocks := getRenderedTextBlocks(tc, "", f.note.ID)
+	assertTemplateTokenDisclosure(t, "auth-off GET /v1/note/renderedTextBlocks", blocks.Body.String(), "TB107:", f.token, true)
 }

@@ -29,7 +29,7 @@ func RenderPropertyShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
 
 	raw := sc.Attrs["raw"] == "true" && !ctx.UntrustedSource
 
-	field, ok := traversePropertyPath(ctx.Entity, path)
+	field, ok := traversePropertyPath(ctx.Entity, path, ctx.credentialsVisible)
 	var text string
 	if ok {
 		text = formatPropertyValue(field, sc.Attrs["format"], sc.Attrs["layout"])
@@ -57,7 +57,8 @@ func RenderPropertyShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
 // pointers and interfaces at each step and stopping (ok=false) on a nil pointer,
 // missing field, or a non-struct/non-slice where traversal must continue.
 // A purely numeric segment indexes into a slice or array (out-of-range → not ok).
-func traversePropertyPath(entity any, path string) (reflect.Value, bool) {
+// A segment naming a credential field is not ok unless credentialsVisible.
+func traversePropertyPath(entity any, path string, credentialsVisible bool) (reflect.Value, bool) {
 	v := reflect.ValueOf(entity)
 	for _, seg := range strings.Split(path, ".") {
 		for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
@@ -80,6 +81,9 @@ func traversePropertyPath(entity any, path string) (reflect.Value, bool) {
 		}
 
 		if v.Kind() != reflect.Struct {
+			return reflect.Value{}, false
+		}
+		if credentialFields[seg] && !credentialsVisible {
 			return reflect.Value{}, false
 		}
 		f := v.FieldByName(seg)

@@ -68,6 +68,10 @@ type MetaShortcodeContext struct {
 	// scalarObserver is the render's WithScalarFormatObserver hook, copied from
 	// the request context by processWithDepth.
 	scalarObserver func(string)
+	// credentialsVisible is the render's WithCredentialFieldsVisible flag, copied
+	// from the request context by processWithDepth. False withholds
+	// credentialFields from [property] and [conditional field=].
+	credentialsVisible bool
 }
 
 // RenderMetaShortcode expands a [meta] shortcode into a <meta-shortcode> custom

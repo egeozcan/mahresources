@@ -256,6 +256,7 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 	if ctx.scalarObserver == nil {
 		ctx.scalarObserver = scalarFormatObserverFrom(reqCtx)
 	}
+	ctx.credentialsVisible = credentialFieldsVisibleFrom(reqCtx)
 
 	var b strings.Builder
 	b.Grow(len(input) * 2)
