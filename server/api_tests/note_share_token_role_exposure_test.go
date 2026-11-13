@@ -267,6 +267,65 @@ func TestNoteShareToken_DisclosedToWriters(t *testing.T) {
 	}
 }
 
+// A note type's templates render against the note itself, and the built-in
+// [property] shortcode reads the Go field by reflection, so json:"-" does not
+// keep ShareToken out of them. The note detail provider's strip is the only
+// thing between such a template and a reader that may not share the note: the
+// default share panel is gated on canShare on its own, so the other tests here
+// stay green without the strip. Here every detail-page slot prints the field
+// between markers, and the markers prove the slot rendered.
+func TestNoteShareToken_NoteTypeTemplateCannotPrintIt(t *testing.T) {
+	tc := setupAuthEnv(t)
+	f := buildShareTokenFixture(t, tc)
+	slots := map[string]string{
+		"custom_header":        "HDR107:",
+		"custom_sidebar":       "SIDE107:",
+		"custom_detail_footer": "FOOT107:",
+	}
+	updates := map[string]any{}
+	for col, marker := range slots {
+		updates[col] = marker + `[property path="ShareToken"]:END107`
+	}
+	if err := tc.DB.Model(&models.NoteType{}).Where("id = ?", f.noteType.ID).Updates(updates).Error; err != nil {
+		t.Fatalf("set note type templates: %v", err)
+	}
+	readers := map[string]struct {
+		bearer    string
+		wantToken bool
+	}{
+		"scoped guest": {scopedRoleBearer(t, tc, models.RoleGuest, f.group.ID, "st107_tpl_guest"), false},
+		"scoped user":  {scopedRoleBearer(t, tc, models.RoleUser, f.group.ID, "st107_tpl_user"), true},
+		"editor":       {roleBearer(t, tc, models.RoleEditor), true},
+	}
+	for who, r := range readers {
+		for _, page := range []struct{ path, accept string }{
+			{fmt.Sprintf("/note?id=%d", f.note.ID), "text/html"},
+			{fmt.Sprintf("/note.json?id=%d", f.note.ID), "application/json"},
+		} {
+			t.Run(who+" "+page.path, func(t *testing.T) {
+				res := doReq(tc, http.MethodGet, page.path,
+					map[string]string{"Accept": page.accept, "Authorization": r.bearer}, nil, nil)
+				if res.Code != http.StatusOK {
+					t.Fatalf("GET %s = %d: %s", page.path, res.Code, res.Body.String())
+				}
+				body := res.Body.String()
+				for _, marker := range slots {
+					if !strings.Contains(body, marker) {
+						t.Fatalf("GET %s did not render the note type slot %q, so the token check proves nothing", page.path, marker)
+					}
+					printed := strings.Contains(body, marker+f.token+":END107")
+					if printed != r.wantToken {
+						t.Errorf("GET %s: slot %q printed the share token = %v, want %v", page.path, marker, printed, r.wantToken)
+					}
+				}
+				if !r.wantToken && strings.Contains(body, f.token) {
+					t.Errorf("GET %s leaks the share token to a reader that may not share", page.path)
+				}
+			})
+		}
+	}
+}
+
 // With auth off every request runs as the super-user, which may share, so GET
 // /v1/note keeps returning shareToken. The mr CLI doctest in
 // cmd/mr/commands/notes_help/note_share.md pins that contract.
