@@ -245,6 +245,13 @@ func (ctx *MahresourcesContext) unscopedDB() *gorm.DB {
 // Such writes call this after their tree lock, so every scoped statement that
 // follows answers against current membership.
 //
+// The scope root is an input to that snapshot too: the principal was built from
+// the account when the request started, so an admin narrowing the account's
+// scope group (or disabling it, or changing its role) mid-request would leave
+// the fresh subtree rooted at the old group. The account is re-read on tx first,
+// and the write is refused unless its role, scope group and enabled state are
+// still the ones the principal was built from (see accountStillBound).
+//
 // The lookup runs on tx, never on the outer handle: inside a transaction a
 // second connection waits on the transaction's own SQLite writer lock. It fails
 // closed by returning the error. Admins, unscoped users, the system principal
@@ -259,6 +266,9 @@ func (ctx *MahresourcesContext) rescopeTx(tx *gorm.DB) (*gorm.DB, error) {
 	case deny:
 		// allowed stays empty: deny-all.
 	case forced:
+		if err := ctx.accountStillBound(tx); err != nil {
+			return nil, err
+		}
 		lookup := *ctx
 		lookup.db = tx
 		ids, err := lookup.collectSubtreeGroupIDs(scopeID)
@@ -270,6 +280,48 @@ func (ctx *MahresourcesContext) rescopeTx(tx *gorm.DB) (*gorm.DB, error) {
 		return tx, nil
 	}
 	return tx.WithContext(context.WithValue(tx.Statement.Context, scopeCtxKey{}, &scopeFilter{allowed: allowed})), nil
+}
+
+// errAccountChanged refuses a containment write whose account no longer holds
+// the role, scope group or enabled state its request was bound with. It wraps
+// gorm.ErrRecordNotFound: the subtree the write was judged against is gone,
+// which is the answer deny-all would give.
+var errAccountChanged = fmt.Errorf("the account changed during this request: %w", gorm.ErrRecordNotFound)
+
+// accountStillBound re-reads the principal's account on tx and refuses unless
+// it still exists, is enabled, and has the role and scope group the principal
+// was built from. A principal with no account (UserID 0) has nothing to re-read.
+//
+// The read takes no row lock. On SQLite it needs none: tx holds the writer lock
+// from BEGIN, so an account change either committed before it or waits for it.
+// On Postgres a READ COMMITTED read sees every committed change, which closes
+// the window a parked request body opens; what remains is a user update still
+// in flight at that instant. A FOR SHARE here would invert the
+// groups-before-users lock order UpdateUser follows (it locks the newly
+// assigned scope group, then the user row), and the re-parent's foreign-key
+// check on that same group would deadlock against it.
+func (ctx *MahresourcesContext) accountStillBound(tx *gorm.DB) error {
+	p := ctx.principal
+	if p == nil || p.UserID == 0 {
+		return nil
+	}
+	var rows []struct {
+		Role         models.Role
+		ScopeGroupId *uint
+		Disabled     bool
+	}
+	if err := tx.Raw("SELECT role, scope_group_id, disabled FROM users WHERE id = ?", p.UserID).Scan(&rows).Error; err != nil {
+		return err
+	}
+	if len(rows) != 1 {
+		return errAccountChanged
+	}
+	stored := rows[0]
+	if stored.Disabled || stored.Role != p.Role || stored.ScopeGroupId == nil || p.ScopeGroupID == nil ||
+		*stored.ScopeGroupId != *p.ScopeGroupID {
+		return errAccountChanged
+	}
+	return nil
 }
 
 // subtreeScopeIDs resolves the set of group IDs a scoped principal may touch.

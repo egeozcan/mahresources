@@ -32,8 +32,17 @@ func newReparentScopePGFixture(t *testing.T) (ctx *MahresourcesContext, s, a, b,
 	a = mk("A", &s.ID)
 	b = mk("B", &s.ID)
 	out = mk("Out", nil)
-	p = &auth.Principal{UserID: 1, Username: "u", Role: models.RoleUser, ScopeGroupID: &s.ID}
+	p = accountPrincipal(t, ctx, "u", models.RoleUser, &s.ID)
 	return ctx, s, a, b, out, p
+}
+
+// accountStillBound's re-read of the account runs on the transaction after
+// pg_advisory_xact_lock, and must see an admin's committed account change.
+func TestStaleAccountCannotWriteContainment_Postgres(t *testing.T) {
+	runStaleAccountCannotWriteContainment(t, func(t *testing.T) (*MahresourcesContext, *models.Group, *models.Group, *models.Group, *auth.Principal) {
+		ctx, s, a, b, _, p := newReparentScopePGFixture(t)
+		return ctx, s, a, b, p
+	})
 }
 
 func pgGroupOwner(t *testing.T, ctx *MahresourcesContext, id uint) *uint {

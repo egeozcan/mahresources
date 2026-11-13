@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"mahresources/auth"
 	"mahresources/models"
 	"mahresources/models/query_models"
 )
@@ -23,7 +22,7 @@ func TestScopedUser_EditResourceOwnerReassignmentBlocked(t *testing.T) {
 	res := &models.Resource{Name: "re-res", OwnerId: &root.ID}
 	tc.DB.Create(res)
 
-	scoped := tc.AppCtx.WithPrincipal(&auth.Principal{UserID: 5, Role: models.RoleUser, ScopeGroupID: &root.ID})
+	scoped := accountCtx(t, tc, models.RoleUser, &root.ID)
 	ownerOf := func() uint {
 		var after models.Resource
 		tc.DB.First(&after, res.ID)
@@ -121,7 +120,7 @@ func TestScopedUser_GroupDetailRelationsConfined(t *testing.T) {
 	tc.DB.Create(&models.GroupRelation{FromGroupId: &root.ID, ToGroupId: &child.ID, RelationTypeId: &rt.ID})
 	tc.DB.Create(&models.GroupRelation{FromGroupId: &root.ID, ToGroupId: &outside.ID, RelationTypeId: &rt.ID})
 
-	scoped := tc.AppCtx.WithPrincipal(&auth.Principal{UserID: 4, Role: models.RoleUser, ScopeGroupID: &root.ID})
+	scoped := accountCtx(t, tc, models.RoleUser, &root.ID)
 	g, err := scoped.GetGroup(root.ID)
 	if err != nil {
 		t.Fatalf("GetGroup: %v", err)
@@ -158,7 +157,7 @@ func TestScopedUser_CloneSkipsExternalRelations(t *testing.T) {
 	tc.DB.Create(&models.GroupRelation{FromGroupId: &a.ID, ToGroupId: &b.ID, RelationTypeId: &rt.ID})
 	tc.DB.Create(&models.GroupRelation{FromGroupId: &a.ID, ToGroupId: &outside.ID, RelationTypeId: &rt.ID})
 
-	scoped := tc.AppCtx.WithPrincipal(&auth.Principal{UserID: 4, Role: models.RoleUser, ScopeGroupID: &root.ID})
+	scoped := accountCtx(t, tc, models.RoleUser, &root.ID)
 	clone, err := scoped.DuplicateGroup(a.ID)
 	if err != nil {
 		t.Fatalf("DuplicateGroup: %v", err)
@@ -211,7 +210,7 @@ func TestScopedUser_MergeSkipsExternalRelations(t *testing.T) {
 	tc.DB.Exec("INSERT INTO groups_related_resources (group_id, resource_id) VALUES (?, ?)", loser.ID, inRes.ID)
 	tc.DB.Exec("INSERT INTO groups_related_resources (group_id, resource_id) VALUES (?, ?)", loser.ID, outRes.ID)
 
-	scoped := tc.AppCtx.WithPrincipal(&auth.Principal{UserID: 4, Role: models.RoleUser, ScopeGroupID: &root.ID})
+	scoped := accountCtx(t, tc, models.RoleUser, &root.ID)
 	if err := scoped.MergeGroups(winner.ID, []uint{loser.ID}); err != nil {
 		t.Fatalf("MergeGroups: %v", err)
 	}
@@ -298,7 +297,7 @@ func TestScopedUser_RelationsConfined(t *testing.T) {
 	outRel := &models.GroupRelation{FromGroupId: &outA.ID, ToGroupId: &outB.ID, RelationTypeId: &rt.ID}
 	tc.DB.Create(outRel)
 
-	scoped := tc.AppCtx.WithPrincipal(&auth.Principal{UserID: 3, Role: models.RoleUser, ScopeGroupID: &root.ID})
+	scoped := accountCtx(t, tc, models.RoleUser, &root.ID)
 	rels, err := scoped.GetRelations(0, 100, &query_models.GroupRelationshipQuery{})
 	if err != nil {
 		t.Fatalf("GetRelations: %v", err)

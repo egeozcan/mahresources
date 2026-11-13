@@ -3,7 +3,6 @@ package application_context
 import (
 	"testing"
 
-	"mahresources/auth"
 	"mahresources/models"
 )
 
@@ -81,12 +80,7 @@ func TestMergeGroups_ScopedMergeLeavesAnOutOfSubtreeSelfEdgeAlone(t *testing.T) 
 	ctx := createTestContextWithPlugins(t, t.TempDir())
 	scopeGroup, winner, loser, outsideEdge, insideEdge := mergeScopeFixture(t, ctx)
 
-	scoped := ctx.WithPrincipal(&auth.Principal{
-		UserID:       1,
-		Username:     "confined-merger",
-		Role:         models.RoleUser,
-		ScopeGroupID: &scopeGroup.ID,
-	})
+	scoped := ctx.WithPrincipal(accountPrincipal(t, ctx, "confined-merger", models.RoleUser, &scopeGroup.ID))
 	if err := scoped.MergeGroups(winner.ID, []uint{loser.ID}); err != nil {
 		t.Fatalf("merge inside the principal's own subtree failed: %v", err)
 	}

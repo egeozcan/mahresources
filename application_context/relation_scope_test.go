@@ -86,12 +86,7 @@ func relationScopeFixture(t *testing.T, ctx *MahresourcesContext) (principal *au
 	inside = newRelation("inside-edge", insideA, insideB)
 	mixed = newRelation("mixed-edge", insideA, outsideB)
 
-	scoped := &auth.Principal{
-		UserID:       1,
-		Username:     "confined-rel",
-		Role:         models.RoleEditor,
-		ScopeGroupID: &scopeGroup.ID,
-	}
+	scoped := accountPrincipal(t, ctx, "confined-rel", models.RoleEditor, &scopeGroup.ID)
 	return scoped, outside, inside, mixed
 }
 

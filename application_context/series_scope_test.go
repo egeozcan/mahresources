@@ -52,8 +52,8 @@ func newSeriesScopeFixture(t *testing.T, ctx *MahresourcesContext, withOutsideMe
 	return f
 }
 
-func (f seriesScopeFixture) principal(role models.Role) *auth.Principal {
-	return &auth.Principal{UserID: 1, Username: "series-scoped", Role: role, ScopeGroupID: &f.scopeGroup.ID}
+func (f seriesScopeFixture) principal(t *testing.T, ctx *MahresourcesContext, role models.Role) *auth.Principal {
+	return accountPrincipal(t, ctx, "series-scoped", role, &f.scopeGroup.ID)
 }
 
 func (f seriesScopeFixture) editInside(t *testing.T, ctx *MahresourcesContext, seriesID uint) {
@@ -109,7 +109,7 @@ func assertSeriesSurvivedScopedLeave(t *testing.T, ctx *MahresourcesContext, f s
 
 func runScopedEditLeaveKeepsSeriesWithOutsideMembers(t *testing.T, ctx *MahresourcesContext) {
 	f := newSeriesScopeFixture(t, ctx, true)
-	scoped := ctx.WithPrincipal(f.principal(models.RoleUser))
+	scoped := ctx.WithPrincipal(f.principal(t, ctx, models.RoleUser))
 
 	f.editInside(t, scoped, f.series.ID) // join
 	f.editInside(t, scoped, 0)           // leave
@@ -119,7 +119,7 @@ func runScopedEditLeaveKeepsSeriesWithOutsideMembers(t *testing.T, ctx *Mahresou
 
 func runScopedEditLeaveDeletesSeriesWhenSoleMember(t *testing.T, ctx *MahresourcesContext) {
 	f := newSeriesScopeFixture(t, ctx, false)
-	scoped := ctx.WithPrincipal(f.principal(models.RoleUser))
+	scoped := ctx.WithPrincipal(f.principal(t, ctx, models.RoleUser))
 
 	f.editInside(t, scoped, f.series.ID)
 	f.editInside(t, scoped, 0)
@@ -137,7 +137,7 @@ func runScopedRemoveFromSeriesKeepsSeriesWithOutsideMembers(t *testing.T, ctx *M
 	if err := ctx.db.Model(&models.Resource{}).Where("id = ?", f.inside.ID).Update("series_id", f.series.ID).Error; err != nil {
 		t.Fatalf("join inside resource: %v", err)
 	}
-	scoped := ctx.WithPrincipal(f.principal(models.RoleEditor))
+	scoped := ctx.WithPrincipal(f.principal(t, ctx, models.RoleEditor))
 
 	if err := scoped.RemoveResourceFromSeries(f.inside.ID); err != nil {
 		t.Fatalf("scoped RemoveResourceFromSeries: %v", err)
@@ -151,7 +151,7 @@ func runScopedRemoveFromSeriesDeletesSeriesWhenSoleMember(t *testing.T, ctx *Mah
 	if err := ctx.db.Model(&models.Resource{}).Where("id = ?", f.inside.ID).Update("series_id", f.series.ID).Error; err != nil {
 		t.Fatalf("join inside resource: %v", err)
 	}
-	scoped := ctx.WithPrincipal(f.principal(models.RoleEditor))
+	scoped := ctx.WithPrincipal(f.principal(t, ctx, models.RoleEditor))
 
 	if err := scoped.RemoveResourceFromSeries(f.inside.ID); err != nil {
 		t.Fatalf("scoped RemoveResourceFromSeries: %v", err)

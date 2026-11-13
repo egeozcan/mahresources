@@ -111,6 +111,18 @@ func principalCtx(tc *TestContext, role models.Role, scope *uint) *application_c
 	return tc.AppCtx.WithPrincipal(&auth.Principal{UserID: 77, Role: role, ScopeGroupID: scope})
 }
 
+// accountCtx is principalCtx backed by a stored account. A containment write
+// (re-parent, re-own, merge) re-reads the account and refuses a principal whose
+// account is missing or no longer matches it.
+func accountCtx(t *testing.T, tc *TestContext, role models.Role, scope *uint) *application_context.MahresourcesContext {
+	t.Helper()
+	var n int64
+	require.NoError(t, tc.DB.Model(&models.User{}).Count(&n).Error)
+	u := &models.User{Username: fmt.Sprintf("account-%d", n+1), Role: role, ScopeGroupId: scope}
+	require.NoError(t, tc.DB.Create(u).Error)
+	return tc.AppCtx.WithPrincipal(auth.FromUser(u))
+}
+
 // assertGroupFilterFindsNothing runs one group filter through every consumer
 // of the group list builder and asserts each one finds nothing.
 func assertGroupFilterFindsNothing(t *testing.T, ctx *application_context.MahresourcesContext, label string, q func() *query_models.GroupQuery, filter string, massEditTag uint) {

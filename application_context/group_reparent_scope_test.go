@@ -44,7 +44,7 @@ func newReparentScopeFixture(t *testing.T) *reparentScopeFixture {
 	if err := ctx.db.Create(f.tag).Error; err != nil {
 		t.Fatalf("create tag: %v", err)
 	}
-	f.p = &auth.Principal{UserID: 1, Username: "u", Role: models.RoleUser, ScopeGroupID: &f.s.ID}
+	f.p = accountPrincipal(t, ctx, "u", models.RoleUser, &f.s.ID)
 	return f
 }
 
@@ -317,4 +317,121 @@ func TestCreateOrUpdateNote_StaleScopeCannotReownANoteOfARevokedGroup(t *testing
 	}); err != nil {
 		t.Fatalf("update inside the subtree: %v", err)
 	}
+}
+
+// accountChangeWrites are the containment writes rescopeTx guards, each
+// pulling B (or B's content) under A. s, a and b are S, A under S and B under
+// S, as in newReparentScopeFixture.
+func accountChangeWrites(t *testing.T, ctx *MahresourcesContext, a, b *models.Group) map[string]func(stale *MahresourcesContext) error {
+	t.Helper()
+	res := &models.Resource{Name: "B-res", OwnerId: &b.ID}
+	if err := ctx.db.Create(res).Error; err != nil {
+		t.Fatalf("create resource: %v", err)
+	}
+	note := &models.Note{Name: "B-note", OwnerId: &b.ID}
+	if err := ctx.db.Create(note).Error; err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	return map[string]func(stale *MahresourcesContext) error{
+		"UpdateGroup": func(stale *MahresourcesContext) error {
+			ed := query_models.GroupEditor{}
+			ed.ID, ed.Name, ed.OwnerId = b.ID, b.Name, a.ID
+			_, err := stale.UpdateGroup(&ed)
+			return err
+		},
+		"MassEditGroups": func(stale *MahresourcesContext) error {
+			_, err := stale.MassEditGroups(&query_models.MassEditQuery{ID: []uint{b.ID}, OwnerOp: "set", OwnerId: a.ID})
+			return err
+		},
+		"MergeGroups": func(stale *MahresourcesContext) error {
+			return stale.MergeGroups(a.ID, []uint{b.ID})
+		},
+		"EditResource": func(stale *MahresourcesContext) error {
+			ed := &query_models.ResourceEditor{}
+			ed.ID, ed.Name, ed.OwnerId = res.ID, res.Name, a.ID
+			ed.PatchFields = map[string]bool{"owner_id": true}
+			_, err := stale.EditResource(ed)
+			return err
+		},
+		"CreateOrUpdateNote": func(stale *MahresourcesContext) error {
+			_, err := stale.CreateOrUpdateNote(&query_models.NoteEditor{
+				ID: note.ID, NoteCreator: query_models.NoteCreator{Name: note.Name, OwnerId: a.ID},
+			})
+			return err
+		},
+	}
+}
+
+// assertBUntouched checks that B, its resource and its note still sit where
+// accountChangeWrites found them.
+func assertBUntouched(t *testing.T, ctx *MahresourcesContext, s, b *models.Group) {
+	t.Helper()
+	var g models.Group
+	if err := ctx.db.First(&g, b.ID).Error; err != nil {
+		t.Fatalf("reload B: %v", err)
+	}
+	if g.OwnerId == nil || *g.OwnerId != s.ID {
+		t.Fatalf("B's owner = %v, want %d", g.OwnerId, s.ID)
+	}
+	var r models.Resource
+	if err := ctx.db.Where("name = ?", "B-res").First(&r).Error; err != nil || r.OwnerId == nil || *r.OwnerId != b.ID {
+		t.Fatalf("B's resource owner = %v (err %v), want %d", r.OwnerId, err, b.ID)
+	}
+	var n models.Note
+	if err := ctx.db.Where("name = ?", "B-note").First(&n).Error; err != nil || n.OwnerId == nil || *n.OwnerId != b.ID {
+		t.Fatalf("B's note owner = %v (err %v), want %d", n.OwnerId, err, b.ID)
+	}
+}
+
+// runStaleAccountCannotWriteContainment: the principal was bound while its
+// account was scoped to S. An admin then narrows the account to A (removing B
+// from its subtree) or disables it. A containment write through the stale
+// binding must be refused rather than judged against subtree(S).
+func runStaleAccountCannotWriteContainment(t *testing.T, newFixture func(t *testing.T) (ctx *MahresourcesContext, s, a, b *models.Group, p *auth.Principal)) {
+	changes := map[string]func(a *models.Group) *UserUpdate{
+		"scope narrowed": func(a *models.Group) *UserUpdate {
+			return &UserUpdate{ScopeGroupID: UserField[*uint]{Set: true, Value: &a.ID}}
+		},
+		"disabled": func(*models.Group) *UserUpdate {
+			return &UserUpdate{Disabled: UserField[bool]{Set: true, Value: true}}
+		},
+		"demoted to guest": func(*models.Group) *UserUpdate {
+			return &UserUpdate{Role: UserField[models.Role]{Set: true, Value: models.RoleGuest}}
+		},
+	}
+	for change, update := range changes {
+		for _, write := range []string{"UpdateGroup", "MassEditGroups", "MergeGroups", "EditResource", "CreateOrUpdateNote"} {
+			t.Run(change+"/"+write, func(t *testing.T) {
+				ctx, s, a, b, p := newFixture(t)
+				writes := accountChangeWrites(t, ctx, a, b)
+				stale := ctx.WithPrincipal(p)
+				if _, err := ctx.UpdateUser(p.UserID, update(a)); err != nil {
+					t.Fatalf("admin account change: %v", err)
+				}
+				if err := writes[write](stale); !errors.Is(err, gorm.ErrRecordNotFound) {
+					t.Fatalf("stale binding wrote after the account changed: err=%v", err)
+				}
+				assertBUntouched(t, ctx, s, b)
+			})
+		}
+	}
+
+	// Control: the same writes through a binding whose account is unchanged
+	// still land.
+	for _, write := range []string{"UpdateGroup", "MassEditGroups", "MergeGroups", "EditResource", "CreateOrUpdateNote"} {
+		t.Run("unchanged/"+write, func(t *testing.T) {
+			ctx, _, a, b, p := newFixture(t)
+			writes := accountChangeWrites(t, ctx, a, b)
+			if err := writes[write](ctx.WithPrincipal(p)); err != nil {
+				t.Fatalf("write inside an unchanged subtree: %v", err)
+			}
+		})
+	}
+}
+
+func TestStaleAccountCannotWriteContainment(t *testing.T) {
+	runStaleAccountCannotWriteContainment(t, func(t *testing.T) (*MahresourcesContext, *models.Group, *models.Group, *models.Group, *auth.Principal) {
+		f := newReparentScopeFixture(t)
+		return f.ctx, f.s, f.a, f.b, f.p
+	})
 }

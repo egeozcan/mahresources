@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"mahresources/auth"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
@@ -167,12 +166,7 @@ func setResourceMetaRaw(t *testing.T, ctx *MahresourcesContext, id uint, meta, o
 }
 
 func scopedMassEditContext(ctx *MahresourcesContext, scopeGroup *models.Group) *MahresourcesContext {
-	return ctx.WithPrincipal(&auth.Principal{
-		UserID:       1,
-		Username:     "confined-editor",
-		Role:         models.RoleUser,
-		ScopeGroupID: &scopeGroup.ID,
-	})
+	return ctx.WithPrincipal(accountPrincipal(nil, ctx, "confined-editor", models.RoleUser, &scopeGroup.ID))
 }
 
 // ---------------------------------------------------------------------------
