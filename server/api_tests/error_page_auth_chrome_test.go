@@ -122,10 +122,39 @@ func errorPageRoleChecks(t *testing.T, tc *TestContext) {
 		t.Errorf("editor 403: want Admin dropdown without /admin/users")
 	}
 
-	// HandleError-backed renderer
+	// An HTML page whose route errors renders through its own template path.
 	_, body = htmlGet(tc, "/note?id=999999", guest)
 	if strings.Contains(body, `href="/admin/users"`) {
-		t.Errorf("guest HandleError page shows /admin/users")
+		t.Errorf("guest /note error page shows /admin/users")
+	}
+
+	// A /v1 error a browser asked for as HTML goes through
+	// http_utils.HandleError and the renderer BuildPrimaryRouter installs.
+	for name, b := range map[string]string{"guest": guest, "user": user, "editor": editor} {
+		code, body := htmlGet(tc, "/v1/note?id=999999", b)
+		if code != http.StatusNotFound {
+			t.Fatalf("%s /v1/note: want 404, got %d", name, code)
+		}
+		if name == "editor" {
+			if !strings.Contains(body, "<span>Admin</span>") || strings.Contains(body, `href="/admin/users"`) || !strings.Contains(body, `action="/logout"`) {
+				t.Errorf("editor HandleError 404: want Admin dropdown without /admin/users, and the sign-out block")
+			}
+		} else {
+			assertNoAdminChrome(t, name+" HandleError 404", body)
+		}
+
+		h := map[string]string{"Accept": "text/html", "Authorization": b, "Content-Type": "application/json"}
+		rr := doReq(tc, http.MethodPost, "/v1/mrql/explain", h, nil, strings.NewReader(`{"query":"type = note","nativePlan":true}`))
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("%s /v1/mrql/explain nativePlan: want 403, got %d", name, rr.Code)
+		}
+		if name == "editor" {
+			if strings.Contains(rr.Body.String(), `href="/admin/users"`) || !strings.Contains(rr.Body.String(), `action="/logout"`) {
+				t.Errorf("editor HandleError 403: want no /admin/users and the sign-out block")
+			}
+		} else {
+			assertNoAdminChrome(t, name+" HandleError 403", rr.Body.String())
+		}
 	}
 }
 
