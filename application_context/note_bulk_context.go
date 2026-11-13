@@ -164,6 +164,12 @@ func (ctx *MahresourcesContext) BulkDeleteNotes(query *query_models.BulkQuery) e
 	var deleteEffects []noteDeleteEffect
 
 	err := ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
+		// As in DeleteNote: judge every target against the current subtree.
+		rescoped, err := altCtx.rescopeTx(altCtx.db)
+		if err != nil {
+			return err
+		}
+		altCtx.db = rescoped
 		for _, id := range query.ID {
 			if err := altCtx.prepareNoteDelete(id); err != nil {
 				return err

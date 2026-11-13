@@ -168,8 +168,10 @@ func setupSharedFileTestCtx(t *testing.T) *MahresourcesContext {
 	return ctx
 }
 
-func scopedPrincipalFor(group *models.Group) *auth.Principal {
-	return &auth.Principal{UserID: 9001, Role: models.RoleUser, ScopeGroupID: &group.ID}
+// scopedPrincipalFor is a user account scoped to group. It is a stored account,
+// because deletes re-read the account they were bound from (see rescopeTx).
+func scopedPrincipalFor(t *testing.T, ctx *MahresourcesContext, group *models.Group) *auth.Principal {
+	return accountPrincipal(t, ctx, "shared-file-scoped", models.RoleUser, &group.ID)
 }
 
 func TestAScopedUploadOfBytesHeldOutsideItsScopeSharesTheFile(t *testing.T) {
@@ -179,7 +181,7 @@ func TestAScopedUploadOfBytesHeldOutsideItsScopeSharesTheFile(t *testing.T) {
 	outside := createGroupNamed(t, ctx, "scoped-upload-outside", nil)
 	existing := uploadAs(t, ctx, body, "outside.txt", outside.ID)
 
-	scoped := ctx.WithPrincipal(scopedPrincipalFor(inside))
+	scoped := ctx.WithPrincipal(scopedPrincipalFor(t, ctx, inside))
 	created := uploadAs(t, scoped, body, "inside.txt", inside.ID)
 
 	if created.ID == existing.ID {
@@ -209,7 +211,7 @@ func runSharedFileDeletionCases(t *testing.T, newContext func(*testing.T) *Mahre
 		inside := createGroupNamed(t, ctx, "shared-file-inside", nil)
 		outside := createGroupNamed(t, ctx, "shared-file-outside", nil)
 		existing := uploadAs(t, ctx, body, "outside.txt", outside.ID)
-		scoped := ctx.WithPrincipal(scopedPrincipalFor(inside))
+		scoped := ctx.WithPrincipal(scopedPrincipalFor(t, ctx, inside))
 		copyInScope := uploadAs(t, scoped, body, "inside.txt", inside.ID)
 		if copyInScope.Location != existing.Location {
 			t.Fatalf("the two resources do not share a file: %s and %s", copyInScope.Location, existing.Location)

@@ -107,6 +107,21 @@ func TestGroupAndNoteWritesNestInsideATransaction(t *testing.T) {
 	if name != "nested-note-renamed" {
 		t.Errorf("note name after commit = %q, want %q", name, "nested-note-renamed")
 	}
+
+	// DeleteNote opens its own transaction (it re-derives the subtree on it),
+	// which must nest as well: a plugin's delete_note inside mah.db.transaction.
+	if err := ctx.WithTransaction(func(txCtx *MahresourcesContext) error {
+		return txCtx.DeleteNote(noteID)
+	}); err != nil {
+		t.Fatalf("note delete inside a transaction: %v", err)
+	}
+	var count int64
+	if err := ctx.db.Model(&models.Note{}).Where("id = ?", noteID).Count(&count).Error; err != nil {
+		t.Fatalf("count notes: %v", err)
+	}
+	if count != 0 {
+		t.Error("note survived a committed nested delete")
+	}
 }
 
 // A failure inside the nested path must roll back to the caller's transaction,

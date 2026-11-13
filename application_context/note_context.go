@@ -374,7 +374,20 @@ func (ctx *MahresourcesContext) DeleteNote(noteId uint) error {
 		return err
 	}
 
-	effect, err := ctx.deleteNoteInTransaction(noteId)
+	// A delete removes the note from wherever it is now, so it is judged
+	// against the current subtree rather than the request's allow-list
+	// snapshot. The account is re-read for every principal (see rescopeTx).
+	// WithTransaction nests as a SAVEPOINT under mah.db.transaction.
+	var effect noteDeleteEffect
+	err := ctx.WithTransaction(func(txCtx *MahresourcesContext) error {
+		rescoped, err := txCtx.rescopeTx(txCtx.db)
+		if err != nil {
+			return err
+		}
+		txCtx.db = rescoped
+		effect, err = txCtx.deleteNoteInTransaction(noteId)
+		return err
+	})
 	if err != nil {
 		return err
 	}

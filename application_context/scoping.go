@@ -239,11 +239,14 @@ func (ctx *MahresourcesContext) unscopedDB() *gorm.DB {
 // The allow-list applyPrincipalScope binds is a snapshot from when the request
 // context was built, which can be long before the write runs (the scope is bound
 // before the request body is read). For most writes that is the accepted read
-// TOCTOU. A write that changes containment (a re-parent, a re-own, a merge) is
-// different: it is durable and decides future visibility, so a stale "this
-// group is mine" could undo an admin's move of that group out of the subtree.
-// Such writes call this after their tree lock, so every scoped statement that
-// follows answers against current membership.
+// TOCTOU. A write that changes containment (a re-parent, a re-own, a group or
+// resource merge) or deletes a group, resource or note is different: it is
+// durable and decides future visibility or destroys what an admin placed, so a
+// stale "this group is mine" could undo an admin's move of that group out of
+// the subtree. Such writes call this on their transaction before they read
+// their targets, after their tree lock where they take one (most take none),
+// so every scoped statement that follows answers against current membership.
+// internal/arch/containment_rescope_test.go pins the list of those writers.
 //
 // The scope root is an input to that snapshot too: the principal was built from
 // the account when the request started, so an admin narrowing the account's

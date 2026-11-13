@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"mahresources/application_context"
-	"mahresources/auth"
 	"mahresources/models"
 	"mahresources/models/query_models"
 )
@@ -20,14 +19,13 @@ import (
 // predicate and everything it *reaches* is guarded by the db handle's scope. Both
 // halves need proving, and only the second one is what stops a confined reviewer
 // destroying somebody else's files.
+//
+// The user is a stored account: an apply merges, and a merge re-reads the
+// account it was bound from (see rescopeTx).
 func scopedTo(t *testing.T, tc *TestContext, groupID uint) *application_context.MahresourcesContext {
 	t.Helper()
 	scope := groupID
-	return tc.AppCtx.WithPrincipal(&auth.Principal{
-		UserID:       42,
-		Role:         models.RoleUser,
-		ScopeGroupID: &scope,
-	})
+	return accountCtx(t, tc, models.RoleUser, &scope)
 }
 
 // A scope-limited reviewer sees and acts on only the Resources inside their

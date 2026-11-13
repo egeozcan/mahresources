@@ -626,7 +626,15 @@ func (ctx *MahresourcesContext) DeleteGroup(groupID uint) error {
 		if err := txCtx.lockUserManagementMutation(txCtx.db); err != nil {
 			return err
 		}
-		var err error
+		// A delete re-owns the group's children and content to the root, so the
+		// group is judged against the subtree as it is now, not the request's
+		// allow-list snapshot. The account is re-read for every principal (see
+		// rescopeTx).
+		rescoped, err := txCtx.rescopeTx(txCtx.db)
+		if err != nil {
+			return err
+		}
+		txCtx.db = rescoped
 		event, err = txCtx.deleteGroupInTransaction(groupID)
 		return err
 	})

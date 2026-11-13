@@ -233,6 +233,132 @@ func TestMergeGroups_StaleScopeCannotMergeARevokedLoser(t *testing.T) {
 	}
 }
 
+// MergeResources reads its winner and losers through the scoped handle, so a
+// stale binding could merge a resource of a revoked group into an in-scope
+// winner: the loser's file becomes a version the caller can read, and the
+// loser is deleted from where the admin put it.
+func TestMergeResources_StaleScopeCannotMergeARevokedLoser(t *testing.T) {
+	for _, keep := range []bool{true, false} {
+		t.Run(map[bool]string{true: "keep as version", false: "discard"}[keep], func(t *testing.T) {
+			f := newReparentScopeFixture(t)
+			winner := &models.Resource{Name: "A-winner", OwnerId: &f.a.ID, Hash: "aaaa", Location: "/x/winner"}
+			loser := &models.Resource{Name: "B-loser", OwnerId: &f.b.ID, Hash: "1111", Location: "/x/loser"}
+			for _, r := range []*models.Resource{winner, loser} {
+				if err := f.ctx.db.Create(r).Error; err != nil {
+					t.Fatalf("create resource: %v", err)
+				}
+			}
+			stale := f.ctx.WithPrincipal(f.p)
+
+			if err := f.move(t, f.ctx, f.b.ID, f.out.ID); err != nil {
+				t.Fatalf("admin move of B out of S: %v", err)
+			}
+
+			if err := stale.MergeResources(winner.ID, []uint{loser.ID}, keep); err == nil {
+				t.Fatal("stale binding merged a resource of a revoked group")
+			}
+			var r models.Resource
+			if err := f.ctx.db.First(&r, loser.ID).Error; err != nil {
+				t.Fatalf("the revoked loser was deleted: %v", err)
+			}
+			if r.OwnerId == nil || *r.OwnerId != f.b.ID {
+				t.Fatalf("loser owner = %v, want %d", r.OwnerId, f.b.ID)
+			}
+			var versions int64
+			f.ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ? AND hash = ?", winner.ID, "1111").Count(&versions)
+			if versions != 0 {
+				t.Fatalf("the revoked loser's file became %d version(s) of the winner", versions)
+			}
+
+			// Control: the same stale binding still merges a loser that stayed
+			// inside the subtree.
+			inside := &models.Resource{Name: "S-loser", OwnerId: &f.s.ID, Hash: "2222", Location: "/x/inside"}
+			if err := f.ctx.db.Create(inside).Error; err != nil {
+				t.Fatalf("create inside resource: %v", err)
+			}
+			if err := stale.MergeResources(winner.ID, []uint{inside.ID}, keep); err != nil {
+				t.Fatalf("merge inside the subtree: %v", err)
+			}
+		})
+	}
+}
+
+// The deletes read their targets through the scoped handle, so a stale binding
+// could delete a group, resource or note the admin had moved out of the
+// subtree. A group delete also re-owns the group's children and content to the
+// root.
+func TestDeletes_StaleScopeCannotDeleteFromARevokedGroup(t *testing.T) {
+	deletes := map[string]func(stale *MahresourcesContext, b *models.Group, res *models.Resource, note *models.Note) error{
+		"DeleteGroup": func(stale *MahresourcesContext, b *models.Group, _ *models.Resource, _ *models.Note) error {
+			return stale.DeleteGroup(b.ID)
+		},
+		"BulkDeleteGroups": func(stale *MahresourcesContext, b *models.Group, _ *models.Resource, _ *models.Note) error {
+			return stale.BulkDeleteGroups(&query_models.BulkQuery{ID: []uint{b.ID}})
+		},
+		"DeleteResource": func(stale *MahresourcesContext, _ *models.Group, res *models.Resource, _ *models.Note) error {
+			return stale.DeleteResource(res.ID)
+		},
+		"BulkDeleteResources": func(stale *MahresourcesContext, _ *models.Group, res *models.Resource, _ *models.Note) error {
+			return stale.BulkDeleteResources(&query_models.BulkQuery{ID: []uint{res.ID}})
+		},
+		"DeleteNote": func(stale *MahresourcesContext, _ *models.Group, _ *models.Resource, note *models.Note) error {
+			return stale.DeleteNote(note.ID)
+		},
+		"BulkDeleteNotes": func(stale *MahresourcesContext, _ *models.Group, _ *models.Resource, note *models.Note) error {
+			return stale.BulkDeleteNotes(&query_models.BulkQuery{ID: []uint{note.ID}})
+		},
+	}
+	for name, del := range deletes {
+		t.Run(name, func(t *testing.T) {
+			f := newReparentScopeFixture(t)
+			child := &models.Group{Name: "B-child", OwnerId: &f.b.ID}
+			res := &models.Resource{Name: "B-res", OwnerId: &f.b.ID}
+			note := &models.Note{Name: "B-note", OwnerId: &f.b.ID}
+			for _, row := range []any{child, res, note} {
+				if err := f.ctx.db.Create(row).Error; err != nil {
+					t.Fatalf("create %T: %v", row, err)
+				}
+			}
+			stale := f.ctx.WithPrincipal(f.p)
+
+			if err := f.move(t, f.ctx, f.b.ID, f.out.ID); err != nil {
+				t.Fatalf("admin move of B out of S: %v", err)
+			}
+
+			if err := del(stale, f.b, res, note); err == nil {
+				t.Fatal("stale binding deleted from a revoked group")
+			}
+			if got := f.ownerOf(t, f.b.ID); got == nil || *got != f.out.ID {
+				t.Fatalf("B's owner = %v, want %d", got, f.out.ID)
+			}
+			if got := f.ownerOf(t, child.ID); got == nil || *got != f.b.ID {
+				t.Fatalf("B's child owner = %v, want %d", got, f.b.ID)
+			}
+			var r models.Resource
+			if err := f.ctx.db.First(&r, res.ID).Error; err != nil || r.OwnerId == nil || *r.OwnerId != f.b.ID {
+				t.Fatalf("B's resource owner = %v (err %v), want %d", r.OwnerId, err, f.b.ID)
+			}
+			var n models.Note
+			if err := f.ctx.db.First(&n, note.ID).Error; err != nil || n.OwnerId == nil || *n.OwnerId != f.b.ID {
+				t.Fatalf("B's note owner = %v (err %v), want %d", n.OwnerId, err, f.b.ID)
+			}
+
+			// Control: the same stale binding still deletes inside the subtree
+			// (A, with a resource and a note of its own).
+			aRes := &models.Resource{Name: "B-res", OwnerId: &f.a.ID}
+			aNote := &models.Note{Name: "B-note", OwnerId: &f.a.ID}
+			for _, row := range []any{aRes, aNote} {
+				if err := f.ctx.db.Create(row).Error; err != nil {
+					t.Fatalf("create %T: %v", row, err)
+				}
+			}
+			if err := del(stale, f.a, aRes, aNote); err != nil {
+				t.Fatalf("delete inside the subtree: %v", err)
+			}
+		})
+	}
+}
+
 // EditResource re-owns through the scoped handle; a stale binding could
 // re-own a resource whose group was moved out of the subtree.
 func TestEditResource_StaleScopeCannotReownAResourceOfARevokedGroup(t *testing.T) {
@@ -359,14 +485,26 @@ func TestCreateOrUpdateNote_StaleScopeCannotReownUnderARevokedOwner(t *testing.T
 	}
 }
 
-// accountChangeWrites are the containment writes rescopeTx guards, each
-// pulling B (or B's content) under A. s, a and b are S, A under S and B under
-// S, as in newReparentScopeFixture.
+// accountChangeWriteNames lists every write accountChangeWrites builds, in a
+// stable order for the runners below.
+var accountChangeWriteNames = []string{
+	"UpdateGroup", "MassEditGroups", "MergeGroups", "EditResource", "CreateOrUpdateNote",
+	"MergeResources", "DeleteGroup", "BulkDeleteGroups", "DeleteResource", "BulkDeleteResources",
+	"DeleteNote", "BulkDeleteNotes",
+}
+
+// accountChangeWrites are the writes rescopeTx guards, each pulling B (or B's
+// content) under A, or deleting it. s, a and b are S, A under S and B under S,
+// as in newReparentScopeFixture.
 func accountChangeWrites(t *testing.T, ctx *MahresourcesContext, a, b *models.Group) map[string]func(stale *MahresourcesContext) error {
 	t.Helper()
-	res := &models.Resource{Name: "B-res", OwnerId: &b.ID}
+	res := &models.Resource{Name: "B-res", OwnerId: &b.ID, Hash: "b-res-hash", Location: "/x/b-res"}
 	if err := ctx.db.Create(res).Error; err != nil {
 		t.Fatalf("create resource: %v", err)
+	}
+	winner := &models.Resource{Name: "A-winner", OwnerId: &a.ID}
+	if err := ctx.db.Create(winner).Error; err != nil {
+		t.Fatalf("create winner: %v", err)
 	}
 	note := &models.Note{Name: "B-note", OwnerId: &b.ID}
 	if err := ctx.db.Create(note).Error; err != nil {
@@ -398,6 +536,27 @@ func accountChangeWrites(t *testing.T, ctx *MahresourcesContext, a, b *models.Gr
 				ID: note.ID, NoteCreator: query_models.NoteCreator{Name: note.Name, OwnerId: a.ID},
 			})
 			return err
+		},
+		"MergeResources": func(stale *MahresourcesContext) error {
+			return stale.MergeResources(winner.ID, []uint{res.ID}, true)
+		},
+		"DeleteGroup": func(stale *MahresourcesContext) error {
+			return stale.DeleteGroup(b.ID)
+		},
+		"BulkDeleteGroups": func(stale *MahresourcesContext) error {
+			return stale.BulkDeleteGroups(&query_models.BulkQuery{ID: []uint{b.ID}})
+		},
+		"DeleteResource": func(stale *MahresourcesContext) error {
+			return stale.DeleteResource(res.ID)
+		},
+		"BulkDeleteResources": func(stale *MahresourcesContext) error {
+			return stale.BulkDeleteResources(&query_models.BulkQuery{ID: []uint{res.ID}})
+		},
+		"DeleteNote": func(stale *MahresourcesContext) error {
+			return stale.DeleteNote(note.ID)
+		},
+		"BulkDeleteNotes": func(stale *MahresourcesContext) error {
+			return stale.BulkDeleteNotes(&query_models.BulkQuery{ID: []uint{note.ID}})
 		},
 	}
 }
@@ -440,7 +599,7 @@ func runStaleAccountCannotWriteContainment(t *testing.T, newFixture func(t *test
 		},
 	}
 	for change, update := range changes {
-		for _, write := range []string{"UpdateGroup", "MassEditGroups", "MergeGroups", "EditResource", "CreateOrUpdateNote"} {
+		for _, write := range accountChangeWriteNames {
 			t.Run(change+"/"+write, func(t *testing.T) {
 				ctx, s, a, b, p := newFixture(t)
 				writes := accountChangeWrites(t, ctx, a, b)
@@ -458,7 +617,7 @@ func runStaleAccountCannotWriteContainment(t *testing.T, newFixture func(t *test
 
 	// Control: the same writes through a binding whose account is unchanged
 	// still land.
-	for _, write := range []string{"UpdateGroup", "MassEditGroups", "MergeGroups", "EditResource", "CreateOrUpdateNote"} {
+	for _, write := range accountChangeWriteNames {
 		t.Run("unchanged/"+write, func(t *testing.T) {
 			ctx, _, a, b, p := newFixture(t)
 			writes := accountChangeWrites(t, ctx, a, b)
@@ -483,7 +642,7 @@ func TestStaleAccountCannotWriteContainment(t *testing.T) {
 // unconfined binding must be refused rather than run unconfined and pull B
 // into the account's new scope.
 func runStaleUnscopedAccountCannotWriteContainment(t *testing.T, newFixture func(t *testing.T) (ctx *MahresourcesContext, s, a, b *models.Group)) {
-	writes := []string{"UpdateGroup", "MassEditGroups", "MergeGroups", "EditResource", "CreateOrUpdateNote"}
+	writes := accountChangeWriteNames
 	for _, role := range []models.Role{models.RoleUser, models.RoleEditor, models.RoleAdmin} {
 		for _, write := range writes {
 			t.Run("confined "+string(role)+"/"+write, func(t *testing.T) {

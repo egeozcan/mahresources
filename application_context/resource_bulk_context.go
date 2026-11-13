@@ -61,6 +61,16 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 	// Series lock, roll back and retry from the freshly locked Resource snapshot.
 	for attempt := 0; attempt < 5; attempt++ {
 		err = ctx.WithTransaction(func(txCtx *MahresourcesContext) error {
+			// A delete removes the resource from wherever it is now, so it is
+			// judged against the current subtree rather than the request's
+			// allow-list snapshot: the locked read below then refuses a
+			// resource that has left it. The account is re-read for every
+			// principal (see rescopeTx).
+			rescoped, rescopeErr := txCtx.rescopeTx(txCtx.db)
+			if rescopeErr != nil {
+				return rescopeErr
+			}
+			txCtx.db = rescoped
 			if resource.SeriesID != nil {
 				if _, lockErr := lockSeriesRowsForWrite(txCtx.db, *resource.SeriesID); lockErr != nil {
 					if !errors.Is(lockErr, gorm.ErrRecordNotFound) {
@@ -811,6 +821,12 @@ func (ctx *MahresourcesContext) BulkDeleteResources(query *query_models.BulkQuer
 	}
 
 	err := ctx.withResourceSeriesRetry("bulk deletion", func(altCtx *MahresourcesContext) error {
+		// As in DeleteResource: judge every target against the current subtree.
+		rescoped, err := altCtx.rescopeTx(altCtx.db)
+		if err != nil {
+			return err
+		}
+		altCtx.db = rescoped
 		if _, err := lockResourcesAfterSeries(altCtx.db, query.ID); err != nil {
 			return err
 		}
@@ -953,6 +969,18 @@ func (ctx *MahresourcesContext) MergeResourcesExpecting(winnerId uint, loserIds 
 				return err
 			}
 		}
+
+		// A merge carries each loser's file, versions, tags, notes and related
+		// groups onto the winner and deletes the loser, so winner and losers
+		// are judged against the subtree as it is now, not the request's
+		// allow-list snapshot. After the SQLite writer-lock write above (this
+		// reads), before any participant is read. The account is re-read for
+		// every principal (see rescopeTx).
+		rescoped, err := transactionCtx.rescopeTx(tx)
+		if err != nil {
+			return err
+		}
+		transactionCtx.db, tx = rescoped, rescoped
 
 		participantIDs := append(append(make([]uint, 0, len(loserIds)+1), loserIds...), winnerId)
 		participants, err := lockResourcesAfterSeries(tx, participantIDs)

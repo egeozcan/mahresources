@@ -26,7 +26,7 @@ func TestInterleavedDeletesOfTheLastRowsOverAFileRemoveItPG(t *testing.T) {
 	outside := createGroupNamed(t, ctx, "interleaved-outside", nil)
 	inside := createGroupNamed(t, ctx, "interleaved-inside", nil)
 	first := uploadAs(t, ctx, body, "first.txt", outside.ID)
-	second := uploadAs(t, ctx.WithPrincipal(scopedPrincipalFor(inside)), body, "second.txt", inside.ID)
+	second := uploadAs(t, ctx.WithPrincipal(scopedPrincipalFor(t, ctx, inside)), body, "second.txt", inside.ID)
 	if first.Location != second.Location {
 		t.Fatalf("the two rows do not share a file: %s and %s", first.Location, second.Location)
 	}

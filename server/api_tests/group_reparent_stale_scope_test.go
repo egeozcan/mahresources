@@ -302,3 +302,113 @@ func TestScopedNoteReown_ParkedRequestCannotUseARevokedOwner(t *testing.T) {
 		t.Fatalf("note owner = %v, want %d: the parked request used a revoked owner", got.OwnerId, f.b.ID)
 	}
 }
+
+// The resource-merge twin: a parked POST /v1/resources/merge must not merge a
+// resource of a group the admin moved out of the subtree (or, for an account
+// confined mid-request, of any group outside its new scope) into an in-scope
+// winner. That would make the loser's file a version the caller can read and
+// delete the loser from where the admin put it.
+func TestScopedResourceMerge_ParkedRequestCannotTakeARevokedLoser(t *testing.T) {
+	cases := map[string]func(t *testing.T, tc *TestContext, f staleReparentFixture) (bearer string, loserOwner uint){
+		"loser's group moved out": func(t *testing.T, tc *TestContext, f staleReparentFixture) (string, uint) {
+			return f.scoped, f.b.ID
+		},
+		"unscoped account confined": func(t *testing.T, tc *TestContext, f staleReparentFixture) (string, uint) {
+			return roleBearer(t, tc, models.RoleUser), f.mk("stale-X", nil).ID
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			tc := setupAuthEnv(t)
+			f := buildStaleReparentFixture(t, tc)
+			out := f.mk("stale-Out", nil)
+			bearer, loserOwner := setup(t, tc, f)
+			winner := &models.Resource{Name: "A-winner", OwnerId: &f.a.ID}
+			loser := &models.Resource{Name: "revoked-loser", OwnerId: &loserOwner, Hash: "1111", Location: "/x/loser"}
+			for _, r := range []*models.Resource{winner, loser} {
+				if err := tc.DB.Create(r).Error; err != nil {
+					t.Fatalf("create resource: %v", err)
+				}
+			}
+
+			send := parkPost(t, tc, bearer, "/v1/resources/merge")
+			if bearer == f.scoped {
+				adminPost(t, tc, f.admin, "/v1/group", fmt.Sprintf(`{"ID":%d,"Name":"stale-B","OwnerId":%d}`, f.b.ID, out.ID))
+			} else {
+				var u models.User
+				if err := tc.DB.Where("username = ?", "rb_user").First(&u).Error; err != nil {
+					t.Fatalf("load user account: %v", err)
+				}
+				adminPost(t, tc, f.admin, "/v1/user", fmt.Sprintf(`{"id":%d,"role":"user","scopeGroupId":%d}`, u.ID, f.a.ID))
+			}
+			rec := send(fmt.Sprintf(`"Winner":%d,"Losers":[%d],"KeepAsVersion":true}`, winner.ID, loser.ID))
+
+			if rec.Code == http.StatusOK {
+				t.Fatalf("parked merge of a revoked loser: status 200 (%s)", rec.Body.String())
+			}
+			var got models.Resource
+			if err := tc.DB.First(&got, loser.ID).Error; err != nil {
+				t.Fatalf("the revoked loser was deleted: %v", err)
+			}
+			var versions int64
+			tc.DB.Model(&models.ResourceVersion{}).Where("resource_id = ? AND hash = ?", winner.ID, "1111").Count(&versions)
+			if versions != 0 {
+				t.Fatalf("the revoked loser's file became %d version(s) of the winner", versions)
+			}
+		})
+	}
+}
+
+// The delete twin: a parked POST /v1/resources/delete must not delete a
+// resource of a group the admin moved out of the subtree.
+func TestScopedResourceDelete_ParkedRequestCannotDeleteFromARevokedGroup(t *testing.T) {
+	tc := setupAuthEnv(t)
+	f := buildStaleReparentFixture(t, tc)
+	out := f.mk("stale-Out", nil)
+	res := &models.Resource{Name: "B-res", OwnerId: &f.b.ID}
+	if err := tc.DB.Create(res).Error; err != nil {
+		t.Fatalf("create resource: %v", err)
+	}
+
+	send := parkPost(t, tc, f.scoped, "/v1/resources/delete")
+	adminPost(t, tc, f.admin, "/v1/group", fmt.Sprintf(`{"ID":%d,"Name":"stale-B","OwnerId":%d}`, f.b.ID, out.ID))
+	rec := send(fmt.Sprintf(`"ID":[%d]}`, res.ID))
+
+	if rec.Code == http.StatusOK {
+		t.Fatalf("parked delete from a revoked group: status 200 (%s)", rec.Body.String())
+	}
+	var got models.Resource
+	if err := tc.DB.First(&got, res.ID).Error; err != nil {
+		t.Fatalf("the revoked group's resource was deleted: %v", err)
+	}
+}
+
+// Control: parked merge and delete inside an unchanged subtree still land.
+func TestScopedResourceMergeAndDelete_ParkedRequestInsideTheSubtreeSucceeds(t *testing.T) {
+	tc := setupAuthEnv(t)
+	f := buildStaleReparentFixture(t, tc)
+	winner := &models.Resource{Name: "A-winner", OwnerId: &f.a.ID}
+	loser := &models.Resource{Name: "B-loser", OwnerId: &f.b.ID, Hash: "2222", Location: "/x/inside"}
+	doomed := &models.Resource{Name: "B-doomed", OwnerId: &f.b.ID}
+	for _, r := range []*models.Resource{winner, loser, doomed} {
+		if err := tc.DB.Create(r).Error; err != nil {
+			t.Fatalf("create resource: %v", err)
+		}
+	}
+
+	send := parkPost(t, tc, f.scoped, "/v1/resources/merge")
+	rec := send(fmt.Sprintf(`"Winner":%d,"Losers":[%d],"KeepAsVersion":true}`, winner.ID, loser.ID))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("parked merge inside the subtree: status %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	send = parkPost(t, tc, f.scoped, "/v1/resources/delete")
+	rec = send(fmt.Sprintf(`"ID":[%d]}`, doomed.ID))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("parked delete inside the subtree: status %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	var n int64
+	tc.DB.Model(&models.Resource{}).Where("id IN ?", []uint{loser.ID, doomed.ID}).Count(&n)
+	if n != 0 {
+		t.Fatalf("%d of the merged/deleted resources survived", n)
+	}
+}

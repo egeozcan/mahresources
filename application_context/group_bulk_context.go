@@ -458,6 +458,12 @@ func (ctx *MahresourcesContext) BulkDeleteGroups(query *query_models.BulkQuery) 
 		if err := altCtx.lockUserManagementMutation(altCtx.db); err != nil {
 			return err
 		}
+		// As in DeleteGroup: judge every target against the current subtree.
+		rescoped, err := altCtx.rescopeTx(altCtx.db)
+		if err != nil {
+			return err
+		}
+		altCtx.db = rescoped
 		for _, id := range groupIDs {
 			if err := altCtx.prepareGroupDelete(id); err != nil {
 				return err
