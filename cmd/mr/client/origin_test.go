@@ -150,6 +150,64 @@ func TestStoreTokenTightensExistingFileMode(t *testing.T) {
 	}
 }
 
+// A credentials file whose mode cannot be tightened (writable but owned by
+// another uid, or on a filesystem that refuses chmod) must not be emptied:
+// login and logout fail closed and every other origin's token survives.
+func TestTokenWriteKeepsFileWhenChmodFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod semantics")
+	}
+	orig := chmodTokenFile
+	t.Cleanup(func() { chmodTokenFile = orig })
+	chmodTokenFile = func(f *os.File) error { return fmt.Errorf("chmod %s: operation not permitted", f.Name()) }
+
+	const before = `{"http://a.example":"TOKA","http://c.example":"TOKC"}`
+	for _, op := range []struct {
+		name string
+		run  func() error
+	}{
+		{"login", func() error { return StoreToken("http://b.example", "TOKB") }},
+		{"logout", func() error { return ClearToken("http://c.example") }},
+	} {
+		t.Run(op.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "creds.json")
+			t.Setenv("MR_TOKEN", "")
+			t.Setenv("MR_TOKEN_FILE", p)
+			if err := os.WriteFile(p, []byte(before), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(p, 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := op.run(); err == nil {
+				t.Fatal("expected the write to fail closed on a 0644 file it cannot tighten")
+			}
+			if b, _ := os.ReadFile(p); string(b) != before {
+				t.Fatalf("credentials file was modified: %q", b)
+			}
+		})
+	}
+
+	// A file that is already private needs no chmod: the write proceeds.
+	t.Run("already-private", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "creds.json")
+		t.Setenv("MR_TOKEN", "")
+		t.Setenv("MR_TOKEN_FILE", p)
+		if err := os.WriteFile(p, []byte(before), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := StoreToken("http://b.example", "TOKB"); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := os.ReadFile(p)
+		for _, tok := range []string{"TOKA", "TOKB", "TOKC"} {
+			if !strings.Contains(string(b), tok) {
+				t.Fatalf("%s missing from %q", tok, b)
+			}
+		}
+	})
+}
+
 // captureRT stands in for the network (the folded hosts do not resolve): the
 // configured host answers with a redirect to redirectTo, every other host with
 // 200. Each request is recorded as "host authorization".

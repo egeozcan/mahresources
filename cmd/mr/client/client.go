@@ -141,6 +141,9 @@ func readTokenMap() map[string]string {
 	return m
 }
 
+// chmodTokenFile tightens the credentials file; a var so tests can make it fail.
+var chmodTokenFile = func(f *os.File) error { return f.Chmod(0600) }
+
 // writeTokenMap persists the origin→token map (0600).
 func writeTokenMap(m map[string]string) error {
 	path := tokenFilePath()
@@ -154,13 +157,23 @@ func writeTokenMap(m map[string]string) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	// No O_TRUNC: the existing contents (other origins' tokens) must survive a
+	// failure to tighten the mode.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
 		return err
 	}
 	// The create mode only applies to new files; tighten an existing one before
-	// the token is written into it.
-	if err := f.Chmod(0600); err != nil {
+	// the token is written into it. A file that is already private needs no
+	// chmod, so a refused chmod only fails closed when the mode is loose.
+	if err := chmodTokenFile(f); err != nil {
+		st, serr := f.Stat()
+		if serr != nil || st.Mode().Perm()&0077 != 0 {
+			f.Close()
+			return err
+		}
+	}
+	if err := f.Truncate(0); err != nil {
 		f.Close()
 		return err
 	}
