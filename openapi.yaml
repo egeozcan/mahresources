@@ -11086,6 +11086,11 @@ paths:
                   required: true
                   schema:
                     type: string
+                - description: Acknowledge the external commands a command-bearing plugin may run. Without it, enabling such a plugin is refused.
+                  in: query
+                  name: confirm_commands
+                  schema:
+                    type: boolean
             responses:
                 "200":
                     content:

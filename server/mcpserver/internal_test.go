@@ -233,3 +233,23 @@ func TestFoldKeyMatchesEqualFold(t *testing.T) {
 		}
 	}
 }
+
+func TestDeleteLeftoversTravelInTheBody(t *testing.T) {
+	parent := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	op := &Operation{Method: http.MethodDelete, Path: "/v1/admin/settings/{key}",
+		Params: []Param{{Name: "key", In: "path", Required: true}}}
+	req, err := buildRequest(context.Background(), parent, op, map[string]any{"key": "max_upload_size", "reason": "restore"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(req.Body)
+	if req.URL.RawQuery != "" || string(body) != `{"reason":"restore"}` || req.Header.Get("Content-Type") != "application/json" {
+		t.Fatalf("query=%q body=%s ct=%s", req.URL.RawQuery, body, req.Header.Get("Content-Type"))
+	}
+
+	get := &Operation{Method: http.MethodGet, Path: "/v1/notes"}
+	greq, _ := buildRequest(context.Background(), parent, get, map[string]any{"Name": "x"})
+	if greq.URL.Query().Get("Name") != "x" {
+		t.Fatalf("GET leftover not in the query: %s", greq.URL.String())
+	}
+}

@@ -127,7 +127,7 @@ func buildRequest(ctx context.Context, parent *http.Request, op *Operation, args
 		bodyArgs = remaining
 		// An operation with no declared body takes explicit body fields under
 		// "body" (see inputSchema); they join the leftovers.
-		if b, ok := remaining["body"]; ok && op.Body == nil && op.Method != http.MethodGet && op.Method != http.MethodDelete {
+		if b, ok := remaining["body"]; ok && op.Body == nil && op.Method != http.MethodGet {
 			bm, ok := b.(map[string]any)
 			if !ok {
 				return nil, errors.New(`argument "body" must be an object`)
@@ -150,7 +150,9 @@ func buildRequest(ctx context.Context, parent *http.Request, op *Operation, args
 	var body []byte
 	contentType := ""
 	switch {
-	case op.Method == http.MethodGet || op.Method == http.MethodDelete || op.Body == nil && len(bodyArgs) == 0:
+	case op.Method == http.MethodGet || op.Body == nil && len(bodyArgs) == 0:
+		// A GET has no body. Leftover GET arguments are filters the registry
+		// did not declare, which the query decoders read.
 		for k, v := range bodyArgs {
 			if err := addValues(query, k, v); err != nil {
 				return nil, fmt.Errorf("argument %q: %w", k, err)
@@ -159,7 +161,9 @@ func buildRequest(ctx context.Context, parent *http.Request, op *Operation, args
 	case op.Body == nil:
 		// No declared body, but arguments are left: the registry entry omits
 		// the handler's body type. tryFillStructValuesFromRequest, which nearly
-		// every handler uses, decodes JSON, and JSON keeps nested objects.
+		// every handler uses, decodes JSON, and JSON keeps nested objects. A
+		// DELETE's declared parameters are in the query already; what is left
+		// is body, such as resetRuntimeSetting's audit reason.
 		b, err := json.Marshal(bodyArgs)
 		if err != nil {
 			return nil, err

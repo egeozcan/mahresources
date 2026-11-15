@@ -136,3 +136,38 @@ func TestScopedUpdateKeepsOnlyExistingUnseenLinks(t *testing.T) {
 		t.Errorf("a dangling link survived the clear (%d rows)", n)
 	}
 }
+
+// An explicit empty list removes the links the caller can see, even though
+// the edit keeps the unseen ones (review round 6: the preloaded association
+// slices re-created the deleted rows on save).
+func TestScopedEditRemovesVisibleLinksOnExplicitClear(t *testing.T) {
+	checkScopedEditRemovesVisibleLinks(t, setupAuthEnv(t))
+}
+
+func checkScopedEditRemovesVisibleLinks(t *testing.T, tc *TestContext) {
+	t.Helper()
+	root := &models.Group{Name: "rv-root"}
+	tc.DB.Create(root)
+	visibleGroup := &models.Group{Name: "rv-visible", OwnerId: &root.ID}
+	tc.DB.Create(visibleGroup)
+	res := &models.Resource{Name: "rv-res", OwnerId: &root.ID}
+	tc.DB.Create(res)
+	visibleNote := &models.Note{Name: "rv-note", OwnerId: &root.ID}
+	tc.DB.Create(visibleNote)
+	tc.DB.Exec("INSERT INTO groups_related_resources (group_id, resource_id) VALUES (?, ?)", visibleGroup.ID, res.ID)
+	tc.DB.Exec("INSERT INTO resource_notes (resource_id, note_id) VALUES (?, ?)", res.ID, visibleNote.ID)
+
+	bearer := scopedUserBearer(t, tc, root.ID)
+	h := map[string]string{"Accept": "application/json", "Content-Type": "application/json", "Authorization": bearer}
+	rr := doReq(tc, http.MethodPost, "/v1/resource/edit", h, nil,
+		strings.NewReader(`{"ID":`+fmt.Sprint(res.ID)+`,"Name":"rv","Groups":[],"Notes":[]}`))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("scoped clear = %d %s", rr.Code, rr.Body.String())
+	}
+	if n := linkCount(tc, "groups_related_resources", "resource_id", res.ID, "group_id", visibleGroup.ID); n != 0 {
+		t.Errorf("Groups: [] kept a visible group link (%d rows)", n)
+	}
+	if n := linkCount(tc, "resource_notes", "resource_id", res.ID, "note_id", visibleNote.ID); n != 0 {
+		t.Errorf("Notes: [] kept a visible note link (%d rows)", n)
+	}
+}

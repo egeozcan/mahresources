@@ -165,3 +165,14 @@ func requires(schema map[string]any, name string) bool {
 func containsFold(s, sub string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(sub))
 }
+
+func TestEnablePluginTakesCommandAcknowledgement(t *testing.T) {
+	c := buildCatalog(t)
+	op, _ := c.Get("enablePlugin")
+	for _, p := range op.Params {
+		if p.Name == "confirm_commands" && p.In == "query" {
+			return
+		}
+	}
+	t.Fatalf("enablePlugin does not declare confirm_commands: %+v", op.Params)
+}

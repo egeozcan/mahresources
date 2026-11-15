@@ -347,7 +347,7 @@ func inputSchema(op *Operation) map[string]any {
 			required = append(required, p.Name)
 		}
 	}
-	if op.Body == nil && (op.Method == "POST" || op.Method == "PUT" || op.Method == "PATCH") {
+	if op.Body == nil && op.Method != "GET" {
 		// The registry declares no body here, but the handler may read one
 		// (saved-query bind values, for instance, whose names can equal a
 		// routing parameter's). "body" is sent as the JSON request body.

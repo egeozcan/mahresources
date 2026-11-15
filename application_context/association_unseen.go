@@ -13,13 +13,19 @@ type joinLink struct {
 	farCol   string // the column holding the linked entity
 	farTable string // the linked entity's table
 	far      any    // the linked entity's model, for the scoped visibility check
+	// entities builds the far side's model slice for Association.Delete.
+	entities func(ids []uint) any
 }
 
 var (
-	noteGroupsLink     = joinLink{"groups_related_notes", "note_id", "group_id", "groups", &models.Group{}}
-	noteResourcesLink  = joinLink{"resource_notes", "note_id", "resource_id", "resources", &models.Resource{}}
-	resourceGroupsLink = joinLink{"groups_related_resources", "resource_id", "group_id", "groups", &models.Group{}}
-	resourceNotesLink  = joinLink{"resource_notes", "resource_id", "note_id", "notes", &models.Note{}}
+	groupEntities    = func(ids []uint) any { return BuildAssociationSlice(ids, GroupFromID) }
+	noteEntities     = func(ids []uint) any { return BuildAssociationSlice(ids, NoteFromID) }
+	resourceEntities = func(ids []uint) any { return BuildAssociationSlice(ids, ResourceFromID) }
+
+	noteGroupsLink     = joinLink{"groups_related_notes", "note_id", "group_id", "groups", &models.Group{}, groupEntities}
+	noteResourcesLink  = joinLink{"resource_notes", "note_id", "resource_id", "resources", &models.Resource{}, resourceEntities}
+	resourceGroupsLink = joinLink{"groups_related_resources", "resource_id", "group_id", "groups", &models.Group{}, groupEntities}
+	resourceNotesLink  = joinLink{"resource_notes", "resource_id", "note_id", "notes", &models.Note{}, noteEntities}
 )
 
 // clearLinks removes ownerID's links through link before the writer adds
@@ -35,7 +41,9 @@ var (
 //
 // Only rows are deleted, never re-inserted, so a link that someone else
 // deletes while this update runs stays deleted. Visibility is decided on tx,
-// which carries the scope the update itself runs under.
+// which carries the scope the update itself runs under. The rows go through
+// Association.Delete, which also drops them from owner's preloaded slice, so
+// a later Save cannot write them back.
 func (ctx *MahresourcesContext) clearLinks(tx *gorm.DB, owner any, assoc string, link joinLink, ownerID uint) error {
 	if !ctx.isScopedPrincipal() {
 		return tx.Model(owner).Association(assoc).Clear()
@@ -79,6 +87,5 @@ func (ctx *MahresourcesContext) clearLinks(tx *gorm.DB, owner any, assoc string,
 	if len(removable) == 0 {
 		return nil
 	}
-	return tx.Exec("DELETE FROM "+link.table+" WHERE "+link.ownerCol+" = ? AND "+link.farCol+" IN ?",
-		ownerID, removable).Error
+	return tx.Model(owner).Association(assoc).Delete(link.entities(removable))
 }

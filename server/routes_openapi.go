@@ -3535,6 +3535,7 @@ func registerPluginRoutes(r *openapi.Registry) {
 		Tags:        []string{"plugins"},
 		ExtraQueryParams: []openapi.QueryParam{
 			{Name: "name", Type: "string", Required: true, Description: "Plugin name to enable"},
+			{Name: "confirm_commands", Type: "boolean", Description: "Acknowledge the external commands a command-bearing plugin may run. Without it, enabling such a plugin is refused."},
 		},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
