@@ -3,7 +3,9 @@ package api_handlers
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/net/html"
 )
@@ -19,28 +21,52 @@ var previewBlockElements = map[string]bool{
 	"p": true, "pre": true, "section": true, "table": true, "tr": true, "ul": true,
 }
 
+// previewTextBuilder writes at most previewTextLimit bytes, cut on a rune
+// boundary, and remembers whether anything was cut.
+type previewTextBuilder struct {
+	b   strings.Builder
+	cut bool
+}
+
+func (p *previewTextBuilder) write(s string) {
+	room := previewTextLimit - p.b.Len()
+	if room <= 0 {
+		p.cut = p.cut || s != ""
+		return
+	}
+	if len(s) > room {
+		s = s[:room]
+		for !utf8.ValidString(s) && len(s) > 0 {
+			s = s[:len(s)-1]
+		}
+		p.cut = true
+	}
+	p.b.WriteString(s)
+}
+
+func (p *previewTextBuilder) newline() {
+	if p.b.Len() > 0 && !strings.HasSuffix(p.b.String(), "\n") {
+		p.write("\n")
+	}
+}
+
 // previewText renders a preview's HTML as the text a reader would see. The
 // browser renders [meta] as a <meta-shortcode> element whose value sits in a
-// data attribute; here the value is written in its place, so a model reading
-// the preview sees "Status: active" rather than an empty element. Script and
-// style bodies are dropped.
+// data attribute; here the element is replaced by what it displays (see
+// metaElementText), so a model reading the preview sees "Status: active".
+// Script, style and template bodies are dropped.
 func previewText(src string) string {
-	var b strings.Builder
+	var p previewTextBuilder
 	z := html.NewTokenizer(strings.NewReader(src))
 	skip := 0 // depth inside an element whose body is not text
-	newline := func() {
-		if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
-			b.WriteString("\n")
-		}
-	}
-	for b.Len() < previewTextLimit {
+	for !p.cut {
 		tt := z.Next()
 		switch tt {
 		case html.ErrorToken:
-			return finishPreviewText(b.String())
+			return finishPreviewText(p.b.String(), false)
 		case html.TextToken:
 			if skip == 0 {
-				b.WriteString(collapseSpace(string(z.Text())))
+				p.write(collapseSpace(string(z.Text())))
 			}
 		case html.StartTagToken, html.SelfClosingTagToken:
 			name, hasAttr := z.TagName()
@@ -51,23 +77,23 @@ func previewText(src string) string {
 					skip++
 				}
 			case tag == "meta-shortcode":
-				var value string
+				attrs := map[string]string{}
+				present := map[string]bool{}
 				for hasAttr {
 					var k, v []byte
 					k, v, hasAttr = z.TagAttr()
-					if string(k) == "data-value" {
-						value = metaDisplayValue(string(v))
-					}
+					attrs[string(k)] = string(v)
+					present[string(k)] = true
 				}
 				if skip == 0 {
-					b.WriteString(value)
+					p.write(metaElementText(attrs, present["data-value"]))
 				}
 				if tt == html.StartTagToken {
 					skip++
 				}
 			case previewBlockElements[tag]:
 				if skip == 0 {
-					newline()
+					p.newline()
 				}
 			}
 		case html.EndTagToken:
@@ -80,12 +106,66 @@ func previewText(src string) string {
 				}
 			case previewBlockElements[tag]:
 				if skip == 0 {
-					newline()
+					p.newline()
 				}
 			}
 		}
 	}
-	return finishPreviewText(b.String()) + "…"
+	return finishPreviewText(p.b.String(), true)
+}
+
+// metaElementText is what a read-only <meta-shortcode> shows, following
+// src/webcomponents/meta-shortcode.ts: an empty value (absent, null or blank
+// text) shows nothing under hide-empty, else the default, else "Label: —"
+// with the schema's title or the path's last segment title-cased.
+func metaElementText(attrs map[string]string, hasValue bool) string {
+	var value any
+	if hasValue && json.Unmarshal([]byte(attrs["data-value"]), &value) != nil {
+		value = attrs["data-value"]
+	}
+	empty := !hasValue || value == nil
+	if s, ok := value.(string); ok && strings.TrimSpace(s) == "" {
+		empty = true
+	}
+	if !empty {
+		switch t := value.(type) {
+		case string:
+			return t
+		case float64, bool:
+			return fmt.Sprint(t)
+		default:
+			b, _ := json.Marshal(t)
+			return string(b)
+		}
+	}
+	if attrs["data-hide-empty"] == "true" {
+		return ""
+	}
+	if d := attrs["data-default"]; d != "" {
+		return d
+	}
+	return metaLabel(attrs["data-schema"], attrs["data-path"]) + ": —"
+}
+
+var (
+	titleCaseCamel = regexp.MustCompile(`([a-z])([A-Z])`)
+	titleCaseWord  = regexp.MustCompile(`\b\w`)
+)
+
+// metaLabel is the element's label: the schema title, else the last path
+// segment title-cased (titleCase in src/schema-editor/schema-core.ts).
+func metaLabel(schema, path string) string {
+	var s struct {
+		Title string `json:"title"`
+	}
+	if json.Unmarshal([]byte(schema), &s) == nil && s.Title != "" {
+		return s.Title
+	}
+	parts := strings.Split(path, ".")
+	key := parts[len(parts)-1]
+	key = titleCaseCamel.ReplaceAllString(key, "$1 $2")
+	key = strings.NewReplacer("_", " ", "-", " ").Replace(key)
+	return titleCaseWord.ReplaceAllStringFunc(key, strings.ToUpper)
 }
 
 // collapseSpace folds each whitespace run into one space, keeping a leading
@@ -108,7 +188,7 @@ func collapseSpace(s string) string {
 	return out
 }
 
-func finishPreviewText(s string) string {
+func finishPreviewText(s string, cut bool) string {
 	lines := strings.Split(s, "\n")
 	out := lines[:0]
 	for _, l := range lines {
@@ -116,24 +196,9 @@ func finishPreviewText(s string) string {
 			out = append(out, l)
 		}
 	}
-	return strings.Join(out, "\n")
-}
-
-// metaDisplayValue turns a [meta] data-value (JSON) into display text.
-func metaDisplayValue(raw string) string {
-	var v any
-	if json.Unmarshal([]byte(raw), &v) != nil {
-		return raw
+	text := strings.Join(out, "\n")
+	if cut {
+		text += "…"
 	}
-	switch t := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return t
-	case float64, bool:
-		return fmt.Sprint(t)
-	default:
-		b, _ := json.Marshal(t)
-		return string(b)
-	}
+	return text
 }

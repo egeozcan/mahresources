@@ -337,6 +337,15 @@ func lintText(input string, opts LintOptions) []LintIssue {
 		return nil
 	}
 
+	// [meta] inside these bodies reads another entity (or a query row), whose
+	// schema is not the one being edited, so the schema check skips them.
+	var otherContext [][2]int
+	if len(opts.metaProps) > 0 {
+		for _, name := range []string{"using", "mrql", "each"} {
+			otherContext = append(otherContext, namedBlockSpans(tokens, name)...)
+		}
+	}
+
 	// --- Attribute and semantic checks over opener tokens ---
 	for _, tk := range tokens {
 		if tk.closing {
@@ -458,8 +467,10 @@ func lintText(input string, opts LintOptions) []LintIssue {
 					`no template partial named "`+refName+`" exists; this renders nothing`)
 			}
 		case "meta":
-			if msg := metaPathIssue(tk.attrs["path"], opts.metaProps); msg != "" {
-				add(tk.start, tk.end, SeverityWarning, msg)
+			if !withinSpans(tk.start, otherContext) {
+				if msg := metaPathIssue(tk.attrs["path"], opts.metaProps); msg != "" {
+					add(tk.start, tk.end, SeverityWarning, msg)
+				}
 			}
 			if strings.TrimSpace(tk.attrs["default"]) != "" && tk.attrs["hide-empty"] == "true" {
 				add(tk.start, tk.end, SeverityWarning,
@@ -614,7 +625,7 @@ func lintText(input string, opts LintOptions) []LintIssue {
 
 	lintStrayCloseTags(w, lm, input, tokens, add)
 	if opts.CheckHTMLBalance && !opts.CSSMode {
-		lintUnbalancedHTML(w, input, add)
+		lintUnbalancedHTML(w, input, tokens, add)
 	}
 	if lm.Err() != nil {
 		w.fail()
@@ -622,6 +633,11 @@ func lintText(input string, opts LintOptions) []LintIssue {
 	}
 
 	// --- Loose bracket scan for shortcode-looking typos (info) ---
+	// Inside a stylesheet a bracket is an attribute selector ([disabled]).
+	var cssSpans [][2]int
+	if !opts.CSSMode {
+		cssSpans = styleElementSpans(input)
+	}
 	looseMatches := looseBracketPattern.FindAllStringSubmatchIndex(input, budgetedTokenCap+1)
 	if len(looseMatches) > budgetedTokenCap {
 		w.fail()
@@ -652,7 +668,7 @@ func lintText(input string, opts LintOptions) []LintIssue {
 				add(pos, m[1], SeverityInfo,
 					"unknown shortcode \"["+name+"]\"; did you mean ["+suggestion+"]?")
 			}
-		} else if looksLikeShortcode(input, pos, m[3], name) {
+		} else if !opts.CSSMode && !withinSpans(pos, cssSpans) && looksLikeShortcode(input, pos, m[3], name) {
 			add(pos, m[1], SeverityInfo,
 				"["+name+"] is not a shortcode, so it renders as literal text")
 		}

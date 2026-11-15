@@ -75,8 +75,8 @@ An agent editing category, resource category or note type templates gets the sam
 | Tool | What it does |
 |------|--------------|
 | `template_guide` | The run's reference for one carrier: shortcode, plugin and MRQL references, template partials, the carrier's name, description and detail-page layout, its Meta JSON Schema, sample members and, with `slot`, that slot's current content. Call it first. |
-| `template_lint` | Lint a field. Flags shortcode errors, MRQL the renderer would reject, missing partials, bracketed words that are not shortcodes, `[meta]` paths that are not in the schema, and unbalanced HTML. Omit `content` to lint the saved value. |
-| `template_preview` | Render a field against a real entity. Returns the HTML, the CSS and the text a reader sees, with `[meta]` values written in. Renders against `editing.entityId`, else one of the carrier's members. `editing.previewMRQL` runs `[mrql]` queries and `editing.previewPlugins` runs plugin shortcodes, read-only. |
+| `template_lint` | Lint a field. Flags shortcode errors, MRQL the renderer would reject, missing partials, bracketed words that are not shortcodes, `[meta]` paths the schema does not declare, and unbalanced HTML. Omit `content` to lint the saved value. |
+| `template_preview` | Render a field against a real entity. Returns the HTML, the CSS and the text a reader sees, with each `[meta]` shown as the page shows it. Renders against `editing.entityId`, else one of the carrier's members. `editing.previewMRQL` runs `[mrql]` queries and `editing.previewPlugins` runs plugin shortcodes, read-only. |
 | `template_check_mrql` | Check an MRQL query without running it. |
 | `template_get_entity`, `template_list_related`, `template_list_members` | Read sample entities and their relations. |
 | `template_get_template`, `template_list_carriers` | Read saved templates of any carrier. |

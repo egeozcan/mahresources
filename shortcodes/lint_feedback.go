@@ -2,6 +2,7 @@ package shortcodes
 
 import (
 	"encoding/json"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -41,28 +42,38 @@ func looksLikeShortcode(input string, start, nameEnd int, name string) bool {
 // tokens, but they are not literal text either.
 var slotDividers = map[string]bool{mrqlHeaderTag: true, mrqlFooterTag: true, "else": true, "elseif": true, "item": true}
 
-// metaSchemaProperties returns a metadata schema's top-level property names,
-// or nil when it has none to check against.
+// metaSchemaProperties returns a metadata schema's declared top-level
+// property names, or nil when there is nothing reliable to check against: no
+// properties, or a schema composed with allOf/anyOf/oneOf/$ref or pattern
+// properties, whose effective property set this does not compute.
 func metaSchemaProperties(schema string) []string {
 	if strings.TrimSpace(schema) == "" {
 		return nil
 	}
-	var doc struct {
-		Properties map[string]json.RawMessage `json:"properties"`
-	}
-	if json.Unmarshal([]byte(schema), &doc) != nil || len(doc.Properties) == 0 {
+	var doc map[string]json.RawMessage
+	if json.Unmarshal([]byte(schema), &doc) != nil {
 		return nil
 	}
-	names := make([]string, 0, len(doc.Properties))
-	for name := range doc.Properties {
+	for _, k := range []string{"allOf", "anyOf", "oneOf", "$ref", "patternProperties", "if"} {
+		if _, ok := doc[k]; ok {
+			return nil
+		}
+	}
+	var props map[string]json.RawMessage
+	if json.Unmarshal(doc["properties"], &props) != nil || len(props) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(props))
+	for name := range props {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	return names
 }
 
-// metaPathIssue flags a [meta] path whose first segment is not a schema
-// property; such a path renders empty.
+// metaPathIssue flags a [meta] path whose first segment the schema does not
+// declare. Metadata may hold undeclared keys, which [meta] still shows, so
+// this is a likely typo rather than a certain one.
 func metaPathIssue(path string, props []string) string {
 	path = strings.TrimSpace(path)
 	if len(props) == 0 || path == "" {
@@ -81,8 +92,29 @@ func metaPathIssue(path string, props []string) string {
 	if len(shown) > 12 {
 		shown = append(append([]string{}, shown[:12]...), "…")
 	}
-	return `[meta] path "` + path + `": "` + first + `" is not a property of the metadata schema, so it renders empty (properties: ` +
-		strings.Join(shown, ", ") + ")"
+	return `[meta] path "` + path + `": "` + first + `" is not declared in the metadata schema (declared: ` +
+		strings.Join(shown, ", ") + `); if it is a typo, it renders empty`
+}
+
+func withinSpans(pos int, spans [][2]int) bool {
+	for _, s := range spans {
+		if pos >= s[0] && pos < s[1] {
+			return true
+		}
+	}
+	return false
+}
+
+var styleElementPattern = regexp.MustCompile(`(?is)<style\b[^>]*>.*?(?:</style\s*>|$)`)
+
+// styleElementSpans are the <style> elements of markup, whose brackets are
+// CSS attribute selectors.
+func styleElementSpans(input string) [][2]int {
+	var out [][2]int
+	for _, m := range styleElementPattern.FindAllStringIndex(input, -1) {
+		out = append(out, [2]int{m[0], m[1]})
+	}
+	return out
 }
 
 // htmlVoid elements have no closing tag; htmlOptionalClose ones may omit it.
@@ -99,16 +131,27 @@ var (
 // swallows whatever the page renders after it. Elements whose closing tag is
 // optional are not tracked. Shortcode branches can open and close an element
 // on different sides, so these are warnings.
-func lintUnbalancedHTML(w *schemaWork, input string, add func(start, end int, severity, msg string)) {
+func lintUnbalancedHTML(w *schemaWork, input string, tokens []token, add func(start, end int, severity, msg string)) {
 	if !w.charge(1 + len(input)/16) {
 		return
+	}
+	// Shortcode openers are blanked out, length for length, so an attribute
+	// value such as eq="<div>" is not read as markup and offsets still match.
+	masked := []byte(input)
+	for _, tk := range tokens {
+		for i := tk.start; i < tk.end && i < len(masked); i++ {
+			if masked[i] != '\n' {
+				masked[i] = ' '
+			}
+		}
 	}
 	type open struct {
 		name       string
 		start, end int
 	}
 	var stack []open
-	z := html.NewTokenizer(strings.NewReader(input))
+	foreign := 0 // depth inside <svg> or <math>, where <x/> is a complete element
+	z := html.NewTokenizer(strings.NewReader(string(masked)))
 	pos := 0
 	for {
 		tt := z.Next()
@@ -121,9 +164,16 @@ func lintUnbalancedHTML(w *schemaWork, input string, add func(start, end int, se
 				add(o.start, o.end, SeverityWarning, "<"+o.name+"> is never closed; it will contain everything rendered after this slot")
 			}
 			return
-		case html.StartTagToken:
+		case html.StartTagToken, html.SelfClosingTagToken:
 			nameBytes, _ := z.TagName()
 			name := string(nameBytes)
+			if tt == html.SelfClosingTagToken && (foreign > 0 || name == "svg" || name == "math") {
+				continue
+			}
+			if name == "svg" || name == "math" {
+				foreign++
+			}
+			// Outside SVG and MathML, <div/> opens a <div>: the slash is ignored.
 			if !htmlVoid[name] && !htmlOptionalClose[name] {
 				stack = append(stack, open{name, start, end})
 			}
@@ -143,6 +193,11 @@ func lintUnbalancedHTML(w *schemaWork, input string, add func(start, end int, se
 			}
 			for _, o := range stack[i+1:] {
 				add(o.start, o.end, SeverityWarning, "<"+o.name+"> is not closed before </"+name+">")
+			}
+			for _, o := range stack[i:] {
+				if (o.name == "svg" || o.name == "math") && foreign > 0 {
+					foreign--
+				}
 			}
 			stack = stack[:i]
 		}
