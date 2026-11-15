@@ -23,6 +23,9 @@ const (
 	thumbnailLimit = 512 << 10
 	// previewLookupLimit caps the per-ID lookups a confirmation preview makes.
 	previewLookupLimit = 25
+	// previewArgsLimit caps the arguments of a destructive call, which its
+	// confirmation shows in full.
+	previewArgsLimit = 16 << 10
 	// confirmKey is the input request ID of a confirmation.
 	confirmKey = "confirm"
 	// protocolStateless is the first protocol version whose clients carry
@@ -113,9 +116,17 @@ func (c *caller) run(_ context.Context, req *mcp.CallToolRequest, toolName strin
 	if err := refuseUnpinnedSelection(op, args); err != nil {
 		return toolError(err.Error())
 	}
+	if err := refuseBodyShadowing(op, args); err != nil {
+		return toolError(err.Error())
+	}
 	argsHash, err := hashArgs(args)
 	if err != nil {
 		return toolError(err.Error())
+	}
+	// The confirmation shows every argument it covers, unclipped, so it can
+	// only cover what fits in one.
+	if raw, _ := json.Marshal(args); len(raw) > previewArgsLimit {
+		return toolError(fmt.Sprintf("These arguments are too large to show in a confirmation (%d bytes, limit %d), so the call was refused. Split it into smaller calls.", len(raw), previewArgsLimit))
 	}
 	want := challenge{
 		UserID:   principalID(c.r),
@@ -299,6 +310,42 @@ func refuseInexpressible(op *Operation, args map[string]any) error {
 	return nil
 }
 
+// refuseBodyShadowing refuses a destructive call whose "body" passthrough
+// carries a field that names another argument. Both reach the handler, and
+// the handler may prefer the body copy (deleteNote reads a body ID before its
+// Id parameter), so the confirmation would name one target and the call
+// delete another. Non-destructive calls may shadow on purpose: a saved
+// query's bind value can be called "name" like runQuery's lookup parameter.
+// args must be canonical.
+func refuseBodyShadowing(op *Operation, args map[string]any) error {
+	if op.Body != nil {
+		return nil
+	}
+	body, ok := args["body"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	props, _ := op.InputSchema["properties"].(map[string]any)
+	top := map[string]string{}
+	for k := range args {
+		if k != "body" {
+			top[foldKey(k)] = k
+		}
+	}
+	for name := range props {
+		if name != "body" {
+			top[foldKey(name)] = name
+		}
+	}
+	for k := range body {
+		if other, dup := top[foldKey(k)]; dup {
+			return fmt.Errorf("argument %q inside \"body\" duplicates %q; pass it once, outside \"body\"", k, other)
+		}
+	}
+	_, err := canonicalKeys(nil, body)
+	return err
+}
+
 // refuseUnpinnedSelection refuses destructive calls whose targets would be
 // resolved again at execution time. A confirmation covers the sealed
 // arguments, so the targets must be in them. args must be canonical.
@@ -431,7 +478,7 @@ func (c *caller) preview(op *Operation, args map[string]any) string {
 	}
 
 	if raw, err := json.Marshal(args); err == nil && len(args) > 0 {
-		fmt.Fprintf(&b, "Arguments: %s\n", clip(string(raw), 1000))
+		fmt.Fprintf(&b, "Arguments: %s\n", raw)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

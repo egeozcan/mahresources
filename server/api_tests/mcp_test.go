@@ -866,3 +866,61 @@ func TestMCP_MRQLParamsAndExportPreflight(t *testing.T) {
 		t.Fatalf("export preflight = %v %s", pre.IsError, resultText(pre))
 	}
 }
+
+// Review round 10: a field hidden in "body" must not retarget a confirmed
+// call, and a confirmation shows every argument it covers.
+func TestMCP_BodyCannotRetargetAConfirmation(t *testing.T) {
+	env := newMCPEnv(t, false)
+	shown := env.tc.CreateDummyNote("shown")
+	hidden := env.tc.CreateDummyNote("hidden")
+	cs := env.connect(t, clientOpts{answer: accept})
+	for _, args := range []map[string]any{
+		{"Id": shown.ID, "body": map[string]any{"ID": hidden.ID}},
+		{"Id": shown.ID, "body": map[string]any{"id": hidden.ID}},
+		{"Id": shown.ID, "Extra": 1, "body": map[string]any{"extra": 2}},
+	} {
+		res := callTool(t, cs, "call_operation", map[string]any{"operationId": "deleteNote", "arguments": args})
+		if !res.IsError {
+			t.Fatalf("%v ran: %s", args, resultText(res))
+		}
+	}
+	if !env.noteExists(t, shown.ID) || !env.noteExists(t, hidden.ID) {
+		t.Fatal("a refused call deleted a note")
+	}
+
+	huge := callTool(t, cs, "call_operation", map[string]any{"operationId": "deleteNote",
+		"arguments": map[string]any{"Id": shown.ID, "AAAA": strings.Repeat("x", 20000)}})
+	if !huge.IsError || !strings.Contains(resultText(huge), "too large") {
+		t.Fatalf("oversized confirmation = %v %s", huge.IsError, clipForLog(resultText(huge)))
+	}
+
+	var seen []string
+	full := env.connect(t, clientOpts{answer: &mcp.ElicitResult{Action: "decline"}, seen: &seen})
+	callTool(t, full, "call_operation", map[string]any{"operationId": "deleteNote",
+		"arguments": map[string]any{"Id": shown.ID, "AAAA": strings.Repeat("y", 1100) + "TAIL"}})
+	if len(seen) != 1 || !strings.Contains(seen[0], "TAIL") {
+		t.Fatalf("the confirmation clipped its arguments")
+	}
+}
+
+func TestMCP_SearchSeveralTypes(t *testing.T) {
+	env := newMCPEnv(t, false)
+	env.tc.CreateDummyNote("needle note")
+	env.tc.CreateDummyGroup("needle group")
+	cs := env.connect(t, clientOpts{})
+	desc := resultText(callTool(t, cs, "describe_operation", map[string]any{"operationId": "globalSearch"}))
+	if !strings.Contains(desc, `"types":{"description"`) || strings.Contains(desc, `"types":{"items"`) {
+		t.Fatalf("globalSearch types is not documented as one comma-separated string: %s", desc)
+	}
+	res := resultText(callTool(t, cs, "search", map[string]any{"q": "needle", "types": "note,group"}))
+	if !strings.Contains(res, "needle note") || !strings.Contains(res, "needle group") {
+		t.Fatalf("multi-type search = %s", res)
+	}
+}
+
+func clipForLog(s string) string {
+	if len(s) > 300 {
+		return s[:300] + "..."
+	}
+	return s
+}

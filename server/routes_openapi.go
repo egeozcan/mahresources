@@ -2220,16 +2220,22 @@ func registerSearchRoutes(r *openapi.Registry) {
 		QueryType: reflect.TypeOf(query_models.EntityPickerResolveQuery{}), ResponseType: reflect.TypeOf(api_handlers.EntityPickerResolveResponse{}),
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
-	searchQueryType := reflect.TypeOf(query_models.GlobalSearchQuery{})
 	searchResponseType := reflect.TypeOf(query_models.GlobalSearchResponse{})
 
 	r.Register(openapi.RouteInfo{
-		Method:               http.MethodGet,
-		Path:                 "/v1/search",
-		OperationID:          "globalSearch",
-		Summary:              "Global search across all entities",
-		Tags:                 []string{"search"},
-		QueryType:            searchQueryType,
+		Method:      http.MethodGet,
+		Path:        "/v1/search",
+		OperationID: "globalSearch",
+		Summary:     "Global search across all entities",
+		Tags:        []string{"search"},
+		// Spelled out rather than derived from GlobalSearchQuery: the handler
+		// reads types as ONE comma-separated value, which the derived array
+		// parameter (repeat the key) misdocumented.
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "q", Type: "string", Description: "Search text"},
+			{Name: "limit", Type: "integer", Description: "Maximum results, capped at 200 (default 20)"},
+			{Name: "types", Type: "string", Description: "Comma-separated entity types to search, e.g. note,group. Names are singular: resource, note, group, tag, category, query, relationType, noteType, resourceCategory, mrqlQuery."},
+		},
 		ResponseType:         searchResponseType,
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 		Paginated:            true,

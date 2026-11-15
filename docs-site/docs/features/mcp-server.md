@@ -96,13 +96,15 @@ These operations are **destructive**:
 
 Applying a resource reduction states how many clusters are checked and how many resources would be removed. Applying an import states what it creates and how many existing entities its GUID collision policy affects. For resources, notes, groups, saved queries and series, the confirmation names each target the user can see, such as `#12 "Invoice 2026"`, for up to 25 targets. Targets that do not exist or are outside the user's scope are listed as "not found or not visible", without saying which. Other targets, such as tags, are listed by ID. Mass edits also show the result of a dry run.
 
+The confirmation also shows the call's arguments in full. A destructive call whose arguments exceed 16 KiB is refused rather than shown in part; split it into smaller calls.
+
 A confirmation is bound to the exact call it was issued for: the same user and token, the same tool, the same operation and the same arguments. It expires after five minutes, can be used once, and does not survive a server restart.
 
 **Clients that cannot show a confirmation.** The client must speak MCP 2026-07-28 and support form elicitation. Otherwise a destructive call is refused, the refusal includes what the call would have affected, and nothing changes. Older clients that support elicitation can confirm through `mr mcp`, which asks them over its stdio session. Automation that must delete without a person present should use the REST API or the `mr` CLI.
 
 Argument names are matched to the operation's declared fields case-insensitively, with the same Unicode case folding the API's JSON decoder uses, and an argument given twice under different spellings (`Id` and `id`) is refused.
 
-Operations that take a request body the API spec does not describe accept it under a `body` argument, sent as JSON. Use it for a field that shares its name with a parameter, such as a saved query's bind value named `name`: `{"id": 7, "body": {"name": "Alice"}}`.
+Operations that take a request body the API spec does not describe accept it under a `body` argument, sent as JSON. Use it for a field that shares its name with a parameter, such as a saved query's bind value named `name`: `{"id": 7, "body": {"name": "Alice"}}`. A destructive call refuses this: a field inside `body` may not repeat the name of another argument, because the handler could act on the body copy instead of the one the confirmation named.
 
 **Mass edits** over MCP must list their targets in `ID`. A `Target` other than `ids`, and selecting targets with `Filter`, `MRQLQuery`, `MRQLParams` or `MRQLSnapshot`, are refused, because the matching set could change between the confirmation and the edit. Resolve the IDs first with a list tool or MRQL.
 

@@ -536,17 +536,6 @@ components:
                         $ref: '#/components/schemas/DiffHunkPartial'
                     type: array
             type: object
-        GlobalSearchQuery:
-            properties:
-                limit:
-                    type: integer
-                q:
-                    type: string
-                types:
-                    items:
-                        type: string
-                    type: array
-            type: object
         GlobalSearchResponse:
             properties:
                 query:
@@ -14165,22 +14154,21 @@ paths:
         get:
             operationId: globalSearch
             parameters:
-                - in: query
+                - description: Search text
+                  in: query
                   name: q
                   schema:
                     type: string
-                - in: query
+                - description: Maximum results, capped at 200 (default 20)
+                  in: query
                   name: limit
                   schema:
                     type: integer
-                - explode: true
+                - description: 'Comma-separated entity types to search, e.g. note,group. Names are singular: resource, note, group, tag, category, query, relationType, noteType, resourceCategory, mrqlQuery.'
                   in: query
                   name: types
                   schema:
-                    items:
-                        type: string
-                    type: array
-                  style: form
+                    type: string
                 - description: Page number for pagination
                   in: query
                   name: page
