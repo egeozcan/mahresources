@@ -59,6 +59,7 @@ The server offers a few named tools for common work and three generic tools that
 | `delete` | Delete one resource, note, group or tag |
 | `merge` | Merge resources, groups or tags into one winner |
 | `get_job`, `list_jobs` | Follow background jobs |
+| `template_guide`, `template_lint`, `template_preview`, `template_edit`, ... | Edit category, resource category and note type templates; see [Editing Templates](#editing-templates) |
 | `search_operations` | List API operations, filtered by words, tag or safety class |
 | `describe_operation` | Show an operation's arguments as a JSON Schema |
 | `call_operation` | Run any operation by its `operationId` |
@@ -66,6 +67,24 @@ The server offers a few named tools for common work and three generic tools that
 The operations behind `search_operations` are the ones in the [OpenAPI spec](../api/overview.md), so a new API route becomes reachable without a new tool. Operations that return files (resource views, version files, export downloads, job outputs) answer with a link to the file instead of its content; fetch it with the same Authorization header. Thumbnails up to 512 KiB come back as images. A JSON response over 8 MiB is refused with a request to narrow the query.
 
 Long-running work, such as downloads, exports, imports and plugin actions, returns a job ID. Poll it with `get_job`.
+
+## Editing Templates
+
+An agent editing category, resource category or note type templates gets the same help a [Generation run](./custom-templates.md#generation-runs)'s model gets:
+
+| Tool | What it does |
+|------|--------------|
+| `template_guide` | The run's reference for one carrier: shortcode, plugin and MRQL references, template partials, the carrier's name, description and detail-page layout, its Meta JSON Schema, sample members and, with `slot`, that slot's current content. Call it first. |
+| `template_lint` | Lint a field. Flags shortcode errors, MRQL the renderer would reject, missing partials, bracketed words that are not shortcodes, `[meta]` paths that are not in the schema, and unbalanced HTML. Omit `content` to lint the saved value. |
+| `template_preview` | Render a field against a real entity. Returns the HTML, the CSS and the text a reader sees, with `[meta]` values written in. Renders against `editing.entityId`, else one of the carrier's members. `editing.previewMRQL` runs `[mrql]` queries and `editing.previewPlugins` runs plugin shortcodes, read-only. |
+| `template_check_mrql` | Check an MRQL query without running it. |
+| `template_get_entity`, `template_list_related`, `template_list_members` | Read sample entities and their relations. |
+| `template_get_template`, `template_list_carriers` | Read saved templates of any carrier. |
+| `template_list_revisions`, `template_get_revision`, `template_diff_revisions` | Read the template history. |
+| `template_get_partial`, `template_get_shortcode_docs` | Read a partial or one shortcode's full documentation. |
+| `template_edit` | Save fields (`{"CustomHeader": "...", "CustomHeaderCSS": "..."}`); other fields keep their values. It lints first and refuses an unknown field before saving anything, then answers with each field's lint result and a preview of the first HTML field. |
+
+The `template_*` read tools take an `editing` object naming the carrier being edited (`carrierType`, `carrierId`). They are the run's own Tools, served by the run's executor through `templateTool`, so a result matches what a run would see. Every save is a template revision, so a bad edit can be compared and restored. Editing a note type asks for a confirmation, like any note type edit. Like Generation runs, the template tools are not available to group-limited accounts.
 
 ## Permissions
 

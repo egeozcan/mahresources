@@ -963,6 +963,19 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/noteType/generateTemplate").HandlerFunc(scopedAPI(appContext, func(ctx api_handlers.TemplateGenerationContext) func(http.ResponseWriter, *http.Request) {
 		return api_handlers.GetGenerateTemplateHandler(ctx, "note", runAccess)
 	}))
+	// Template tools: a generation run's read Tools and its reference, one call
+	// at a time, for clients that edit templates themselves (the MCP template
+	// tools). Mounted under each carrier's prefix, so the role gate is the
+	// generate route's.
+	for carrier, entityType := range map[string]string{"category": "group", "resourceCategory": "resource", "noteType": "note"} {
+		entityType := entityType
+		router.Methods(http.MethodPost).Path("/v1/" + carrier + "/templateTool").HandlerFunc(scopedAPI(appContext, func(ctx api_handlers.TemplateGenerationContext) func(http.ResponseWriter, *http.Request) {
+			return api_handlers.GetTemplateToolHandler(ctx, entityType, runAccess)
+		}))
+		router.Methods(http.MethodPost).Path("/v1/" + carrier + "/templateGuide").HandlerFunc(scopedAPI(appContext, func(ctx api_handlers.TemplateGenerationContext) func(http.ResponseWriter, *http.Request) {
+			return api_handlers.GetTemplateGuideHandler(ctx, entityType, runAccess)
+		}))
+	}
 	// Finish now for a live run. Mounted under each carrier's prefix, so the
 	// role gate is the generate route's; it reads no entities, so it takes no
 	// request-scoped context, only the client-IP reader.

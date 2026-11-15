@@ -25,6 +25,7 @@ func ValidateTemplateRunField(ctx context.Context, in TemplateGenerationInput, f
 		DisplayTypes:          in.DisplayTypes,
 		DisplayTypesTruncated: in.DisplayTypesTruncated,
 		PartialExists:         in.PartialExists,
+		MetaSchema:            in.MetaSchema,
 	}, field, content)
 }
 

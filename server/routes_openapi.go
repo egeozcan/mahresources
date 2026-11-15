@@ -2883,6 +2883,57 @@ category/resourceCategory, editor for noteType).`
 		})
 	}
 
+	toolDescription := `Runs one read Tool of a template generation run, the way a run's model calls it,
+for clients that edit templates themselves (an agent over MCP, a script). The Tools
+are lint, preview, check_mrql, get_entity, list_related, get_template, list_carriers,
+list_members, list_revisions, get_revision, diff_revisions, get_partial and
+get_shortcode_docs; templateGuide lists them with their argument schemas.
+
+categoryId names the carrier being edited: lint and preview read its saved fields
+when content is omitted, and revisions default to it. A preview renders against
+entityId, else one of the carrier's members. previewMRQL runs [mrql] queries in
+previews; previewPlugins runs plugin shortcodes, read-only.
+
+The answer is {tool, result, isError}: result is the Tool's text, and isError marks
+a result the caller should read and correct (an unknown field, a bad argument).
+Refused for group-limited accounts, as generation runs are.`
+	guideDescription := `Returns what a template generation run's model is given to work from, without the
+parts about the run itself: the shortcode, plugin and MRQL references, the template
+partials, the carrier's identity, detail-page layout and metadata schema, sample
+values, the starting points and, with slot, that slot's current content. tools lists
+the template tools (templateTool) with their argument schemas. slot=MetaSchema gives
+the schema-authoring reference.`
+	for _, p := range []struct{ carrier, tool, guide string }{
+		{"category", "categoryTemplateTool", "categoryTemplateGuide"},
+		{"resourceCategory", "resourceCategoryTemplateTool", "resourceCategoryTemplateGuide"},
+		{"noteType", "noteTypeTemplateTool", "noteTypeTemplateGuide"},
+	} {
+		r.Register(openapi.RouteInfo{
+			Method:               http.MethodPost,
+			Path:                 "/v1/" + p.carrier + "/templateTool",
+			OperationID:          p.tool,
+			Summary:              "Run one template-authoring tool (lint, preview, reads)",
+			Description:          toolDescription,
+			Tags:                 shortcodesTag,
+			RequestType:          reflect.TypeOf(templateToolRequestDoc{}),
+			RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON},
+			ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+			ErrorResponses:       map[int]string{http.StatusForbidden: "Not available to group-limited accounts"},
+		})
+		r.Register(openapi.RouteInfo{
+			Method:               http.MethodPost,
+			Path:                 "/v1/" + p.carrier + "/templateGuide",
+			OperationID:          p.guide,
+			Summary:              "Get the template-authoring reference a generation run is given",
+			Description:          guideDescription,
+			Tags:                 shortcodesTag,
+			RequestType:          reflect.TypeOf(templateGuideRequestDoc{}),
+			RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+			ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+			ErrorResponses:       map[int]string{http.StatusForbidden: "Not available to group-limited accounts"},
+		})
+	}
+
 	for _, p := range []struct{ path, op string }{
 		{"/v1/category/generateTemplate/finish", "finishCategoryTemplateRun"},
 		{"/v1/resourceCategory/generateTemplate/finish", "finishResourceCategoryTemplateRun"},
@@ -3960,4 +4011,21 @@ func registerTemplateRevisionRoutes(r *openapi.Registry) {
 			WithResponse(contracts.TemplateRevisionSummary{}).
 			WithDescription("Saves the revision (or one slot of it) as the current templates and records a new revision with source `restore`; later revisions are kept. Runs the ordinary save validation and is refused with 400, writing nothing, when the revision no longer validates." + access)))
 	}
+}
+
+// templateToolRequestDoc documents the templateTool request body.
+type templateToolRequestDoc struct {
+	Tool           string         `json:"tool"`
+	Arguments      map[string]any `json:"arguments"`
+	CategoryID     uint           `json:"categoryId"`
+	EntityID       uint           `json:"entityId"`
+	PreviewMRQL    bool           `json:"previewMRQL"`
+	PreviewPlugins bool           `json:"previewPlugins"`
+}
+
+// templateGuideRequestDoc documents the templateGuide request body.
+type templateGuideRequestDoc struct {
+	CategoryID uint   `json:"categoryId"`
+	EntityID   uint   `json:"entityId"`
+	Slot       string `json:"slot"`
 }

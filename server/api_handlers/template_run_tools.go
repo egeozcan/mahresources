@@ -593,6 +593,7 @@ func (e *templateToolExecutor) validation(mc *application_context.MahresourcesCo
 			}
 			return err == nil && p != nil, err
 		},
+		MetaSchema: e.cfg.Input.MetaSchema,
 	}
 }
 
@@ -814,6 +815,9 @@ func (e *templateToolExecutor) preview(ctx context.Context, mc *application_cont
 			return "", err
 		}
 		result["html"] = html
+		// What a reader sees, for a model that cannot render: tags dropped,
+		// each [meta] element replaced by its value.
+		result["text"] = previewText(html)
 		if css != "" {
 			cssOut, err := processTemplateToolSource(renderCtx, css, *metaCtx, renderer, executor)
 			if err != nil {

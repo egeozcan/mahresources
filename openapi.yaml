@@ -3402,6 +3402,31 @@ components:
                 versionId:
                     type: integer
             type: object
+        templateGuideRequestDoc:
+            properties:
+                categoryId:
+                    type: integer
+                entityId:
+                    type: integer
+                slot:
+                    type: string
+            type: object
+        templateToolRequestDoc:
+            properties:
+                arguments:
+                    additionalProperties: {}
+                    type: object
+                categoryId:
+                    type: integer
+                entityId:
+                    type: integer
+                previewMRQL:
+                    type: boolean
+                previewPlugins:
+                    type: boolean
+                tool:
+                    type: string
+            type: object
 info:
     title: mahresources
     version: "1.0"
@@ -4732,6 +4757,69 @@ paths:
             summary: Diff two template revisions of a category
             tags:
                 - categories
+    /v1/category/templateGuide:
+        post:
+            description: |-
+                Returns what a template generation run's model is given to work from, without the
+                parts about the run itself: the shortcode, plugin and MRQL references, the template
+                partials, the carrier's identity, detail-page layout and metadata schema, sample
+                values, the starting points and, with slot, that slot's current content. tools lists
+                the template tools (templateTool) with their argument schemas. slot=MetaSchema gives
+                the schema-authoring reference.
+            operationId: categoryTemplateGuide
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/templateGuideRequestDoc'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/templateGuideRequestDoc'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "403":
+                    description: Not available to group-limited accounts
+            summary: Get the template-authoring reference a generation run is given
+            tags:
+                - shortcodes
+    /v1/category/templateTool:
+        post:
+            description: |-
+                Runs one read Tool of a template generation run, the way a run's model calls it,
+                for clients that edit templates themselves (an agent over MCP, a script). The Tools
+                are lint, preview, check_mrql, get_entity, list_related, get_template, list_carriers,
+                list_members, list_revisions, get_revision, diff_revisions, get_partial and
+                get_shortcode_docs; templateGuide lists them with their argument schemas.
+
+                categoryId names the carrier being edited: lint and preview read its saved fields
+                when content is omitted, and revisions default to it. A preview renders against
+                entityId, else one of the carrier's members. previewMRQL runs [mrql] queries in
+                previews; previewPlugins runs plugin shortcodes, read-only.
+
+                The answer is {tool, result, isError}: result is the Tool's text, and isError marks
+                a result the caller should read and correct (an unknown field, a bad argument).
+                Refused for group-limited accounts, as generation runs are.
+            operationId: categoryTemplateTool
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/templateToolRequestDoc'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "403":
+                    description: Not available to group-limited accounts
+            summary: Run one template-authoring tool (lint, preview, reads)
+            tags:
+                - shortcodes
     /v1/download/cancel:
         post:
             deprecated: true
@@ -10589,6 +10677,69 @@ paths:
             summary: Diff two template revisions of a note type
             tags:
                 - notes
+    /v1/noteType/templateGuide:
+        post:
+            description: |-
+                Returns what a template generation run's model is given to work from, without the
+                parts about the run itself: the shortcode, plugin and MRQL references, the template
+                partials, the carrier's identity, detail-page layout and metadata schema, sample
+                values, the starting points and, with slot, that slot's current content. tools lists
+                the template tools (templateTool) with their argument schemas. slot=MetaSchema gives
+                the schema-authoring reference.
+            operationId: noteTypeTemplateGuide
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/templateGuideRequestDoc'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/templateGuideRequestDoc'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "403":
+                    description: Not available to group-limited accounts
+            summary: Get the template-authoring reference a generation run is given
+            tags:
+                - shortcodes
+    /v1/noteType/templateTool:
+        post:
+            description: |-
+                Runs one read Tool of a template generation run, the way a run's model calls it,
+                for clients that edit templates themselves (an agent over MCP, a script). The Tools
+                are lint, preview, check_mrql, get_entity, list_related, get_template, list_carriers,
+                list_members, list_revisions, get_revision, diff_revisions, get_partial and
+                get_shortcode_docs; templateGuide lists them with their argument schemas.
+
+                categoryId names the carrier being edited: lint and preview read its saved fields
+                when content is omitted, and revisions default to it. A preview renders against
+                entityId, else one of the carrier's members. previewMRQL runs [mrql] queries in
+                previews; previewPlugins runs plugin shortcodes, read-only.
+
+                The answer is {tool, result, isError}: result is the Tool's text, and isError marks
+                a result the caller should read and correct (an unknown field, a bad argument).
+                Refused for group-limited accounts, as generation runs are.
+            operationId: noteTypeTemplateTool
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/templateToolRequestDoc'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "403":
+                    description: Not available to group-limited accounts
+            summary: Run one template-authoring tool (lint, preview, reads)
+            tags:
+                - shortcodes
     /v1/notes:
         get:
             description: Get all notes, paginated, with optional filters.
@@ -13528,6 +13679,69 @@ paths:
             summary: Diff two template revisions of a resource category
             tags:
                 - resourceCategories
+    /v1/resourceCategory/templateGuide:
+        post:
+            description: |-
+                Returns what a template generation run's model is given to work from, without the
+                parts about the run itself: the shortcode, plugin and MRQL references, the template
+                partials, the carrier's identity, detail-page layout and metadata schema, sample
+                values, the starting points and, with slot, that slot's current content. tools lists
+                the template tools (templateTool) with their argument schemas. slot=MetaSchema gives
+                the schema-authoring reference.
+            operationId: resourceCategoryTemplateGuide
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/templateGuideRequestDoc'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/templateGuideRequestDoc'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "403":
+                    description: Not available to group-limited accounts
+            summary: Get the template-authoring reference a generation run is given
+            tags:
+                - shortcodes
+    /v1/resourceCategory/templateTool:
+        post:
+            description: |-
+                Runs one read Tool of a template generation run, the way a run's model calls it,
+                for clients that edit templates themselves (an agent over MCP, a script). The Tools
+                are lint, preview, check_mrql, get_entity, list_related, get_template, list_carriers,
+                list_members, list_revisions, get_revision, diff_revisions, get_partial and
+                get_shortcode_docs; templateGuide lists them with their argument schemas.
+
+                categoryId names the carrier being edited: lint and preview read its saved fields
+                when content is omitted, and revisions default to it. A preview renders against
+                entityId, else one of the carrier's members. previewMRQL runs [mrql] queries in
+                previews; previewPlugins runs plugin shortcodes, read-only.
+
+                The answer is {tool, result, isError}: result is the Tool's text, and isError marks
+                a result the caller should read and correct (an unknown field, a bad argument).
+                Refused for group-limited accounts, as generation runs are.
+            operationId: resourceCategoryTemplateTool
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/templateToolRequestDoc'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "403":
+                    description: Not available to group-limited accounts
+            summary: Run one template-authoring tool (lint, preview, reads)
+            tags:
+                - shortcodes
     /v1/resources:
         get:
             operationId: listResources

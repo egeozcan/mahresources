@@ -304,68 +304,13 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 		// The saved carrier, loaded once: the MetaSchema fallback and the pair
 		// partner below both read it. nil on the create form or when it cannot
 		// be loaded.
-		var carrier any
-		if req.CategoryID != 0 {
-			if loaded, err := loadPreviewCarrier(ctx, entityType, req.CategoryID); err == nil {
-				carrier = loaded
-			}
-		}
-
-		// MetaSchema: prefer the client's (possibly unsaved) value; else the saved carrier's.
-		metaSchema := req.MetaSchema
-		if strings.TrimSpace(metaSchema) == "" && carrier != nil {
-			metaSchema = carrierMetaSchema(carrier)
-		}
-
-		siblings, err := templateSiblingSlots(entityType, carrier, req.SiblingSlots)
+		g, err := groundTemplateInput(ctx, request, entityType, target, req, privacyOn, privacyLocked)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
-		name, description, sectionConfig := carrierIdentity(carrier)
-		if strings.TrimSpace(req.Name) != "" {
-			name = req.Name
-		}
-		if strings.TrimSpace(req.Description) != "" {
-			description = req.Description
-		}
-		if strings.TrimSpace(req.SectionConfig) != "" {
-			sectionConfig = req.SectionConfig
-		}
-
-		pluginReferences := serializeTemplateGenerationPluginReferencesForPrompt(ctx)
-		partials, partialCount := templatePartialSummaries(ctx)
-		// The masker exists before the first sample is projected, so every value the
-		// Seed shows is masked in the same order for the dry run and the request.
-		var privacy *application_context.TemplatePrivacy
-		if privacyOn {
-			privacy = application_context.NewTemplatePrivacy(application_context.TemplatePrivacyTag(templateRunAccountKey(ctx, request), entityType, req.CategoryID))
-		}
-		samples, sampleRefs, samplesArePreview := loadTemplateSamples(ctx, entityType, req.CategoryID, req.EntityID, privacy, metaSchema)
-		input := application_context.TemplateGenerationInput{
-			Target:                target,
-			Mode:                  req.Mode,
-			Slot:                  req.Slot,
-			EntityType:            entityType,
-			CurrentContent:        req.Content,
-			CategoryName:          name,
-			CategoryDescription:   description,
-			SectionConfig:         sectionConfig,
-			SiblingSlots:          siblings,
-			MetaSchema:            metaSchema,
-			Samples:               samples,
-			SamplesArePreview:     samplesArePreview,
-			DocsBlock:             pluginReferences.DocsBlock,
-			PluginContext:         pluginReferences.PluginContext,
-			DisplayTypes:          pluginReferences.DisplayTypes,
-			DisplayTypesTruncated: pluginReferences.DisplayTypesTruncated,
-			Known:                 pluginReferences.Known,
-			ValidateMRQL:          templateMRQLValidator(ctx.MRQLStaticEnv()),
-			Partials:              partials,
-			PartialCount:          partialCount,
-			Privacy:               privacy,
-			PrivacyLocked:         privacyLocked,
-		}
+		input, carrier, name, sampleRefs := g.input, g.carrier, g.name, g.sampleRefs
+		siblings, metaSchema, sectionConfig := g.siblings, g.metaSchema, g.sectionConfig
 		if target == "cluster" || (target == application_context.TemplateTargetSlot && req.Slot != "CustomCSS") {
 			base := strings.TrimSuffix(req.Slot, "CSS")
 			if !templateGenerateSlotAllowed(entityType, base) || !templateGenerateSlotAllowed(entityType, base+"CSS") {
@@ -988,4 +933,89 @@ func oneLine(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "\t", " ")
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// groundedTemplate is what grounding read for one template request: the
+// generation input and the parts the harness preparation keeps.
+type groundedTemplate struct {
+	input         application_context.TemplateGenerationInput
+	carrier       any
+	name          string
+	sampleRefs    []application_context.TemplateRef
+	siblings      map[string]string
+	metaSchema    string
+	sectionConfig string
+}
+
+// groundTemplateInput reads everything a template request is grounded in: the
+// carrier, its metadata schema, sibling slots, identity and layout, the plugin
+// and partial references and the samples. The generate handler and the
+// template tools (GetTemplateToolHandler, GetTemplateGuideHandler) share it, so
+// a model authoring through either sees the same facts.
+func groundTemplateInput(ctx TemplateGenerationContext, request *http.Request, entityType, target string, req templateGenerateRequest, privacyOn, privacyLocked bool) (groundedTemplate, error) {
+	var carrier any
+	if req.CategoryID != 0 {
+		if loaded, err := loadPreviewCarrier(ctx, entityType, req.CategoryID); err == nil {
+			carrier = loaded
+		}
+	}
+
+	// MetaSchema: prefer the client's (possibly unsaved) value; else the saved carrier's.
+	metaSchema := req.MetaSchema
+	if strings.TrimSpace(metaSchema) == "" && carrier != nil {
+		metaSchema = carrierMetaSchema(carrier)
+	}
+
+	siblings, err := templateSiblingSlots(entityType, carrier, req.SiblingSlots)
+	if err != nil {
+		return groundedTemplate{}, err
+	}
+	name, description, sectionConfig := carrierIdentity(carrier)
+	if strings.TrimSpace(req.Name) != "" {
+		name = req.Name
+	}
+	if strings.TrimSpace(req.Description) != "" {
+		description = req.Description
+	}
+	if strings.TrimSpace(req.SectionConfig) != "" {
+		sectionConfig = req.SectionConfig
+	}
+
+	pluginReferences := serializeTemplateGenerationPluginReferencesForPrompt(ctx)
+	partials, partialCount := templatePartialSummaries(ctx)
+	// The masker exists before the first sample is projected, so every value the
+	// Seed shows is masked in the same order for the dry run and the request.
+	var privacy *application_context.TemplatePrivacy
+	if privacyOn {
+		privacy = application_context.NewTemplatePrivacy(application_context.TemplatePrivacyTag(templateRunAccountKey(ctx, request), entityType, req.CategoryID))
+	}
+	samples, sampleRefs, samplesArePreview := loadTemplateSamples(ctx, entityType, req.CategoryID, req.EntityID, privacy, metaSchema)
+	input := application_context.TemplateGenerationInput{
+		Target:                target,
+		Mode:                  req.Mode,
+		Slot:                  req.Slot,
+		EntityType:            entityType,
+		CurrentContent:        req.Content,
+		CategoryName:          name,
+		CategoryDescription:   description,
+		SectionConfig:         sectionConfig,
+		SiblingSlots:          siblings,
+		MetaSchema:            metaSchema,
+		Samples:               samples,
+		SamplesArePreview:     samplesArePreview,
+		DocsBlock:             pluginReferences.DocsBlock,
+		PluginContext:         pluginReferences.PluginContext,
+		DisplayTypes:          pluginReferences.DisplayTypes,
+		DisplayTypesTruncated: pluginReferences.DisplayTypesTruncated,
+		Known:                 pluginReferences.Known,
+		ValidateMRQL:          templateMRQLValidator(ctx.MRQLStaticEnv()),
+		Partials:              partials,
+		PartialCount:          partialCount,
+		Privacy:               privacy,
+		PrivacyLocked:         privacyLocked,
+	}
+	return groundedTemplate{
+		input: input, carrier: carrier, name: name, sampleRefs: sampleRefs,
+		siblings: siblings, metaSchema: metaSchema, sectionConfig: sectionConfig,
+	}, nil
 }

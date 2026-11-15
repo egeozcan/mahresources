@@ -56,6 +56,14 @@ var readOnlyPosts = map[string]bool{
 	"previewCategoryTemplate":            true,
 	"previewNoteTypeTemplate":            true,
 	"previewResourceCategoryTemplate":    true,
+	// Template tools: a generation run's read Tools and its reference. Plugin
+	// code in a preview runs read-only (the run's own mark, and MCP's).
+	"categoryTemplateTool":          true,
+	"resourceCategoryTemplateTool":  true,
+	"noteTypeTemplateTool":          true,
+	"categoryTemplateGuide":         true,
+	"resourceCategoryTemplateGuide": true,
+	"noteTypeTemplateGuide":         true,
 }
 
 // excluded lists every operation MCP does not expose, with the reason.

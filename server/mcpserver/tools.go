@@ -44,6 +44,9 @@ type caller struct {
 type namedTool struct {
 	tool    *mcp.Tool
 	resolve func(args map[string]any) (*Operation, map[string]any, error)
+	// handle, when set, runs the tool itself instead of resolving it to one
+	// operation (template_edit saves, then lints and previews).
+	handle func(ctx context.Context, c *caller, req *mcp.CallToolRequest, args map[string]any) *mcp.CallToolResult
 }
 
 func (c *caller) named(t namedTool) mcp.ToolHandler {
@@ -51,6 +54,9 @@ func (c *caller) named(t namedTool) mcp.ToolHandler {
 		args, err := decodeArgs(req.Params.Arguments)
 		if err != nil {
 			return toolError(err.Error()), nil
+		}
+		if t.handle != nil {
+			return t.handle(ctx, c, req, args), nil
 		}
 		op, opArgs, err := t.resolve(args)
 		if err != nil {
@@ -97,37 +103,44 @@ func (c *caller) generic(name string) mcp.ToolHandler {
 }
 
 // run executes one operation, behind a confirmation when it is destructive.
-func (c *caller) run(_ context.Context, req *mcp.CallToolRequest, toolName string, op *Operation, args map[string]any) *mcp.CallToolResult {
+func (c *caller) run(ctx context.Context, req *mcp.CallToolRequest, toolName string, op *Operation, args map[string]any) *mcp.CallToolResult {
+	res, _ := c.runOp(ctx, req, toolName, op, args)
+	return res
+}
+
+// runOp is run that also reports whether the operation was dispatched. A
+// confirmation request, a refusal and a declined confirmation report false.
+func (c *caller) runOp(_ context.Context, req *mcp.CallToolRequest, toolName string, op *Operation, args map[string]any) (*mcp.CallToolResult, bool) {
 	if op.Safety == Excluded {
-		return toolError(fmt.Sprintf("%s is not available over MCP", op.ID))
+		return toolError(fmt.Sprintf("%s is not available over MCP", op.ID)), false
 	}
 	// Handlers decode JSON case-insensitively, so every guard, hash and
 	// preview below must see each argument under its one declared name.
 	args, err := canonicalArgs(op, args)
 	if err != nil {
-		return toolError(err.Error())
+		return toolError(err.Error()), false
 	}
 	if err := refuseInexpressible(op, args); err != nil {
-		return toolError(err.Error())
+		return toolError(err.Error()), false
 	}
 	if effectiveSafety(op, args) != Destructive {
-		return c.execute(op, args)
+		return c.execute(op, args), true
 	}
 
 	if err := refuseUnpinnedSelection(op, args); err != nil {
-		return toolError(err.Error())
+		return toolError(err.Error()), false
 	}
 	if err := refuseBodyShadowing(op, args); err != nil {
-		return toolError(err.Error())
+		return toolError(err.Error()), false
 	}
 	argsHash, err := hashArgs(args)
 	if err != nil {
-		return toolError(err.Error())
+		return toolError(err.Error()), false
 	}
 	// The confirmation shows every argument it covers, unclipped, so it can
 	// only cover what fits in one.
 	if raw, _ := json.Marshal(args); len(raw) > previewArgsLimit {
-		return toolError(fmt.Sprintf("These arguments are too large to show in a confirmation (%d bytes, limit %d), so the call was refused. Split it into smaller calls.", len(raw), previewArgsLimit))
+		return toolError(fmt.Sprintf("These arguments are too large to show in a confirmation (%d bytes, limit %d), so the call was refused. Split it into smaller calls.", len(raw), previewArgsLimit)), false
 	}
 	want := challenge{
 		UserID:   principalID(c.r),
@@ -140,25 +153,25 @@ func (c *caller) run(_ context.Context, req *mcp.CallToolRequest, toolName strin
 	if req.Params.RequestState != "" || len(req.Params.InputResponses) > 0 {
 		answer, _ := req.Params.InputResponses[confirmKey].(*mcp.ElicitResult)
 		if answer == nil {
-			return toolError("the confirmation response is missing")
+			return toolError("the confirmation response is missing"), false
 		}
 		if answer.Action != "accept" || answer.Content["confirm"] != true {
-			return textResult(fmt.Sprintf("Cancelled: %s was not run, and nothing was changed.", op.ID))
+			return textResult(fmt.Sprintf("Cancelled: %s was not run, and nothing was changed.", op.ID)), false
 		}
 		if err := c.h.confirmer.redeem(req.Params.RequestState, want); err != nil {
-			return toolError(err.Error())
+			return toolError(err.Error()), false
 		}
-		return c.execute(op, args)
+		return c.execute(op, args), true
 	}
 
 	preview := c.preview(op, args)
 	if !canConfirm(req) {
 		return toolError(preview + "\n\nThis action needs a confirmation this client cannot show, so it was refused and nothing was changed. " +
-			"Use an MCP client that supports elicitation (protocol " + protocolStateless + "), the `mr mcp` bridge, or the REST API.")
+			"Use an MCP client that supports elicitation (protocol " + protocolStateless + "), the `mr mcp` bridge, or the REST API."), false
 	}
 	state, err := c.h.confirmer.issue(want)
 	if err != nil {
-		return toolError(err.Error())
+		return toolError(err.Error()), false
 	}
 	return &mcp.CallToolResult{
 		InputRequests: mcp.InputRequestMap{
@@ -179,7 +192,7 @@ func (c *caller) run(_ context.Context, req *mcp.CallToolRequest, toolName strin
 			},
 		},
 		RequestState: state,
-	}
+	}, false
 }
 
 // canConfirm reports whether the client can show the user a confirmation and
@@ -976,5 +989,9 @@ func buildNamedTools(c *Catalog) ([]namedTool, error) {
 		}); err != nil {
 		return nil, err
 	}
-	return out, nil
+	templates, err := buildTemplateTools(c)
+	if err != nil {
+		return nil, err
+	}
+	return append(out, templates...), nil
 }

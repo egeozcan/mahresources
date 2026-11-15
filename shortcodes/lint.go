@@ -103,8 +103,19 @@ type LintOptions struct {
 	// Context, when set, cancels the lint. A lint that is cancelled or runs past
 	// its work allowance reports one error issue instead of its findings.
 	Context context.Context
+	// MetaSchema, when set, is the carrier's metadata JSON Schema. A [meta]
+	// path whose first segment is not one of its top-level properties is
+	// flagged, since it renders empty. Empty, or a schema without properties,
+	// skips the check.
+	MetaSchema string
+	// CheckHTMLBalance flags elements left open and closing tags that close
+	// nothing (lintUnbalancedHTML). Off by default: template slots are
+	// fragments, and the attribute-context checks read malformed markup on
+	// purpose.
+	CheckHTMLBalance bool
 
-	work *schemaWork // set by Lint; nil-safe everywhere it is used
+	work      *schemaWork // set by Lint; nil-safe everywhere it is used
+	metaProps []string    // MetaSchema's top-level property names, set by Lint
 }
 
 // KnownFromBuiltins builds a KnownShortcodes catalogue seeded with the built-in
@@ -149,6 +160,7 @@ func Lint(input string, opts LintOptions) []LintIssue {
 	}
 	w := newLintWork(opts.Context)
 	opts.work = w
+	opts.metaProps = metaSchemaProperties(opts.MetaSchema)
 	if !w.poll() || !w.charge(1+len(input)/64) {
 		return lintTooComplex()
 	}
@@ -446,6 +458,9 @@ func lintText(input string, opts LintOptions) []LintIssue {
 					`no template partial named "`+refName+`" exists; this renders nothing`)
 			}
 		case "meta":
+			if msg := metaPathIssue(tk.attrs["path"], opts.metaProps); msg != "" {
+				add(tk.start, tk.end, SeverityWarning, msg)
+			}
 			if strings.TrimSpace(tk.attrs["default"]) != "" && tk.attrs["hide-empty"] == "true" {
 				add(tk.start, tk.end, SeverityWarning,
 					`[meta] has both hide-empty and default; hide-empty wins and the default is never shown`)
@@ -598,6 +613,9 @@ func lintText(input string, opts LintOptions) []LintIssue {
 	}
 
 	lintStrayCloseTags(w, lm, input, tokens, add)
+	if opts.CheckHTMLBalance && !opts.CSSMode {
+		lintUnbalancedHTML(w, input, add)
+	}
 	if lm.Err() != nil {
 		w.fail()
 		return nil
@@ -634,6 +652,9 @@ func lintText(input string, opts LintOptions) []LintIssue {
 				add(pos, m[1], SeverityInfo,
 					"unknown shortcode \"["+name+"]\"; did you mean ["+suggestion+"]?")
 			}
+		} else if looksLikeShortcode(input, pos, m[3], name) {
+			add(pos, m[1], SeverityInfo,
+				"["+name+"] is not a shortcode, so it renders as literal text")
 		}
 	}
 

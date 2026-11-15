@@ -535,6 +535,9 @@ type TemplateRunValidation struct {
 	DisplayTypes          []string
 	DisplayTypesTruncated bool
 	PartialExists         func(ctx context.Context, name string) (bool, error)
+	// MetaSchema is the carrier's metadata schema; [meta] paths outside it are
+	// flagged.
+	MetaSchema string
 }
 
 // ValidateTemplateRunContent lints one field's content. A field ending in CSS
@@ -560,6 +563,10 @@ func ValidateTemplateRunContent(ctx context.Context, v TemplateRunValidation, fi
 		ValidateMRQL: v.ValidateMRQL,
 		CSSMode:      strings.HasSuffix(field, "CSS"),
 		Context:      ctx,
+		MetaSchema:   v.MetaSchema,
+		// A template slot is rendered into a page, so an element left open
+		// takes the rest of the page with it.
+		CheckHTMLBalance: true,
 	}
 	if v.PartialExists != nil {
 		opts.PartialExists = func(name string) bool {
