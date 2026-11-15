@@ -615,11 +615,11 @@ func registerNoteShareRoutes(r *openapi.Registry) {
 	// redirecting back to /admin/shares by default, or JSON summary if the
 	// caller sends Accept: application/json.
 	r.Register(openapi.RouteInfo{
-		Method:               http.MethodPost,
-		Path:                 "/v1/admin/shares/bulk-revoke",
-		OperationID:          "bulkRevokeShares",
-		Summary:              "Revoke share tokens for a list of note IDs",
-		Tags:                 []string{"notes", "admin"},
+		Method:      http.MethodPost,
+		Path:        "/v1/admin/shares/bulk-revoke",
+		OperationID: "bulkRevokeShares",
+		Summary:     "Revoke share tokens for a list of note IDs",
+		Tags:        []string{"notes", "admin"},
 		// The handler reads request.Form, which merges the query string and a
 		// form body, so ids may be sent either way.
 		ExtraQueryParams: []openapi.QueryParam{
