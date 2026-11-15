@@ -930,7 +930,7 @@ func TestMCP_OpaqueBodyKeepsCaseDistinctKeys(t *testing.T) {
 	env := newMCPEnv(t, false)
 	cs := env.connect(t, clientOpts{answer: accept})
 	res := callTool(t, cs, "call_operation", map[string]any{"operationId": "updatePluginSettings",
-		"arguments": map[string]any{"name": "no-such-plugin", "body": map[string]any{"key": "lower", "Key": "upper"}}})
+		"arguments": map[string]any{"name": "no-such-plugin", "body": map[string]any{"key": "lower", "Key": "upper", "name": "Alice"}}})
 	if strings.Contains(resultText(res), "given twice") || strings.Contains(resultText(res), "duplicates") {
 		t.Fatalf("case-distinct settings were refused: %s", resultText(res))
 	}

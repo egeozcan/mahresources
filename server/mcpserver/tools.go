@@ -16,6 +16,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"mahresources/auth"
+	"mahresources/plugin_system"
 )
 
 const (
@@ -310,6 +311,13 @@ func refuseInexpressible(op *Operation, args map[string]any) error {
 	return nil
 }
 
+// opaqueBodyOps decode their body into a free-form map that their routing
+// parameters never read, so a body key cannot retarget them: plugin settings
+// may well include one called "name", beside the plugin's own name parameter.
+var opaqueBodyOps = map[string]bool{
+	"updatePluginSettings": true,
+}
+
 // refuseBodyShadowing refuses a destructive call whose "body" passthrough
 // carries a field that names another argument. Both reach the handler, and
 // the handler may prefer the body copy (deleteNote reads a body ID before its
@@ -318,7 +326,7 @@ func refuseInexpressible(op *Operation, args map[string]any) error {
 // query's bind value can be called "name" like runQuery's lookup parameter.
 // args must be canonical.
 func refuseBodyShadowing(op *Operation, args map[string]any) error {
-	if op.Body != nil {
+	if op.Body != nil || opaqueBodyOps[op.ID] {
 		return nil
 	}
 	body, ok := args["body"].(map[string]any)
@@ -377,13 +385,27 @@ func principalID(r *http.Request) uint {
 	return p.UserID
 }
 
-// execute dispatches op and turns the response into a tool result.
+// readOnly returns the /mcp request marked so that plugin code running
+// inside a dispatch can only read (plugin_system.WithModelPreview). Template
+// and description previews, and any page that renders shortcodes, run plugin
+// code, and a shortcode can call the mah.db writers; without the mark a
+// read-only operation could change data with no confirmation.
+func (c *caller) readOnly() *http.Request {
+	return c.r.WithContext(plugin_system.WithModelPreview(c.r.Context()))
+}
+
+// execute dispatches op and turns the response into a tool result. A
+// read-only operation runs under the read-only mark.
 func (c *caller) execute(op *Operation, args map[string]any) *mcp.CallToolResult {
+	parent := c.r
+	if effectiveSafety(op, args) == ReadOnly {
+		parent = c.readOnly()
+	}
 	switch op.Response {
 	case ResponseLink:
 		return c.linkResult(op, args)
 	case ResponseImage:
-		resp, err := dispatch(c.h.opts.Dispatch, c.r, op, args, thumbnailLimit)
+		resp, err := dispatch(c.h.opts.Dispatch, parent, op, args, thumbnailLimit)
 		if err != nil {
 			return toolError(err.Error())
 		}
@@ -397,7 +419,7 @@ func (c *caller) execute(op *Operation, args map[string]any) *mcp.CallToolResult
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.ImageContent{Data: resp.Body, MIMEType: ct}}}
 	}
 
-	resp, err := dispatch(c.h.opts.Dispatch, c.r, op, args, c.h.opts.MaxResponse)
+	resp, err := dispatch(c.h.opts.Dispatch, parent, op, args, c.h.opts.MaxResponse)
 	if err != nil {
 		return toolError(err.Error())
 	}
@@ -474,7 +496,7 @@ func (c *caller) preview(op *Operation, args map[string]any) string {
 			dry[k] = v
 		}
 		dry["DryRun"] = true
-		if resp, err := dispatch(c.h.opts.Dispatch, c.r, op, dry, 64<<10); err == nil && resp.Status < 300 {
+		if resp, err := dispatch(c.h.opts.Dispatch, c.readOnly(), op, dry, 64<<10); err == nil && resp.Status < 300 {
 			fmt.Fprintf(&b, "Dry run: %s\n", clip(string(bytes.TrimSpace(resp.Body)), 1500))
 		}
 	}
@@ -495,7 +517,7 @@ func (c *caller) reductionPreview(args map[string]any) string {
 	}
 	page := &Operation{ID: "reductionPage", Method: http.MethodGet, Path: "/reduction.json",
 		Params: []Param{{Name: "id", In: "query", Required: true}}}
-	resp, err := dispatch(c.h.opts.Dispatch, c.r, page, map[string]any{"id": json.Number(id[0])}, c.h.opts.MaxResponse)
+	resp, err := dispatch(c.h.opts.Dispatch, c.readOnly(), page, map[string]any{"id": json.Number(id[0])}, c.h.opts.MaxResponse)
 	if err != nil || resp.Truncated || resp.Status >= 300 {
 		return "Reduction: not found or not visible\n"
 	}
@@ -523,7 +545,7 @@ func (c *caller) importPreview(args map[string]any) string {
 	if jobID == "" || !ok {
 		return ""
 	}
-	resp, err := dispatch(c.h.opts.Dispatch, c.r, op, map[string]any{"jobId": jobID}, c.h.opts.MaxResponse)
+	resp, err := dispatch(c.h.opts.Dispatch, c.readOnly(), op, map[string]any{"jobId": jobID}, c.h.opts.MaxResponse)
 	if err != nil || resp.Truncated || resp.Status >= 300 {
 		return "Import plan: not found or not visible\n"
 	}
@@ -580,7 +602,7 @@ func (c *caller) nameOf(lookupID, id string) string {
 	if !ok {
 		return ""
 	}
-	resp, err := dispatch(c.h.opts.Dispatch, c.r, op, map[string]any{"id": json.Number(id)}, 256<<10)
+	resp, err := dispatch(c.h.opts.Dispatch, c.readOnly(), op, map[string]any{"id": json.Number(id)}, 256<<10)
 	if err != nil || resp.Truncated || resp.Status >= 300 {
 		return "(not found or not visible)"
 	}

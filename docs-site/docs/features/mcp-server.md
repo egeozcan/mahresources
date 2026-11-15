@@ -71,6 +71,8 @@ Long-running work, such as downloads, exports, imports and plugin actions, retur
 
 Each tool call runs as an ordinary API request from the signed-in user, through the same authentication, role checks, group scope, plugin permissions and rate limits as the REST API. A guest can read but not write; a user limited to a group sees only that group's subtree. The MCP endpoint itself admits every signed-in role.
 
+Read-only operations stay read-only when they run plugin code. Template and description previews render plugin shortcodes, and during a read-only call (and while a confirmation is being prepared) a plugin may only call its read functions; a shortcode that tries to write fails instead of changing anything.
+
 A few operations are never available over MCP:
 
 - signing in and out;
@@ -104,7 +106,7 @@ A confirmation is bound to the exact call it was issued for: the same user and t
 
 Argument names are matched to the operation's declared fields case-insensitively, with the same Unicode case folding the API's JSON decoder uses, and an argument given twice under different spellings (`Id` and `id`) is refused.
 
-Operations that take a request body the API spec does not describe accept it under a `body` argument, sent as JSON. Use it for a field that shares its name with a parameter, such as a saved query's bind value named `name`: `{"id": 7, "body": {"name": "Alice"}}`. A destructive call refuses this: a field inside `body` may not repeat the name of another argument, because the handler could act on the body copy instead of the one the confirmation named.
+Operations that take a request body the API spec does not describe accept it under a `body` argument, sent as JSON. Use it for a field that shares its name with a parameter, such as a saved query's bind value named `name`: `{"id": 7, "body": {"name": "Alice"}}`. A destructive call refuses this: a field inside `body` may not repeat the name of another argument, because the handler could act on the body copy instead of the one the confirmation named. Plugin settings (`updatePluginSettings`) are the exception, since the handler reads them as a separate map that never selects the plugin.
 
 **Mass edits** over MCP must list their targets in `ID`. A `Target` other than `ids`, and selecting targets with `Filter`, `MRQLQuery`, `MRQLParams` or `MRQLSnapshot`, are refused, because the matching set could change between the confirmation and the edit. Resolve the IDs first with a list tool or MRQL.
 
