@@ -128,6 +128,9 @@ func metaElementText(attrs map[string]string, hasValue bool) string {
 		empty = true
 	}
 	if !empty {
+		if label, ok := schemaDisplay(attrs["data-schema"], value); ok {
+			return label
+		}
 		switch t := value.(type) {
 		case string:
 			return t
@@ -201,4 +204,39 @@ func finishPreviewText(s string, cut bool) string {
 		text += "…"
 	}
 	return text
+}
+
+// schemaDisplay applies the element's schema-driven display for the common
+// cases: a labeled enum (oneOf entries with const) shows the entry's title,
+// and a boolean property shows Yes or No. Custom displays (x-display,
+// date-time layouts, plugin renderers) are not reproduced; the stored value
+// is shown for them.
+func schemaDisplay(schemaText string, value any) (string, bool) {
+	var schema struct {
+		Type  json.RawMessage `json:"type"`
+		OneOf []struct {
+			Const any    `json:"const"`
+			Title string `json:"title"`
+		} `json:"oneOf"`
+	}
+	if schemaText == "" || json.Unmarshal([]byte(schemaText), &schema) != nil {
+		return "", false
+	}
+	want, _ := json.Marshal(value)
+	for _, entry := range schema.OneOf {
+		// Strict, as the element compares (===): 3 is not "3".
+		if got, _ := json.Marshal(entry.Const); entry.Const != nil && string(got) == string(want) {
+			if entry.Title != "" {
+				return entry.Title, true
+			}
+			return fmt.Sprint(value), true
+		}
+	}
+	if b, ok := value.(bool); ok && strings.Contains(string(schema.Type), `"boolean"`) {
+		if b {
+			return "Yes", true
+		}
+		return "No", true
+	}
+	return "", false
 }

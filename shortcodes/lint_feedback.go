@@ -105,6 +105,8 @@ func withinSpans(pos int, spans [][2]int) bool {
 	return false
 }
 
+var elseifPattern = regexp.MustCompile(`\[elseif\b(?:"[^"]*"|'[^']*'|[^\]"'])*\]`)
+
 var styleElementPattern = regexp.MustCompile(`(?is)<style\b[^>]*>.*?(?:</style\s*>|$)`)
 
 // styleElementSpans are the <style> elements of markup, whose brackets are
@@ -138,12 +140,19 @@ func lintUnbalancedHTML(w *schemaWork, input string, tokens []token, add func(st
 	// Shortcode openers are blanked out, length for length, so an attribute
 	// value such as eq="<div>" is not read as markup and offsets still match.
 	masked := []byte(input)
-	for _, tk := range tokens {
-		for i := tk.start; i < tk.end && i < len(masked); i++ {
+	blank := func(start, end int) {
+		for i := start; i < end && i < len(masked); i++ {
 			if masked[i] != '\n' {
 				masked[i] = ' '
 			}
 		}
+	}
+	for _, tk := range tokens {
+		blank(tk.start, tk.end)
+	}
+	// [elseif] guards are dividers, not tokens, and carry attributes too.
+	for _, m := range elseifPattern.FindAllStringIndex(input, -1) {
+		blank(m[0], m[1])
 	}
 	type open struct {
 		name       string

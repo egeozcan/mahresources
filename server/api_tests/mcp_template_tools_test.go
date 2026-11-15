@@ -138,3 +138,19 @@ func TestTemplateToolEndpointRefusals(t *testing.T) {
 		t.Errorf("scoped template tool = %d %s", rr.Code, rr.Body.String())
 	}
 }
+
+// An explicit preview entity is honoured even outside the carrier (review
+// round 2): grounding samples only members.
+func TestMCPTemplate_PreviewHonoursAnExplicitEntity(t *testing.T) {
+	env, cat, _ := templateEnv(t)
+	other := &models.Category{Name: "Other"}
+	env.tc.DB.Create(other)
+	outsider := &models.Group{Name: "Outsider", CategoryId: &other.ID}
+	env.tc.DB.Create(outsider)
+	cs := env.connect(t, clientOpts{})
+	res := callTool(t, cs, "template_preview", map[string]any{"field": "CustomHeader", "content": `[property path="Name"]`,
+		"editing": map[string]any{"carrierType": "category", "carrierId": cat.ID, "entityId": outsider.ID}})
+	if res.IsError || !strings.Contains(resultText(res), "Outsider") || strings.Contains(resultText(res), "Apollo") {
+		t.Fatalf("preview = %v %s", res.IsError, resultText(res))
+	}
+}

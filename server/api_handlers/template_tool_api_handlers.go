@@ -110,6 +110,21 @@ func GetTemplateToolHandler(ctx TemplateGenerationContext, entityType string, ac
 		if len(req.Arguments) == 0 || string(req.Arguments) == "null" {
 			req.Arguments = json.RawMessage(`{}`)
 		}
+		// A preview with no entity of its own renders against entityId, even
+		// one outside the carrier: grounding only samples members, and the
+		// caller named this entity on purpose.
+		if req.Tool == application_context.ToolPreview && req.EntityID != 0 {
+			var args map[string]any
+			if err := json.Unmarshal(req.Arguments, &args); err != nil {
+				http_utils.HandleError(fmt.Errorf("arguments must be a JSON object: %w", err), writer, request, http.StatusBadRequest)
+				return
+			}
+			if _, named := args["entityId"]; !named {
+				args["entityType"], args["entityId"] = entityType, req.EntityID
+				b, _ := json.Marshal(args)
+				req.Arguments = b
+			}
+		}
 
 		runCtx := ctx.WithParentContext(request.Context())
 		gen := templateGenerateRequest{

@@ -86,3 +86,10 @@ func TestLintHTMLBalanceIsOptIn(t *testing.T) {
 		t.Fatalf("SVG flagged:\n%s", got)
 	}
 }
+
+func TestLintHTMLBalanceIgnoresElseifAttributes(t *testing.T) {
+	in := `[conditional path="status" eq="active"]Active[elseif path="status" eq="<div>"]Other[/conditional]`
+	if got := lintMessages(in, LintOptions{Known: KnownFromBuiltins(), CheckHTMLBalance: true}); strings.Contains(got, "<div>") {
+		t.Fatalf("an [elseif] attribute was read as markup:\n%s", got)
+	}
+}

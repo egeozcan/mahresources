@@ -42,3 +42,16 @@ func TestPreviewTextIsCapped(t *testing.T) {
 		t.Fatalf("an uncut preview was marked cut: %q", short)
 	}
 }
+
+func TestPreviewTextUsesSchemaDisplay(t *testing.T) {
+	cases := map[string]string{
+		`<meta-shortcode data-path="approved" data-value="true" data-schema="{&#34;type&#34;:&#34;boolean&#34;}"></meta-shortcode>`:                                                          "Yes",
+		`<meta-shortcode data-path="s" data-value="&#34;wip&#34;" data-schema="{&#34;oneOf&#34;:[{&#34;const&#34;:&#34;wip&#34;,&#34;title&#34;:&#34;In progress&#34;}]}"></meta-shortcode>`: "In progress",
+		`<meta-shortcode data-path="n" data-value="3" data-schema="{&#34;oneOf&#34;:[{&#34;const&#34;:3,&#34;title&#34;:&#34;High&#34;}]}"></meta-shortcode>`:                                "High",
+	}
+	for in, want := range cases {
+		if got := previewText(in); got != want {
+			t.Errorf("previewText(%s) = %q, want %q", in, got, want)
+		}
+	}
+}
