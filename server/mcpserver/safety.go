@@ -179,6 +179,15 @@ var destructive = map[string]bool{
 	"runPluginAction":      true,
 	"runPluginScheduleNow": true,
 
+	// Changing a relation type's categories deletes every relation, forward
+	// and reverse, that no longer fits them. createOrUpdateGroup does the same
+	// to a group's relations on update; see effectiveSafety in tools.go.
+	"editRelationType": true,
+	// Share pages resolve [partial] against the stored content, so writing a
+	// partial publishes it on every shared note whose templates include it.
+	"createOrUpdateTemplatePartial": true,
+	"updateTemplatePartial":         true,
+
 	// Taxonomy and other entities
 	"deleteTag":              true,
 	"bulkDeleteTags":         true,
@@ -235,7 +244,7 @@ var mutating = map[string]bool{
 	"computeResourceReduction": true, "editResourceReduction": true,
 
 	"createOrUpdateRelation": true, "editRelationDescription": true, "editRelationName": true,
-	"createRelationType": true, "editRelationType": true, "editRelationTypeDescription": true,
+	"createRelationType": true, "editRelationTypeDescription": true,
 	"editRelationTypeName": true,
 
 	"createResource": true, "editResource": true, "editResourceDescription": true,
@@ -252,7 +261,6 @@ var mutating = map[string]bool{
 
 	"createOrUpdateTag": true, "editTagDescription": true, "editTagName": true,
 
-	"createOrUpdateTemplatePartial": true, "updateTemplatePartial": true,
 	"editTemplatePartialDescription": true,
 }
 

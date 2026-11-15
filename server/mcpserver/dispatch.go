@@ -95,6 +95,9 @@ func buildRequest(ctx context.Context, parent *http.Request, op *Operation, args
 			}
 			header.Set(p.Name, s)
 		default:
+			if err := checkStringItems(p, v); err != nil {
+				return nil, err
+			}
 			if err := addValues(query, p.Name, v); err != nil {
 				return nil, fmt.Errorf("argument %q: %w", p.Name, err)
 			}
@@ -185,6 +188,26 @@ func buildRequest(ctx context.Context, parent *http.Request, op *Operation, args
 		req.Header.Set("Content-Type", contentType)
 	}
 	return req, nil
+}
+
+// checkStringItems refuses an object where a query parameter's schema asks
+// for string items, rather than sending its JSON text for the handler to
+// misread as a filter.
+func checkStringItems(p Param, v any) error {
+	items, _ := p.Schema["items"].(map[string]any)
+	if p.Schema["type"] != "array" || items["type"] != "string" {
+		return nil
+	}
+	list, ok := v.([]any)
+	if !ok {
+		list = []any{v}
+	}
+	for _, item := range list {
+		if _, isObj := item.(map[string]any); isObj {
+			return fmt.Errorf("argument %q takes strings, not objects; see its schema for the format", p.Name)
+		}
+	}
+	return nil
 }
 
 func multipartBody(b *Body, args map[string]any) ([]byte, string, error) {

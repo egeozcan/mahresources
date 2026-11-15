@@ -86,9 +86,10 @@ These operations are **destructive**:
 - merges and mass edits, adding meta in bulk (it overwrites the keys it names) and replacing resource tags in bulk;
 - operations that delete stored previews, including an uploaded custom thumbnail: rotating, cropping or trimming a resource, uploading or restoring a version, and setting a custom thumbnail;
 - removing a resource from its series, and an `editResource` call that sends `SeriesId` as 0, because the series is deleted when its last member leaves;
+- updating an existing group (`createOrUpdateGroup` with an `ID`) and editing a relation type, because both delete the relations that no longer fit the categories;
 - applying a resource reduction or a group import;
 - running a plugin action or plugin schedule, and running a job command (one of them, `forget`, erases a job's stored inputs);
-- sharing and unsharing notes, revoking shares in bulk, and creating, editing or restoring a note type, which can publish its templates on shared notes;
+- sharing and unsharing notes, revoking shares in bulk, creating, editing or restoring a note type (which can publish its templates on shared notes), and writing a template partial (share pages render the stored content);
 - changes to plugins and runtime settings.
 
 `search_operations` with `safety: destructive` lists them all. A destructive call never runs on its first request. The server answers with a confirmation request that names what the call would affect, and the agent's client shows it to the user. The operation runs only after the user accepts.

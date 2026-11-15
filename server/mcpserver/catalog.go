@@ -46,6 +46,18 @@ const (
 	ResponseLink
 )
 
+// metaQuerySchema is what a MetaQuery query parameter takes on the wire
+// (models/query_models/meta_query.go ParseMeta).
+var metaQuerySchema = map[string]any{
+	"type": "array",
+	"items": map[string]any{
+		"type":    "string",
+		"pattern": "^[^:]+:.*$",
+	},
+	"description": "Meta filters, each a string key:OP:value, where OP is EQ, LI (like, the default), NE, NL (not like), GT, GE, LT or LE, " +
+		"e.g. \"status:EQ:open\" or \"rating:GE:4\". key:value is shorthand for LI. true, false, null and numbers are compared as those types.",
+}
+
 // linkOnly operations return file bodies of any size.
 var linkOnly = map[string]bool{
 	"viewResource":           true,
@@ -206,6 +218,11 @@ func buildOperation(r *resolver, id, method, path string, o map[string]any) (*Op
 			}
 			if d, ok := pm["description"].(string); ok && d != "" {
 				schema = withDescription(schema, d)
+			}
+			if in == "query" && name == "MetaQuery" {
+				// The registry documents the decoded struct, but the query
+				// string carries each filter as text, which ParseMeta reads.
+				schema = metaQuerySchema
 			}
 			op.Params = append(op.Params, Param{Name: name, In: in, Required: req || in == "path", Schema: schema})
 		}

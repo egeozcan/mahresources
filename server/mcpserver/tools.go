@@ -259,17 +259,33 @@ func foldKey(s string) string {
 }
 
 // effectiveSafety upgrades an operation whose safety depends on its
-// arguments. editResource with SeriesId 0 removes the resource from its
-// Series, and deletes the Series when it was the last member.
+// arguments.
+//
+//   - editResource with SeriesId 0 removes the resource from its Series, and
+//     deletes the Series when it was the last member.
+//   - createOrUpdateGroup with an ID updates a group, and every update
+//     re-derives the group's category and deletes the relations that no
+//     longer fit it. A create touches no existing relation.
 func effectiveSafety(op *Operation, args map[string]any) Safety {
-	if op.ID == "editResource" {
-		if v, ok := args["SeriesId"]; ok {
-			if s, err := scalarString(v); v == nil || (err == nil && (s == "0" || s == "")) {
-				return Destructive
-			}
+	switch op.ID {
+	case "editResource":
+		if v, ok := args["SeriesId"]; ok && isZeroArg(v) {
+			return Destructive
+		}
+	case "createOrUpdateGroup":
+		if v, ok := args["ID"]; ok && !isZeroArg(v) {
+			return Destructive
 		}
 	}
 	return op.Safety
+}
+
+func isZeroArg(v any) bool {
+	if v == nil {
+		return true
+	}
+	s, err := scalarString(v)
+	return err == nil && (s == "0" || s == "")
 }
 
 // refuseUnpinnedSelection refuses destructive calls whose targets would be

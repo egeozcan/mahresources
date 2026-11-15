@@ -777,3 +777,53 @@ func TestMCP_SideEffectDestructionNeedsConfirmation(t *testing.T) {
 		t.Fatalf("a plain edit was refused: %s", resultText(plain))
 	}
 }
+
+// Review round 3: updates whose handlers delete relations, and template
+// partials that share pages render, need a confirmation.
+func TestMCP_RelationAndPublicationSideEffectsNeedConfirmation(t *testing.T) {
+	env := newMCPEnv(t, false)
+	group := env.tc.CreateDummyGroup("categorised")
+	cs := env.connect(t, clientOpts{}) // cannot confirm
+	for _, c := range []struct {
+		op   string
+		args map[string]any
+	}{
+		{"createOrUpdateGroup", map[string]any{"ID": group.ID, "Name": "categorised", "CategoryId": 2}},
+		{"editRelationType", map[string]any{"Id": 1, "FromCategory": 2}},
+		{"createOrUpdateTemplatePartial", map[string]any{"Name": "share-banner", "Content": "x"}},
+		{"updateTemplatePartial", map[string]any{"ID": 7, "Content": "x"}},
+	} {
+		out := callTool(t, cs, "call_operation", map[string]any{"operationId": c.op, "arguments": c.args})
+		if !out.IsError || !strings.Contains(resultText(out), "needs a confirmation") {
+			t.Errorf("%s ran without a confirmation: %s", c.op, resultText(out))
+		}
+	}
+	// Creating a group touches no existing relation and stays a plain write.
+	if out := callTool(t, cs, "create_group", map[string]any{"Name": "fresh"}); out.IsError {
+		t.Fatalf("create_group was refused: %s", resultText(out))
+	}
+}
+
+// MetaQuery entries are parsed as key:OP:value strings, so the schema must
+// say so instead of advertising objects that would be misread (finding 4).
+func TestMCP_MetaQueryFiltersAsStrings(t *testing.T) {
+	env := newMCPEnv(t, false)
+	open := env.tc.CreateDummyNote("open one")
+	env.tc.DB.Model(&models.Note{}).Where("id = ?", open.ID).Update("meta", `{"status":"open"}`)
+	closed := env.tc.CreateDummyNote("closed one")
+	env.tc.DB.Model(&models.Note{}).Where("id = ?", closed.ID).Update("meta", `{"status":"closed"}`)
+
+	cs := env.connect(t, clientOpts{})
+	desc := resultText(callTool(t, cs, "describe_operation", map[string]any{"operationId": "listNotes"}))
+	if !strings.Contains(desc, "key:OP:value") {
+		t.Fatalf("listNotes MetaQuery schema does not describe its grammar: %s", desc)
+	}
+	res := resultText(callTool(t, cs, "list_notes", map[string]any{"MetaQuery": []any{"status:EQ:open"}}))
+	if !strings.Contains(res, "open one") || strings.Contains(res, "closed one") {
+		t.Fatalf("MetaQuery filter = %s", res)
+	}
+	bad := callTool(t, cs, "list_notes", map[string]any{"MetaQuery": []any{map[string]any{"name": "status", "operation": "EQ", "value": "open"}}})
+	if !bad.IsError {
+		t.Fatalf("an object MetaQuery entry was accepted: %s", resultText(bad))
+	}
+}
