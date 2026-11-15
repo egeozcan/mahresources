@@ -9257,6 +9257,13 @@ paths:
                   name: format
                   schema:
                     type: string
+                - description: 1 validates the query and its limits and answers 204 without exporting.
+                  in: query
+                  name: preflight
+                  schema:
+                    enum:
+                        - "1"
+                    type: string
             responses:
                 "200":
                     content:

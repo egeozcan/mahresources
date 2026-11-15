@@ -28,8 +28,23 @@ var (
 	resourceNotesLink  = joinLink{"resource_notes", "resource_id", "note_id", "notes", &models.Note{}, noteEntities}
 )
 
-// linkChunk bounds the IDs one statement binds.
+// linkChunk bounds the link IDs one statement binds.
 const linkChunk = 500
+
+// bindBudget is how many variables one statement may bind, under SQLite's
+// 32766 (PostgreSQL allows 65535), with room for the statement's own.
+const bindBudget = 32000
+
+// scopedChunk is the chunk size for a scoped query on tx: the scope callback
+// binds the caller's whole subtree allow-list next to the chunk, so a large
+// subtree leaves less room for link IDs.
+func scopedChunk(tx *gorm.DB) int {
+	n := linkChunk
+	if sf := scopeFromContext(tx.Statement.Context); sf != nil {
+		n = min(n, bindBudget-len(sf.allowed))
+	}
+	return max(n, 1)
+}
 
 // clearLinks removes ownerID's links through link before the writer adds
 // the caller's list back. assoc is the GORM association the link belongs to.
@@ -63,8 +78,9 @@ func (ctx *MahresourcesContext) clearLinks(tx *gorm.DB, owner any, assoc string,
 	// Work in chunks: one entity can have tens of thousands of links, and
 	// SQLite refuses a statement with more than 32766 bound variables.
 	removable := make([]uint, 0, len(ids))
-	for start := 0; start < len(ids); start += linkChunk {
-		chunk := ids[start:min(start+linkChunk, len(ids))]
+	step := scopedChunk(tx)
+	for start := 0; start < len(ids); start += step {
+		chunk := ids[start:min(start+step, len(ids))]
 
 		// Raw bypasses the scope callbacks, so this sees every row that exists.
 		var existing []uint

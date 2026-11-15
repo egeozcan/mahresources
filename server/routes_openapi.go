@@ -2426,6 +2426,7 @@ reported via the X-MRQL-Default-Limit-Applied response header.`,
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 		ExtraQueryParams: []openapi.QueryParam{
 			{Name: "format", Type: "string", Description: "Export format: csv (default) or json"},
+			{Name: "preflight", Type: "string", Enum: []string{"1"}, Description: "1 validates the query and its limits and answers 204 without exporting."},
 		},
 	})
 

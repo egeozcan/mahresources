@@ -150,6 +150,23 @@ func buildRequest(ctx context.Context, parent *http.Request, op *Operation, args
 		}
 	}
 
+	// MRQL reads its named bind values from "param.<name>" keys in the query
+	// string or a form body, never from JSON, so they always travel in the
+	// query (the JSON form is the "params" object).
+	// A fresh map: bodyArgs can be the caller's own "body" object, which a
+	// confirmation preview and the real dispatch both read.
+	withoutParams := make(map[string]any, len(bodyArgs))
+	for k, v := range bodyArgs {
+		if strings.HasPrefix(k, "param.") {
+			if err := addValues(query, k, v); err != nil {
+				return nil, fmt.Errorf("argument %q: %w", k, err)
+			}
+			continue
+		}
+		withoutParams[k] = v
+	}
+	bodyArgs = withoutParams
+
 	var body []byte
 	contentType := ""
 	switch {

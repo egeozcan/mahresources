@@ -267,3 +267,16 @@ func TestExplicitEmptyBodyIsSent(t *testing.T) {
 		t.Fatalf("body=%q ct=%q", body, req.Header.Get("Content-Type"))
 	}
 }
+
+func TestMRQLParamKeysTravelInTheQuery(t *testing.T) {
+	parent := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	op := &Operation{Method: http.MethodPost, Path: "/v1/mrql"}
+	req, err := buildRequest(context.Background(), parent, op, map[string]any{"query": "x", "param.needle": "meeting"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(req.Body)
+	if req.URL.Query().Get("param.needle") != "meeting" || string(body) != `{"query":"x"}` {
+		t.Fatalf("query=%q body=%s", req.URL.RawQuery, body)
+	}
+}

@@ -848,3 +848,21 @@ func TestMCP_SeriesRemovalAndBodyBindValues(t *testing.T) {
 		t.Fatalf("runQuery with a body bind value = %v %s", run.IsError, resultText(run))
 	}
 }
+
+// Review round 8: MRQL reads param.<name> bind values and export preflight
+// from the query string only.
+func TestMCP_MRQLParamsAndExportPreflight(t *testing.T) {
+	env := newMCPEnv(t, false)
+	env.tc.CreateDummyNote("meeting notes")
+	cs := env.connect(t, clientOpts{})
+
+	res := callTool(t, cs, "mrql_query", map[string]any{"query": `type = "note" AND name ~ $needle`, "param.needle": "meeting"})
+	if res.IsError || !strings.Contains(resultText(res), "meeting notes") {
+		t.Fatalf("param.needle = %v %s", res.IsError, resultText(res))
+	}
+	pre := callTool(t, cs, "call_operation", map[string]any{"operationId": "exportMRQL",
+		"arguments": map[string]any{"query": `type = "note" LIMIT 10`, "format": "json", "preflight": "1"}})
+	if pre.IsError || !strings.Contains(resultText(pre), "HTTP 204") {
+		t.Fatalf("export preflight = %v %s", pre.IsError, resultText(pre))
+	}
+}
