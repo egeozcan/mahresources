@@ -82,6 +82,14 @@ func requiredCapability(method, rawPath string) capability {
 		strings.HasPrefix(path, "/v1/auth/") || strings.HasPrefix(path, "/v1/account/"):
 		return capRead
 
+	// The MCP endpoint admits any signed-in role, guests included. Each tool
+	// call is dispatched back through this policy as its own request, so the
+	// operation it runs is authorized on its own. Deliberately not in
+	// isReadViaPost: csrfExempt reuses that list, and /mcp needs no exemption
+	// because it accepts only Bearer requests when auth is enabled.
+	case path == "/mcp":
+		return capRead
+
 	// System administration — restricted for reads and writes alike.
 	case isSystemPath(path):
 		return capSystem

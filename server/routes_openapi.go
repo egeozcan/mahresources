@@ -1000,6 +1000,7 @@ func registerSeriesRoutes(r *openapi.Registry) {
 		OperationID: "editSeriesName",
 		Summary:     "Edit a series name inline",
 		Tags:        []string{"series"},
+		RequestType: reflect.TypeOf(query_models.BasicEntityQuery{}),
 		ExtraQueryParams: []openapi.QueryParam{
 			{Name: "id", Type: "integer", Required: true, Description: "Series ID"},
 		},
@@ -1087,10 +1088,12 @@ returns it too.`,
 	})
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/note/editName", "editNoteName", "Edit a note's name", "notes").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/note/editDescription", "editNoteDescription", "Edit a note's description", "notes").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 
 	r.Register(registerMetaEditRoute("note", "notes"))
 
@@ -1216,10 +1219,12 @@ func registerNoteTypeRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/noteType/editName", "editNoteTypeName", "Edit a note type's name", "notes").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/noteType/editDescription", "editNoteTypeDescription", "Edit a note type's description", "notes").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 }
 
 func registerGroupRoutes(r *openapi.Registry) {
@@ -1389,10 +1394,12 @@ func registerGroupRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/group/editName", "editGroupName", "Edit a group's name", "groups").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/group/editDescription", "editGroupDescription", "Edit a group's description", "groups").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 
 	r.Register(registerMetaEditRoute("group", "groups"))
 }
@@ -1473,16 +1480,20 @@ func registerRelationRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/relation/editName", "editRelationName", "Edit a relation instance's name", "relations").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/relation/editDescription", "editRelationDescription", "Edit a relation instance's description", "relations").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/relationType/editName", "editRelationTypeName", "Edit a relation type's name", "relations").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/relationType/editDescription", "editRelationTypeDescription", "Edit a relation type's description", "relations").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 }
 
 func registerResourceRoutes(r *openapi.Registry) {
@@ -1806,10 +1817,12 @@ func registerResourceRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/resource/editName", "editResourceName", "Edit a resource's name", "resources").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/resource/editDescription", "editResourceDescription", "Edit a resource's description", "resources").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 
 	r.Register(registerMetaEditRoute("resource", "resources"))
 }
@@ -1865,10 +1878,12 @@ func registerTagRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/tag/editName", "editTagName", "Edit a tag's name", "tags").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/tag/editDescription", "editTagDescription", "Edit a tag's description", "tags").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 
 	mergeQueryType := reflect.TypeOf(query_models.MergeQuery{})
 
@@ -1935,10 +1950,12 @@ func registerCategoryRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/category/editName", "editCategoryName", "Edit a category's name", "categories").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/category/editDescription", "editCategoryDescription", "Edit a category's description", "categories").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 }
 
 func registerResourceCategoryRoutes(r *openapi.Registry) {
@@ -1981,10 +1998,12 @@ func registerResourceCategoryRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/resourceCategory/editName", "editResourceCategoryName", "Edit a resource category's name", "resourceCategories").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/resourceCategory/editDescription", "editResourceCategoryDescription", "Edit a resource category's description", "resourceCategories").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 }
 
 func registerDescriptionPreviewRoutes(r *openapi.Registry) {
@@ -2077,7 +2096,8 @@ func registerTemplatePartialRoutes(r *openapi.Registry) {
 	// No editName route: a partial's Name must stay kebab-case, which the
 	// generic name editor does not enforce. Names change via create/update.
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/templatePartial/editDescription", "editTemplatePartialDescription", "Edit a template partial's description (admin only)", "templatePartials").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 
 	r.Register(openapi.RouteInfo{
 		Method:               http.MethodGet,
@@ -2171,10 +2191,12 @@ func registerQueryRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/query/editName", "editQueryName", "Edit a query's name", "queries").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/query/editDescription", "editQueryDescription", "Edit a query's description", "queries").
-		WithIDParam("id", true))
+		WithIDParam("id", true).
+		WithRequest(query_models.BasicEntityQuery{}))
 }
 
 func registerSearchRoutes(r *openapi.Registry) {
@@ -3336,10 +3358,12 @@ func registerImportRoutes(r *openapi.Registry) {
 		Path:                 "/v1/groups/import/parse",
 		OperationID:          "parseGroupImport",
 		Summary:              "Upload an import tar and start parsing",
-		Description:          "Accepts a multipart file upload, stages the tar, and enqueues a parse job.",
+		Description:          "Accepts a multipart file upload (field \"file\"), stages the tar, and enqueues a parse job.",
 		Tags:                 []string{"imports"},
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeMultipart},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		HasFileUpload:        true,
+		FileFieldName:        "file",
 	})
 
 	r.Register(openapi.RouteInfo{

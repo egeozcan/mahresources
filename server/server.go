@@ -12,6 +12,8 @@ import (
 	"mahresources/application_context"
 	"mahresources/auth"
 	"mahresources/server/http_utils"
+	"mahresources/server/mcpserver"
+	"mahresources/server/openapi"
 	"mahresources/server/template_handlers"
 
 	"github.com/flosch/pongo2/v4"
@@ -94,9 +96,32 @@ func CreateServer(appContext *application_context.MahresourcesContext, fs afero.
 	// auth is disabled it injects an implicit administrator so behaviour matches
 	// the historical no-auth deployment. CSRF runs after auth (so the session
 	// token is on the context) and before authz; it is a no-op when auth is off.
+	chain := withAuthentication(appContext, withCSRFProtection(appContext, withAuthorization(appContext, withJSONBodyLimit(appContext, router))))
+
+	// The MCP endpoint dispatches every tool call back through chain as the
+	// caller, so it sees exactly the authentication, roles, scope and limits
+	// the REST API applies. Admission sits outside CSRF so a cookie-only
+	// request is refused as unauthenticated rather than as a CSRF failure.
+	handler := chain
+	if appContext.Config.MCPEnabled {
+		registry := openapi.NewRegistry()
+		RegisterAPIRoutesWithOpenAPI(registry)
+		mcpHandler, err := mcpserver.New(mcpserver.Options{
+			Dispatch:       chain,
+			Spec:           registry.GenerateSpec(),
+			SigningKey:     appContext.DeferredSigningKey(),
+			MaxRequestBody: appContext.Config.MaxJSONBodySize,
+		})
+		if err != nil {
+			panic(fmt.Sprintf("mcp: %v", err))
+		}
+		router.Methods(http.MethodPost).Path(mcpserver.Path).Handler(mcpHandler)
+		handler = mcpserver.Admission(appContext.AuthEnabled(), appContext.Config.MCPAllowedOrigins, chain)
+	}
+
 	return &http.Server{
 		Addr:         appContext.Config.BindAddress,
-		Handler:      withPrimarySecurityHeaders(withAuthentication(appContext, withCSRFProtection(appContext, withAuthorization(appContext, withJSONBodyLimit(appContext, router))))),
+		Handler:      withPrimarySecurityHeaders(handler),
 		WriteTimeout: 45 * time.Minute,
 		ReadTimeout:  45 * time.Minute,
 	}

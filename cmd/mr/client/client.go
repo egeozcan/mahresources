@@ -40,6 +40,10 @@ func New(baseURL string) *Client {
 	}
 }
 
+// HTTPClient returns the client's HTTP client, which carries the resolved
+// credentials. The `mr mcp` bridge sends its MCP traffic through it.
+func (c *Client) HTTPClient() *http.Client { return c.httpClient }
+
 // authTransport always marks the request as coming from the mr CLI and injects
 // an Authorization: Bearer header only when the request targets the origin the
 // token is bound to (same scheme://host:port as the configured server). The

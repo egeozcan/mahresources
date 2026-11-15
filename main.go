@@ -266,6 +266,8 @@ func main() {
 	// Documentation link options
 	docsSiteBaseURL := flag.String("docs-site-base-url", getEnvOrDefault("DOCS_SITE_BASE_URL", application_context.DefaultDocsSiteBaseURL), "Base URL for contextual links to the published documentation site (env: DOCS_SITE_BASE_URL)")
 	docsLinksDisabled := flag.Bool("docs-links-disabled", os.Getenv("DOCS_LINKS_DISABLED") == "1", "Disable contextual external documentation links in the app (env: DOCS_LINKS_DISABLED=1)")
+	mcpEnabled := flag.Bool("mcp", os.Getenv("MCP_ENABLED") == "1", "Serve the Model Context Protocol endpoint at /mcp for AI agents. With authentication enabled it requires an API token (env: MCP_ENABLED=1)")
+	mcpAllowedOrigins := flag.String("mcp-allowed-origins", os.Getenv("MCP_ALLOWED_ORIGINS"), "Comma-separated browser origins the /mcp endpoint accepts, e.g. https://agent.example.com. Empty (default) refuses every browser request (env: MCP_ALLOWED_ORIGINS)")
 
 	// MRQL options
 	mrqlTimeout := flag.Duration("mrql-query-timeout", parseDurationEnv("MRQL_QUERY_TIMEOUT", 10*time.Second), "Maximum execution time for MRQL queries (env: MRQL_QUERY_TIMEOUT)")
@@ -425,6 +427,8 @@ func main() {
 		SharePublicURL:               *sharePublicURL,
 		DocsSiteBaseURL:              *docsSiteBaseURL,
 		DocsLinksDisabled:            *docsLinksDisabled,
+		MCPEnabled:                   *mcpEnabled,
+		MCPAllowedOrigins:            splitCommaList(*mcpAllowedOrigins),
 		FfmpegPath:                   *ffmpegPath,
 		LibreOfficePath:              *libreOfficePath,
 		AltFileSystems:               altFileSystems,

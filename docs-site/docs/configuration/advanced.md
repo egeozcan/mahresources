@@ -520,6 +520,15 @@ Contextual links in the app point to the published documentation site. These are
 | `-docs-site-base-url` | `DOCS_SITE_BASE_URL` | `https://egeozcan.github.io/mahresources` | Base URL used for contextual documentation links. |
 | `-docs-links-disabled` | `DOCS_LINKS_DISABLED=1` | `false` | Hide all contextual external documentation links in the app. |
 
+## MCP Endpoint
+
+Serve the [Model Context Protocol](../features/mcp-server.md) at `/mcp` for AI agents.
+
+| Flag | Env Variable | Default | Description |
+|------|--------------|---------|-------------|
+| `-mcp` | `MCP_ENABLED=1` | `false` | Serve the MCP endpoint at `/mcp`. With authentication enabled it requires an API token |
+| `-mcp-allowed-origins` | `MCP_ALLOWED_ORIGINS` | (empty) | Comma-separated browser origins `/mcp` accepts. Empty refuses every browser request |
+
 ## Log Cleanup
 
 Automatically delete old log entries on startup:
@@ -702,6 +711,8 @@ Each plugin lives in a subdirectory of the plugin path and must contain a `plugi
 | `-share-public-url` | `SHARE_PUBLIC_URL` | (unset) | Externally-routable base URL for shared notes |
 | `-docs-site-base-url` | `DOCS_SITE_BASE_URL` | `https://egeozcan.github.io/mahresources` | Base URL for contextual documentation links |
 | `-docs-links-disabled` | `DOCS_LINKS_DISABLED=1` | `false` | Hide contextual documentation links |
+| `-mcp` | `MCP_ENABLED=1` | `false` | Serve the MCP endpoint at `/mcp` |
+| `-mcp-allowed-origins` | `MCP_ALLOWED_ORIGINS` | (empty) | Browser origins `/mcp` accepts |
 | `-cleanup-logs-days` | `CLEANUP_LOGS_DAYS` | `0` (disabled) | Delete old logs on startup |
 | `-plugin-path` | `PLUGIN_PATH` | `./plugins` | Plugin directory |
 | `-plugins-disabled` | `PLUGINS_DISABLED=1` | `false` | Disable plugin system |

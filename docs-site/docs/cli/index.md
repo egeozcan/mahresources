@@ -83,6 +83,7 @@ sidebar_label: CLI
 | `mr log get` | Get a log entry by ID | [Details](./log/get.md) |
 | `mr logs` | List and filter audit log entries | [Details](./logs/index.md) |
 | `mr logs list` | List log entries | [Details](./logs/list.md) |
+| `mr mcp` | Serve the server's MCP endpoint over stdio | [Details](./mcp.md) |
 | `mr mrql` | Execute and manage MRQL queries | [Details](./mrql/index.md) |
 | `mr mrql delete` | Delete a saved MRQL query by ID | [Details](./mrql/delete.md) |
 | `mr mrql explain` | Show the SQL an MRQL query would run, without executing it | [Details](./mrql/explain.md) |

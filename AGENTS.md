@@ -293,6 +293,15 @@ npm run report         # View HTML test report
 
 When you add or change a command or flag in `cmd/mr/commands/`, update the corresponding `<group>_help/*.md` file. CI runs `./mr docs lint` (the `cli-docs-fresh` job) and `./mr docs check-examples` (the `cli-doctest` job) on every PR. Reference pattern: `cmd/mr/commands/resources_help/resource_get.md`.
 
+## MCP endpoint (`server/mcpserver/`)
+
+`-mcp` serves the Model Context Protocol at `/mcp` (stateless, 2026-07-28; older protocols on the same handler). Tools are built from the generated OpenAPI spec, and each tool call is dispatched back through the full REST handler chain as the caller, so authorization never needs a second implementation. Design: `docs/plans/2026-11-15-builtin-mcp-server.md`.
+
+- **Every new API route needs a safety class** in `server/mcpserver/safety.go` (`readOnlyPosts`, `mutating`, `destructive` or `excluded`). GETs default to read-only. `BuildCatalog` refuses to start with an unclassified non-GET route, and the drift tests in `server/mcpserver/catalog_test.go` fail on stale or overlapping entries. Deletes, merges, mass edits, publishing and system configuration are `destructive`; anything that issues a credential is `excluded`.
+- **Destructive operations need a confirmation** (`confirm.go`, `tools.go`): an AES-GCM sealed `requestState` bound to the user, token, tool, operation and argument hash, valid for one use and five minutes, keyed with a per-boot nonce. Clients that cannot show a form elicitation are refused. Do not add a bypass.
+- A route that returns a file body belongs in `linkOnly` (or `inlineImages`) in `catalog.go`.
+- `mr mcp` (`cmd/mr/mcpbridge/`) is a stdio bridge that passes confirmations through. Tests: `server/api_tests/mcp_test.go`, `mcp_bridge_test.go`, `e2e/tests/cli/cli-mcp.spec.ts`.
+
 ## Agent skill (`skills/`)
 
 `skills/mahresources-mrql/` is an installable [open agent skill](https://github.com/vercel-labs/skills) that teaches an agent to drive MRQL through the `mr` CLI. It is not a fourth place to write MRQL documentation:

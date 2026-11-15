@@ -70,6 +70,12 @@ type MahresourcesConfig struct {
 	// DocsLinksDisabled hides contextual links to the external documentation
 	// site when true. Runtime overrides live in RuntimeSettings.
 	DocsLinksDisabled bool
+	// MCPEnabled serves the Model Context Protocol endpoint at /mcp. See
+	// server/mcpserver and -mcp.
+	MCPEnabled bool
+	// MCPAllowedOrigins lists the browser origins the MCP endpoint accepts.
+	// Empty (the default) refuses every browser request. See -mcp-allowed-origins.
+	MCPAllowedOrigins []string
 	// RemoteResourceConnectTimeout is the timeout for connecting to remote URLs (dial, TLS, response headers)
 	RemoteResourceConnectTimeout time.Duration
 	// RemoteResourceIdleTimeout is how long to wait before erroring if a remote server stops sending data
@@ -272,6 +278,10 @@ type MahresourcesInputConfig struct {
 	DocsSiteBaseURL string
 	// DocsLinksDisabled hides contextual external documentation links when true.
 	DocsLinksDisabled bool
+	// MCPEnabled serves the MCP endpoint at /mcp.
+	MCPEnabled bool
+	// MCPAllowedOrigins lists the browser origins /mcp accepts.
+	MCPAllowedOrigins []string
 	AltFileSystems    map[string]string
 	// MemoryDB uses an in-memory SQLite database (ephemeral, no persistence)
 	MemoryDB bool
@@ -1919,6 +1929,8 @@ func OpenContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext, 
 		SharePublicURL:               cfg.SharePublicURL,
 		DocsSiteBaseURL:              cfg.DocsSiteBaseURL,
 		DocsLinksDisabled:            cfg.DocsLinksDisabled,
+		MCPEnabled:                   cfg.MCPEnabled,
+		MCPAllowedOrigins:            cfg.MCPAllowedOrigins,
 		RemoteResourceConnectTimeout: connectTimeout,
 		RemoteResourceIdleTimeout:    idleTimeout,
 		RemoteResourceOverallTimeout: overallTimeout,

@@ -81,6 +81,13 @@ components:
                 - prefix
                 - disabled
             type: object
+        BasicEntityQuery:
+            properties:
+                Description:
+                    type: string
+                Name:
+                    type: string
+            type: object
         BulkEditMetaQuery:
             properties:
                 ID:
@@ -4153,6 +4160,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -4176,6 +4192,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -6173,6 +6198,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -6226,6 +6260,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -6568,8 +6611,18 @@ paths:
                 - exports
     /v1/groups/import/parse:
         post:
-            description: Accepts a multipart file upload, stages the tar, and enqueues a parse job.
+            description: Accepts a multipart file upload (field "file"), stages the tar, and enqueues a parse job.
             operationId: parseGroupImport
+            requestBody:
+                content:
+                    multipart/form-data:
+                        schema:
+                            properties:
+                                file:
+                                    format: binary
+                                    type: string
+                            type: object
+                required: true
             responses:
                 "200":
                     content:
@@ -9672,6 +9725,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -9725,6 +9787,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -9939,6 +10010,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -9962,6 +10042,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -11396,6 +11485,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -11419,6 +11517,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -11816,6 +11923,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -11839,6 +11955,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -11958,6 +12083,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -11981,6 +12115,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -12168,6 +12311,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -12221,6 +12373,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -12777,6 +12938,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -12800,6 +12970,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -14076,6 +14255,12 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -14257,6 +14442,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -14280,6 +14474,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:
@@ -14600,6 +14803,15 @@ paths:
                   required: true
                   schema:
                     type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicEntityQuery'
+                required: true
             responses:
                 "200":
                     content:

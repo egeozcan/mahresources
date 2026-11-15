@@ -188,6 +188,8 @@ function startServerProcessWithDatabase(port: number, sharePort: number, opts: S
       '-hash-worker-disabled',
       '-thumb-worker-disabled',
       '-skip-version-migration',
+      // The CLI suites drive `mr mcp` against the MCP endpoint.
+      '-mcp',
       '-plugin-path=./e2e/test-plugins',
       allowPrivateFetch,
       ...authArgs,
@@ -207,6 +209,8 @@ function startServerProcessWithDatabase(port: number, sharePort: number, opts: S
       '-hash-worker-disabled',
       '-thumb-worker-disabled',
       '-skip-version-migration',
+      // The CLI suites drive `mr mcp` against the MCP endpoint.
+      '-mcp',
       // 2, not 1. Every flake observed across the 2026-07-29 UI bug hunt was
       // `TimeoutError: page.goto: Timeout 15000ms exceeded`, and the count
       // tracked machine load precisely: 0 on an idle machine, 3 moderately

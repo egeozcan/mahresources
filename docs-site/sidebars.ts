@@ -83,6 +83,7 @@ const sidebars: SidebarsConfig = {
         'features/timeline-view',
         'features/mrql',
         'features/mrql-reference',
+        'features/mcp-server',
       ],
     },
     {
