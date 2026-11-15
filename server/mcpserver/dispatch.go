@@ -108,6 +108,7 @@ func buildRequest(ctx context.Context, parent *http.Request, op *Operation, args
 	// "body"; anything else left over is passed through, because some registry
 	// entries omit inputs their handlers read.
 	var bodyArgs map[string]any
+	explicitBody := false
 	if op.Body != nil && op.Body.Nested {
 		if b, ok := remaining["body"]; ok {
 			delete(remaining, "body")
@@ -126,8 +127,10 @@ func buildRequest(ctx context.Context, parent *http.Request, op *Operation, args
 	} else {
 		bodyArgs = remaining
 		// An operation with no declared body takes explicit body fields under
-		// "body" (see inputSchema); they join the leftovers.
+		// "body" (see inputSchema); they join the leftovers. An explicit body
+		// is sent even when empty: {} can mean "clear every field".
 		if b, ok := remaining["body"]; ok && op.Body == nil && op.Method != http.MethodGet {
+			explicitBody = true
 			bm, ok := b.(map[string]any)
 			if !ok {
 				return nil, errors.New(`argument "body" must be an object`)
@@ -150,7 +153,7 @@ func buildRequest(ctx context.Context, parent *http.Request, op *Operation, args
 	var body []byte
 	contentType := ""
 	switch {
-	case op.Method == http.MethodGet || op.Body == nil && len(bodyArgs) == 0:
+	case op.Method == http.MethodGet || op.Body == nil && len(bodyArgs) == 0 && !explicitBody:
 		// A GET has no body. Leftover GET arguments are filters the registry
 		// did not declare, which the query decoders read.
 		for k, v := range bodyArgs {

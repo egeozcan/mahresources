@@ -12569,6 +12569,12 @@ paths:
     /v1/resource/remote:
         post:
             operationId: addRemoteResource
+            parameters:
+                - description: Queue the download as a background job and return the job instead of waiting for the file.
+                  in: query
+                  name: background
+                  schema:
+                    type: boolean
             requestBody:
                 content:
                     application/json:

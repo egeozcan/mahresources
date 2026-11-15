@@ -32,3 +32,7 @@ func TestScopedResourceEditSparesUnseenAssociations_PG(t *testing.T) {
 func TestScopedEditRemovesVisibleLinksOnExplicitClear_PG(t *testing.T) {
 	checkScopedEditRemovesVisibleLinks(t, setupPostgresAuthEnv(t))
 }
+
+func TestScopedEditClearsManyLinks_PG(t *testing.T) {
+	checkScopedEditClearsManyLinks(t, setupPostgresAuthEnv(t))
+}

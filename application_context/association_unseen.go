@@ -28,6 +28,9 @@ var (
 	resourceNotesLink  = joinLink{"resource_notes", "resource_id", "note_id", "notes", &models.Note{}, noteEntities}
 )
 
+// linkChunk bounds the IDs one statement binds.
+const linkChunk = 500
+
 // clearLinks removes ownerID's links through link before the writer adds
 // the caller's list back. assoc is the GORM association the link belongs to.
 //
@@ -57,35 +60,41 @@ func (ctx *MahresourcesContext) clearLinks(tx *gorm.DB, owner any, assoc string,
 		return nil
 	}
 
-	// Raw bypasses the scope callbacks, so this sees every row that exists.
-	var existing []uint
-	if err := tx.Raw("SELECT id FROM "+link.farTable+" WHERE id IN ?", ids).Scan(&existing).Error; err != nil {
-		return err
-	}
-	exists := make(map[uint]bool, len(existing))
-	for _, id := range existing {
-		exists[id] = true
-	}
-
+	// Work in chunks: one entity can have tens of thousands of links, and
+	// SQLite refuses a statement with more than 32766 bound variables.
 	removable := make([]uint, 0, len(ids))
-	for _, id := range ids {
-		if !exists[id] {
-			removable = append(removable, id)
-			continue
-		}
-		// One scoped query per link, bounded by this entity's own degree. An
-		// IN list would have the scope callback append the whole subtree
-		// allow-list as well.
-		var n int64
-		if err := tx.Model(link.far).Where("id = ?", id).Limit(1).Count(&n).Error; err != nil {
+	for start := 0; start < len(ids); start += linkChunk {
+		chunk := ids[start:min(start+linkChunk, len(ids))]
+
+		// Raw bypasses the scope callbacks, so this sees every row that exists.
+		var existing []uint
+		if err := tx.Raw("SELECT id FROM "+link.farTable+" WHERE id IN ?", chunk).Scan(&existing).Error; err != nil {
 			return err
 		}
-		if n > 0 {
-			removable = append(removable, id)
+		// The scoped query sees only what the caller may see.
+		var visible []uint
+		if err := tx.Model(link.far).Where("id IN ?", chunk).Pluck("id", &visible).Error; err != nil {
+			return err
+		}
+		exists := make(map[uint]bool, len(existing))
+		for _, id := range existing {
+			exists[id] = true
+		}
+		sees := make(map[uint]bool, len(visible))
+		for _, id := range visible {
+			sees[id] = true
+		}
+		for _, id := range chunk {
+			if !exists[id] || sees[id] {
+				removable = append(removable, id)
+			}
 		}
 	}
-	if len(removable) == 0 {
-		return nil
+	for start := 0; start < len(removable); start += linkChunk {
+		chunk := removable[start:min(start+linkChunk, len(removable))]
+		if err := tx.Model(owner).Association(assoc).Delete(link.entities(chunk)); err != nil {
+			return err
+		}
 	}
-	return tx.Model(owner).Association(assoc).Delete(link.entities(removable))
+	return nil
 }

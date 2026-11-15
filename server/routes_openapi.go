@@ -1591,13 +1591,16 @@ func registerResourceRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:               http.MethodPost,
-		Path:                 "/v1/resource/remote",
-		OperationID:          "addRemoteResource",
-		Summary:              "Add a resource from a remote URL",
-		Tags:                 []string{"resources"},
-		RequestType:          resourceCreatorType,
-		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		Method:              http.MethodPost,
+		Path:                "/v1/resource/remote",
+		OperationID:         "addRemoteResource",
+		Summary:             "Add a resource from a remote URL",
+		Tags:                []string{"resources"},
+		RequestType:         resourceCreatorType,
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "background", Type: "boolean", Description: "Queue the download as a background job and return the job instead of waiting for the file."},
+		},
 		ResponseType:         resourceType,
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})

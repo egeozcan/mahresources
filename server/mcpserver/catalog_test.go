@@ -166,13 +166,21 @@ func containsFold(s, sub string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(sub))
 }
 
-func TestEnablePluginTakesCommandAcknowledgement(t *testing.T) {
+// Handlers that read a field with FormValue only see the query string or a
+// form body, never the JSON body MCP sends, so those fields must be declared
+// as query parameters.
+func TestFormValueFieldsAreQueryParameters(t *testing.T) {
 	c := buildCatalog(t)
-	op, _ := c.Get("enablePlugin")
-	for _, p := range op.Params {
-		if p.Name == "confirm_commands" && p.In == "query" {
-			return
+	for opID, name := range map[string]string{"enablePlugin": "confirm_commands", "addRemoteResource": "background"} {
+		op, _ := c.Get(opID)
+		found := false
+		for _, p := range op.Params {
+			if p.Name == name && p.In == "query" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s does not declare %s as a query parameter", opID, name)
 		}
 	}
-	t.Fatalf("enablePlugin does not declare confirm_commands: %+v", op.Params)
 }

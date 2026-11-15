@@ -171,3 +171,53 @@ func checkScopedEditRemovesVisibleLinks(t *testing.T, tc *TestContext) {
 		t.Errorf("Notes: [] kept a visible note link (%d rows)", n)
 	}
 }
+
+// One entity can carry more links than SQLite binds in one statement
+// (32766). The scoped clear works in chunks (review round 7).
+func TestScopedEditClearsManyLinks(t *testing.T) {
+	checkScopedEditClearsManyLinks(t, setupAuthEnv(t))
+}
+
+func checkScopedEditClearsManyLinks(t *testing.T, tc *TestContext) {
+	t.Helper()
+	root := &models.Group{Name: "ml-root"}
+	tc.DB.Create(root)
+	outside := &models.Group{Name: "ml-outside"}
+	tc.DB.Create(outside)
+	note := &models.Note{Name: "ml-note", OwnerId: &root.ID}
+	tc.DB.Create(note)
+	unseen := &models.Resource{Name: "ml-unseen", OwnerId: &outside.ID}
+	tc.DB.Create(unseen)
+	tc.DB.Exec("INSERT INTO resource_notes (resource_id, note_id) VALUES (?, ?)", unseen.ID, note.ID)
+
+	// 33000 links to resources that do not exist: removable, and more than
+	// one statement could bind.
+	const dangling = 33000
+	for start := 0; start < dangling; start += 400 {
+		var b strings.Builder
+		args := make([]any, 0, 800)
+		for i := start; i < start+400 && i < dangling; i++ {
+			if b.Len() > 0 {
+				b.WriteString(",")
+			}
+			b.WriteString("(?, ?)")
+			args = append(args, 1_000_000+i, note.ID)
+		}
+		if err := tc.DB.Exec("INSERT INTO resource_notes (resource_id, note_id) VALUES "+b.String(), args...).Error; err != nil {
+			t.Fatalf("seed links: %v", err)
+		}
+	}
+
+	bearer := scopedUserBearer(t, tc, root.ID)
+	h := map[string]string{"Accept": "application/json", "Content-Type": "application/json", "Authorization": bearer}
+	rr := doReq(tc, http.MethodPost, "/v1/note", h, nil,
+		strings.NewReader(`{"ID":`+fmt.Sprint(note.ID)+`,"OwnerId":`+fmt.Sprint(root.ID)+`,"Name":"ml","Resources":[]}`))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("scoped clear of many links = %d %s", rr.Code, rr.Body.String())
+	}
+	var left int64
+	tc.DB.Table("resource_notes").Where("note_id = ?", note.ID).Count(&left)
+	if left != 1 || linkCount(tc, "resource_notes", "note_id", note.ID, "resource_id", unseen.ID) != 1 {
+		t.Fatalf("%d links left, want only the unseen one", left)
+	}
+}
