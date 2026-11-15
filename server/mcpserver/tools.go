@@ -342,8 +342,10 @@ func refuseBodyShadowing(op *Operation, args map[string]any) error {
 			return fmt.Errorf("argument %q inside \"body\" duplicates %q; pass it once, outside \"body\"", k, other)
 		}
 	}
-	_, err := canonicalKeys(nil, body)
-	return err
+	// Keys inside body are not folded against each other: a body can be an
+	// opaque map (plugin settings may name both "key" and "Key"), and the
+	// confirmation shows the body in full.
+	return nil
 }
 
 // refuseUnpinnedSelection refuses destructive calls whose targets would be
