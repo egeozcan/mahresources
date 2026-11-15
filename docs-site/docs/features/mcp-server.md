@@ -82,7 +82,7 @@ An agent editing category, resource category or note type templates gets the sam
 | `template_get_template`, `template_list_carriers` | Read saved templates of any carrier. |
 | `template_list_revisions`, `template_get_revision`, `template_diff_revisions` | Read the template history. |
 | `template_get_partial`, `template_get_shortcode_docs` | Read a partial or one shortcode's full documentation. |
-| `template_edit` | Save fields (`{"CustomHeader": "...", "CustomHeaderCSS": "..."}`); other fields keep their values. It lints first and refuses an unknown field before saving anything, then answers with each field's lint result and a preview of the first HTML field. |
+| `template_edit` | Save fields (`{"CustomHeader": "...", "CustomHeaderCSS": "..."}`; `true` or `false` for a boolean field such as `ApplyTemplatesToShares`); other fields keep their values. An unknown field or a wrongly typed value is refused before anything is saved. After saving it answers with each field's lint result, read from the saved values so a `MetaSchema` saved in the same call counts, and a preview of the first HTML field. |
 
 The `template_*` read tools take an `editing` object naming the carrier being edited (`carrierType`, `carrierId`). They are the run's own Tools, served by the run's executor through `templateTool`, so a result matches what a run would see. Every save is a template revision, so a bad edit can be compared and restored. Editing a note type asks for a confirmation, like any note type edit. Like Generation runs, the template tools are not available to group-limited accounts.
 

@@ -154,3 +154,38 @@ func TestMCPTemplate_PreviewHonoursAnExplicitEntity(t *testing.T) {
 		t.Fatalf("preview = %v %s", res.IsError, resultText(res))
 	}
 }
+
+// Review round 3: a boolean field saves as a boolean, and lint is read after
+// the save, so a schema saved in the same call is the one paths are checked
+// against.
+func TestMCPTemplate_EditTypedFieldsAndFreshLint(t *testing.T) {
+	env, cat, _ := templateEnv(t)
+	cs := env.connect(t, clientOpts{answer: accept})
+	res := callTool(t, cs, "template_edit", map[string]any{"carrierType": "category", "carrierId": cat.ID, "fields": map[string]any{
+		"MetaSchema":   `{"type":"object","properties":{"budget":{"type":"number"}}}`,
+		"CustomHeader": `<p>[meta path="budget"]</p>`,
+	}})
+	if res.IsError || strings.Contains(resultText(res), "not declared") {
+		t.Fatalf("combined edit = %v %s", res.IsError, resultText(res))
+	}
+
+	nt := &models.NoteType{Name: "Shared"}
+	env.tc.DB.Create(nt)
+	for _, v := range []any{true, "false", true} {
+		out := callTool(t, cs, "template_edit", map[string]any{"carrierType": "noteType", "carrierId": nt.ID,
+			"fields": map[string]any{"ApplyTemplatesToShares": v}})
+		if out.IsError {
+			t.Fatalf("ApplyTemplatesToShares=%v: %s", v, resultText(out))
+		}
+	}
+	var got models.NoteType
+	env.tc.DB.First(&got, nt.ID)
+	if !got.ApplyTemplatesToShares {
+		t.Fatal("ApplyTemplatesToShares was not saved")
+	}
+	bad := callTool(t, cs, "template_edit", map[string]any{"carrierType": "noteType", "carrierId": nt.ID,
+		"fields": map[string]any{"ApplyTemplatesToShares": "maybe"}})
+	if !bad.IsError || !strings.Contains(resultText(bad), "Nothing was saved") {
+		t.Fatalf("a bad boolean = %v %s", bad.IsError, resultText(bad))
+	}
+}

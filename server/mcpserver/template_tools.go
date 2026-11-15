@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"mahresources/application_context"
+	"mahresources/models"
 )
 
 // The template tools give an agent what a template generation run gives its
@@ -186,15 +188,15 @@ func buildTemplateTools(c *Catalog) ([]namedTool, error) {
 			Description: "Save template fields of a category, resource category or note type, like a generation run's " +
 				"submit: fields maps field names (CustomHeader, CustomHeaderCSS, CustomSidebar, MetaSchema, ...) to their " +
 				"new content; other fields keep their values. Answers with each field's lint issues and a preview of the " +
-				"first HTML field. Every save is a template revision, which template_diff_revisions and " +
+				"first HTML field, both read after the save. Every save is a template revision, which template_diff_revisions and " +
 				"restore*Revision can undo. Note type edits ask the user to confirm first.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"carrierType": map[string]any{"type": "string", "enum": carrierTypes},
 					"carrierId":   map[string]any{"type": "integer", "minimum": 1},
-					"fields": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"},
-						"description": "Field name to new content"},
+					"fields": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": []any{"string", "boolean"}},
+						"description": "Field name to new content (true or false for a boolean field such as ApplyTemplatesToShares)"},
 					"entityId": map[string]any{"type": "integer", "minimum": 1, "description": "Entity the preview renders against"},
 				},
 				"required": []any{"carrierType", "carrierId", "fields"},
@@ -225,10 +227,37 @@ func (c *caller) templateEdit(ctx context.Context, req *mcp.CallToolRequest, ops
 	if !ok || len(fields) == 0 {
 		return toolError(`"fields" must be a non-empty object of field name to content`)
 	}
+	kinds := map[string]models.TemplateFieldKind{}
+	var known []string
+	for _, f := range models.TemplateFields(ct) {
+		kinds[f.Name] = f.Kind
+		known = append(known, f.Name)
+	}
 	names := make([]string, 0, len(fields))
+	saveArgs := map[string]any{"ID": id}
 	for name, v := range fields {
-		if _, ok := v.(string); !ok {
-			return toolError(fmt.Sprintf("fields.%s must be a string", name))
+		kind, ok := kinds[name]
+		if !ok {
+			return toolError(fmt.Sprintf("%s is not a template field of a %s; fields: %s\nNothing was saved.", name, ct, strings.Join(known, ", ")))
+		}
+		switch t := v.(type) {
+		case string:
+			if kind == models.TemplateFieldBool {
+				b, err := strconv.ParseBool(t)
+				if err != nil {
+					return toolError(fmt.Sprintf("%s is true or false\nNothing was saved.", name))
+				}
+				saveArgs[name] = b
+			} else {
+				saveArgs[name] = t
+			}
+		case bool:
+			if kind != models.TemplateFieldBool {
+				return toolError(fmt.Sprintf("fields.%s must be a string\nNothing was saved.", name))
+			}
+			saveArgs[name] = t
+		default:
+			return toolError(fmt.Sprintf("fields.%s must be a string (true or false for %s fields)\nNothing was saved.", name, "boolean"))
 		}
 		names = append(names, name)
 	}
@@ -236,20 +265,6 @@ func (c *caller) templateEdit(ctx context.Context, req *mcp.CallToolRequest, ops
 	editing := templateEditing{carrierType: ct, carrierID: id, entityID: args["entityId"]}
 	tool := ops[carrier.tool]
 
-	// Lint first: an unknown field is refused before anything is written.
-	var lint []string
-	for _, name := range names {
-		text, isErr := c.templateToolCall(tool, editing, "lint", map[string]any{"field": name, "content": fields[name]})
-		if isErr {
-			return toolError(fmt.Sprintf("%s: %s\nNothing was saved.", name, text))
-		}
-		lint = append(lint, name+": "+text)
-	}
-
-	saveArgs := map[string]any{"ID": id}
-	for _, name := range names {
-		saveArgs[name] = fields[name]
-	}
 	// Only an operation that ran gets the lint and preview report; a
 	// confirmation request, a refusal and a declined confirmation are
 	// returned as they are.
@@ -258,10 +273,24 @@ func (c *caller) templateEdit(ctx context.Context, req *mcp.CallToolRequest, ops
 		return res
 	}
 
-	var b strings.Builder
-	fmt.Fprintf(&b, "Saved %s to %s %v.\n\nLint:\n%s\n", strings.Join(names, ", "), ct, id, strings.Join(lint, "\n"))
+	// Lint what was saved, so a MetaSchema saved in the same call is the one
+	// [meta] paths are checked against.
+	var lint []string
 	for _, name := range names {
-		if name == "MetaSchema" || strings.HasSuffix(name, "CSS") || name == "SectionConfig" {
+		if kinds[name] == models.TemplateFieldBool {
+			continue
+		}
+		text, _ := c.templateToolCall(tool, editing, "lint", map[string]any{"field": name})
+		lint = append(lint, name+": "+text)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Saved %s to %s %v.\n", strings.Join(names, ", "), ct, id)
+	if len(lint) > 0 {
+		fmt.Fprintf(&b, "\nLint:\n%s\n", strings.Join(lint, "\n"))
+	}
+	for _, name := range names {
+		if kinds[name] != models.TemplateFieldText || strings.HasSuffix(name, "CSS") {
 			continue
 		}
 		text, isErr := c.templateToolCall(tool, editing, "preview", map[string]any{"field": name})
