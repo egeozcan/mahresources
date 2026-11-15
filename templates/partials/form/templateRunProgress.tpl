@@ -9,7 +9,7 @@
 <template x-if="run">
     <section class="mt-2 rounded-md border border-stone-300 bg-white p-2 space-y-2" data-testid="run-panel-{{ name }}" aria-labelledby="{{ field_id }}-runhead">
         <p id="{{ field_id }}-runhead" class="text-xs font-semibold font-mono text-stone-800">
-            <span x-text="run.status === 'running' ? 'Generation run in progress' : 'Generation run ended'"></span>
+            <span x-text="run.status === 'running' ? 'Generation run in progress' : run.status === 'done' ? 'Generation run finished' : run.status === 'cancelled' ? 'Generation run cancelled' : 'Generation run failed'"></span>
         </p>
         <div class="grid gap-1 text-xs font-mono text-stone-700 sm:grid-cols-2">
             <div>
@@ -31,7 +31,8 @@
         </div>
         <p class="text-xs font-mono text-stone-600" x-show="run.status === 'running' && run.finishRequested && !run.finishError" data-testid="run-finishing-{{ name }}">The next Turn will be the last.</p>
         <p class="text-xs font-mono text-red-700" x-show="run.finishError" x-text="run.finishError" role="alert"></p>
-        <p class="text-xs font-mono text-stone-700" x-show="run.status !== 'running'" data-testid="run-end-{{ name }}"
+        <p class="rounded border-l-4 px-2 py-1 text-xs font-mono font-medium" x-show="run.status !== 'running'" data-testid="run-end-{{ name }}"
+           :class="run.status === 'done' ? 'border-green-700 bg-green-50 text-green-900' : run.status === 'cancelled' ? 'border-stone-400 bg-stone-50 text-stone-800' : 'border-red-700 bg-red-50 text-red-900'"
            x-text="(run.status === 'done' ? 'Finished' : run.status === 'cancelled' ? 'Cancelled' : run.status === 'closed' ? 'The connection closed before the run finished' : 'Failed') + (run.stopReason ? ' (' + run.stopReason + ')' : '') + (run.error ? ': ' + run.error : '') + '.'"></p>
         <details class="rounded border border-stone-200" :open="run.status === 'running'" data-testid="run-turns-{{ name }}">
             <summary class="cursor-pointer px-2 py-1 text-xs font-mono text-stone-800 bg-stone-50" x-text="'Turns (' + run.turns.length + ')'"></summary>

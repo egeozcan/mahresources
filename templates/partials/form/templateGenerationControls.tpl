@@ -1,4 +1,4 @@
-<div class="mb-2 border border-stone-200 rounded-md p-2 bg-stone-50" aria-label="Generate {{ title }} from natural language">
+<div class="mb-2 border border-stone-200 rounded-md p-2 bg-stone-50" aria-label="Generate {{ title }} from natural language" data-generation-host>
     <label for="{{ field_id }}-genprompt" class="sr-only">Describe the {{ title }} to generate</label>
     {# flex-wrap + min-w-0: the prompt textarea is flex-1 and the buttons are #}
     {# whitespace-nowrap, so at 390px the row was 932px wide and the Generate  #}
@@ -33,17 +33,39 @@
                     class="px-2 py-1 text-xs font-mono text-stone-700 bg-white border border-stone-300 rounded-md hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">Review again</button>
         </template>
         <template x-if="generationError">
-            <p data-testid="generate-error-{{ name }}" role="alert" class="text-xs text-red-700 font-mono" x-text="generationError"></p>
+            <p data-testid="generate-error-{{ name }}" data-generation-error tabindex="-1" role="alert" class="text-xs text-red-700 font-mono focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-600" x-text="generationError"></p>
         </template>
     </div>
     {% include "/partials/form/templateRunProgress.tpl" with name=name field_id=field_id %}
     {# A pending draft is shown as text only (x-text, never x-html) and reaches no editor before Apply. #}
     <template x-if="hasDraft()">
-        <section class="mt-2 rounded-md border border-stone-300 bg-white p-2 space-y-2" data-testid="generate-review-{{ name }}" aria-labelledby="{{ field_id }}-genreview">
-            <p id="{{ field_id }}-genreview" class="text-xs font-semibold font-mono text-stone-800">Generated draft (not applied)</p>
+        {# tabindex -1: the end-of-run notice's Review button moves focus here. #}
+        <section class="mt-2 rounded-md border border-stone-300 border-l-4 bg-white p-2 space-y-2 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-600"
+                 :class="draftOutcome() === 'ready' ? 'border-l-green-700' : 'border-l-amber-600'"
+                 tabindex="-1" data-generation-review :data-outcome="draftOutcome()"
+                 data-testid="generate-review-{{ name }}" aria-labelledby="{{ field_id }}-genreview">
+            <div class="flex flex-wrap items-baseline gap-x-2">
+                <p id="{{ field_id }}-genreview" class="text-sm font-semibold font-mono"
+                    :class="draftOutcome() === 'ready' ? 'text-green-800' : 'text-amber-800'"
+                    x-text="draftOutcome() === 'ready' ? 'Draft ready' : 'Draft needs review'"></p>
+                <span class="text-xs font-mono text-stone-600">Not applied yet</span>
+            </div>
+            {# What Apply does to each field, against the field as it was when Generate was pressed. #}
+            <div data-testid="generate-summary-{{ name }}" class="rounded border border-stone-200 bg-stone-50 px-2 py-1">
+                <p class="text-xs font-mono font-medium text-stone-700">Before and after</p>
+                <ul class="text-xs font-mono text-stone-700">
+                    <template x-for="field in generatedFields" :key="field.name">
+                        <li class="flex flex-wrap gap-x-2" :data-testid="'generate-summary-row-' + field.name">
+                            <span class="font-medium" x-text="field.name"></span>
+                            <span :class="field.summary.status === 'unchanged' ? 'text-stone-500' : ['cleared', 'blocked'].includes(field.summary.status) ? 'text-red-800' : 'text-stone-800'" x-text="field.summary.text"></span>
+                        </li>
+                    </template>
+                </ul>
+            </div>
             <template x-for="field in generatedFields" :key="field.name">
                 <div class="min-w-0" :data-testid="'generate-review-field-' + field.name">
                     <p class="text-xs font-mono font-medium text-stone-700" x-text="field.name"></p>
+                    {% include "/partials/form/templateDraftDiff.tpl" with rows="field.diff" test_id="'generate-diff-' + field.name" label="field.name" %}
                     <p x-show="draftWarnings(field.text, field.css).length" class="text-xs font-mono text-amber-800"
                        x-text="'Runs code once applied: ' + draftWarnings(field.text, field.css).join(', ') + ' (highlighted).'"></p>
                     <pre tabindex="0" role="region" :aria-label="'Draft text of ' + field.name" :data-testid="'generate-review-text-' + field.name" class="mt-1 max-h-48 overflow-auto rounded border border-stone-200 bg-stone-50 p-2 text-xs font-mono whitespace-pre-wrap break-all focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-600"><template x-for="(segment, i) in draftSegments(field.text || '(empty)', field.css)" :key="i"><span :class="segment.flagged ? 'bg-amber-200 text-stone-900 outline outline-1 outline-amber-700' : ''" x-text="segment.text"></span></template></pre>

@@ -13,7 +13,8 @@
 // Slot key -> hidden-input field name on the form.
 import { askToConfirm } from './confirmDialog.js';
 import { announceApplied, REVISION_APPLIED_EVENT } from './revisionApplied.js';
-import { draftSegments, draftWarnings } from './templateDraftReview.js';
+import { changeSummary, diffRows, draftSegments, draftWarnings, notAppliedSummary } from './templateDraftReview.js';
+import { dismissGenerationNotice, noticeGenerationEnd } from './generationEndNotice.js';
 import { withheldFields } from './privacyLegend.js';
 import { afterDialogTeardown, returnFocusToGenerate, makeRedisclose, approvedFields, reviewDisclosure } from './generationDisclosure.js';
 import { runHost } from './templateRun.js';
@@ -723,9 +724,12 @@ export function templateBundle({ carrier } = {}) {
       const generatePath = `/v1/${this.carrier}/generateTemplate`;
       // A new run supersedes the previous one: abort it and any open review first.
       this.stopGeneration();
+      dismissGenerationNotice();
       const requestId = ++this._generationRequestId;
       // Created before the dry run: teardown or supersession while preparing aborts it.
       const requestSignal = this.beginRequest();
+      // Set once the reader approves the send: only a sent request's end is signalled.
+      let sent = false;
       this.generating = true;
       this.run = null;
       this.pendingDraft = null;
@@ -779,17 +783,18 @@ export function templateBundle({ carrier } = {}) {
         });
         if (this._reviewOwner === owner) this._reviewOwner = null;
         if (requestId !== this._generationRequestId || !approval) return;
+        sent = true;
 
         this.generating = true;
         this.notify(harness ? 'Generating the whole template…' : 'Generating the whole template… this can take up to a minute.', 'info');
         afterDialogTeardown().then(() => {
           if (requestId === this._generationRequestId && this.generating) bundleStatus?.focus();
         });
-        const sent = approvedFields(approval, harness);
+        const approved = approvedFields(approval, harness);
         let resp;
         let data;
         if (harness) {
-          const outcome = await this.streamRun((signal) => post(sent, { signal, stream: true }), `${generatePath}/finish`);
+          const outcome = await this.streamRun((signal) => post(approved, { signal, stream: true }), `${generatePath}/finish`);
           if (requestId !== this._generationRequestId) return;
           if (outcome.kind === 'json') {
             resp = outcome.resp;
@@ -810,7 +815,7 @@ export function templateBundle({ carrier } = {}) {
             return;
           }
         } else {
-          resp = await post(sent);
+          resp = await post(approved);
           data = await resp.json().catch(() => null);
         }
         if (requestId !== this._generationRequestId) return;
@@ -863,7 +868,19 @@ export function templateBundle({ carrier } = {}) {
         // warning; their per-section issue would repeat it.
         const failedSlots = data && Array.isArray(data.failedSlots) ? data.failedSlots.filter((name) => typeof name === 'string') : [];
         const isFailedSlotIssue = (i) => failedSlots.some((name) => String(i.message).startsWith(`${name} could not be generated`));
+        // What Apply does to each returned field, against the field as the request sent it.
+        // A blocked field (half a pair, or withheld) is not written, so it changes nothing.
+        const summaries = Object.fromEntries(returned.map((field) => [
+          field,
+          blocked.includes(field) ? notAppliedSummary(snapshot[field]) : changeSummary(snapshot[field], slots[field]),
+        ]));
+        const diffs = Object.fromEntries(returned.map((field) => [
+          field,
+          ['changed', 'cleared'].includes(summaries[field].status) ? diffRows(snapshot[field], slots[field]) : [],
+        ]));
         this.pendingDraft = {
+          summaries,
+          diffs,
           slots: Object.fromEntries(returned.map((field) => [field, slots[field]])),
           fields: returned,
           valid: !(data && data.valid === false),
@@ -895,7 +912,14 @@ export function templateBundle({ carrier } = {}) {
       } finally {
         if (requestId === this._generationRequestId) {
           this.generating = false;
-          returnFocusToGenerate(this, bundleStatus, bundleGenerate, [bundlePrompt]);
+          // Measured after focus has settled: returning focus to Generate can
+          // scroll the result into view, and then no notice is needed.
+          const settled = returnFocusToGenerate(this, bundleStatus, bundleGenerate, [bundlePrompt]);
+          if (sent) {
+            Promise.resolve(settled).then(() => {
+              if (requestId === this._generationRequestId) this._noticeEnd();
+            });
+          }
         }
       }
     },
@@ -938,12 +962,14 @@ export function templateBundle({ carrier } = {}) {
       }
       for (const field of fields) this.setEditor(field, draft.slots[field] || '');
       announceApplied('generated');
+      dismissGenerationNotice();
       this.pendingDraft = null;
       this.notify(`Filled ${fields.length} slot(s) from your description. Review, then save.`, 'info');
       this._focusAfterPanelCloses();
     },
 
     discardPendingDraft() {
+      dismissGenerationNotice();
       this.pendingDraft = null;
       this.notify('Discarded the generated draft.', 'info');
       this._focusAfterPanelCloses();
@@ -958,6 +984,50 @@ export function templateBundle({ carrier } = {}) {
       if (!hit.length) return 'Not applied: its companion did not arrive.';
       const base = `Not applied: Privacy mode withheld ${hit.join(' and ')} because it contained a Placeholder`;
       return group.length > 1 ? `${base}, and a template and its CSS apply together.` : `${base}.`;
+    },
+
+    // How the pending draft ended: 'ready' when every returned slot applies
+    // cleanly, 'review' when it has issues, failed or blocked slots.
+    draftOutcome() {
+      const draft = this.pendingDraft;
+      if (!draft) return '';
+      return draft.valid && !draft.failedSlots.length && !draft.blocked.length ? 'ready' : 'review';
+    },
+
+    // One line over the per-slot summary: how many returned slots Apply changes.
+    draftSummaryLine() {
+      const draft = this.pendingDraft;
+      if (!draft) return '';
+      const count = (status) => draft.fields.filter((field) => draft.summaries[field]?.status === status).length;
+      const same = count('unchanged');
+      const skipped = count('blocked');
+      const changing = draft.fields.length - same - skipped;
+      const parts = [`${changing} ${changing === 1 ? 'slot changes' : 'slots change'}`];
+      if (same) parts.push(`${same} unchanged`);
+      if (skipped) parts.push(`${skipped} not applied`);
+      return parts.join(', ');
+    },
+
+    // Signal the end of a sent request: a notice when its result is out of
+    // sight, a tab-title mark when the page is in the background. A cancelled
+    // run ends at the reader's own word and is not signalled.
+    _noticeEnd() {
+      const status = (this.$refs || {}).bundleStatus;
+      const host = status?.closest('[data-generation-host]') || this._panel;
+      const locate = () => host?.querySelector('[data-generation-review]') || status || null;
+      if (this.pendingDraft) {
+        const ready = this.draftOutcome() === 'ready';
+        noticeGenerationEnd({
+          kind: ready ? 'ready' : 'review',
+          heading: ready ? 'Template draft ready' : 'Template draft needs review',
+          detail: `Whole template: ${this.draftSummaryLine()}. See what changes, then Apply or Discard.`,
+          locate,
+        });
+      } else if (this.groundingChanged) {
+        noticeGenerationEnd({ kind: 'review', heading: 'Generation needs another review', detail: 'Whole template: the data to be sent changed.', locate });
+      } else if (this.messageKind === 'warn' && this.message) {
+        noticeGenerationEnd({ kind: 'failed', heading: 'Template generation failed', detail: `Whole template: ${this.message}`, locate });
+      }
     },
 
     // Whether Apply has anything to write: half pairs are listed, not applied.

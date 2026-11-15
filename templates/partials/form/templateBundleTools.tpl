@@ -2,7 +2,7 @@
 {# Closed on load; announceRevision opens it when a revision load reports here. #}
 <details class="template-panel rounded-lg border border-stone-200 bg-stone-50/50"
           x-data="templateBundle({ carrier: '{{ carrier }}' })"
-          data-testid="template-bundle-tools">
+          data-testid="template-bundle-tools" data-generation-host>
     <summary>Reuse &amp; Presets</summary>
     <div class="px-4 pb-4 sm:px-6 sm:pb-6 space-y-4">
     {# What this form applied; each entry posts with the save as revisionApplied. #}
@@ -84,8 +84,17 @@
         {% include "/partials/form/templateRunProgress.tpl" with name="bundle" field_id="tb-run" %}
         {# A generated draft is held here until Apply; nothing reaches an editor before. #}
         <template x-if="pendingDraft">
-            <section class="mt-3 rounded-md border border-stone-300 bg-white p-3 space-y-3" data-testid="template-bundle-review" aria-labelledby="tb-review-heading">
-                <p id="tb-review-heading" class="text-sm font-semibold font-mono text-stone-800">Generated draft (not applied)</p>
+            {# tabindex -1: the end-of-run notice's Review button moves focus here. #}
+            <section class="mt-3 rounded-md border border-stone-300 border-l-4 bg-white p-3 space-y-3 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-600"
+                     :class="draftOutcome() === 'ready' ? 'border-l-green-700' : 'border-l-amber-600'"
+                     tabindex="-1" data-generation-review :data-outcome="draftOutcome()"
+                     data-testid="template-bundle-review" aria-labelledby="tb-review-heading">
+                <div class="flex flex-wrap items-baseline gap-x-2">
+                    <p id="tb-review-heading" class="text-sm font-semibold font-mono"
+                        :class="draftOutcome() === 'ready' ? 'text-green-800' : 'text-amber-800'"
+                        x-text="draftOutcome() === 'ready' ? 'Draft ready' : 'Draft needs review'"></p>
+                    <span class="text-xs font-mono text-stone-600">Not applied yet</span>
+                </div>
                 <p x-show="pendingDraft.explanation" class="text-xs text-stone-600" x-text="pendingDraft.explanation"></p>
                 <p x-show="pendingDraft.failedSlots.length" data-testid="template-bundle-failed-slots" role="status" class="text-xs font-mono text-amber-800"
                    x-text="'Could not generate: ' + pendingDraft.failedSlots.join(', ') + '. ' + (pendingDraft.failedSlots.length === 1 ? 'It was' : 'They were') + ' left as ' + (pendingDraft.failedSlots.length === 1 ? 'it is' : 'they are') + '; generate ' + (pendingDraft.failedSlots.length === 1 ? 'it' : 'them') + ' on their own.'"></p>
@@ -94,6 +103,18 @@
                         <li x-text="issue.message"></li>
                     </template>
                 </ul>
+                {# What Apply does to each returned slot, against the slot as it was when Generate was pressed. #}
+                <div data-testid="template-bundle-summary" class="rounded border border-stone-200 bg-stone-50 px-2 py-1">
+                    <p class="text-xs font-mono font-medium text-stone-700" x-text="'Before and after: ' + draftSummaryLine()"></p>
+                    <ul class="text-xs font-mono text-stone-700">
+                        <template x-for="field in pendingDraft.fields" :key="field">
+                            <li class="flex flex-wrap gap-x-2" :data-testid="'template-bundle-summary-row-' + field">
+                                <span class="font-medium" x-text="field"></span>
+                                <span :class="pendingDraft.summaries[field].status === 'unchanged' ? 'text-stone-500' : ['cleared', 'blocked'].includes(pendingDraft.summaries[field].status) ? 'text-red-800' : 'text-stone-800'" x-text="pendingDraft.summaries[field].text"></span>
+                            </li>
+                        </template>
+                    </ul>
+                </div>
                 <ul class="space-y-2">
                     <template x-for="field in pendingDraft.fields" :key="field">
                         <li :data-testid="'template-bundle-review-slot-' + field" class="min-w-0">
@@ -106,6 +127,7 @@
                             <p x-show="draftWarnings(pendingDraft.slots[field], field.endsWith('CSS')).length" class="text-xs font-mono text-amber-800"
                                x-text="'Runs code once applied: ' + draftWarnings(pendingDraft.slots[field], field.endsWith('CSS')).join(', ') + ' (highlighted).'"></p>
                             <p x-show="pendingDraft.blocked.includes(field)" :data-testid="'template-bundle-blocked-' + field" class="text-xs font-mono text-red-700" x-text="blockedReason(field)"></p>
+                            {% include "/partials/form/templateDraftDiff.tpl" with rows="pendingDraft.diffs[field]" test_id="'template-bundle-diff-' + field" label="field" %}
                             <pre tabindex="0" role="region" :aria-label="'Draft text of ' + field" :data-testid="'template-bundle-review-text-' + field" class="mt-1 max-h-40 overflow-auto rounded border border-stone-200 bg-stone-50 p-2 text-xs font-mono whitespace-pre-wrap break-all focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-600"><template x-for="(segment, i) in draftSegments(pendingDraft.slots[field] || '(empty)', field.endsWith('CSS'))" :key="i"><span :class="segment.flagged ? 'bg-amber-200 text-stone-900 outline outline-1 outline-amber-700' : ''" x-text="segment.text"></span></template></pre>
                         </li>
                     </template>

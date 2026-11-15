@@ -3,13 +3,25 @@ import { announceApplied } from './revisionApplied.js';
 import { afterDialogTeardown, returnFocusToGenerate, makeRedisclose, approvedFields, reviewDisclosure } from './generationDisclosure.js';
 import { runHost } from './templateRun.js';
 import { withheldFields } from './privacyLegend.js';
-import { changedSince, draftSegments, draftWarnings } from './templateDraftReview.js';
+import { changedSince, changeSummary, diffRows, draftSegments, draftWarnings, notAppliedSummary } from './templateDraftReview.js';
+import { dismissGenerationNotice, noticeGenerationEnd } from './generationEndNotice.js';
 
 // The CodeMirror view behind a field's editor container, or a promise of it: the editor
 // mounts from a lazy import, and a prompt can be submitted before that lands. Settles null
 // for an editor that could not be built.
 function editorFor(container) {
   return Promise.resolve(container?._cmView || container?._cmReady || null);
+}
+
+// A field of the pending draft with what Apply does to it: before is the field
+// as it stood when Generate was pressed. Only a changed field that had content
+// gets a line view; a new field's draft text is the whole change, and a field
+// Apply will not write (blocked or withheld) changes nothing.
+function reviewField(field, before) {
+  if (field.blocked || field.withheld) return { ...field, summary: notAppliedSummary(before), diff: [] };
+  const summary = changeSummary(before, field.text);
+  const diff = summary.status === 'changed' || summary.status === 'cleared' ? diffRows(before, field.text) : [];
+  return { ...field, summary, diff };
 }
 
 // Shared generation state for a template/CSS pair or a standalone schema/CSS editor.
@@ -47,6 +59,36 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
       return this.generatedFields.length > 0;
     },
 
+    // How the pending draft ended: 'ready' to apply, or 'review' when it has
+    // issues or cannot be applied as it stands.
+    draftOutcome() {
+      return this.generatedValid === false || this.draftBlocked() || this.draftWithheld().length ? 'review' : 'ready';
+    },
+
+    // Signal the end of a sent request: a notice when its result is out of
+    // sight, a tab-title mark when the page is in the background. A cancelled
+    // run ends at the reader's own word and is not signalled.
+    _noticeEnd(label) {
+      const status = (this.$refs || {}).generateStatus;
+      const host = status?.closest('[data-generation-host]');
+      const locate = () => host?.querySelector('[data-generation-review]') || status || null;
+      // A failure clears the status line (hidden when empty); its message is in the error line.
+      const locateError = () => host?.querySelector('[data-generation-error]') || (this.$refs || {}).generatePrompt || null;
+      if (this.hasDraft()) {
+        const ready = this.draftOutcome() === 'ready';
+        noticeGenerationEnd({
+          kind: ready ? 'ready' : 'review',
+          heading: ready ? 'Template draft ready' : 'Template draft needs review',
+          detail: `${label}: see what changes, then Apply or Discard.`,
+          locate,
+        });
+      } else if (this.generationError) {
+        noticeGenerationEnd({ kind: 'failed', heading: 'Template generation failed', detail: `${label}: ${this.generationError}`, locate: locateError });
+      } else if (this.groundingChanged) {
+        noticeGenerationEnd({ kind: 'review', heading: 'Generation needs another review', detail: `${label}: the data to be sent changed.`, locate });
+      }
+    },
+
     // A draft holding half a pair (a reply cut off before the companion
     // arrived) is shown for review but cannot be applied.
     draftBlocked() {
@@ -81,9 +123,12 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
       // not land a draft after the reader has asked for something else.
       // A new run supersedes the previous one: abort it and any open review first.
       this.stopGeneration();
+      dismissGenerationNotice();
       const requestId = ++this._generationRequestId;
       // Created before the dry run: teardown or supersession while preparing aborts it.
       const requestSignal = this.beginRequest();
+      // Set once the reader approves the send: only a sent request's end is signalled.
+      let sentLabel = '';
       this.generating = false;
       this.run = null;
       const prompt = (this.generationPrompt || '').trim();
@@ -198,6 +243,7 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
         });
         if (this._reviewOwner === owner) this._reviewOwner = null;
         if (requestId !== this._generationRequestId || !approval) return;
+        sentLabel = target === 'cluster' ? base : fieldName;
 
         this.generating = true;
         this.generationStatus = 'Generating…';
@@ -266,7 +312,7 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
           // Half a pair with its diagnostic: listed for review, never applied.
           this.generatedFields = pair
             .filter((name) => typeof data?.slots?.[name] === 'string')
-            .map((name) => ({ name, text: data.slots[name], css: name.endsWith('CSS'), blocked: true }));
+            .map((name) => reviewField({ name, text: data.slots[name], css: name.endsWith('CSS'), blocked: true }, pairSnapshot[name]));
           this.generationError = issueText;
           this.generationStatus = '';
           return;
@@ -287,14 +333,14 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
 
         const fields = this.generatedSlots ? pair : [fieldName];
         this._draftSnapshot = this.generatedSlots ? pairSnapshot : { [fieldName]: snapshot };
-        this.generatedFields = fields.map((name) => ({
+        this.generatedFields = fields.map((name) => reviewField({
           name,
           text: this.generatedSlots ? this.generatedSlots[name] : this.generatedContent,
           css: name.endsWith('CSS') || this.mode === 'css',
           // Privacy mode withheld it (it carried a Placeholder): never applicable.
           withheld: withheld.has(name),
           blocked: fields.some((f) => withheld.has(f)),
-        }));
+        }, this._draftSnapshot[name]));
         // Display only: the repaired note is for the reader, and Apply depends on
         // the pending draft, never on this text.
         const repairedNote = data?.repair?.applied ? ' (auto-repaired)' : '';
@@ -316,7 +362,14 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
       } finally {
         if (requestId === this._generationRequestId) {
           this.generating = false;
-          returnFocusToGenerate(this, generateStatus, generateButton, [generatePrompt]);
+          // Measured after focus has settled: returning focus to Generate can
+          // scroll the result into view, and then no notice is needed.
+          const settled = returnFocusToGenerate(this, generateStatus, generateButton, [generatePrompt]);
+          if (sentLabel) {
+            Promise.resolve(settled).then(() => {
+              if (requestId === this._generationRequestId) this._noticeEnd(sentLabel);
+            });
+          }
         }
       }
     },
@@ -349,6 +402,7 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
       }
       for (const { view, text } of edits) view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
       announceApplied('generated');
+      dismissGenerationNotice();
       this.discardGenerated();
       this.generationStatus = 'Generated draft applied.';
       this._focusAfterPanelCloses();
@@ -356,6 +410,7 @@ export function templateGeneration({ fieldName = '', mode = 'html' } = {}) {
 
     // Discard from the panel's button: the panel goes, and focus with it.
     discardFromPanel() {
+      dismissGenerationNotice();
       this.discardGenerated();
       this._focusAfterPanelCloses();
     },

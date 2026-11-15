@@ -1253,3 +1253,178 @@ test.describe('Generated content is attributed on the saved revision', () => {
     expect(revisions[0]).toMatchObject({ source: 'form', applied: ['generated'] });
   });
 });
+
+// A draft is compared with the fields as they stood when Generate was pressed,
+// so the reader sees what Apply changes before pressing it; and a run that ends
+// out of sight says so.
+test.describe('Draft before/after summary and the end of a run', () => {
+  test('a pair draft lists what Apply changes per field, with the changed lines', async ({ page }) => {
+    await page.route('**/v1/category/generateTemplate', withDisclosure(async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ target: 'bundle', valid: true, explanation: 'x', slots: { CustomHeader: '<h1>New</h1>\n<p>keep</p>', CustomHeaderCSS: 'h1{color:red}' } }),
+      });
+    }));
+    await page.goto('/category/new');
+    const header = page.locator('.cm-content[aria-label="Custom Header"]');
+    await expect(header).toBeVisible({ timeout: 10000 });
+    await header.click();
+    await page.keyboard.insertText('<h1>Old</h1>\n<p>keep</p>');
+    await expect(page.locator('input[name="CustomHeader"]')).toHaveValue('<h1>Old</h1>\n<p>keep</p>');
+
+    await page.getByTestId('generate-prompt-CustomHeader').fill('a header');
+    await page.getByTestId('generate-button-CustomHeader').click();
+    await sendDisclosure(page);
+
+    const review = page.getByTestId('generate-review-CustomHeader');
+    await expect(review).toHaveAttribute('data-outcome', 'ready', { timeout: 10000 });
+    await expect(page.locator('#CustomHeader-genreview')).toHaveText('Draft ready');
+    const summary = page.getByTestId('generate-summary-CustomHeader');
+    await expect(summary.getByTestId('generate-summary-row-CustomHeader')).toContainText('Changed: +1 / -1 lines (2 to 2)');
+    await expect(summary.getByTestId('generate-summary-row-CustomHeaderCSS')).toContainText('New: 1 line');
+
+    const diff = page.getByTestId('generate-diff-CustomHeader');
+    await diff.locator('summary').click();
+    await expect(diff.getByTestId('diff-row-del')).toHaveText(['- <h1>Old</h1>']);
+    await expect(diff.getByTestId('diff-row-add')).toHaveText(['+ <h1>New</h1>']);
+    await expect(diff.getByTestId('diff-row-same')).toHaveText(['  <p>keep</p>']);
+    // A new field has no "before", so it offers no line view: its draft text is the whole change.
+    await expect(page.getByTestId('generate-diff-CustomHeaderCSS')).toHaveCount(0);
+  });
+
+  test('a draft with issues is marked as needing review', async ({ page }) => {
+    await page.route('**/v1/category/generateTemplate', withDisclosure(async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ target: 'bundle', valid: false, issues: [{ severity: 'error', message: 'Unknown shortcode [nope].' }], slots: { CustomHeader: '[nope]', CustomHeaderCSS: '' } }),
+      });
+    }));
+    await page.goto('/category/new');
+    await expect(page.getByTestId('generate-button-CustomHeader')).toBeVisible({ timeout: 10000 });
+    await page.getByTestId('generate-prompt-CustomHeader').fill('a header');
+    await page.getByTestId('generate-button-CustomHeader').click();
+    await sendDisclosure(page);
+    const review = page.getByTestId('generate-review-CustomHeader');
+    await expect(review).toHaveAttribute('data-outcome', 'review', { timeout: 10000 });
+    await expect(page.locator('#CustomHeader-genreview')).toHaveText('Draft needs review');
+  });
+
+  test('a whole-template draft summarises every section it writes', async ({ page }) => {
+    await page.route('**/v1/category/generateTemplate', withDisclosure(async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ target: 'bundle', valid: true, explanation: 'A card.', slots: { CustomHeader: '<h1>Card</h1>', CustomHeaderCSS: '', CustomCSS: '.card{padding:1rem}' } }),
+      });
+    }));
+    await page.goto('/category/new');
+    await expect(page.getByTestId('template-bundle-generate-button')).toBeVisible({ timeout: 10000 });
+    await page.getByTestId('template-bundle-generate-prompt').fill('a card');
+    await page.getByTestId('template-bundle-generate-button').click();
+    await sendDisclosure(page);
+
+    const review = page.getByTestId('template-bundle-review');
+    await expect(review).toHaveAttribute('data-outcome', 'ready', { timeout: 10000 });
+    const summary = page.getByTestId('template-bundle-summary');
+    await expect(summary).toContainText('2 slots change, 1 unchanged');
+    await expect(summary.getByTestId('template-bundle-summary-row-CustomHeader')).toContainText('New: 1 line');
+    await expect(summary.getByTestId('template-bundle-summary-row-CustomHeaderCSS')).toContainText('No change');
+    await expect(summary.getByTestId('template-bundle-summary-row-CustomCSS')).toContainText('New: 1 line');
+  });
+
+  test('a run that ends out of sight shows a notice that leads to the draft', async ({ page }) => {
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/v1/category/generateTemplate', withDisclosure(async (route) => {
+      await released;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ target: 'bundle', valid: true, explanation: 'x', slots: { CustomHeader: '<h1>Draft</h1>', CustomHeaderCSS: '' } }),
+      });
+    }));
+    await page.goto('/category/new');
+    await expect(page.getByTestId('generate-button-CustomHeader')).toBeVisible({ timeout: 10000 });
+    await page.getByTestId('generate-prompt-CustomHeader').fill('a header');
+    await page.getByTestId('generate-button-CustomHeader').click();
+    await sendDisclosure(page);
+    // The reader scrolls elsewhere while the run works.
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.locator('input[name="name"]').focus();
+    release();
+
+    const notice = page.getByTestId('generation-end-notice');
+    await expect(notice).toBeVisible({ timeout: 10000 });
+    await expect(notice).toContainText('Template draft ready');
+    await notice.getByTestId('generation-end-notice-show').click();
+    await expect(notice).toHaveCount(0);
+    const review = page.getByTestId('generate-review-CustomHeader');
+    await expect(review).toBeFocused();
+    await expect(review).toBeInViewport();
+  });
+
+  test('a half pair Apply leaves alone is summarised as not applied, and not counted as a change', async ({ page }) => {
+    await page.route('**/v1/category/generateTemplate', withDisclosure(async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ target: 'bundle', valid: false, issues: [truncationIssue], slots: { CustomHeader: '<h1>Half</h1>', CustomCSS: '.card{}' } }),
+      });
+    }));
+    await page.goto('/category/new');
+    await expect(page.getByTestId('template-bundle-generate-button')).toBeVisible({ timeout: 10000 });
+    await page.getByTestId('template-bundle-generate-prompt').fill('a card');
+    await page.getByTestId('template-bundle-generate-button').click();
+    await sendDisclosure(page);
+    const review = page.getByTestId('template-bundle-review');
+    await expect(review).toHaveAttribute('data-outcome', 'review', { timeout: 10000 });
+    const summary = page.getByTestId('template-bundle-summary');
+    await expect(summary).toContainText('1 slot changes, 1 not applied');
+    await expect(summary.getByTestId('template-bundle-summary-row-CustomHeader')).toContainText('Not applied');
+    await expect(summary.getByTestId('template-bundle-summary-row-CustomCSS')).toContainText('New: 1 line');
+  });
+
+  test('a failure out of sight leads to the error message', async ({ page }) => {
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/v1/category/generateTemplate', withDisclosure(async (route) => {
+      await released;
+      await route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ error: 'The provider is unavailable.' }) });
+    }));
+    await page.goto('/category/new');
+    await expect(page.getByTestId('generate-button-CustomHeader')).toBeVisible({ timeout: 10000 });
+    await page.getByTestId('generate-prompt-CustomHeader').fill('a header');
+    await page.getByTestId('generate-button-CustomHeader').click();
+    await sendDisclosure(page);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.locator('input[name="name"]').focus();
+    release();
+
+    const notice = page.getByTestId('generation-end-notice');
+    await expect(notice).toContainText('Template generation failed', { timeout: 10000 });
+    await notice.getByTestId('generation-end-notice-show').click();
+    const error = page.getByTestId('generate-error-CustomHeader');
+    await expect(error).toBeFocused();
+    await expect(error).toBeInViewport();
+  });
+
+  test('a run that ends on screen shows no notice', async ({ page }) => {
+    await page.route('**/v1/category/generateTemplate', withDisclosure(async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ target: 'bundle', valid: true, explanation: 'x', slots: { CustomHeader: '<h1>Draft</h1>', CustomHeaderCSS: '' } }),
+      });
+    }));
+    await page.goto('/category/new');
+    await expect(page.getByTestId('generate-button-CustomHeader')).toBeVisible({ timeout: 10000 });
+    await page.getByTestId('generate-prompt-CustomHeader').fill('a header');
+    await page.getByTestId('generate-button-CustomHeader').click();
+    await sendDisclosure(page);
+    await expect(page.getByTestId('generate-review-CustomHeader')).toBeVisible({ timeout: 10000 });
+    await page.waitForTimeout(200);
+    await expect(page.getByTestId('generation-end-notice')).toHaveCount(0);
+  });
+});
