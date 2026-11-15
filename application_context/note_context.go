@@ -149,6 +149,17 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 				return err
 			}
 
+			// The lists below come from the caller's scoped view, so keep the
+			// links it cannot see (see unseenLinks).
+			unseenGroups, err := ctx.unseenLinks(tx, noteGroupsLink, note.ID)
+			if err != nil {
+				return err
+			}
+			unseenResources, err := ctx.unseenLinks(tx, noteResourcesLink, note.ID)
+			if err != nil {
+				return err
+			}
+
 			if err := tx.Model(&note).Association("Groups").Clear(); err != nil {
 				return err
 			}
@@ -158,6 +169,13 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 			}
 
 			if err := tx.Model(&note).Association("Resources").Clear(); err != nil {
+				return err
+			}
+
+			if err := restoreLinks(tx, noteGroupsLink, note.ID, unseenGroups); err != nil {
+				return err
+			}
+			if err := restoreLinks(tx, noteResourcesLink, note.ID, unseenResources); err != nil {
 				return err
 			}
 		}

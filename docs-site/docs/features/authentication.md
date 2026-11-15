@@ -78,6 +78,8 @@ Accounts with the **user** or **guest** role can be confined to a single Group a
 
 Scoping is enforced consistently and **fail-closed** across the entire surface: list pages, single-item reads, full-text search, [MRQL](./mrql.md) queries, file and thumbnail serving, group export, and all writes. What it confines are the entities that carry an owner, Groups, Resources and Notes, and every path that reads them. Full-text search uses one index shared by every account, so for a scoped account, how long a search takes can reflect content outside its subtree.
 
+A scoped account's edits leave alone what it cannot see. When it updates a note or resource inside its subtree, links from that entity to groups, notes or resources outside the subtree stay in place, whether the edit omits the list or replaces it. The same holds for group relations when a scoped account changes a group's category.
+
 Tags, Categories, Note Types, Series, Saved Queries and Relation Types carry no owner. They are global, and every authenticated account can read them; what limits a scoped account there is its role, not its scope group.
 
 Group-limited accounts are also refused a plugin's own surfaces by default: its pages, its `/v1/plugins/...` endpoints, and block and display rendering. An operator opens one plugin at a time with **Allow limited users** on `/plugins/manage`, or `mr plugin scoped-access <name> --allowed=true`. Opening a plugin does not widen it, because a confined caller's `mah.db` stays bound to that caller's own subtree and role. Unscoped roles (admin, editor, and an unscoped user) are unaffected. See [Plugin Permissions](./plugin-permissions.md).
