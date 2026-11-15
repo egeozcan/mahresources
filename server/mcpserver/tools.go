@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -102,7 +103,7 @@ func (c *caller) run(_ context.Context, req *mcp.CallToolRequest, toolName strin
 	if err != nil {
 		return toolError(err.Error())
 	}
-	if op.Safety != Destructive {
+	if effectiveSafety(op, args) != Destructive {
 		return c.execute(op, args)
 	}
 
@@ -209,7 +210,7 @@ func canonicalArgs(op *Operation, args map[string]any) (map[string]any, error) {
 func canonicalKeys(props map[string]any, args map[string]any) (map[string]any, error) {
 	declared := map[string]string{} // folded -> declared name; "" when two declared names fold together
 	for name := range props {
-		folded := strings.ToLower(name)
+		folded := foldKey(name)
 		if prev, ok := declared[folded]; ok && prev != name {
 			declared[folded] = ""
 			continue
@@ -221,14 +222,14 @@ func canonicalKeys(props map[string]any, args map[string]any) (map[string]any, e
 	for key, v := range args {
 		name := key
 		if _, exact := props[key]; !exact {
-			if d, ok := declared[strings.ToLower(key)]; ok {
+			if d, ok := declared[foldKey(key)]; ok {
 				if d == "" {
 					return nil, fmt.Errorf("argument %q is ambiguous: the operation declares several fields with that name in different cases; use the exact name", key)
 				}
 				name = d
 			}
 		}
-		folded := strings.ToLower(name)
+		folded := foldKey(name)
 		if prev, dup := from[folded]; dup {
 			return nil, fmt.Errorf("argument %q is given twice (as %q and %q); pass it once", name, prev, key)
 		}
@@ -236,6 +237,39 @@ func canonicalKeys(props map[string]any, args map[string]any) (map[string]any, e
 		out[name] = v
 	}
 	return out, nil
+}
+
+// foldKey maps s to one representative of its Unicode simple-fold class,
+// rune by rune: two names get the same key exactly when strings.EqualFold
+// reports them equal, which is how encoding/json matches object keys to
+// struct fields. ASCII case folding alone is not enough: "Loſers" (U+017F)
+// and the Kelvin sign both reach ASCII fields.
+func foldKey(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		lowest := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			if f < lowest {
+				lowest = f
+			}
+		}
+		b.WriteRune(lowest)
+	}
+	return b.String()
+}
+
+// effectiveSafety upgrades an operation whose safety depends on its
+// arguments. editResource with SeriesId 0 removes the resource from its
+// Series, and deletes the Series when it was the last member.
+func effectiveSafety(op *Operation, args map[string]any) Safety {
+	if op.ID == "editResource" {
+		if v, ok := args["SeriesId"]; ok {
+			if s, err := scalarString(v); v == nil || (err == nil && (s == "0" || s == "")) {
+				return Destructive
+			}
+		}
+	}
+	return op.Safety
 }
 
 // refuseUnpinnedSelection refuses destructive calls whose targets would be

@@ -80,7 +80,18 @@ A few operations are never available over MCP:
 
 ## Confirmations
 
-These operations are **destructive**: every delete (including version cleanup, clearing finished jobs, deleting download history, clearing a resource's thumbnails, and revoking an API token), merges, mass edits, adding meta in bulk (it overwrites the keys it names), replacing resource tags in bulk, applying a resource reduction or a group import, running a job command (one of them, `forget`, erases a job's stored inputs), sharing and unsharing notes, revoking shares in bulk, and changes to plugins or runtime settings. `search_operations` with `safety: destructive` lists them all. A destructive call never runs on its first request. The server answers with a confirmation request that names what the call would affect, and the agent's client shows it to the user. The operation runs only after the user accepts.
+These operations are **destructive**:
+
+- every delete, including version cleanup, clearing finished jobs, deleting download history, clearing a resource's thumbnails and revoking an API token. Deleting one of your own UI settings is the one exception;
+- merges and mass edits, adding meta in bulk (it overwrites the keys it names) and replacing resource tags in bulk;
+- operations that delete stored previews, including an uploaded custom thumbnail: rotating, cropping or trimming a resource, uploading or restoring a version, and setting a custom thumbnail;
+- removing a resource from its series, and an `editResource` call that sends `SeriesId` as 0, because the series is deleted when its last member leaves;
+- applying a resource reduction or a group import;
+- running a plugin action or plugin schedule, and running a job command (one of them, `forget`, erases a job's stored inputs);
+- sharing and unsharing notes, revoking shares in bulk, and creating, editing or restoring a note type, which can publish its templates on shared notes;
+- changes to plugins and runtime settings.
+
+`search_operations` with `safety: destructive` lists them all. A destructive call never runs on its first request. The server answers with a confirmation request that names what the call would affect, and the agent's client shows it to the user. The operation runs only after the user accepts.
 
 Applying a resource reduction states how many clusters are checked and how many resources would be removed. Applying an import states what it creates and how many existing entities its GUID collision policy affects. For resources, notes, groups, saved queries and series, the confirmation names each target the user can see, such as `#12 "Invoice 2026"`, for up to 25 targets. Targets that do not exist or are outside the user's scope are listed as "not found or not visible", without saying which. Other targets, such as tags, are listed by ID. Mass edits also show the result of a dry run.
 
@@ -88,7 +99,7 @@ A confirmation is bound to the exact call it was issued for: the same user and t
 
 **Clients that cannot show a confirmation.** The client must speak MCP 2026-07-28 and support form elicitation. Otherwise a destructive call is refused, the refusal includes what the call would have affected, and nothing changes. Older clients that support elicitation can confirm through `mr mcp`, which asks them over its stdio session. Automation that must delete without a person present should use the REST API or the `mr` CLI.
 
-Argument names are matched to the operation's declared fields case-insensitively, the way the API decodes them, and an argument given twice under different spellings (`Id` and `id`) is refused.
+Argument names are matched to the operation's declared fields case-insensitively, with the same Unicode case folding the API's JSON decoder uses, and an argument given twice under different spellings (`Id` and `id`) is refused.
 
 **Mass edits** over MCP must list their targets in `ID`. A `Target` other than `ids`, and selecting targets with `Filter`, `MRQLQuery`, `MRQLParams` or `MRQLSnapshot`, are refused, because the matching set could change between the confirmation and the edit. Resolve the IDs first with a list tool or MRQL.
 

@@ -717,3 +717,63 @@ func TestMCP_ReductionConfirmationStatesWhatItRemoves(t *testing.T) {
 		t.Fatalf("reduction preview = %q", seen)
 	}
 }
+
+// encoding/json folds names with Unicode simple folding, so "Loſers"
+// (U+017F) reaches the Losers field. Folding by ASCII case alone would let a
+// second spelling replace the confirmed targets (review round 2, finding 1).
+func TestMCP_UnicodeFoldedArgumentIsADuplicate(t *testing.T) {
+	env := newMCPEnv(t, false)
+	winner := env.tc.CreateDummyGroup("winner")
+	shown := env.tc.CreateDummyGroup("shown")
+	hidden := env.tc.CreateDummyGroup("hidden")
+	cs := env.connect(t, clientOpts{answer: accept})
+	res := callTool(t, cs, "call_operation", map[string]any{"operationId": "mergeGroups", "arguments": map[string]any{
+		"Winner": winner.ID, "Losers": []any{shown.ID}, "Loſers": []any{hidden.ID},
+	}})
+	if !res.IsError || !strings.Contains(resultText(res), "given twice") {
+		t.Fatalf("folded duplicate = %v %s", res.IsError, resultText(res))
+	}
+	var n int64
+	env.tc.DB.Model(&models.Group{}).Where("id IN ?", []uint{shown.ID, hidden.ID}).Count(&n)
+	if n != 2 {
+		t.Fatalf("a refused merge removed %d groups", 2-n)
+	}
+}
+
+// Operations that destroy data as a side effect need a confirmation too
+// (review round 2, findings 2-5).
+func TestMCP_SideEffectDestructionNeedsConfirmation(t *testing.T) {
+	env := newMCPEnv(t, false)
+	res := env.tc.CreateResourceWithType(t, "in-series.jpg", "image/jpeg")
+	series := &models.Series{Name: "only member", Slug: "only-member"}
+	env.tc.DB.Create(series)
+	env.tc.DB.Model(&models.Resource{}).Where("id = ?", res.ID).Update("series_id", series.ID)
+
+	cs := env.connect(t, clientOpts{}) // cannot confirm
+	for _, c := range []struct {
+		op   string
+		args map[string]any
+	}{
+		{"removeResourceFromSeries", map[string]any{"id": res.ID}},
+		{"editResource", map[string]any{"ID": res.ID, "SeriesId": 0}},
+		{"rotateResource", map[string]any{"ID": res.ID, "Degrees": 90}},
+		{"runPluginAction", map[string]any{"plugin": "x", "action": "y"}},
+		{"editNoteType", map[string]any{"ID": 1, "ApplyTemplatesToShares": true}},
+	} {
+		out := callTool(t, cs, "call_operation", map[string]any{"operationId": c.op, "arguments": c.args})
+		if !out.IsError || !strings.Contains(resultText(out), "needs a confirmation") {
+			t.Errorf("%s ran without a confirmation: %s", c.op, resultText(out))
+		}
+	}
+	var n int64
+	env.tc.DB.Model(&models.Series{}).Where("id = ?", series.ID).Count(&n)
+	if n != 1 {
+		t.Fatal("the series was deleted without a confirmation")
+	}
+
+	// An edit that leaves series membership alone stays a plain edit.
+	plain := callTool(t, cs, "edit_resource", map[string]any{"ID": res.ID, "Name": "renamed.jpg"})
+	if plain.IsError {
+		t.Fatalf("a plain edit was refused: %s", resultText(plain))
+	}
+}

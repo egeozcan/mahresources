@@ -222,3 +222,14 @@ func TestAdmissionLeavesOtherPathsAlone(t *testing.T) {
 		t.Fatal("Admission intercepted a non-MCP path")
 	}
 }
+
+func TestFoldKeyMatchesEqualFold(t *testing.T) {
+	names := []string{"Losers", "losers", "LOSERS", "Lo\u017fers", "Id", "ID", "id", "\u212aey", "Key", "key", "Winner", "Name", "name\u00df", "NAMESS"}
+	for _, a := range names {
+		for _, b := range names {
+			if got, want := foldKey(a) == foldKey(b), strings.EqualFold(a, b); got != want {
+				t.Errorf("foldKey(%q)==foldKey(%q) is %v, strings.EqualFold says %v", a, b, got, want)
+			}
+		}
+	}
+}

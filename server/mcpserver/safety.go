@@ -157,6 +157,28 @@ var destructive = map[string]bool{
 	"clearResourceThumbnailViaPost": true,
 	"deleteResourceReduction":       true,
 
+	// Side-effect destruction. Each of these deletes stored previews,
+	// including an uploaded custom thumbnail, which a version does not keep.
+	"setCustomResourceThumbnail": true,
+	"rotateResource":             true,
+	"cropResource":               true,
+	"trimResourceVideo":          true,
+	"uploadVersion":              true,
+	"restoreVersion":             true,
+	// Removing the last member deletes the Series. editResource does the same
+	// when SeriesId is sent as 0; see effectiveSafety in tools.go.
+	"removeResourceFromSeries": true,
+	// Note type edits can turn on ApplyTemplatesToShares, which publishes the
+	// type's templates on every shared note of that type. createNoteType
+	// updates an existing type when ID is set.
+	"editNoteType":            true,
+	"createNoteType":          true,
+	"restoreNoteTypeRevision": true,
+	// Plugin code can delete or replace plugin and application data, and an
+	// action declares no safety MCP could enforce.
+	"runPluginAction":      true,
+	"runPluginScheduleNow": true,
+
 	// Taxonomy and other entities
 	"deleteTag":              true,
 	"bulkDeleteTags":         true,
@@ -191,7 +213,7 @@ var mutating = map[string]bool{
 	"bulkAddTagsToGroups": true, "bulkRemoveTagsFromGroups": true,
 	"submitGroupExport": true, "parseGroupImport": true,
 
-	"runPluginAction": true, "jobsCancel": true,
+	"jobsCancel":         true,
 	"jobsSubmitDownload": true, "jobsPause": true, "jobsResume": true, "jobsRetry": true,
 	"exportCanonicalJobSummary": true,
 
@@ -200,14 +222,12 @@ var mutating = map[string]bool{
 	"createOrUpdateNote": true, "createBlock": true, "updateBlockContent": true,
 	"updateBlockState": true, "rebalanceBlocks": true, "reorderBlocks": true,
 	"editNoteDescription": true, "editNoteMeta": true, "editNoteName": true,
-	"createNoteType": true, "editNoteType": true, "editNoteTypeDescription": true,
-	"editNoteTypeName": true, "generateNoteTypeTemplate": true, "finishNoteTypeTemplateRun": true,
-	"labelNoteTypeRevision": true, "restoreNoteTypeRevision": true,
-	"bulkAddGroupsToNotes": true, "bulkAddTagsToNotes": true,
+	"editNoteTypeDescription": true,
+	"editNoteTypeName":        true, "generateNoteTypeTemplate": true, "finishNoteTypeTemplateRun": true,
+	"labelNoteTypeRevision": true, "bulkAddGroupsToNotes": true, "bulkAddTagsToNotes": true,
 	"bulkRemoveTagsFromNotes": true,
 
-	"cancelPluginCommandRun": true, "runPluginScheduleNow": true,
-	"cancelPluginScheduledDownload": true,
+	"cancelPluginCommandRun": true, "cancelPluginScheduledDownload": true,
 
 	"createOrUpdateQuery": true, "editQueryDescription": true, "editQueryName": true,
 
@@ -220,13 +240,10 @@ var mutating = map[string]bool{
 
 	"createResource": true, "editResource": true, "editResourceDescription": true,
 	"editResourceMeta": true, "editResourceName": true, "addLocalResource": true,
-	"setCustomResourceThumbnail": true, "bulkRecalculateDimensions": true,
-	"addRemoteResource": true, "removeResourceFromSeries": true, "restoreVersion": true,
-	"uploadVersion": true, "bulkAddGroupsToResources": true,
-	"bulkAddTagsToResources": true, "cropResource": true, "bulkRemoveTagsFromResources": true,
-	"rotateResource": true, "setResourceDimensions": true, "trimResourceVideo": true,
-
-	"createOrUpdateResourceCategory": true, "editResourceCategoryDescription": true,
+	"bulkRecalculateDimensions": true,
+	"addRemoteResource":         true, "bulkAddGroupsToResources": true,
+	"bulkAddTagsToResources": true, "bulkRemoveTagsFromResources": true,
+	"setResourceDimensions": true, "createOrUpdateResourceCategory": true, "editResourceCategoryDescription": true,
 	"editResourceCategoryName": true, "generateResourceCategoryTemplate": true,
 	"finishResourceCategoryTemplateRun": true, "labelResourceCategoryRevision": true,
 	"restoreResourceCategoryRevision": true,
