@@ -755,7 +755,6 @@ func TestMCP_SideEffectDestructionNeedsConfirmation(t *testing.T) {
 		args map[string]any
 	}{
 		{"removeResourceFromSeries", map[string]any{"id": res.ID}},
-		{"editResource", map[string]any{"ID": res.ID, "SeriesId": 0}},
 		{"rotateResource", map[string]any{"ID": res.ID, "Degrees": 90}},
 		{"runPluginAction", map[string]any{"plugin": "x", "action": "y"}},
 		{"editNoteType", map[string]any{"ID": 1, "ApplyTemplatesToShares": true}},
@@ -825,5 +824,27 @@ func TestMCP_MetaQueryFiltersAsStrings(t *testing.T) {
 	bad := callTool(t, cs, "list_notes", map[string]any{"MetaQuery": []any{map[string]any{"name": "status", "operation": "EQ", "value": "open"}}})
 	if !bad.IsError {
 		t.Fatalf("an object MetaQuery entry was accepted: %s", resultText(bad))
+	}
+}
+
+// Review round 5: editResource cannot remove series membership over JSON,
+// so MCP points at removeResourceFromSeries instead of confirming a no-op;
+// saved-query bind values that share a routing parameter's name go under
+// "body".
+func TestMCP_SeriesRemovalAndBodyBindValues(t *testing.T) {
+	env := newMCPEnv(t, false)
+	res := env.tc.CreateResourceWithType(t, "s.jpg", "image/jpeg")
+	cs := env.connect(t, clientOpts{answer: accept})
+	out := callTool(t, cs, "edit_resource", map[string]any{"ID": res.ID, "SeriesId": 0})
+	if !out.IsError || !strings.Contains(resultText(out), "removeResourceFromSeries") {
+		t.Fatalf("edit_resource SeriesId 0 = %v %s", out.IsError, resultText(out))
+	}
+
+	q := &models.Query{Name: "bind-name", Text: "SELECT :name AS value"}
+	env.tc.DB.Create(q)
+	run := callTool(t, cs, "call_operation", map[string]any{"operationId": "runQuery",
+		"arguments": map[string]any{"id": q.ID, "body": map[string]any{"name": "Alice"}}})
+	if run.IsError || !strings.Contains(resultText(run), "Alice") {
+		t.Fatalf("runQuery with a body bind value = %v %s", run.IsError, resultText(run))
 	}
 }

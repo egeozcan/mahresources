@@ -149,18 +149,9 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 				return err
 			}
 
-			// The lists below come from the caller's scoped view, so keep the
-			// links it cannot see (see unseenLinks).
-			unseenGroups, err := ctx.unseenLinks(tx, noteGroupsLink, note.ID)
-			if err != nil {
-				return err
-			}
-			unseenResources, err := ctx.unseenLinks(tx, noteResourcesLink, note.ID)
-			if err != nil {
-				return err
-			}
-
-			if err := tx.Model(&note).Association("Groups").Clear(); err != nil {
+			// The lists below come from the caller's scoped view, so groups and
+			// resources it cannot see keep their links (see clearLinks).
+			if err := ctx.clearLinks(tx, &note, "Groups", noteGroupsLink, note.ID); err != nil {
 				return err
 			}
 
@@ -168,14 +159,7 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 				return err
 			}
 
-			if err := tx.Model(&note).Association("Resources").Clear(); err != nil {
-				return err
-			}
-
-			if err := restoreLinks(tx, noteGroupsLink, note.ID, unseenGroups); err != nil {
-				return err
-			}
-			if err := restoreLinks(tx, noteResourcesLink, note.ID, unseenResources); err != nil {
+			if err := ctx.clearLinks(tx, &note, "Resources", noteResourcesLink, note.ID); err != nil {
 				return err
 			}
 		}

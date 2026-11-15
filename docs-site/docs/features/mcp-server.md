@@ -85,7 +85,7 @@ These operations are **destructive**:
 - every delete, including version cleanup, clearing finished jobs, deleting download history, clearing a resource's thumbnails and revoking an API token. Deleting one of your own UI settings is the one exception;
 - merges and mass edits, adding meta in bulk (it overwrites the keys it names) and replacing resource tags in bulk;
 - operations that delete stored previews, including an uploaded custom thumbnail: rotating, cropping or trimming a resource, uploading or restoring a version, and setting a custom thumbnail;
-- removing a resource from its series, and an `editResource` call that sends `SeriesId` as 0, because the series is deleted when its last member leaves;
+- removing a resource from its series (`removeResourceFromSeries`), because the series is deleted when its last member leaves. `editResource` with `SeriesId` 0 is refused over MCP, since the JSON request it sends cannot remove series membership;
 - updating an existing group (`createOrUpdateGroup` with an `ID`) and editing a relation type, because both delete the relations that no longer fit the categories;
 - applying a resource reduction or a group import;
 - running a plugin action or plugin schedule, and running a job command (one of them, `forget`, erases a job's stored inputs);
@@ -101,6 +101,8 @@ A confirmation is bound to the exact call it was issued for: the same user and t
 **Clients that cannot show a confirmation.** The client must speak MCP 2026-07-28 and support form elicitation. Otherwise a destructive call is refused, the refusal includes what the call would have affected, and nothing changes. Older clients that support elicitation can confirm through `mr mcp`, which asks them over its stdio session. Automation that must delete without a person present should use the REST API or the `mr` CLI.
 
 Argument names are matched to the operation's declared fields case-insensitively, with the same Unicode case folding the API's JSON decoder uses, and an argument given twice under different spellings (`Id` and `id`) is refused.
+
+Operations that take a request body the API spec does not describe accept it under a `body` argument, sent as JSON. Use it for a field that shares its name with a parameter, such as a saved query's bind value named `name`: `{"id": 7, "body": {"name": "Alice"}}`.
 
 **Mass edits** over MCP must list their targets in `ID`. A `Target` other than `ids`, and selecting targets with `Filter`, `MRQLQuery`, `MRQLParams` or `MRQLSnapshot`, are refused, because the matching set could change between the confirmation and the edit. Resolve the IDs first with a list tool or MRQL.
 

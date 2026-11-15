@@ -392,16 +392,9 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		}
 
 		if fieldProvided("groups") {
-			// The list comes from the caller's scoped view; keep the links it
-			// cannot see (see unseenLinks).
-			unseen, err := ctx.unseenLinks(tx, resourceGroupsLink, resource.ID)
-			if err != nil {
-				return err
-			}
-			if err := tx.Model(&resource).Association("Groups").Clear(); err != nil {
-				return err
-			}
-			if err := restoreLinks(tx, resourceGroupsLink, resource.ID, unseen); err != nil {
+			// The list comes from the caller's scoped view; links it cannot
+			// see are kept (see clearLinks).
+			if err := ctx.clearLinks(tx, &resource, "Groups", resourceGroupsLink, resource.ID); err != nil {
 				return err
 			}
 			if len(resourceQuery.Groups) > 0 {
@@ -415,16 +408,9 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 			}
 		}
 		if fieldProvided("notes") {
-			// The list comes from the caller's scoped view; keep the links it
-			// cannot see (see unseenLinks).
-			unseen, err := ctx.unseenLinks(tx, resourceNotesLink, resource.ID)
-			if err != nil {
-				return err
-			}
-			if err := tx.Model(&resource).Association("Notes").Clear(); err != nil {
-				return err
-			}
-			if err := restoreLinks(tx, resourceNotesLink, resource.ID, unseen); err != nil {
+			// The list comes from the caller's scoped view; links it cannot
+			// see are kept (see clearLinks).
+			if err := ctx.clearLinks(tx, &resource, "Notes", resourceNotesLink, resource.ID); err != nil {
 				return err
 			}
 			if len(resourceQuery.Notes) > 0 {

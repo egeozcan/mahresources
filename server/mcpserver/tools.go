@@ -103,6 +103,9 @@ func (c *caller) run(_ context.Context, req *mcp.CallToolRequest, toolName strin
 	if err != nil {
 		return toolError(err.Error())
 	}
+	if err := refuseInexpressible(op, args); err != nil {
+		return toolError(err.Error())
+	}
 	if effectiveSafety(op, args) != Destructive {
 		return c.execute(op, args)
 	}
@@ -261,17 +264,11 @@ func foldKey(s string) string {
 // effectiveSafety upgrades an operation whose safety depends on its
 // arguments.
 //
-//   - editResource with SeriesId 0 removes the resource from its Series, and
-//     deletes the Series when it was the last member.
 //   - createOrUpdateGroup with an ID updates a group, and every update
 //     re-derives the group's category and deletes the relations that no
 //     longer fit it. A create touches no existing relation.
 func effectiveSafety(op *Operation, args map[string]any) Safety {
 	switch op.ID {
-	case "editResource":
-		if v, ok := args["SeriesId"]; ok && isZeroArg(v) {
-			return Destructive
-		}
 	case "createOrUpdateGroup":
 		if v, ok := args["ID"]; ok && !isZeroArg(v) {
 			return Destructive
@@ -286,6 +283,20 @@ func isZeroArg(v any) bool {
 	}
 	s, err := scalarString(v)
 	return err == nil && (s == "0" || s == "")
+}
+
+// refuseInexpressible refuses arguments the dispatched request cannot carry
+// with the meaning the caller gave them. editResource tells "SeriesId: 0"
+// (leave the series) from an omitted SeriesId only in a form body, and
+// dispatch sends JSON, where the handler keeps the current series and reports
+// success.
+func refuseInexpressible(op *Operation, args map[string]any) error {
+	if op.ID == "editResource" {
+		if v, ok := args["SeriesId"]; ok && isZeroArg(v) {
+			return errors.New("editResource cannot remove a resource from its series over MCP; call removeResourceFromSeries with the resource's id instead")
+		}
+	}
+	return nil
 }
 
 // refuseUnpinnedSelection refuses destructive calls whose targets would be

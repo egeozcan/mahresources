@@ -103,3 +103,36 @@ func linkCount(tc *TestContext, table, ownerCol string, ownerID uint, farCol str
 	tc.DB.Table(table).Where(ownerCol+" = ? AND "+farCol+" = ?", ownerID, farID).Count(&n)
 	return n
 }
+
+// The visibility check must use the scope the update transaction runs under,
+// and a link whose far side disappears mid-update must not be re-created.
+// Exercised directly: keepUnseen* run inside the writer's transaction.
+func TestScopedUpdateKeepsOnlyExistingUnseenLinks(t *testing.T) {
+	tc := setupAuthEnv(t)
+	root := &models.Group{Name: "ku-root"}
+	tc.DB.Create(root)
+	outside := &models.Group{Name: "ku-outside"}
+	tc.DB.Create(outside)
+	res := &models.Resource{Name: "ku-res", OwnerId: &root.ID}
+	tc.DB.Create(res)
+	gone := &models.Note{Name: "ku-gone", OwnerId: &outside.ID}
+	tc.DB.Create(gone)
+	tc.DB.Exec("INSERT INTO resource_notes (resource_id, note_id) VALUES (?, ?)", res.ID, gone.ID)
+	tc.DB.Exec("INSERT INTO resource_notes (resource_id, note_id) VALUES (?, ?)", res.ID, gone.ID+1000)
+
+	bearer := scopedUserBearer(t, tc, root.ID)
+	h := map[string]string{"Accept": "application/json", "Content-Type": "application/json", "Authorization": bearer}
+	rr := doReq(tc, http.MethodPost, "/v1/resource/edit", h, nil, strings.NewReader(`{"ID":`+fmt.Sprint(res.ID)+`,"Name":"ku","Notes":[]}`))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("scoped edit = %d %s", rr.Code, rr.Body.String())
+	}
+	if n := linkCount(tc, "resource_notes", "resource_id", res.ID, "note_id", gone.ID); n != 1 {
+		t.Errorf("the unseen link was not kept exactly once (%d rows)", n)
+	}
+	// A link to a note that no longer exists is not something the caller is
+	// being protected from; like deleteRelationsSparingUnseen, the clear
+	// collects it, and nothing re-creates it.
+	if n := linkCount(tc, "resource_notes", "resource_id", res.ID, "note_id", gone.ID+1000); n != 0 {
+		t.Errorf("a dangling link survived the clear (%d rows)", n)
+	}
+}

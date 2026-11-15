@@ -125,6 +125,26 @@ func buildRequest(ctx context.Context, parent *http.Request, op *Operation, args
 		}
 	} else {
 		bodyArgs = remaining
+		// An operation with no declared body takes explicit body fields under
+		// "body" (see inputSchema); they join the leftovers.
+		if b, ok := remaining["body"]; ok && op.Body == nil && op.Method != http.MethodGet && op.Method != http.MethodDelete {
+			bm, ok := b.(map[string]any)
+			if !ok {
+				return nil, errors.New(`argument "body" must be an object`)
+			}
+			bodyArgs = make(map[string]any, len(remaining)+len(bm))
+			for k, v := range remaining {
+				if k != "body" {
+					bodyArgs[k] = v
+				}
+			}
+			for k, v := range bm {
+				if _, dup := bodyArgs[k]; dup {
+					return nil, fmt.Errorf("argument %q is given both inside and outside \"body\"", k)
+				}
+				bodyArgs[k] = v
+			}
+		}
 	}
 
 	var body []byte
