@@ -280,3 +280,17 @@ func TestMRQLParamKeysTravelInTheQuery(t *testing.T) {
 		t.Fatalf("query=%q body=%s", req.URL.RawQuery, body)
 	}
 }
+
+func TestParamKeysStayInTheBodyOutsideMRQL(t *testing.T) {
+	parent := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	op := &Operation{Method: http.MethodPost, Path: "/v1/plugin/settings",
+		Params: []Param{{Name: "name", In: "query", Required: true}}}
+	req, err := buildRequest(context.Background(), parent, op, map[string]any{"name": "example", "body": map[string]any{"param.limit": "10"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(req.Body)
+	if string(body) != `{"param.limit":"10"}` || req.URL.Query().Has("param.limit") {
+		t.Fatalf("query=%q body=%s", req.URL.RawQuery, body)
+	}
+}
