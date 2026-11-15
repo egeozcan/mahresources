@@ -46,7 +46,11 @@ The server offers a few named tools for common work and three generic tools that
 | Tool | What it does |
 |------|--------------|
 | `search` | Full-text search across every entity type |
-| `mrql_query` | Run an [MRQL](./mrql.md) query |
+| `mrql_query` | Run an [MRQL](./mrql.md) query. `params` binds its `$name` placeholders; `limit`, `buckets`, `page` and `offset` page the results |
+| `mrql_validate` | Check an MRQL query without running it. Returns the errors with positions and the `$name` placeholders the query needs |
+| `mrql_reference` | The [MRQL reference](./mrql-reference.md) without its CLI and web UI sections, after the generator's syntax rules and this server's facts: the database (regex `~*` runs only on PostgreSQL), whether full-text search is available, and the default `LIMIT`. `topic: "recipes"` returns the task-shaped recipes instead |
+| `mrql_vocabulary` | The caller's tags, categories and resource categories (with the IDs `category = <id>` needs), note types, meta keys per entity type and saved queries. Each list is read through its REST route as the caller, and paginated lists stop at 200 rows. `sections` picks lists; `tagName` filters tags |
+| `list_saved_queries`, `run_saved_query`, `save_mrql_query` | List, run (by `id` or `name`, with `params`) and save MRQL queries |
 | `list_resources`, `get_resource` | List and read resources |
 | `list_notes`, `get_note` | List and read notes |
 | `list_groups`, `get_group` | List and read groups |

@@ -111,6 +111,15 @@ func CreateServer(appContext *application_context.MahresourcesContext, fs afero.
 			Spec:           registry.GenerateSpec(),
 			SigningKey:     appContext.DeferredSigningKey(),
 			MaxRequestBody: appContext.Config.MaxJSONBodySize,
+			MRQL: func() mcpserver.MRQLFacts {
+				env := appContext.MRQLStaticEnv()
+				return mcpserver.MRQLFacts{
+					Postgres:     env.Postgres,
+					FullText:     env.FTS,
+					DefaultLimit: appContext.MRQLDefaultLimit(),
+					Rules:        application_context.MRQLLanguageReference(env.Postgres),
+				}
+			},
 		})
 		if err != nil {
 			panic(fmt.Sprintf("mcp: %v", err))

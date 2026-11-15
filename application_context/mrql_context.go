@@ -388,6 +388,9 @@ func (ctx *MahresourcesContext) executeMRQLParsed(reqCtx context.Context, parsed
 // lower default (500) via the --mrql-default-limit flag for real deployments.
 const DefaultMRQLLimitFallback = 1000
 
+// MRQLDefaultLimit is the LIMIT a query without one runs with.
+func (ctx *MahresourcesContext) MRQLDefaultLimit() int { return ctx.defaultMRQLLimit() }
+
 // defaultMRQLLimit returns the configured default MRQL LIMIT, or the fallback
 // if none is configured. BH-013.
 func (ctx *MahresourcesContext) defaultMRQLLimit() int {

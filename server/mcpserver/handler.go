@@ -40,6 +40,10 @@ type Options struct {
 	MaxResponse int64
 	// Version is reported as the server version.
 	Version string
+	// MRQL reports this deployment's MRQL facts for mrql_reference. It is
+	// called per tool call, because the default limit is a runtime setting.
+	// Nil leaves the facts out.
+	MRQL func() MRQLFacts
 }
 
 // Handler serves POST /mcp.
@@ -122,7 +126,9 @@ func (h *Handler) serverFor(r *http.Request) *mcp.Server {
 
 const serverInstructions = `Mahresources is a personal information manager for Resources (files), Notes and Groups, with Tags, Categories, Relations, Series, saved Queries and MRQL (its query language).
 
-Start with the named tools (search, mrql_query, list_*, get_*). For anything else, find the operation with search_operations, read its arguments with describe_operation, and run it with call_operation. Every REST operation the caller may use is reachable this way.
+Start with the named tools (search, mrql_query, list_*, get_*).
+
+MRQL is the most precise way to find things: boolean logic, relative dates, metadata, relation counts, group subtrees, hierarchy and GROUP BY. Before writing a non-trivial query, read mrql_reference once, and look up the local tag, category, note type and meta key names (with the IDs category and noteType need) with mrql_vocabulary. Check a query with mrql_validate, and reuse saved queries with list_saved_queries and run_saved_query. For anything else, find the operation with search_operations, read its arguments with describe_operation, and run it with call_operation. Every REST operation the caller may use is reachable this way.
 
 Destructive operations (deletes, merges, mass edits, publishing, system settings) ask the user to confirm through the client before they run. If the client cannot show a confirmation, they are refused.
 

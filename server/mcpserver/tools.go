@@ -893,30 +893,11 @@ func buildNamedTools(c *Catalog) ([]namedTool, error) {
 		})
 	}
 
-	mrql, ok := c.Get("executeMRQL")
-	if !ok {
-		return nil, errors.New("named tool mrql_query: executeMRQL is not exposed")
+	mrqlTools, err := buildMRQLTools(c)
+	if err != nil {
+		return nil, err
 	}
-	out = append(out, namedTool{
-		tool: &mcp.Tool{
-			Name:  "mrql_query",
-			Title: "Run an MRQL query",
-			Description: "Run a Mahresources Query Language query, e.g. `type = resource AND tags = \"photo\" ORDER BY created DESC LIMIT 20`. " +
-				"Use validateMRQL through call_operation to check syntax, and the docs at describe_operation executeMRQL.",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"query":  map[string]any{"type": "string"},
-					"limit":  map[string]any{"type": "integer"},
-					"page":   map[string]any{"type": "integer"},
-					"offset": map[string]any{"type": "integer"},
-				},
-				"required": []any{"query"},
-			},
-			Annotations: annotationsFor(ReadOnly, false, http.MethodGet),
-		},
-		resolve: func(args map[string]any) (*Operation, map[string]any, error) { return mrql, args, nil },
-	})
+	out = append(out, mrqlTools...)
 
 	entityTool := func(name, title, desc string, safety Safety, ops map[string]string, schema map[string]any,
 		mapArgs func(args map[string]any) (map[string]any, error)) error {

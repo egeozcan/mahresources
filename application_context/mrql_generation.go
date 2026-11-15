@@ -136,12 +136,31 @@ func buildMRQLGenerationPrompt(userPrompt string, postgres bool) string {
 
 	// Regex match (~*) is PostgreSQL-only; only teach it on Postgres deployments.
 	if postgres {
-		lines = append(lines, mrqlRegexReferenceLine, "resources whose name matches regex <regex> -> type = resource AND name ~* \"<regex>\" LIMIT 50")
+		lines = append(lines, mrqlRegexReferenceLine, mrqlRegexExampleLine)
 	}
 
 	lines = append(lines, "User request: "+userPrompt)
 	return strings.Join(lines, "\n")
 }
+
+// MRQLLanguageReference is the generation prompt's syntax rules and example
+// mappings, without its instructions about the reply, for a model that writes
+// MRQL itself (the MCP server's mrql_reference tool). The regex operator is
+// taught only on PostgreSQL, as in the prompt.
+func MRQLLanguageReference(postgres bool) []string {
+	lines := append([]string{}, mrqlLanguageReferenceLines()...)
+	if postgres {
+		lines = append(lines, mrqlRegexReferenceLine)
+	}
+	lines = append(lines, mrqlExampleLines()...)
+	if postgres {
+		lines = append(lines, mrqlRegexExampleLine)
+	}
+	return lines
+}
+
+// mrqlRegexExampleLine is the regex example mapping, PostgreSQL only.
+const mrqlRegexExampleLine = "resources whose name matches regex <regex> -> type = resource AND name ~* \"<regex>\" LIMIT 50"
 
 // mrqlRegexReferenceLine teaches the regex operator, which only PostgreSQL
 // deployments accept.

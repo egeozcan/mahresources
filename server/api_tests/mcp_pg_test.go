@@ -63,3 +63,20 @@ func TestMCP_PG_ReadsAndGuestWrites(t *testing.T) {
 		t.Fatalf("legacy delete on PG = %v %s", refused.IsError, resultText(refused))
 	}
 }
+
+// On PostgreSQL the reference says so and teaches the regex operators.
+func TestMCP_PG_MRQLReferenceTeachesRegex(t *testing.T) {
+	env := newMCPEnvPG(t, false)
+	cs := env.connect(t, clientOpts{})
+	text := resultText(callTool(t, cs, "mrql_reference", map[string]any{}))
+	for _, want := range []string{"Database: PostgreSQL", "- Use field ~*", `name ~* "<regex>"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("PG mrql_reference is missing %q", want)
+		}
+	}
+	env.tc.CreateDummyNote("IMG_2024 notes")
+	res := callTool(t, cs, "mrql_query", map[string]any{"query": `type = note AND name ~* $re`, "params": map[string]any{"re": "^IMG_[0-9]{4}"}})
+	if res.IsError || !strings.Contains(resultText(res), "IMG_2024 notes") {
+		t.Fatalf("regex query = %v %s", res.IsError, clipForLog(resultText(res)))
+	}
+}
