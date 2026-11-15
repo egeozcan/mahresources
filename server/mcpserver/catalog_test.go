@@ -68,8 +68,7 @@ func TestEveryDeleteAndMergeIsDestructive(t *testing.T) {
 		lower := op.ID
 		isDelete := op.Method == "DELETE" || containsFold(lower, "delete") || containsFold(lower, "merge") ||
 			containsFold(lower, "massEdit") || containsFold(lower, "purge")
-		if isDelete && op.Safety != mcpserver.Destructive && op.ID != "deleteOwnSetting" &&
-			op.ID != "clearResourceThumbnail" {
+		if isDelete && op.Safety != mcpserver.Destructive && op.ID != "deleteOwnSetting" {
 			t.Errorf("%s (%s %s) looks destructive but is %v", op.ID, op.Method, op.Path, op.Safety)
 		}
 	}

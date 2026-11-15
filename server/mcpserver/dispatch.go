@@ -81,6 +81,11 @@ func buildRequest(ctx context.Context, parent *http.Request, op *Operation, args
 			if err != nil {
 				return nil, fmt.Errorf("argument %q: %w", p.Name, err)
 			}
+			// A path segment must stay one segment: a slash or a dot
+			// segment would let an argument address a different route.
+			if s == "" || s == "." || s == ".." || strings.ContainsAny(s, "/\\") {
+				return nil, fmt.Errorf("argument %q is not a valid path segment", p.Name)
+			}
 			path = strings.ReplaceAll(path, "{"+p.Name+"}", s)
 			rawPath = strings.ReplaceAll(rawPath, "{"+p.Name+"}", url.PathEscape(s))
 		case "header":

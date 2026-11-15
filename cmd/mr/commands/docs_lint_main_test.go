@@ -73,6 +73,7 @@ func buildProductionRoot(t *testing.T) *cobra.Command {
 	rootCmd.AddCommand(commands.NewQueriesCmd(c, opts, &page))
 	rootCmd.AddCommand(commands.NewMRQLCmd(c, opts, &page))
 	rootCmd.AddCommand(commands.NewSearchCmd(c, opts))
+	rootCmd.AddCommand(commands.NewMCPCmd(c))
 	rootCmd.AddCommand(commands.NewLogCmd(c, opts))
 	rootCmd.AddCommand(commands.NewLogsCmd(c, opts, &page))
 	rootCmd.AddCommand(commands.NewJobCmd(c, opts))

@@ -113,7 +113,18 @@ var destructive = map[string]bool{
 	"setPluginScopedAccess": true,
 	"updatePluginSettings":  true,
 
+	// Jobs. A command can be "forget", which erases a job's stored inputs;
+	// the jobs package itself advertises it as destructive.
+	"executeCanonicalJobCommand":     true,
+	"executeBulkCanonicalJobCommand": true,
+
+	// Bulk meta "add" merges into existing meta and overwrites the keys it names.
+	"bulkAddMetaToGroups":    true,
+	"bulkAddMetaToNotes":     true,
+	"bulkAddMetaToResources": true,
+
 	// Groups
+	"applyGroupImport":  true, // a "replace" collision policy overwrites existing entities
 	"deleteGroup":       true,
 	"bulkDeleteGroups":  true,
 	"mergeGroups":       true,
@@ -140,7 +151,11 @@ var destructive = map[string]bool{
 	"cleanupVersions":            true,
 	"bulkCleanupVersions":        true,
 	"applyResourceReduction":     true,
-	"deleteResourceReduction":    true,
+	// Clearing previews also deletes an uploaded custom thumbnail, which
+	// cannot be regenerated.
+	"clearResourceThumbnail":        true,
+	"clearResourceThumbnailViaPost": true,
+	"deleteResourceReduction":       true,
 
 	// Taxonomy and other entities
 	"deleteTag":              true,
@@ -172,13 +187,13 @@ var mutating = map[string]bool{
 	"retryDownloadHistory": true,
 
 	"createOrUpdateGroup": true, "cloneGroup": true, "editGroupDescription": true,
-	"editGroupMeta": true, "editGroupName": true, "bulkAddMetaToGroups": true,
+	"editGroupMeta": true, "editGroupName": true,
 	"bulkAddTagsToGroups": true, "bulkRemoveTagsFromGroups": true,
-	"submitGroupExport": true, "parseGroupImport": true, "applyGroupImport": true,
+	"submitGroupExport": true, "parseGroupImport": true,
 
-	"runPluginAction": true, "jobsCancel": true, "executeBulkCanonicalJobCommand": true,
+	"runPluginAction": true, "jobsCancel": true,
 	"jobsSubmitDownload": true, "jobsPause": true, "jobsResume": true, "jobsRetry": true,
-	"exportCanonicalJobSummary": true, "executeCanonicalJobCommand": true,
+	"exportCanonicalJobSummary": true,
 
 	"generateMRQL": true, "createSavedMRQLQuery": true, "updateSavedMRQLQuery": true,
 
@@ -188,7 +203,7 @@ var mutating = map[string]bool{
 	"createNoteType": true, "editNoteType": true, "editNoteTypeDescription": true,
 	"editNoteTypeName": true, "generateNoteTypeTemplate": true, "finishNoteTypeTemplateRun": true,
 	"labelNoteTypeRevision": true, "restoreNoteTypeRevision": true,
-	"bulkAddGroupsToNotes": true, "bulkAddMetaToNotes": true, "bulkAddTagsToNotes": true,
+	"bulkAddGroupsToNotes": true, "bulkAddTagsToNotes": true,
 	"bulkRemoveTagsFromNotes": true,
 
 	"cancelPluginCommandRun": true, "runPluginScheduleNow": true,
@@ -205,10 +220,9 @@ var mutating = map[string]bool{
 
 	"createResource": true, "editResource": true, "editResourceDescription": true,
 	"editResourceMeta": true, "editResourceName": true, "addLocalResource": true,
-	"clearResourceThumbnail": true, "setCustomResourceThumbnail": true,
-	"clearResourceThumbnailViaPost": true, "bulkRecalculateDimensions": true,
+	"setCustomResourceThumbnail": true, "bulkRecalculateDimensions": true,
 	"addRemoteResource": true, "removeResourceFromSeries": true, "restoreVersion": true,
-	"uploadVersion": true, "bulkAddGroupsToResources": true, "bulkAddMetaToResources": true,
+	"uploadVersion": true, "bulkAddGroupsToResources": true,
 	"bulkAddTagsToResources": true, "cropResource": true, "bulkRemoveTagsFromResources": true,
 	"rotateResource": true, "setResourceDimensions": true, "trimResourceVideo": true,
 

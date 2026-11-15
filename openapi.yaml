@@ -3911,6 +3911,17 @@ paths:
     /v1/admin/shares/bulk-revoke:
         post:
             operationId: bulkRevokeShares
+            parameters:
+                - description: IDs of the notes whose share tokens to revoke. Repeat for several.
+                  explode: true
+                  in: query
+                  name: ids
+                  required: true
+                  schema:
+                    items:
+                        type: integer
+                    type: array
+                  style: form
             responses:
                 "200":
                     content:

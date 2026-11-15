@@ -620,6 +620,11 @@ func registerNoteShareRoutes(r *openapi.Registry) {
 		OperationID:          "bulkRevokeShares",
 		Summary:              "Revoke share tokens for a list of note IDs",
 		Tags:                 []string{"notes", "admin"},
+		// The handler reads request.Form, which merges the query string and a
+		// form body, so ids may be sent either way.
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "ids", Type: "array", ItemType: "integer", Required: true, Description: "IDs of the notes whose share tokens to revoke. Repeat for several."},
+		},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 }

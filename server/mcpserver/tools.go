@@ -96,6 +96,12 @@ func (c *caller) run(_ context.Context, req *mcp.CallToolRequest, toolName strin
 	if op.Safety == Excluded {
 		return toolError(fmt.Sprintf("%s is not available over MCP", op.ID))
 	}
+	// Handlers decode JSON case-insensitively, so every guard, hash and
+	// preview below must see each argument under its one declared name.
+	args, err := canonicalArgs(op, args)
+	if err != nil {
+		return toolError(err.Error())
+	}
 	if op.Safety != Destructive {
 		return c.execute(op, args)
 	}
@@ -177,15 +183,73 @@ func canConfirm(req *mcp.CallToolRequest) bool {
 	return caps.Elicitation.Form != nil || caps.Elicitation.URL == nil
 }
 
+// canonicalArgs renames each argument to the operation's declared name for
+// it, matched case-insensitively, the way encoding/json matches struct
+// fields. Two arguments that name the same field ("Id" and "id") are refused:
+// which one a handler would read is a decoder detail, and a confirmation must
+// not depend on it. Undeclared arguments keep their names but are held to the
+// same one-spelling rule.
+func canonicalArgs(op *Operation, args map[string]any) (map[string]any, error) {
+	props, _ := op.InputSchema["properties"].(map[string]any)
+	out, err := canonicalKeys(props, args)
+	if err != nil {
+		return nil, err
+	}
+	if op.Body != nil && op.Body.Nested {
+		if body, ok := out["body"].(map[string]any); ok {
+			bodyProps, _ := op.Body.Schema["properties"].(map[string]any)
+			if out["body"], err = canonicalKeys(bodyProps, body); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return out, nil
+}
+
+func canonicalKeys(props map[string]any, args map[string]any) (map[string]any, error) {
+	declared := map[string]string{} // folded -> declared name; "" when two declared names fold together
+	for name := range props {
+		folded := strings.ToLower(name)
+		if prev, ok := declared[folded]; ok && prev != name {
+			declared[folded] = ""
+			continue
+		}
+		declared[folded] = name
+	}
+	out := make(map[string]any, len(args))
+	from := map[string]string{} // canonical name -> the spelling it came from
+	for key, v := range args {
+		name := key
+		if _, exact := props[key]; !exact {
+			if d, ok := declared[strings.ToLower(key)]; ok {
+				if d == "" {
+					return nil, fmt.Errorf("argument %q is ambiguous: the operation declares several fields with that name in different cases; use the exact name", key)
+				}
+				name = d
+			}
+		}
+		folded := strings.ToLower(name)
+		if prev, dup := from[folded]; dup {
+			return nil, fmt.Errorf("argument %q is given twice (as %q and %q); pass it once", name, prev, key)
+		}
+		from[folded] = key
+		out[name] = v
+	}
+	return out, nil
+}
+
 // refuseUnpinnedSelection refuses destructive calls whose targets would be
 // resolved again at execution time. A confirmation covers the sealed
-// arguments, so the targets must be in them.
+// arguments, so the targets must be in them. args must be canonical.
 func refuseUnpinnedSelection(op *Operation, args map[string]any) error {
 	if !strings.HasPrefix(op.ID, "massEdit") {
 		return nil
 	}
-	for _, k := range []string{"Filter", "MRQLQuery", "MRQLSnapshot"} {
-		if s, _ := args[k].(string); strings.TrimSpace(s) != "" {
+	if target, _ := args["Target"].(string); target != "" && !strings.EqualFold(target, "ids") {
+		return fmt.Errorf("%s over MCP must name its targets with ID; Target %q is refused, because the matching set could change between confirmation and execution. Resolve the IDs first (list or MRQL), then pass them as ID", op.ID, target)
+	}
+	for _, k := range []string{"Filter", "MRQLQuery", "MRQLSnapshot", "MRQLParams"} {
+		if v, ok := args[k]; ok && v != nil && v != "" {
 			return fmt.Errorf("%s over MCP must name its targets with ID; %s selection is refused, because the matching set could change between confirmation and execution. Resolve the IDs first (list or MRQL), then pass them as ID", op.ID, k)
 		}
 	}
@@ -287,6 +351,13 @@ func (c *caller) preview(op *Operation, args map[string]any) string {
 		}
 	}
 
+	switch op.ID {
+	case "applyResourceReduction":
+		b.WriteString(c.reductionPreview(args))
+	case "applyGroupImport":
+		b.WriteString(c.importPreview(args))
+	}
+
 	if strings.HasPrefix(op.ID, "massEdit") {
 		dry := make(map[string]any, len(args)+1)
 		for k, v := range args {
@@ -302,6 +373,70 @@ func (c *caller) preview(op *Operation, args map[string]any) string {
 		fmt.Fprintf(&b, "Arguments: %s\n", clip(string(raw), 1000))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// reductionPreview states what applying a Resource Reduction destroys: the
+// checked Clusters across the whole plan and the Resources they would remove,
+// read from the reduction page's JSON as the caller.
+func (c *caller) reductionPreview(args map[string]any) string {
+	id := idList(args["id"])
+	if len(id) != 1 {
+		return ""
+	}
+	page := &Operation{ID: "reductionPage", Method: http.MethodGet, Path: "/reduction.json",
+		Params: []Param{{Name: "id", In: "query", Required: true}}}
+	resp, err := dispatch(c.h.opts.Dispatch, c.r, page, map[string]any{"id": json.Number(id[0])}, c.h.opts.MaxResponse)
+	if err != nil || resp.Truncated || resp.Status >= 300 {
+		return "Reduction: not found or not visible\n"
+	}
+	var v struct {
+		Raw struct {
+			Name string `json:"name"`
+		} `json:"raw"`
+		Review struct {
+			CheckedCount      int
+			CheckedLoserCount int
+		} `json:"review"`
+	}
+	if json.Unmarshal(resp.Body, &v) != nil {
+		return ""
+	}
+	return fmt.Sprintf("Reduction %q: %d checked clusters; %d resources would be removed (merged into each cluster's winner).\n",
+		clip(v.Raw.Name, 120), v.Review.CheckedCount, v.Review.CheckedLoserCount)
+}
+
+// importPreview states what applying a parsed import creates and, under the
+// "replace" policy, overwrites.
+func (c *caller) importPreview(args map[string]any) string {
+	jobID, _ := args["jobId"].(string)
+	op, ok := c.h.catalog.Get("getImportPlan")
+	if jobID == "" || !ok {
+		return ""
+	}
+	resp, err := dispatch(c.h.opts.Dispatch, c.r, op, map[string]any{"jobId": jobID}, c.h.opts.MaxResponse)
+	if err != nil || resp.Truncated || resp.Status >= 300 {
+		return "Import plan: not found or not visible\n"
+	}
+	var plan struct {
+		Counts struct {
+			Groups, Notes, Resources, Series int
+		} `json:"counts"`
+		Conflicts struct {
+			GUIDMatches         int `json:"guid_matches"`
+			ResourceGUIDMatches int `json:"resource_guid_matches"`
+			ResourceHashMatches int `json:"resource_hash_matches"`
+		} `json:"conflicts"`
+	}
+	if json.Unmarshal(resp.Body, &plan) != nil {
+		return ""
+	}
+	policy, _ := args["guid_collision_policy"].(string)
+	if policy == "" {
+		policy = "(default)"
+	}
+	return fmt.Sprintf("Import: %d groups, %d notes, %d resources, %d series.\nExisting entities matched by GUID: %d (resources: %d by GUID, %d by hash). GUID collision policy: %s; \"replace\" overwrites the matched entities.\n",
+		plan.Counts.Groups, plan.Counts.Notes, plan.Counts.Resources, plan.Counts.Series,
+		plan.Conflicts.GUIDMatches, plan.Conflicts.ResourceGUIDMatches, plan.Conflicts.ResourceHashMatches, policy)
 }
 
 // lookupFor names the single-item GET operation for the entity family a path

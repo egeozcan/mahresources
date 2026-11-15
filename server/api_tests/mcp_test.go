@@ -31,7 +31,15 @@ type mcpEnv struct {
 
 func newMCPEnv(t *testing.T, authOn bool, origins ...string) *mcpEnv {
 	t.Helper()
-	tc := setupTestEnvWithConfig(t, func(c *application_context.MahresourcesConfig) {
+	return newMCPEnvOn(t, setupTestEnvWithConfig, authOn, origins...)
+}
+
+// newMCPEnvOn builds the environment with setup, so the Postgres suite can
+// run the same flows (mcp_pg_test.go).
+func newMCPEnvOn(t *testing.T, setup func(*testing.T, func(*application_context.MahresourcesConfig)) *TestContext,
+	authOn bool, origins ...string) *mcpEnv {
+	t.Helper()
+	tc := setup(t, func(c *application_context.MahresourcesConfig) {
 		c.MCPEnabled = true
 		c.MCPAllowedOrigins = origins
 		if authOn {
@@ -39,8 +47,10 @@ func newMCPEnv(t *testing.T, authOn bool, origins ...string) *mcpEnv {
 			c.SessionTTL = time.Hour
 		}
 	})
-	if sqlDB, err := tc.DB.DB(); err == nil {
-		sqlDB.SetMaxOpenConns(1)
+	if tc.DB.Dialector.Name() == "sqlite" {
+		if sqlDB, err := tc.DB.DB(); err == nil {
+			sqlDB.SetMaxOpenConns(1)
+		}
 	}
 	env := &mcpEnv{tc: tc}
 	if authOn {
@@ -620,5 +630,90 @@ func TestMCP_SearchOperationsFindsEverything(t *testing.T) {
 	var d map[string]any
 	if err := json.Unmarshal([]byte(resultText(desc)), &d); err != nil || d["inputSchema"] == nil {
 		t.Fatalf("describe cropResource = %s", resultText(desc))
+	}
+}
+
+// encoding/json matches field names case-insensitively, so a guard that
+// looks for "Filter" or sets "DryRun" must see the argument under its
+// declared name whatever its casing (review round 1, findings 1 and 2).
+func TestMCP_CaseVariantArgumentsCannotDodgeGuards(t *testing.T) {
+	env := newMCPEnv(t, false)
+	target := env.tc.CreateDummyNote("pinned")
+	other := env.tc.CreateDummyNote("unexpected-target")
+
+	// A client that cannot confirm: nothing destructive may run, preview or not.
+	cs := env.connect(t, clientOpts{})
+	res := callTool(t, cs, "call_operation", map[string]any{"operationId": "massEditNotes", "arguments": map[string]any{
+		"ID": []any{target.ID}, "MetaOp": "replace", "Meta": `{"bypassed":true}`, "dryRun": false,
+	}})
+	if !res.IsError {
+		t.Fatalf("unconfirmable mass edit = %s", resultText(res))
+	}
+	var got models.Note
+	env.tc.DB.First(&got, target.ID)
+	if strings.Contains(string(got.Meta), "bypassed") {
+		t.Fatalf("the preview's dry run wrote meta: %s", got.Meta)
+	}
+
+	confirming := env.connect(t, clientOpts{answer: accept})
+	for _, args := range []map[string]any{
+		{"ID": []any{target.ID}, "Target": "filter", "filter": "name = \"unexpected-target\"", "ExpectedCount": 1, "MetaOp": "replace", "Meta": `{"changed":true}`},
+		{"ID": []any{target.ID}, "target": "mrql", "mrqlquery": "name = \"unexpected-target\"", "ExpectedCount": 1, "MetaOp": "replace", "Meta": `{"changed":true}`},
+		{"ID": []any{target.ID}, "Target": "filter", "MetaOp": "replace", "Meta": `{"changed":true}`},
+	} {
+		res := callTool(t, confirming, "call_operation", map[string]any{"operationId": "massEditNotes", "arguments": args})
+		if !res.IsError {
+			t.Fatalf("selection by %v ran: %s", args, resultText(res))
+		}
+	}
+	var otherAfter models.Note
+	env.tc.DB.First(&otherAfter, other.ID)
+	if strings.Contains(string(otherAfter.Meta), "changed") {
+		t.Fatalf("a filter-selected note was edited: %s", otherAfter.Meta)
+	}
+
+	dup := callTool(t, confirming, "call_operation", map[string]any{"operationId": "deleteNote", "arguments": map[string]any{
+		"Id": target.ID, "id": other.ID,
+	}})
+	if !dup.IsError || !strings.Contains(resultText(dup), "given twice") {
+		t.Fatalf("ambiguous arguments = %v %s", dup.IsError, resultText(dup))
+	}
+	if !env.noteExists(t, target.ID) || !env.noteExists(t, other.ID) {
+		t.Fatal("an ambiguous delete removed a note")
+	}
+}
+
+func TestMCP_BulkRevokeSharesReachesTheHandler(t *testing.T) {
+	env := newMCPEnv(t, false)
+	note := env.tc.CreateDummyNote("shared")
+	token := "tok-" + strings.Repeat("a", 28)
+	env.tc.DB.Model(&models.Note{}).Where("id = ?", note.ID).Update("share_token", token)
+
+	cs := env.connect(t, clientOpts{answer: accept})
+	res := callTool(t, cs, "call_operation", map[string]any{"operationId": "bulkRevokeShares", "arguments": map[string]any{"ids": []any{note.ID}}})
+	if res.IsError {
+		t.Fatalf("bulkRevokeShares: %s", resultText(res))
+	}
+	var got models.Note
+	env.tc.DB.First(&got, note.ID)
+	if got.ShareToken != nil && *got.ShareToken != "" {
+		t.Fatalf("share token still set after a confirmed revoke: %s", resultText(res))
+	}
+}
+
+// Applying a reduction destroys every checked cluster's losers, so the
+// confirmation must say how many (review round 1, finding 8).
+func TestMCP_ReductionConfirmationStatesWhatItRemoves(t *testing.T) {
+	env := newMCPEnv(t, false)
+	a := env.tc.CreateResourceWithType(t, "dup-a.jpg", "image/jpeg")
+	b := env.tc.CreateResourceWithType(t, "dup-b.jpg", "image/jpeg")
+	red := createReduction(t, env.tc, "Holiday duplicates", []uint{a.ID, b.ID})
+
+	var seen []string
+	cs := env.connect(t, clientOpts{answer: &mcp.ElicitResult{Action: "decline"}, seen: &seen})
+	callTool(t, cs, "call_operation", map[string]any{"operationId": "applyResourceReduction",
+		"arguments": map[string]any{"id": red.ID, "version": red.Version}})
+	if len(seen) != 1 || !strings.Contains(seen[0], `Reduction "Holiday duplicates": 0 checked clusters; 0 resources would be removed`) {
+		t.Fatalf("reduction preview = %q", seen)
 	}
 }

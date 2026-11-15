@@ -174,12 +174,17 @@ func TestBuildRequestEncoding(t *testing.T) {
 		},
 		Body: &Body{ContentType: "application/json", Schema: map[string]any{"type": "object"}},
 	}
-	args, _ := decodeArgs(json.RawMessage(`{"id":"a/b","command":"retry","page":2,"Note":{"k":1}}`))
+	for _, bad := range []string{"a/b", "..", ".", `a\\b`, ""} {
+		if _, err := buildRequest(context.Background(), parent, op, map[string]any{"id": bad, "command": "retry"}); err == nil {
+			t.Errorf("path segment %q was accepted", bad)
+		}
+	}
+	args, _ := decodeArgs(json.RawMessage(`{"id":"a b?c","command":"retry","page":2,"Note":{"k":1}}`))
 	req, err := buildRequest(context.Background(), parent, op, args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.URL.EscapedPath() != "/v1/jobs/a%2Fb/commands/retry" || req.URL.Query().Get("page") != "2" {
+	if req.URL.EscapedPath() != "/v1/jobs/a%20b%3Fc/commands/retry" || req.URL.Query().Get("page") != "2" {
 		t.Fatalf("url = %s", req.URL.String())
 	}
 	if req.Header.Get("Authorization") != "Bearer tok" || req.Header.Get("Cookie") != "" {
