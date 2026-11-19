@@ -17,6 +17,7 @@ import { csrfToken } from '../utils/csrfToken.js';
 import { parseUploadError } from '../utils/uploadError.js';
 import { focusOn } from '../utils/focus.js';
 import { errorMessageFromResponse } from '../index.js';
+import { snapshotDrop, walkDrop } from '../utils/dropEntries.js';
 
 // ---------------------------------------------------------------------------
 // Pure helpers (exported for unit tests)
@@ -225,11 +226,26 @@ export function resourceUpload() {
         e.returnValue = '';
       };
       window.addEventListener('beforeunload', this._beforeUnload);
+
+      // The picker owns every file drop on this page. Left alone, a drop beside
+      // it went to the browser, which navigated away from the form to show the
+      // file; and with ?ownerId (where a group's Add link lands) the page-wide
+      // paste upload took it instead and ignored the form. On `document`, so
+      // these run before that listener on `window`, which yields to a
+      // default-prevented drag.
+      this._picker = this.$el.querySelector("input[type='file'][name='resource']");
+      if (this._picker) {
+        this._dropHandler = (e) => this.onPageDrag(e);
+        for (const type of ['dragenter', 'dragover', 'drop']) document.addEventListener(type, this._dropHandler);
+      }
     },
 
     destroy() {
       window.removeEventListener('beforeunload', this._beforeUnload);
       document.removeEventListener('submit', this._submitHandler);
+      if (this._dropHandler) {
+        for (const type of ['dragenter', 'dragover', 'drop']) document.removeEventListener(type, this._dropHandler);
+      }
       // Order matters. abortAll() on its own resolves the in-flight requests
       // without stopping the pool: the workers would read `cancelled` as false,
       // dequeue the next file and keep uploading from a component that is no
@@ -261,6 +277,38 @@ export function resourceUpload() {
       this.cancelled = false;
       this.selectionCount = picked.length;
       this.selectionBytes = picked.reduce((sum, f) => sum + f.size, 0);
+    },
+
+    /**
+     * A file drag anywhere on the page. The drop adds to the selection rather
+     * than replacing it, as a paste into the picker does, and a dropped folder
+     * adds the files inside it. Taken even while a batch runs (the picker is
+     * disabled then), so the browser cannot navigate away mid-upload.
+     */
+    async onPageDrag(e) {
+      if (!Array.from(e.dataTransfer?.types ?? []).includes('Files')) return;
+      const dropTaken = e.defaultPrevented;
+      e.preventDefault();
+      const picker = this._picker;
+      if (e.type !== 'drop') {
+        e.dataTransfer.dropEffect = picker.disabled ? 'none' : 'copy';
+        return;
+      }
+      // Taken by a handler below us (the Description editor reads a text file
+      // into itself): it is theirs, not also the picker's.
+      if (picker.disabled || dropTaken) return;
+      // The DataTransfer is only readable until the first await.
+      const { files: walked } = await walkDrop(snapshotDrop(e.dataTransfer));
+      if (walked.length === 0 || picker.disabled) return;
+      const dt = new DataTransfer();
+      for (const file of picker.files) dt.items.add(file);
+      for (const { file } of walked) dt.items.add(file);
+      picker.files = dt.files;
+      picker.dispatchEvent(new Event('change', { bubbles: true }));
+      // The drop may have landed far from the picker: show where it went, as a paste does.
+      const row = picker.closest('.flex');
+      row?.classList.add('ring-2', 'ring-indigo-500', 'rounded-md');
+      setTimeout(() => row?.classList.remove('ring-2', 'ring-indigo-500', 'rounded-md'), 1500);
     },
 
     /**

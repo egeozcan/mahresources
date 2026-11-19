@@ -92,7 +92,7 @@
                                 :disabled="phase === 'uploading'"
                             >
                         </div>
-                        <p id="resource-description" class="mt-1 text-sm text-stone-500">Choose one or more files, or give a URL below instead.</p>
+                        <p id="resource-description" class="mt-1 text-sm text-stone-500">Choose or drop one or more files (or folders) anywhere on this page, or give a URL below instead.</p>
                         {# Shown once the selection crosses a threshold, so the switch to #}
                         {# per-file uploads is not a surprise after clicking Save.        #}
                         <p x-show="willUseWidget && phase === 'idle'" x-cloak

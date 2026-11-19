@@ -220,7 +220,7 @@ async function resolveUploadContext() {
   const ownerId = new URLSearchParams(window.location.search).get('ownerId');
   if (ownerId) {
     try {
-      const resp = await fetch(`/v1/group.json?id=${encodeURIComponent(ownerId)}`);
+      const resp = await fetch(`/v1/group?id=${encodeURIComponent(ownerId)}`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const group = await resp.json();
       return { context: { type: 'group', id: group.ID, name: group.Name }, message: '' };
@@ -354,6 +354,9 @@ export function setupDropListener() {
   window.addEventListener('dragenter', (e) => {
     if (!counted(e)) return;
     depth++;
+    // A local drop zone claimed this drag (the resource form's picker, say):
+    // an overlay naming another destination would contradict it.
+    if (e.defaultPrevented) return;
     const store = getStore();
     if (!store || store.state === 'uploading' || otherModal()) return;
     let name = '';
