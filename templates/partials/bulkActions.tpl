@@ -9,10 +9,11 @@
                 @click="$dispatch('mass-edit-open', { entityType: '{{ bulkEntity }}', target: 'filter', selection: $selection })">Mass edit all results</button>
         {% endif %}{% endfor %}{% endif %}
     </div>
-    <div class="sticky top-0 z-30 flex pb-2 gap-2 flex-wrap bulk-editors items-start" :hidden="$selection.selectedIds.size === 0" hidden x-cloak>
+    <div class="sticky top-0 z-30 flex gap-2 flex-wrap bulk-editors items-center" :hidden="$selection.selectedIds.size === 0" hidden x-cloak>
+        <span data-testid="bulk-selected-count" class="bulk-selected-count" x-text="$selection.selectedIds.size + ' {{ bulkEntity }}' + ($selection.selectedIds.size === 1 ? '' : 's') + ' selected'"></span>
         {% include "/partials/form/formParts/connected/deselectButton.tpl" %}
         {% include "/partials/form/formParts/connected/selectAllButton.tpl" %}
-        <span data-testid="bulk-selected-count" class="text-sm mt-3" x-text="$selection.selectedIds.size + ' {{ bulkEntity }}' + ($selection.selectedIds.size === 1 ? '' : 's') + ' selected'"></span>
+        <span class="bulk-divider" aria-hidden="true"></span>
         {# The action editors are rendered on the first selection, not with the page: #}
         {# hidden, they were a few hundred bindings Alpine set up on every list page   #}
         {# load. Once rendered they stay, hidden with the bar, so a form keeps what was #}
@@ -27,7 +28,7 @@
                 {% include "/partials/bulkActions/form.tpl" %}
             {% endif %}
             </fieldset>
-            <p :id="$id('bulk-action-reason')" x-show="unavailableReason()" x-text="unavailableReason()" class="bulk-action-reason text-xs text-stone-600" role="status"></p>
+            <p :id="$id('bulk-action-reason')" x-show="unavailableReason()" x-text="unavailableReason()" class="bulk-action-reason" role="status"></p>
         </div>
         {% endfor %}
         </div></template>

@@ -1,6 +1,6 @@
 <div x-data="bulkSelectionForms">
     <form data-editor-label="{% if action.Input %}{{ action.Label }}{% else %}{{ action.SubmitLabel|default:action.Label }}{% endif %}" x-cloak x-show="$selection.isActiveEditor($el)" x-collapse :class="$selection.isActiveEditor($el) && 'active'" method="post" action="{{ action.Endpoint }}" :action="'{{ action.Endpoint }}?redirect=' + encodeURIComponent(window.location.pathname + window.location.search)"
-          {% if action.NoAjax %}class="no-ajax"{% endif %} data-testid="bulk-{{ action.ID }}-{{ bulkEntity }}s-form" data-confirm-message="{{ action.Confirm }}"
+          {% if action.NoAjax %}class="no-ajax"{% endif %} data-testid="bulk-{{ action.ID }}-{{ bulkEntity }}s-form" data-confirm-message="{{ action.Confirm }}"{% if action.Danger %} data-editor-danger{% endif %}
           {% if action.ConfirmComponent %}x-data="{{ action.ConfirmComponent }}" x-bind="events"{% elif action.Confirm %}x-data="confirmAction()" x-bind="events"{% endif %}>
         {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
         {% if action.Input == 'entity' %}

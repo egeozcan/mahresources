@@ -10,18 +10,18 @@
 {#   noun     — the plural noun for the hint, e.g. "Resources"                  #}
 {#   panelId  — unique id for the disclosure panel                              #}
 {#   reductionOwnerId — optional group detail action with a subtree checkbox    #}
-<div class="{% if reductionOwnerId %}relative{% else %}px-4{% endif %}" x-data="reductionBulkAction({ entity: '{{ entity }}', ownerId: {{ reductionOwnerId|default:0 }} })"
+<div class="relative" x-data="reductionBulkAction({ entity: '{{ entity }}', ownerId: {{ reductionOwnerId|default:0 }} })"
      @keydown.escape.stop="open = false; $refs.trigger.focus()" @click.outside="open = false">
     <button type="button" x-ref="trigger"
             data-testid="bulk-reduction-action"
             :aria-expanded="open ? 'true' : 'false'"
             aria-controls="{{ panelId }}"
             @click="toggle()"
-            class="{% if reductionOwnerId %}inline-flex justify-center py-1 px-2 border border-stone-300 text-xs font-mono font-semibold tracking-wide rounded text-stone-700 bg-white hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 transition-colors duration-100{% else %}inline-flex justify-center py-1.5 px-3 mt-3 border border-transparent items-center shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600{% endif %}">
+            class="{% if reductionOwnerId %}inline-flex justify-center py-1 px-2 border border-stone-300 text-xs font-mono font-semibold tracking-wide rounded text-stone-700 bg-white hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 transition-colors duration-100{% else %}bulk-action-btn{% endif %}">
         {% if reductionOwnerId %}Reduce{% else %}Resource Reduction{% endif %}
     </button>
 
-    <div id="{{ panelId }}" x-show="open" x-cloak x-collapse class="{% if reductionOwnerId %}absolute right-0 z-20 {% endif %}mt-2 p-3 bg-white border border-stone-200 rounded-md shadow-sm w-72">
+    <div id="{{ panelId }}" x-show="open" x-cloak x-collapse class="absolute {% if reductionOwnerId %}right-0 z-20{% else %}left-0 top-full z-40{% endif %} mt-2 p-3 bg-white border border-stone-200 rounded-md shadow-sm w-72">
         {% if reductionOwnerId %}
         <label class="flex items-center gap-2 mb-2 text-sm text-stone-700">
             <input type="checkbox" x-model="includeDescendants" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
@@ -74,7 +74,7 @@
 
         {% if !reductionOwnerId %}
         <p class="mt-2 text-xs text-stone-600">
-            <span x-text="selectedIds().length"></span> {{ noun }} selected.
+            <span x-text="selectedIds().length + ' ' + (selectedIds().length === 1 ? '{{ entity }}' : '{{ noun }}') + ' selected.'"></span>
         </p>
         {% endif %}
         <p x-show="error" x-cloak x-text="error" data-testid="bulk-reduction-error" class="mt-1 text-xs text-red-700" role="alert"></p>

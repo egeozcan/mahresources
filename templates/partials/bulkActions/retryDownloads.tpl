@@ -1,10 +1,10 @@
-    <div class="px-4">
+    <div class="bulk-action-item">
         <button type="button"
                 @click="$store.downloads.retrySelected($selection)"
                 :aria-disabled="$store.downloads.busy"
                 aria-label="Retry selected downloads"
                 data-testid="downloads-bulk-retry"
-                class="bulk-action-btn inline-flex justify-center py-1.5 px-3 mt-3 border items-center text-sm font-medium rounded-md focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">
+                class="bulk-action-btn">
             Retry
         </button>
     </div>

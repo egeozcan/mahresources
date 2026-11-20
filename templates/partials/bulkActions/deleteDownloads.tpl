@@ -1,4 +1,4 @@
-    <div class="px-4">
+    <div class="bulk-action-item">
         {# The confirm is raised by the store rather than by `confirmAction`: this is #}
         {# a button, not a form submit, so there is no submit event to intercept.     #}
         {# The accessible name says "selected": the visible heading beside it is a    #}
@@ -9,7 +9,7 @@
                 :aria-disabled="$store.downloads.busy"
                 aria-label="Delete selected downloads"
                 data-testid="downloads-bulk-delete"
-                class="inline-flex justify-center py-1.5 px-3 mt-3 border border-transparent items-center text-sm font-medium rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-red-600 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">
+                class="bulk-action-btn bulk-action-btn--danger">
             Delete
         </button>
     </div>

@@ -1,6 +1,8 @@
 package template_context_providers
 
 import (
+	"slices"
+
 	"github.com/flosch/pongo2/v4"
 	"mahresources/listviews"
 	"mahresources/plugin_system"
@@ -25,5 +27,18 @@ func bulkActionDeclarations(entity string, pluginValue *pongo2.Value) []listview
 			Filters:  listviews.BulkActionFilter{ContentTypes: plugin.Filters.ContentTypes, CategoryIDs: plugin.Filters.CategoryIDs, NoteTypeIDs: plugin.Filters.NoteTypeIDs},
 		})
 	}
+	// Destructive actions close the toolbar row, after every plugin action, so a
+	// Delete never sits between two harmless buttons. The sort is stable and the
+	// DOM order is the visual order, so keyboard focus follows what is seen.
+	slices.SortStableFunc(actions, func(a, b listviews.BulkAction) int {
+		switch {
+		case a.Danger == b.Danger:
+			return 0
+		case b.Danger:
+			return -1
+		default:
+			return 1
+		}
+	})
 	return actions
 }

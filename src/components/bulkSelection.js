@@ -6,12 +6,9 @@ import { findListContainer } from '../utils/listContainer.js';
 import { focusOn } from '../utils/focus.js';
 import { hoistCustomCSS } from '../utils/customCssHoist.js';
 
-const btnClasses = `bulk-action-btn inline-flex justify-center
-      py-1.5 px-3 mt-3
-      border
-      items-center
-      text-sm font-medium rounded-md
-      focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600`;
+// Sizing and colour live in index.css (.bulk-action-btn) so the toggles match the
+// toolbar's template-rendered buttons exactly.
+const btnClasses = 'bulk-action-btn';
 
 
 let _bulkLiveRegion = null;
@@ -315,6 +312,7 @@ export function createBulkSelection(scope = null) {
 
       btn.innerText = buttonText;
       btn.className = btnClasses;
+      if (form.hasAttribute("data-editor-danger")) btn.classList.add("bulk-action-btn--danger");
       btn.type = "button";
       btn.setAttribute("aria-expanded", "false");
       btn.setAttribute("aria-label", `Toggle ${buttonText} editor`);

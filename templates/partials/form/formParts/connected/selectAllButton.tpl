@@ -19,12 +19,7 @@
     <button type="button"
         data-bulk-select-all
         @click.prevent="$selection.selectAll()"
-        class="
-            inline-flex justify-center
-            py-2 px-4 mt-3
-            border border-transparent
-            items-center
-            shadow-sm text-xs font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600"
+        class="bulk-selection-btn"
     >
         {% if text %}{{ text }}{% else %}Select All{% endif %}
     </button>
