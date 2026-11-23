@@ -606,7 +606,8 @@ export function registerReductionReviewStore(Alpine) {
       // the plan then withholds the numbers.
       if (counts.hidden) return 'The apply finished.';
       const changed = counts.changed ? ` ${plural(counts.changed, ...CLUSTER_NOUN)} changed by another decision and ${counts.changed === 1 ? 'was' : 'were'} left alone.` : '';
-      return `Applied ${plural(counts.applied, ...CLUSTER_NOUN)}, removed ${plural(counts.removed, ...COPIES)}.${changed}`;
+      const errors = counts.errors ? ` ${plural(counts.errors, ...CLUSTER_NOUN)} could not be checked; try applying again.` : '';
+      return `Applied ${plural(counts.applied, ...CLUSTER_NOUN)}, removed ${plural(counts.removed, ...COPIES)}.${changed}${errors}`;
     },
 
     async confirmApply() {
@@ -710,7 +711,7 @@ export function registerReductionReviewStore(Alpine) {
 
       if (outcome) {
         this.applyResult = outcome;
-        this.applyCounts = { applied: outcome.applied?.length || 0, removed: outcome.destroyed || 0, stale: outcome.stale?.length || 0, changed: outcome.changed || 0 };
+        this.applyCounts = { applied: outcome.applied?.length || 0, removed: outcome.destroyed || 0, stale: outcome.stale?.length || 0, changed: outcome.changed || 0, errors: outcome.errors || 0 };
         this._nameOutcomes(this.applyResult.stale);
       } else if (recovered?.record) {
         this.applyResult = null;
