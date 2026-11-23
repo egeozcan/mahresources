@@ -406,9 +406,12 @@ export function registerReductionReviewStore(Alpine) {
     /** The skip link's target: the Apply button, or the bar's menu while Apply is disabled. */
     focusApply() {
       const apply = document.getElementById('reduction-apply-button');
-      const target = apply && !apply.disabled ? apply : document.querySelector('[data-testid="reduction-more"]') || document.querySelector('.reduction-bar button:not(:disabled)');
-      target?.scrollIntoView({ block: 'nearest' });
-      target?.focus();
+      // Apply when it can be pressed; otherwise the bar itself, which is a labelled
+      // region that takes programmatic focus (its menu button is hidden on a desktop).
+      const target = apply && !apply.disabled ? apply : document.querySelector('.reduction-bar');
+      if (!target || target.getClientRects().length === 0) return;
+      target.scrollIntoView({ block: 'nearest' });
+      target.focus();
     },
 
     focusSettings() {
@@ -598,22 +601,39 @@ export function registerReductionReviewStore(Alpine) {
       // response: the plan's own record is followed instead, so a response held up
       // by a slow proxy cannot hold the page.
       const background = new Promise((resolve) => { this._onBackground = () => resolve('background'); });
-      const first = await Promise.race([send(), background]);
+      const sending = send();
+      let first = await Promise.race([sending, background]);
       this._onBackground = null;
-      let { outcome = null, lost = false, error = null } = first === 'background' ? { lost: true } : first;
       const quiet = first === 'background';
+      let recovered = null;
+      if (quiet) {
+        // Keep listening to the request as well as the plan: a refusal that arrives
+        // first is the answer (and is shown as one), a recovered record is the answer
+        // otherwise. A response that merely failed (lost) leaves it to the plan.
+        const cancel = { stop: false };
+        const recovery = this._recoverApply(requestId, cancel).then((result) => ({ recovered: result }));
+        const definitive = sending.then((result) => (result.lost ? new Promise(() => {}) : result));
+        const second = await Promise.race([definitive, recovery]);
+        cancel.stop = true;
+        if (second.recovered) {
+          first = { lost: true };
+          recovered = second.recovered;
+        } else {
+          first = second;
+        }
+      }
+      let { outcome = null, lost = false, error = null } = first;
       if (error) {
         this.error = error.message;
         window.mahAnnounce?.(`Nothing was applied: ${error.message}`, { assertive: true });
       }
 
-      let recovered = null;
       if (lost) {
         if (!quiet) {
           this.applyUnknown = 'The result of this apply is unknown; checking…';
           window.mahAnnounce?.(this.applyUnknown, { assertive: true });
         }
-        recovered = await this._recoverApply(requestId);
+        if (!recovered) recovered = await this._recoverApply(requestId);
         this.applyUnknown = '';
       }
       this.localApplying = false;
@@ -677,9 +697,9 @@ export function registerReductionReviewStore(Alpine) {
      *
      * Resolves to {record} (this attempt's finished or interrupted apply) or {message}.
      */
-    async _recoverApply(requestId) {
+    async _recoverApply(requestId, cancel = { stop: false }) {
       let foreign = 0;
-      for (let i = 0; i < RECOVER_TRIES; i++) {
+      for (let i = 0; i < RECOVER_TRIES && !cancel.stop; i++) {
         await new Promise((resolve) => setTimeout(resolve, i === 0 ? RECOVER_FIRST_MS : RECOVER_MS));
         let last;
         try {

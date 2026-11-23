@@ -5202,12 +5202,16 @@ progress.export-progress-bar::-moz-progress-bar {
 }
 
 @media (max-width: 639px) {
-    /* The rows scroll sideways: fade their trailing edge as the hint. */
+    /* The rows scroll sideways. The cue is an edge shadow painted behind the text
+       (scroll-shadow gradients), never a mask over it, so no text is ever dimmed. */
     .reduction-tabs,
     .reduction-chips {
         scroll-padding-inline: 1rem;
-        -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 3rem), transparent);
-        mask-image: linear-gradient(to right, #000 calc(100% - 3rem), transparent);
+        background:
+            linear-gradient(to right, #fafaf9 30%, rgba(250, 250, 249, 0)) left center / 2rem 100% no-repeat local,
+            linear-gradient(to left, #fafaf9 30%, rgba(250, 250, 249, 0)) right center / 2rem 100% no-repeat local,
+            radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.28), rgba(0, 0, 0, 0)) left center / 0.625rem 100% no-repeat scroll,
+            radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.28), rgba(0, 0, 0, 0)) right center / 0.625rem 100% no-repeat scroll;
     }
 }
 

@@ -7,7 +7,7 @@
 <a href="#reduction-clusters" data-testid="reduction-skip-link"
    class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:p-3 focus:bg-white focus:text-amber-800 focus:underline">Skip to Clusters</a>
 {% if statusTab == "open" %}
-<a href="#reduction-apply-button" data-testid="reduction-skip-apply" x-data @click.prevent="$store.reductionReview.focusApply()"
+<a href="#reduction-apply-button" data-testid="reduction-skip-apply" x-data x-show="$store.reductionReview.tab === 'open' && ($store.reductionReview.openCount > 0 || $store.reductionReview.checkedCount > 0)" x-cloak @click.prevent="$store.reductionReview.focusApply()"
    class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:p-3 focus:bg-white focus:text-amber-800 focus:underline">Skip to Apply</a>
 {% endif %}
 </nav>
@@ -263,7 +263,7 @@
 
     {% if showReview %}
     {# The apply bar. Sticky inside the main column so the cards scroll under it; the Clusters region has bottom padding of its own height. #}
-    <div class="reduction-bar" data-testid="reduction-apply-bar" role="region" aria-label="Apply approved Clusters"
+    <div class="reduction-bar" data-testid="reduction-apply-bar" tabindex="-1" role="region" aria-label="Apply approved Clusters"
          x-show="$store.reductionReview.tab === 'open' && ($store.reductionReview.openCount > 0 || $store.reductionReview.checkedCount > 0)" x-cloak
          @keydown.escape="$store.reductionReview.closeMore()">
         <p class="reduction-bar-counts" data-testid="reduction-checked-summary">

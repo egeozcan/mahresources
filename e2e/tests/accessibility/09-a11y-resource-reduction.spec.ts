@@ -222,4 +222,15 @@ test.describe('Resource Reduction accessibility', () => {
     const bar = await page.getByTestId('reduction-apply-bar').boundingBox();
     expect(bar!.height).toBeLessThan(130);
   });
+
+  test('Skip to Apply lands on the bar when Apply is disabled', async ({ page, apiClient, request, baseURL }) => {
+    const id = await computedReduction(apiClient, request, baseURL!, `RR a11y skip bar ${Date.now()}`, 'sample-image-5.png');
+    await page.goto(`/reduction?id=${id}`);
+    // Clear the approval: Apply is disabled, but there is still a bar to reach.
+    await page.getByTestId('cluster-approve').first().click();
+    await expect(page.getByTestId('reduction-apply')).toBeDisabled();
+    await page.getByTestId('reduction-skip-apply').focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('reduction-apply-bar')).toBeFocused();
+  });
 });

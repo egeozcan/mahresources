@@ -1054,4 +1054,27 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     await expect(page.getByTestId('reduction-settings-notice')).toBeHidden();
     await other.close();
   });
+
+  test('a refusal that arrives after Continue in background is shown as a refusal', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR bg refusal ${Date.now()}`;
+    const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);
+    const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID]);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}`);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/v1/reduction/apply', async (route) => {
+      await held;
+      await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'this Reduction changed since you confirmed it' }) });
+    });
+    await page.getByTestId('reduction-apply').click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Apply 1 Cluster' }).click();
+    await page.getByTestId('reduction-apply-background').click();
+    await expect(page.getByTestId('reduction-dialog')).toBeHidden();
+    release();
+    await expect(page.getByTestId('reduction-error')).toContainText('this Reduction changed since you confirmed it');
+    await expect(page.getByTestId('reduction-apply-unknown')).toBeHidden();
+    await expect(page.getByTestId('reduction-apply-result')).toBeHidden();
+  });
 });
