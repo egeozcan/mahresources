@@ -72,7 +72,7 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 	// criteria, and a withheld Cluster is excluded before its fields are ever
 	// consulted — so the filter itself can never answer "what tier is the hidden
 	// Cluster?".
-	visible, err := ctx.visibleMemberIDs(reductionMemberIDs(plan.Clusters))
+	visible, err := ctx.reviewReach(&plan, reductionMemberIDs(plan.Clusters))
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +105,7 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 	if err != nil {
 		return nil, err
 	}
-	pageViews := buildClusterViews(pageClusters, resources, associations)
+	pageViews := buildClusterViews(pageClusters, resources, associations, ctx.isScopedPrincipal())
 
 	// Counted over every Cluster, not the page: apply acts on the whole plan, and
 	// a confirmation that counts only what is on screen understates the blast
@@ -130,7 +130,7 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 		}
 		if cluster.Tier == models.ReductionTierIdentical {
 			figures.bulk.IdenticalOpen++
-			if !clusterNeedsAttention(cluster) {
+			if !cluster.Checked && !clusterNeedsAttention(cluster) {
 				figures.bulk.IdenticalApprovable++
 			}
 		}
@@ -588,7 +588,7 @@ func clusterWithheld(c *models.ReductionCluster, visible map[uint]bool) bool {
 // buildClusterViews hydrates a set of Clusters into the page's views, checking
 // every member against the caller's scoped handle and redacting any Cluster that
 // reaches a Resource the caller may not see.
-func buildClusterViews(clusters []*models.ReductionCluster, resources map[uint]*models.Resource, associations map[uint]resourceAssociationCounts) []contracts.ReductionClusterView {
+func buildClusterViews(clusters []*models.ReductionCluster, resources map[uint]*models.Resource, associations map[uint]resourceAssociationCounts, scoped bool) []contracts.ReductionClusterView {
 	views := make([]contracts.ReductionClusterView, 0, len(clusters))
 	for _, cluster := range clusters {
 		view := contracts.ReductionClusterView{
@@ -617,7 +617,9 @@ func buildClusterViews(clusters []*models.ReductionCluster, resources map[uint]*
 			// what ejection means — so one that later leaves the caller's scope is a
 			// live Resource outside their access, not a merged-away one.
 			mergedAway := cluster.Merged && member.IsLoser(cluster.WinnerID)
-			if resource == nil && !mergedAway {
+			// Only for a scoped caller: for anyone else a Resource that does not come
+			// back was deleted, which is nothing to hide (the Cluster reads as stale).
+			if resource == nil && !mergedAway && scoped {
 				view.Withheld++
 			}
 			view.Members = append(view.Members, contracts.ReductionMemberView{
@@ -735,8 +737,11 @@ func reductionStateLabel(cluster *models.ReductionCluster) string {
 	case models.ReductionClusterStale:
 		return "Stale — refused at apply"
 	}
+	if cluster.Checked {
+		return "Approved"
+	}
 	if cluster.Reviewed {
-		return "Reviewed"
+		return "Not approved"
 	}
 	return "Open"
 }
@@ -836,4 +841,64 @@ func (ctx *MahresourcesContext) deriveKeepsSmallerForOldPlan(plan *models.Resour
 		cluster.KeepsSmaller = keepsSmaller(candidates, cluster.WinnerID, rule, cluster.DecidedBy)
 	}
 	return nil
+}
+
+// reviewReach is the visibility every count, tab, filter, figure and apply of one
+// plan reasons from, and the one place "deleted" is told apart from "not yours".
+//
+// For a scope-confined caller a member that does not come back is either, and the
+// two stay one answer: the Cluster is withheld. For anyone else it can only have
+// been deleted (typically merged away by another Reduction), so a still-pending
+// Cluster that names one is read as stale, with the reason, and nothing about it
+// is withheld. The plan is changed in memory only; callers that write it back
+// persist the same reading, which is accurate.
+func (ctx *MahresourcesContext) reviewReach(plan *models.ResourceReductionPlan, ids []uint) (map[uint]bool, error) {
+	visible, err := ctx.visibleMemberIDs(ids)
+	if err != nil {
+		return nil, err
+	}
+	ctx.readDeletions(plan, visible)
+	if !ctx.isScopedPrincipal() {
+		// Nothing is withheld from them: a missing member is a deleted one.
+		for _, id := range ids {
+			visible[id] = true
+		}
+	}
+	return visible, nil
+}
+
+// readDeletions applies reviewReach's unrestricted reading to a plan given the
+// visibility already read, and returns nothing for a scoped caller.
+func (ctx *MahresourcesContext) readDeletions(plan *models.ResourceReductionPlan, visible map[uint]bool) {
+	if ctx.isScopedPrincipal() {
+		return
+	}
+	for _, cluster := range plan.Clusters {
+		if cluster.State != models.ReductionClusterOpen && cluster.State != models.ReductionClusterSkipped {
+			continue
+		}
+		for _, member := range cluster.Members {
+			if !member.Ejected && !visible[member.ResourceID] {
+				cluster.State = models.ReductionClusterStale
+				cluster.StaleReason = staleReasonDeleted
+				cluster.Checked = false
+				break
+			}
+		}
+	}
+}
+
+// visibleOrAll is visibleMemberIDs with reviewReach's rule for an unconfined caller:
+// nothing is withheld from them.
+func (ctx *MahresourcesContext) visibleOrAll(ids []uint) (map[uint]bool, error) {
+	visible, err := ctx.visibleMemberIDs(ids)
+	if err != nil {
+		return nil, err
+	}
+	if !ctx.isScopedPrincipal() {
+		for _, id := range ids {
+			visible[id] = true
+		}
+	}
+	return visible, nil
 }

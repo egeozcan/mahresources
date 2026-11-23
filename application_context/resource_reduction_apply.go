@@ -18,6 +18,7 @@ import (
 // reviewer's next move depends on which one it was.
 const (
 	staleReasonMemberGone   = "a Resource in this Cluster no longer exists, or is no longer one you may see"
+	staleReasonDeleted      = "a Resource in this Cluster no longer exists"
 	staleReasonHashChanged  = "the bytes of a Resource in this Cluster changed since it was reviewed"
 	staleReasonPairGone     = "the perceptual match between the Winner and a Loser no longer holds"
 	staleReasonNothingToDo  = "every Loser in this Cluster has been ejected, so there is nothing to merge"
@@ -169,7 +170,7 @@ func (ctx *MahresourcesContext) eligibleApplyClusters(reduction *models.Resource
 	if err != nil {
 		return nil, err
 	}
-	visible, err := ctx.visibleMemberIDs(reductionMemberIDs(plan.Clusters))
+	visible, err := ctx.reviewReach(&plan, reductionMemberIDs(plan.Clusters))
 	if err != nil {
 		return nil, err
 	}
@@ -349,7 +350,10 @@ func (ctx *MahresourcesContext) applyOneCluster(reductionID uint, clusterID stri
 		// A member that vanished between the visibility read above and this one is
 		// the same case as that read, caught late: left alone and unreported.
 		if reason == staleReasonMemberGone {
-			return clusterApplyOutcome{Omit: true}
+			if ctx.isScopedPrincipal() {
+				return clusterApplyOutcome{Omit: true}
+			}
+			reason = staleReasonDeleted
 		}
 		report.Reason = reason
 		// Marked stale only if the Cluster is still the one that failed. The

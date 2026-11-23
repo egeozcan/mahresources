@@ -27,22 +27,22 @@ func (ctx *MahresourcesContext) GetReductionProgress(reductions []models.Resourc
 		plans[reductions[i].ID] = plan
 	}
 
-	var visible map[uint]bool
-	if ctx.isScopedPrincipal() {
-		var ids []uint
-		for _, plan := range plans {
-			ids = append(ids, reductionMemberIDs(plan.Clusters)...)
-		}
-		var err error
-		if visible, err = ctx.visibleMemberIDs(ids); err != nil {
-			return nil, err
-		}
+	// The same reading the review's tabs use, so the list and the page agree.
+	var ids []uint
+	for _, plan := range plans {
+		ids = append(ids, reductionMemberIDs(plan.Clusters)...)
+	}
+	visible, err := ctx.visibleMemberIDs(ids)
+	if err != nil {
+		return nil, err
 	}
 
 	for id, plan := range plans {
+		plan := plan
+		ctx.readDeletions(&plan, visible)
 		var progress contracts.ReductionProgress
 		for _, cluster := range plan.Clusters {
-			if visible != nil && clusterWithheld(cluster, visible) {
+			if ctx.isScopedPrincipal() && clusterWithheld(cluster, visible) {
 				continue
 			}
 			progress.Clusters++

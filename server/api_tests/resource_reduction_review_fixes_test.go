@@ -363,6 +363,7 @@ func TestKeepsSmallerIsDerivedForAPlanStoredBeforeTheFlag(t *testing.T) {
 	plan := computeReduction(t, tc, red.ID)
 	plan = override(t, tc, red.ID, plan.Clusters[0].ID, application_context.ReductionActionPromote, small.ID)
 	require.True(t, plan.Clusters[0].KeepsSmaller)
+	plan = override(t, tc, red.ID, plan.Clusters[0].ID, application_context.ReductionActionCheck, 0)
 
 	// Rewrite the stored plan as an older release left it: no flag, no settings.
 	legacy := plan

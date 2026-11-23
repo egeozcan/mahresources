@@ -84,6 +84,10 @@ func (ctx *MahresourcesContext) bulkOverrideReductionClustersOnce(request *query
 	if err := ctx.deriveKeepsSmallerForOldPlan(&plan, reduction); err != nil {
 		return nil, nil, err
 	}
+	// The same reading as the review, so the count on the button is the count here.
+	if _, err := ctx.reviewReach(&plan, reductionMemberIDs(plan.Clusters)); err != nil {
+		return nil, nil, err
+	}
 	targets, err := ctx.bulkTargets(&plan, request)
 	if err != nil {
 		return nil, nil, err
@@ -91,6 +95,17 @@ func (ctx *MahresourcesContext) bulkOverrideReductionClustersOnce(request *query
 
 	checking := request.Action == ReductionActionCheck
 	result := &contracts.ReductionBulkResult{}
+	// What a click on "Approve all Identical (n)" would change: unapproved and not
+	// needing attention. For an uncheck, every open Identical Cluster, as before.
+	counted := len(targets)
+	if checking {
+		counted = 0
+		for _, cluster := range targets {
+			if !cluster.Checked && !clusterNeedsAttention(cluster) {
+				counted++
+			}
+		}
+	}
 	for _, cluster := range targets {
 		if checking && clusterNeedsAttention(cluster) {
 			result.NeedsReview++
@@ -102,7 +117,7 @@ func (ctx *MahresourcesContext) bulkOverrideReductionClustersOnce(request *query
 		cluster.Checked = checking
 		cluster.Reviewed = true
 	}
-	if request.AllIdentical && uint(len(targets)-result.NeedsReview) != *request.ExpectedCount {
+	if request.AllIdentical && uint(counted) != *request.ExpectedCount {
 		return nil, nil, ErrReductionCountMismatch
 	}
 
@@ -128,7 +143,7 @@ func (ctx *MahresourcesContext) bulkTargets(plan *models.ResourceReductionPlan, 
 				identical = append(identical, cluster)
 			}
 		}
-		visible, err := ctx.visibleMemberIDs(reductionMemberIDs(identical))
+		visible, err := ctx.visibleOrAll(reductionMemberIDs(identical))
 		if err != nil {
 			return nil, err
 		}
@@ -154,7 +169,7 @@ func (ctx *MahresourcesContext) bulkTargets(plan *models.ResourceReductionPlan, 
 		}
 		named = append(named, cluster)
 	}
-	visible, err := ctx.visibleMemberIDs(reductionMemberIDs(named))
+	visible, err := ctx.visibleOrAll(reductionMemberIDs(named))
 	if err != nil {
 		return nil, err
 	}

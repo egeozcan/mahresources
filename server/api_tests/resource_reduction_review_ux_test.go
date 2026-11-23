@@ -292,9 +292,10 @@ func TestReviewApplyFigures(t *testing.T) {
 	plan := computeReduction(t, tc, red.ID)
 	override(t, tc, red.ID, clusterFor(plan, skipped[0]).ID, application_context.ReductionActionSkip, 0)
 	nearCluster := clusterFor(plan, near1.ID)
-	override(t, tc, red.ID, nearCluster.ID, application_context.ReductionActionCheck, 0)
-	// Keeping the smaller near copy by hand is the keeps-smaller case.
+	// Keeping the smaller near copy by hand is the keeps-smaller case. Promoting
+	// clears the approval, so it is given after.
 	override(t, tc, red.ID, nearCluster.ID, application_context.ReductionActionPromote, near2.ID)
+	override(t, tc, red.ID, nearCluster.ID, application_context.ReductionActionCheck, 0)
 
 	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
 	require.NoError(t, err)
@@ -311,6 +312,6 @@ func TestReviewApplyFigures(t *testing.T) {
 	assert.Equal(t, 1, figures.KeepsSmaller)
 
 	bulk := reviewOf(t, tc, red.ID, 1, nil).Bulk
-	assert.Equal(t, 2, bulk.IdenticalApprovable, "the skipped Cluster is not open")
+	assert.Equal(t, 0, bulk.IdenticalApprovable, "both open Identical Clusters are already approved, and the skipped one is not open")
 	assert.Equal(t, 2, bulk.IdenticalOpen)
 }

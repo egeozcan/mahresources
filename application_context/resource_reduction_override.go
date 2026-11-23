@@ -143,6 +143,11 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 			cluster.State = models.ReductionClusterOpen
 			cluster.StaleReason = ""
 		}
+		// Nothing left to remove: approving it would count a Cluster that merges
+		// nothing in "N approved".
+		if len(cluster.LoserIDs()) == 0 {
+			cluster.Checked = false
+		}
 		// The curation warning is about which Losers hold what, so it changes with
 		// the membership. Leaving it stale after an ejection warns about a copy that
 		// is no longer going anywhere.
@@ -267,6 +272,9 @@ func (ctx *MahresourcesContext) promoteMember(cluster *models.ReductionCluster, 
 	}
 
 	cluster.WinnerID = member.ResourceID
+	// An approval belongs to the proposal it was given to. A different kept copy is
+	// a different proposal, so the reviewer approves it again.
+	cluster.Checked = false
 	member.Ejected = false
 	member.EjectedReason = ""
 	member.Distance = nil
@@ -395,6 +403,11 @@ func (ctx *MahresourcesContext) refreshLossy(cluster *models.ReductionCluster, r
 // so its absence is the record of what happened rather than something withheld —
 // the same rule the render applies.
 func (ctx *MahresourcesContext) clusterFullyVisible(cluster *models.ReductionCluster) (bool, error) {
+	// Nothing is withheld from an unconfined caller: a missing member is a deleted
+	// one, and the Cluster reads as stale (see reviewReach).
+	if !ctx.isScopedPrincipal() {
+		return true, nil
+	}
 	wanted := make([]uint, 0, len(cluster.Members))
 	for _, member := range cluster.Members {
 		if cluster.Merged && member.IsLoser(cluster.WinnerID) {
