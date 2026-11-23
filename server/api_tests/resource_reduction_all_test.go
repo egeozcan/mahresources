@@ -141,10 +141,15 @@ func TestCreatingAWholeLibraryReductionOverTheRoutes(t *testing.T) {
 	var created map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
 
+	// The client computes straight after creating, and compute needs the version.
+	owner, restricted := asAdmin()
+	stored, err := tc.AppCtx.GetResourceReduction(uint(created["id"].(float64)), owner, restricted)
+	require.NoError(t, err)
+	assert.EqualValues(t, stored.Version, created["version"])
+
 	form := tc.MakeFormRequest(http.MethodPost, "/v1/reduction", url.Values{"name": {"Form all"}, "all": {"true"}})
 	require.Equal(t, http.StatusOK, form.Code, form.Body.String())
 
-	owner, restricted := asAdmin()
 	red, err := tc.AppCtx.GetResourceReduction(uint(created["id"].(float64)), owner, restricted)
 	require.NoError(t, err)
 	extent, err := application_context.DecodeReductionExtent(red.Extent)

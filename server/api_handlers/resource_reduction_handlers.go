@@ -59,8 +59,9 @@ func GetResourceReductionCreateHandler(ctx ResourceReductionContext) func(http.R
 		// off this JSON body rather than a redirect it would never follow.
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(map[string]any{
-			"id":  reduction.ID,
-			"url": reductionURL(reduction.ID),
+			"id":      reduction.ID,
+			"version": reduction.Version,
+			"url":     reductionURL(reduction.ID),
 		})
 	}
 }
