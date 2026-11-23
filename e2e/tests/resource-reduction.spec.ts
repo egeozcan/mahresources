@@ -359,7 +359,11 @@ test.describe('Resource Reduction', () => {
 
     const loser = cluster.locator('[data-testid="reduction-member"]:not([data-winner])').first();
     const loserId = await loser.getAttribute('data-resource-id');
+    await expect(cluster.getByTestId('cluster-approve')).toHaveAttribute('aria-pressed', 'true');
     await loser.getByRole('button', { name: 'Keep this instead' }).click();
+    // A new proposal is not the one that was approved: the reviewer approves it again.
+    await expect(cluster.getByTestId('cluster-approve')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByTestId('reduction-checked-summary')).toContainText('0 approved');
 
     const promoted = cluster.locator(`[data-testid="reduction-member"][data-resource-id="${loserId}"]`);
     await expect(promoted).toHaveAttribute('data-winner', 'true');
@@ -485,6 +489,10 @@ test.describe('Resource Reduction', () => {
     await page.getByTestId('reduction-cluster').first().getByTestId('cluster-reopen').click();
     await expect(page.getByTestId('reduction-cluster')).toHaveCount(0);
     await expect(page.locator('[data-reduction-count]')).toHaveText('(0)');
+
+    // Back on the Open tab the Cluster reads as not approved (the label the backend renders after Reopen).
+    await page.getByTestId('reduction-tab-open').click();
+    await expect(page.getByTestId('reduction-cluster').first().getByTestId('cluster-state')).toHaveText('Not approved');
   });
 
   test('filter chips toggle a query parameter and Clear filters resets them', async ({ page, apiClient, request, baseURL }) => {
