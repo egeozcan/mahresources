@@ -33,9 +33,12 @@ func TestReductionReviewPageFiltersByClusterStatus(t *testing.T) {
 	// Skip one Cluster; the other stays open.
 	override(t, tc, red.ID, plan.Clusters[0].ID, application_context.ReductionActionSkip, 0)
 
-	// Unfiltered: both render.
+	// With no status the page lands on the Open tab: the skipped Cluster is not
+	// there. status=all is the unfiltered list.
 	body := tc.MakeRequest(http.MethodGet, reductionPath(red.ID), nil).Body.String()
-	assert.Equal(t, 2, strings.Count(body, `data-testid="reduction-cluster"`), "both Clusters render unfiltered")
+	assert.Equal(t, 1, strings.Count(body, `data-testid="reduction-cluster"`), "the default view is the Open tab")
+	body = tc.MakeRequest(http.MethodGet, reductionPath(red.ID)+"&status=all", nil).Body.String()
+	assert.Equal(t, 2, strings.Count(body, `data-testid="reduction-cluster"`), "both Clusters render with status=all")
 
 	// Filtered to skipped: only the frozen one, which offers Reopen.
 	body = tc.MakeRequest(http.MethodGet, reductionPath(red.ID)+"&Status=skipped", nil).Body.String()
