@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -56,6 +57,19 @@ func (ctx *MahresourcesContext) ApplyResourceReduction(request *query_models.Red
 		return nil, errors.New("no Resource Reduction given")
 	}
 
+	// Detached from the request, here and not in the handler (whose context has no
+	// way to rebase the handle). A closed tab or a dropped connection cancels the
+	// request, and a cancellation landing between a Cluster's claim and its merge
+	// would strand it marked applied over Losers that still exist, with the failed
+	// merge never demoted because that write is cancelled too. WithoutCancel keeps
+	// the values on the handle and WithParentContext carries the scope filter and
+	// acting user across, so the batch still runs as the caller and inside their
+	// subtree. The ceiling bounds a wedged batch; Clusters it does not reach stay
+	// approved. Every read and write below goes through this handle.
+	detached, cancel := context.WithTimeout(context.WithoutCancel(ctx.db.Statement.Context), ReductionApplyCeiling)
+	defer cancel()
+	ctx = ctx.WithParentContext(detached)
+
 	reduction, err := ctx.loadReductionForUpdate(request.ID, ownerUserID, ownerRestricted)
 	if err != nil {
 		return nil, err
@@ -67,16 +81,9 @@ func (ctx *MahresourcesContext) ApplyResourceReduction(request *query_models.Red
 	// The claim, taken before anything is destroyed and in the shape
 	// ClaimDownloadHistoryRetry uses: a reviewer working from a stale page cannot
 	// apply, and a concurrent apply or override loses here rather than
-	// interleaving merges with this one.
-	claimed, err := ctx.casReduction(reduction.ID, request.Version, map[string]any{})
-	if err != nil {
-		return nil, err
-	}
-	if !claimed {
-		return nil, ErrReductionConflict
-	}
-
-	plan, err := DecodeReductionPlan(reduction.Plan)
+	// interleaving merges with this one. It also writes the batch's own record,
+	// running, so a lost response is answered on reload.
+	plan, startedAt, err := ctx.claimReductionApplyBatch(reduction, request.Version)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +107,57 @@ func (ctx *MahresourcesContext) ApplyResourceReduction(request *query_models.Red
 		}
 	}
 
+	ctx.finishReductionApplyBatch(reduction.ID, startedAt, result)
 	return result, nil
+}
+
+// claimReductionApplyBatch takes the batch-level claim: one compare-and-set on the
+// caller's version that also records the apply as running. Written once here and
+// completed once by finishReductionApplyBatch, not by each Cluster's claim.
+func (ctx *MahresourcesContext) claimReductionApplyBatch(reduction *models.ResourceReduction, version uint) (models.ResourceReductionPlan, time.Time, error) {
+	plan, err := DecodeReductionPlan(reduction.Plan)
+	if err != nil {
+		return plan, time.Time{}, err
+	}
+	startedAt := time.Now()
+	plan.LastApply = &models.ReductionLastApply{StartedAt: startedAt}
+	encoded, err := encodeJSON(plan)
+	if err != nil {
+		return plan, startedAt, err
+	}
+	claimed, err := ctx.casReduction(reduction.ID, version, map[string]any{"plan": encoded})
+	if err != nil {
+		return plan, startedAt, err
+	}
+	if !claimed {
+		return plan, startedAt, ErrReductionConflict
+	}
+	return plan, startedAt, nil
+}
+
+// finishReductionApplyBatch completes the record the claim wrote. The stale count
+// leaves out withheld outcomes: they carry no identifiers because the Cluster
+// reached a Resource the caller may not see, and a count of them would be the
+// same disclosure.
+func (ctx *MahresourcesContext) finishReductionApplyBatch(reductionID uint, startedAt time.Time, result *contracts.ReductionApplyResult) {
+	stale := 0
+	for _, outcome := range result.Stale {
+		if !outcome.Withheld {
+			stale++
+		}
+	}
+	finished := time.Now()
+	_ = ctx.mutatePlan(reductionID, "apply", func(plan *models.ResourceReductionPlan) bool {
+		// Only the record this batch wrote: a later apply has replaced it.
+		if plan.LastApply == nil || !plan.LastApply.StartedAt.Equal(startedAt) {
+			return false
+		}
+		plan.LastApply.FinishedAt = &finished
+		plan.LastApply.Applied = len(result.Applied)
+		plan.LastApply.Removed = result.DestroyedCount()
+		plan.LastApply.Stale = stale
+		return true
+	})
 }
 
 type clusterApplyOutcome struct {
@@ -522,36 +579,47 @@ func (ctx *MahresourcesContext) markClusterStale(reductionID uint, clusterID, re
 // first has already moved it off `open`, and recording "stale" over its "applied"
 // would describe a merge that did happen as one that did not.
 func (ctx *MahresourcesContext) mutateCluster(reductionID uint, clusterID string, mutate func(*models.ReductionCluster) bool) bool {
+	return ctx.mutatePlan(reductionID, clusterID, func(plan *models.ResourceReductionPlan) bool {
+		cluster := findCluster(plan, clusterID)
+		return cluster != nil && mutate(cluster)
+	})
+}
+
+// mutatePlan is the read-modify-write every bookkeeping write of the plan goes
+// through: re-read, change, compare-and-set, again while it loses. The whole
+// decoded plan is what is written back, so the parts a caller does not touch (the
+// settings and the last apply record included) are carried over by construction.
+// label names what is being recorded, for the log when it cannot land.
+func (ctx *MahresourcesContext) mutatePlan(reductionID uint, label string, mutate func(*models.ResourceReductionPlan) bool) bool {
 	for attempt := 0; attempt < reductionCASRetries; attempt++ {
 		current, err := ctx.loadReductionForUpdate(reductionID, nil, false)
 		if err != nil {
-			ctx.logReductionWriteFailure(reductionID, clusterID, err)
+			ctx.logReductionWriteFailure(reductionID, label, err)
 			return false
 		}
 		plan, err := DecodeReductionPlan(current.Plan)
 		if err != nil {
-			ctx.logReductionWriteFailure(reductionID, clusterID, err)
+			ctx.logReductionWriteFailure(reductionID, label, err)
 			return false
 		}
-		cluster := findCluster(&plan, clusterID)
-		if cluster == nil || !mutate(cluster) {
+		if !mutate(&plan) {
 			return false
 		}
 		encoded, err := encodeJSON(plan)
 		if err != nil {
-			ctx.logReductionWriteFailure(reductionID, clusterID, err)
+			ctx.logReductionWriteFailure(reductionID, label, err)
 			return false
 		}
 		ok, err := ctx.casReduction(current.ID, current.Version, map[string]any{"plan": encoded})
 		if err != nil {
-			ctx.logReductionWriteFailure(reductionID, clusterID, err)
+			ctx.logReductionWriteFailure(reductionID, label, err)
 			return false
 		}
 		if ok {
 			return true
 		}
 	}
-	ctx.logReductionWriteFailure(reductionID, clusterID, ErrReductionConflict)
+	ctx.logReductionWriteFailure(reductionID, label, ErrReductionConflict)
 	return false
 }
 
