@@ -47,6 +47,9 @@ type ReductionClusterView struct {
 	// as "<types.JSON Value>" to a reader.
 	DecidedByLabel string
 	StateLabel     string
+	// LoserCount is how many copies this Cluster would remove: members that are
+	// neither the Winner nor ejected. Zero means there is nothing to approve.
+	LoserCount int
 	// Withheld counts members the current principal may not see. A Cluster with
 	// any is not actionable: applying it would destroy Resources the reviewer was
 	// never shown.

@@ -632,6 +632,7 @@ func buildClusterViews(clusters []*models.ReductionCluster, resources map[uint]*
 			Winner:           resources[cluster.WinnerID],
 			DecidedByLabel:   models.WinnerCriterionLabel(cluster.DecidedBy),
 			StateLabel:       reductionStateLabel(cluster),
+			LoserCount:       len(cluster.LoserIDs()),
 		}
 		for _, member := range cluster.Members {
 			resource := resources[member.ResourceID]

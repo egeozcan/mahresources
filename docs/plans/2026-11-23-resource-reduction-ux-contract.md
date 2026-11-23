@@ -145,3 +145,4 @@ Top-level review-page key (also in `.json`): `reviewSelection = {groups: [{id, n
 - A Cluster with no Loser left cannot be approved: single check answers `409 every copy in this Cluster is kept, so there is nothing to approve`, bulk check skips it, and apply ignores it.
 - Approving a Cluster that is stale because a Resource in it is gone answers `409 this Cluster is stale and cannot be approved: ...`, not "no such Cluster". `stateLabel` for stale is `Stale`; the reason is in `staleReason`.
 - A recompute keeps the keeps-smaller warning of legacy frozen Clusters it carries over.
+- `clusters[i].LoserCount` (template `LoserCount`, int): copies the Cluster would remove (not the Winner, not ejected). 0 means nothing to approve; show that instead of the Approve control. 0 on a redacted stub.

@@ -652,3 +652,21 @@ func TestApprovingAClusterStaleForADeletedCopySaysSo(t *testing.T) {
 	require.Len(t, review.Clusters, 1)
 	assert.Equal(t, "Stale", review.Clusters[0].StateLabel)
 }
+
+func TestClusterViewCarriesTheLoserCount(t *testing.T) {
+	tc := SetupTestEnv(t)
+	ids := clusterOf(t, tc, "r2-losercount", 3)
+	setDimensions(t, tc, ids[0], 900, 900)
+	red := createReduction(t, tc, "Loser count", ids)
+	plan := computeReduction(t, tc, red.ID)
+	assert.Equal(t, 2, reviewOf(t, tc, red.ID, 1, nil).Clusters[0].LoserCount)
+	override(t, tc, red.ID, plan.Clusters[0].ID, application_context.ReductionActionEject, ids[1])
+	override(t, tc, red.ID, plan.Clusters[0].ID, application_context.ReductionActionEject, ids[2])
+	view := reviewOf(t, tc, red.ID, 1, nil).Clusters[0]
+	assert.Zero(t, view.LoserCount)
+	for _, m := range view.Members {
+		if m.ResourceID != ids[0] {
+			assert.True(t, m.Ejected, "the ejected members carry Ejected")
+		}
+	}
+}
