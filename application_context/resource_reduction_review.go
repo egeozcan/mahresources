@@ -1,7 +1,10 @@
 package application_context
 
 import (
+	"fmt"
+	"sort"
 	"strconv"
+	"time"
 
 	"mahresources/contracts"
 	"mahresources/models"
@@ -47,39 +50,44 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 	if page < 1 {
 		page = 1
 	}
-	start := (page - 1) * ReductionClustersPerPage
+	pageSize := ReductionClustersPerPage
+	if query != nil {
+		pageSize = normalizeReviewPageSize(query.PageSize)
+	}
+	start := (page - 1) * pageSize
 
-	// Which Clusters are considered for this page. With a filter active every
-	// Cluster must be checked against it before pagination; without one, only
-	// the page's own slice matters and the rest of the plan is never touched.
+	// Reachability for the whole plan, decided once by an id-only read through the
+	// scoped handle, which costs far less than hydrating every member. Everything
+	// below leans on it: the status tabs count only Clusters the caller may fully
+	// see, the filter excludes the rest before consulting any of their fields, and
+	// the apply figures leave them out of the blast radius.
 	//
-	// A Cluster a scoped reviewer may not fully see is redacted down to "a
-	// Cluster outside your access" — tier, state, the curation markers and the
+	// A Cluster a scoped reviewer may not fully see is redacted down to "a Cluster
+	// outside your access" — tier, state, the curation markers and the
 	// justification are all statements about Resources they may not know about.
 	// The filter is therefore applied in two steps: reachability first, then the
 	// criteria, and a withheld Cluster is excluded before its fields are ever
 	// consulted — so the filter itself can never answer "what tier is the hidden
-	// Cluster?". Reachability is decided by an id-only read through the scoped
-	// handle, which costs far less than hydrating every member of the plan.
+	// Cluster?".
+	visible, err := ctx.visibleMemberIDs(reductionMemberIDs(plan.Clusters))
+	if err != nil {
+		return nil, err
+	}
+	tabCounts := countReviewTabs(plan.Clusters, visible)
+
 	candidates := plan.Clusters
-	clusterCount := len(plan.Clusters)
-	// Reachability for the whole plan, known only when the filter needs it (and
-	// reused for the checked count below); the unfiltered path stays per-page.
-	var visible map[uint]bool
-	filtered := reviewQueryActive(query)
-	if filtered {
-		var err error
-		visible, err = ctx.visibleMemberIDs(reductionMemberIDs(plan.Clusters))
-		if err != nil {
-			return nil, err
-		}
+	if reviewQueryActive(query) {
 		candidates = filterReviewClusters(plan.Clusters, visible, query)
-		clusterCount = len(candidates)
+	}
+	clusterCount := len(candidates)
+	candidates, err = ctx.sortReviewClusters(candidates, visible, query)
+	if err != nil {
+		return nil, err
 	}
 	if start > len(candidates) {
 		start = len(candidates)
 	}
-	end := start + ReductionClustersPerPage
+	end := start + pageSize
 	if end > len(candidates) {
 		end = len(candidates)
 	}
@@ -90,7 +98,11 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 	if err != nil {
 		return nil, err
 	}
-	pageViews := buildClusterViews(pageClusters, resources)
+	associations, err := ctx.countResourceAssociationKinds(resourceIDsOf(resources))
+	if err != nil {
+		return nil, err
+	}
+	pageViews := buildClusterViews(pageClusters, resources, associations)
 
 	// Counted over every Cluster, not the page: apply acts on the whole plan, and
 	// a confirmation that counts only what is on screen understates the blast
@@ -99,48 +111,44 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 	// A Cluster reaching a Resource this caller may not see is left out of the
 	// count entirely. It cannot be applied, and counting it would tell them "there
 	// is one more Cluster, with two Resources in it" about Clusters the page
-	// otherwise refuses to describe. Only the checked ones are resolved, so this
-	// costs one lookup over what an apply would actually touch.
-	checkedClusters := make([]*models.ReductionCluster, 0, len(plan.Clusters))
-	var checkedMemberIDs []uint
+	// otherwise refuses to describe.
+	figures := reviewFigures{}
 	for _, cluster := range plan.Clusters {
-		if cluster.State == models.ReductionClusterOpen && cluster.Checked {
-			checkedClusters = append(checkedClusters, cluster)
-			for _, member := range cluster.Members {
+		if cluster.State != models.ReductionClusterOpen {
+			continue
+		}
+		reachable, whole := true, true
+		for _, member := range cluster.Members {
+			if !visible[member.ResourceID] {
+				whole = false
 				if !member.Ejected {
-					checkedMemberIDs = append(checkedMemberIDs, member.ResourceID)
+					reachable = false
 				}
 			}
 		}
-	}
-	// Reachability for the count is the same id-only read the filter uses — and
-	// the filtered path's map already covers the whole plan, so it is reused. A
-	// Resource (and its Series and Category preloads) must not be hydrated for
-	// every checked Cluster of a plan with thousands of them; Identical Clusters
-	// arrive checked, so a plain plan would otherwise load everything twice over.
-	checkedVisible := visible
-	if checkedVisible == nil {
-		var err error
-		checkedVisible, err = ctx.visibleMemberIDs(checkedMemberIDs)
-		if err != nil {
-			return nil, err
-		}
-	}
-	checked, checkedLosers := 0, 0
-	for _, cluster := range checkedClusters {
-		reachable := true
-		for _, member := range cluster.Members {
-			if !member.Ejected && !checkedVisible[member.ResourceID] {
-				reachable = false
-				break
+		if cluster.Tier == models.ReductionTierIdentical && whole {
+			figures.bulk.IdenticalOpen++
+			if !clusterNeedsAttention(cluster) {
+				figures.bulk.IdenticalApprovable++
 			}
 		}
-		if !reachable {
+		if !cluster.Checked || !reachable {
 			continue
 		}
-		checked++
-		checkedLosers += len(cluster.LoserIDs())
+		figures.checked++
+		figures.checkedLosers += len(cluster.LoserIDs())
+		tier := &figures.apply.Identical
+		if cluster.Tier == models.ReductionTierNear {
+			tier = &figures.apply.Near
+		}
+		tier.Clusters++
+		tier.Losers += len(cluster.LoserIDs())
+		if cluster.KeepsSmaller {
+			figures.apply.KeepsSmaller++
+		}
 	}
+	figures.apply.Identical.KeepAsVersion = reduction.KeepAsVersionIdentical
+	figures.apply.Near.KeepAsVersion = reduction.KeepAsVersionNear
 
 	// Deliberately no walk of the Extent here. Resolving it is one recursive CTE
 	// per selected Group, which is cheap; *counting* what it reaches is not, and a
@@ -189,15 +197,190 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 		CoverageTrusted:     coverageTrusted,
 		Clusters:            pageViews,
 		ClusterCount:        clusterCount,
-		CheckedCount:        checked,
-		CheckedLoserCount:   checkedLosers,
+		CheckedCount:        figures.checked,
+		CheckedLoserCount:   figures.checkedLosers,
 		Page:                page,
-		PageSize:            ReductionClustersPerPage,
+		PageSize:            pageSize,
 		SelectedResources:   len(extent.ResourceIDs),
 		SelectedGroups:      extent.SelectedGroups,
 		ExtentSize:          extentSize,
 		EnteredSinceCompute: entered,
+		ExtentAll:           storedExtent.All,
+		TabCounts:           tabCounts,
+		ApplyFigures:        figures.apply,
+		Bulk:                figures.bulk,
+		SettingsChanged:     reductionSettingsChanged(reduction, plan.Settings),
+		LastApply:           describeLastApply(plan.LastApply),
 	}, nil
+}
+
+// reviewFigures gathers what one pass over the plan counts.
+type reviewFigures struct {
+	checked, checkedLosers int
+	apply                  contracts.ReductionApplyFigures
+	bulk                   contracts.ReductionBulkFigures
+}
+
+// reductionSettingsChanged reports whether the row's settings differ from the ones
+// the plan was computed with. A plan with none recorded has nothing to compare.
+// Keep-as-version flags are not compared: they act at apply, not at compute.
+func reductionSettingsChanged(reduction *models.ResourceReduction, ran *models.ReductionSettings) bool {
+	if ran == nil {
+		return false
+	}
+	if ran.MatchingMode != normalizeMatchingMode(reduction.MatchingMode) ||
+		ran.ExcludeExternal != reduction.ExcludeExternalResources {
+		return true
+	}
+	rule := DecodeWinnerRule(reduction.WinnerRule)
+	if len(rule) != len(ran.WinnerRule) {
+		return true
+	}
+	for i := range rule {
+		if rule[i] != ran.WinnerRule[i] {
+			return true
+		}
+	}
+	return false
+}
+
+// describeLastApply is the stored apply record as the page shows it, with the
+// interruption reading derived from the clock: a record still running past the
+// ceiling is one whose process died or whose batch was abandoned.
+func describeLastApply(last *models.ReductionLastApply) *contracts.ReductionLastApplyView {
+	if last == nil {
+		return nil
+	}
+	running := last.FinishedAt == nil
+	return &contracts.ReductionLastApplyView{
+		StartedAt:   last.StartedAt,
+		FinishedAt:  last.FinishedAt,
+		Applied:     last.Applied,
+		Removed:     last.Removed,
+		Stale:       last.Stale,
+		Running:     running,
+		Interrupted: running && time.Since(last.StartedAt) > ReductionApplyCeiling,
+	}
+}
+
+// ReductionPageSizes are the page sizes the review offers.
+var ReductionPageSizes = []int{20, 50, 100}
+
+func normalizeReviewPageSize(asked int) int {
+	for _, size := range ReductionPageSizes {
+		if asked == size {
+			return size
+		}
+	}
+	return ReductionClustersPerPage
+}
+
+// countReviewTabs counts the Clusters of each status tab, over the ones the caller
+// may fully see. A withheld Cluster is in none of them, and neither are its
+// fields consulted: the same rule the filter follows.
+func countReviewTabs(clusters []*models.ReductionCluster, visible map[uint]bool) contracts.ReductionTabCounts {
+	var counts contracts.ReductionTabCounts
+	for _, c := range clusters {
+		if clusterWithheld(c, visible) {
+			continue
+		}
+		switch c.State {
+		case models.ReductionClusterOpen:
+			counts.Open++
+		case models.ReductionClusterSkipped:
+			counts.Skipped++
+		case models.ReductionClusterStale:
+			counts.Stale++
+		case models.ReductionClusterApplied:
+			counts.Applied++
+		}
+	}
+	return counts
+}
+
+// sortReviewClusters orders the filtered Clusters for pagination: most copies first
+// by default, largest total file size first, or the plan's own order. Ties break by
+// Cluster id so a refresh never reshuffles the pages.
+//
+// A withheld Cluster (which only an unfiltered page keeps, as a stub) sorts as if
+// it had no copies and no size, so its position says nothing about it.
+func (ctx *MahresourcesContext) sortReviewClusters(clusters []*models.ReductionCluster, visible map[uint]bool, query *query_models.ResourceReductionReviewQuery) ([]*models.ReductionCluster, error) {
+	mode := "copies"
+	if query != nil && (query.Sort == "size" || query.Sort == "computed") {
+		mode = query.Sort
+	}
+	if mode == "computed" {
+		return clusters, nil
+	}
+
+	keys := make(map[*models.ReductionCluster]int64, len(clusters))
+	if mode == "size" {
+		var ids []uint
+		for _, c := range clusters {
+			if !clusterWithheld(c, visible) {
+				ids = append(ids, reductionMemberIDs([]*models.ReductionCluster{c})...)
+			}
+		}
+		sizes, err := ctx.resourceFileSizes(ids)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range clusters {
+			if clusterWithheld(c, visible) {
+				continue
+			}
+			var total int64
+			for _, member := range c.Members {
+				total += sizes[member.ResourceID]
+			}
+			keys[c] = total
+		}
+	} else {
+		for _, c := range clusters {
+			if !clusterWithheld(c, visible) {
+				keys[c] = int64(len(c.Members))
+			}
+		}
+	}
+
+	sorted := append([]*models.ReductionCluster(nil), clusters...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if keys[sorted[i]] != keys[sorted[j]] {
+			return keys[sorted[i]] > keys[sorted[j]]
+		}
+		return sorted[i].ID < sorted[j].ID
+	})
+	return sorted, nil
+}
+
+// resourceFileSizes reads the stored file size of the named Resources through the
+// caller's scoped handle, so a Resource outside their subtree contributes nothing.
+func (ctx *MahresourcesContext) resourceFileSizes(ids []uint) (map[uint]int64, error) {
+	out := make(map[uint]int64, len(ids))
+	for _, chunk := range chunkUints(dedupeUints(ids), idChunk) {
+		var rows []struct {
+			ID       uint
+			FileSize int64
+		}
+		if err := ctx.db.Model(&models.Resource{}).
+			Select("resources.id, resources.file_size").
+			Where("resources.id IN ?", chunk).
+			Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			out[row.ID] = row.FileSize
+		}
+	}
+	return out, nil
+}
+
+func resourceIDsOf(resources map[uint]*models.Resource) []uint {
+	ids := make([]uint, 0, len(resources))
+	for id := range resources {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // reviewQueryActive reports whether any filter criterion is set. The distinction
@@ -205,7 +388,8 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 // from *filtered* results because matching it would take the very fields the
 // redaction strips, while an unfiltered page keeps showing it as a stub.
 func reviewQueryActive(query *query_models.ResourceReductionReviewQuery) bool {
-	return query != nil && (query.NeedsAttention || len(query.Status) > 0 || len(query.Tier) > 0)
+	return query != nil && (query.NeedsAttention || len(query.Status) > 0 || len(query.Tier) > 0 ||
+		query.Approval == "approved" || query.Approval == "unapproved")
 }
 
 // reductionMemberIDs is every member Resource id named by the Clusters.
@@ -261,13 +445,16 @@ func filterReviewClusters(clusters []*models.ReductionCluster, visible map[uint]
 		if clusterWithheld(c, visible) {
 			continue
 		}
-		if len(status) > 0 && !reviewClusterStatusMatches(c, status) {
+		if len(status) > 0 && !status["all"] && !reviewClusterStatusMatches(c, status) {
 			continue
 		}
 		if len(tier) > 0 && !tier[c.Tier] {
 			continue
 		}
 		if query.NeedsAttention && !clusterNeedsAttention(c) {
+			continue
+		}
+		if (query.Approval == "approved" && !c.Checked) || (query.Approval == "unapproved" && c.Checked) {
 			continue
 		}
 		out = append(out, c)
@@ -292,7 +479,7 @@ func clusterWithheld(c *models.ReductionCluster, visible map[uint]bool) bool {
 // buildClusterViews hydrates a set of Clusters into the page's views, checking
 // every member against the caller's scoped handle and redacting any Cluster that
 // reaches a Resource the caller may not see.
-func buildClusterViews(clusters []*models.ReductionCluster, resources map[uint]*models.Resource) []contracts.ReductionClusterView {
+func buildClusterViews(clusters []*models.ReductionCluster, resources map[uint]*models.Resource, associations map[uint]resourceAssociationCounts) []contracts.ReductionClusterView {
 	views := make([]contracts.ReductionClusterView, 0, len(clusters))
 	for _, cluster := range clusters {
 		view := contracts.ReductionClusterView{
@@ -330,9 +517,16 @@ func buildClusterViews(clusters []*models.ReductionCluster, resources map[uint]*
 				IsWinner:        member.ResourceID == cluster.WinnerID,
 				IsLoser:         member.IsLoser(cluster.WinnerID),
 				DistanceLabel:   reductionDistanceLabel(member.Distance),
+				TagCount:        associations[member.ResourceID].Tags,
+				NoteCount:       associations[member.ResourceID].Notes,
+				GroupCount:      associations[member.ResourceID].Groups,
 			})
 		}
 		view.Position = len(views) + 1
+		view.NeedsAttention = clusterNeedsAttention(cluster)
+		if cluster.KeepsSmaller {
+			describeKeepsSmaller(&view, resources)
+		}
 		if view.Withheld > 0 {
 			view = redactWithheldCluster(view)
 		}
@@ -341,13 +535,41 @@ func buildClusterViews(clusters []*models.ReductionCluster, resources map[uint]*
 	return views
 }
 
+// describeKeepsSmaller fills the two resolutions the warning compares and the copy
+// its fix button keeps instead: the kept copy's, and the largest copy being
+// removed.
+func describeKeepsSmaller(view *contracts.ReductionClusterView, resources map[uint]*models.Resource) {
+	kept := resources[view.WinnerID]
+	if kept == nil {
+		return
+	}
+	var largest *models.Resource
+	for _, member := range view.ReductionCluster.Members {
+		if !member.IsLoser(view.WinnerID) {
+			continue
+		}
+		candidate := resources[member.ResourceID]
+		if candidate != nil && (largest == nil || pixelsOf(candidate) > pixelsOf(largest)) {
+			largest = candidate
+		}
+	}
+	if largest == nil || pixelsOf(largest) <= pixelsOf(kept) {
+		return
+	}
+	view.KeptDimensions = fmt.Sprintf("%d×%d", kept.Width, kept.Height)
+	view.LargerDimensions = fmt.Sprintf("%d×%d", largest.Width, largest.Height)
+	view.LargestMemberID = largest.ID
+}
+
 // reviewClusterStatusMatches is the state filter. "reviewed" is not a state of
 // its own — it is a judgement recorded on an open Cluster — so it selects open
-// Clusters that have been acted on, and "open" selects the rest.
+// Clusters that have been acted on, and "open" selects every open Cluster, acted
+// on or not: the Open tab is where the work is, and approving a Cluster must not
+// move it to another one.
 func reviewClusterStatusMatches(c *models.ReductionCluster, wanted map[string]bool) bool {
 	switch c.State {
 	case models.ReductionClusterOpen:
-		return (wanted["open"] && !c.Reviewed) || (wanted["reviewed"] && c.Reviewed)
+		return wanted["open"] || (wanted["reviewed"] && c.Reviewed)
 	case models.ReductionClusterSkipped:
 		return wanted[models.ReductionClusterSkipped]
 	case models.ReductionClusterApplied:

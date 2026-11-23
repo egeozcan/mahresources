@@ -25,6 +25,12 @@ const (
 	staleReasonMergeRefused = "the merge itself was refused"
 )
 
+// ReductionApplyCeiling bounds one apply batch. The batch runs on a context
+// detached from the request, so a closed tab cannot cancel it halfway; the ceiling
+// is what stops a wedged one from running forever. Clusters it does not reach stay
+// approved.
+const ReductionApplyCeiling = 30 * time.Minute
+
 // ApplyResourceReduction merges every checked Cluster.
 //
 // Repeatable and partial by design: it applies what is checked, marks those

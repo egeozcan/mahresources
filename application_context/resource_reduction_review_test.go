@@ -59,8 +59,12 @@ func TestFilterReviewClustersByStatus(t *testing.T) {
 	got = filterReviewClusters(clusters, visible, &query_models.ResourceReductionReviewQuery{
 		Status: []string{"open"},
 	})
-	require.Len(t, got, 1)
-	assert.False(t, got[0].Reviewed, "\"open\" selects only the untouched open Cluster")
+	require.Len(t, got, 2, "\"open\" is every open Cluster: approving one must not move it to another tab")
+
+	got = filterReviewClusters(clusters, visible, &query_models.ResourceReductionReviewQuery{
+		Status: []string{"all"},
+	})
+	require.Len(t, got, 5, "\"all\" is no state filter")
 
 	got = filterReviewClusters(clusters, visible, &query_models.ResourceReductionReviewQuery{
 		Status: []string{"reviewed"},
@@ -71,7 +75,7 @@ func TestFilterReviewClustersByStatus(t *testing.T) {
 	got = filterReviewClusters(clusters, visible, &query_models.ResourceReductionReviewQuery{
 		Status: []string{"open", models.ReductionClusterSkipped},
 	})
-	require.Len(t, got, 2, "several statuses are an OR")
+	require.Len(t, got, 3, "several statuses are an OR")
 
 	got = filterReviewClusters(clusters, visible, &query_models.ResourceReductionReviewQuery{
 		Status: []string{models.ReductionClusterApplied, models.ReductionClusterStale},

@@ -80,8 +80,8 @@ func TestReductionReviewPageFiltersByReviewed(t *testing.T) {
 	assert.Contains(t, body, "Reviewed", "the card still reads Reviewed")
 
 	body = tc.MakeRequest(http.MethodGet, reductionPath(red.ID)+"&Status=open", nil).Body.String()
-	assert.Equal(t, 0, strings.Count(body, `data-testid="reduction-cluster"`),
-		"an acted-on Cluster is no longer Open")
+	assert.Equal(t, 1, strings.Count(body, `data-testid="reduction-cluster"`),
+		"an acted-on Cluster is still Open: approving it must not move it to another tab")
 }
 
 // The tier filter separates the two match kinds, which is the distinction the

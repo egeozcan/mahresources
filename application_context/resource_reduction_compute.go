@@ -463,6 +463,17 @@ func (ctx *MahresourcesContext) computeReductionPlan(jobCtx context.Context, red
 
 	plan.Clusters = append(carried, fresh...)
 	ensureDistinctClusterIDs(plan.Clusters)
+	// What this plan was computed with, so the page can say when the settings have
+	// since changed. The matching mode and rule are the normalised ones actually
+	// used, not whatever the row's column happened to hold.
+	plan.Settings = &models.ReductionSettings{
+		MatchingMode:    normalizeMatchingMode(reduction.MatchingMode),
+		WinnerRule:      rule,
+		ExcludeExternal: reduction.ExcludeExternalResources,
+	}
+	// The record of the last apply is not the compute's to rebuild: carried over
+	// from the plan it replaces.
+	plan.LastApply = previous.LastApply
 	return plan, version, nil
 }
 

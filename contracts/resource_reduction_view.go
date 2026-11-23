@@ -1,6 +1,8 @@
 package contracts
 
 import (
+	"time"
+
 	"mahresources/models"
 )
 
@@ -24,6 +26,13 @@ type ReductionMemberView struct {
 	// `member.Distance != nil` compares a typed nil pointer against an undefined
 	// variable and is true, which put a bare "distance" chip on every Winner.
 	DistanceLabel string
+	// TagCount, NoteCount and GroupCount are how many tags, notes and related
+	// Groups this member holds, counted through the caller's scoped handle so a
+	// Note or Group outside their subtree is not in the number. Zero for a member
+	// with no Resource behind it.
+	TagCount   int
+	NoteCount  int
+	GroupCount int
 }
 
 // ReductionClusterView is one Cluster ready to render.
@@ -48,6 +57,69 @@ type ReductionClusterView struct {
 	// publishing it next to one visible member is enough to recover the hidden one
 	// by enumeration.
 	Position int
+	// NeedsAttention is the plan-level marker a bulk approval refuses to sweep up:
+	// Lossy, Oversized or KeepsSmaller. False on a withheld Cluster.
+	NeedsAttention bool
+	// KeptDimensions and LargerDimensions ("800×533", "1600×1066") are the two
+	// resolutions the keeps-smaller warning compares: the kept copy's and the
+	// largest copy being removed. LargestMemberID is that larger copy, the one the
+	// "Keep the larger copy instead" button promotes. All empty or zero unless
+	// KeepsSmaller is set.
+	KeptDimensions   string
+	LargerDimensions string
+	LargestMemberID  uint
+}
+
+// ReductionTabCounts is how many Clusters each review tab holds, over the
+// Clusters the caller may fully see. A withheld Cluster is in none of them.
+type ReductionTabCounts struct {
+	Open    int
+	Skipped int
+	Stale   int
+	Applied int
+}
+
+// ReductionTierFigures is what an apply would do to one tier: the approved
+// Clusters, the copies they would remove, and whether those copies would be added
+// as versions of the kept one (the Reduction's keep-as-version flag for the tier).
+type ReductionTierFigures struct {
+	Clusters      int
+	Losers        int
+	KeepAsVersion bool
+}
+
+// ReductionApplyFigures are the numbers the apply dialog states. Counted over the
+// approved Clusters the caller may fully see, across the whole plan.
+type ReductionApplyFigures struct {
+	Identical ReductionTierFigures
+	Near      ReductionTierFigures
+	// KeepsSmaller is how many approved Clusters keep a lower-resolution copy than
+	// one they remove.
+	KeepsSmaller int
+}
+
+// ReductionBulkFigures are the numbers on the bulk buttons. IdenticalApprovable is
+// the target of "Approve all Identical": open, fully visible Identical Clusters
+// that do not need attention. IdenticalOpen is the target of the matching
+// uncheck: every open, fully visible Identical Cluster.
+type ReductionBulkFigures struct {
+	IdenticalApprovable int
+	IdenticalOpen       int
+}
+
+// ReductionLastApplyView is the last apply as the page renders it.
+type ReductionLastApplyView struct {
+	StartedAt  time.Time
+	FinishedAt *time.Time
+	Applied    int
+	Removed    int
+	Stale      int
+	// Running is true while the record has no FinishedAt. Interrupted is true when
+	// it has been running for longer than the apply ceiling, which means the
+	// process died or the batch was abandoned: Clusters it did not reach are still
+	// approved.
+	Running     bool
+	Interrupted bool
 }
 
 // ReductionReview is a page of a Reduction's plan, hydrated and paginated.
@@ -94,6 +166,22 @@ type ReductionReview struct {
 	// than surprising them with it.
 	ExtentSize          int
 	EnteredSinceCompute int
+	// ExtentAll is true for a whole-library Reduction: everything the caller can
+	// access, with no named Resources or Groups.
+	ExtentAll bool
+
+	// TabCounts is how many visible Clusters sit on each status tab, whatever the
+	// current filters are.
+	TabCounts ReductionTabCounts
+	// ApplyFigures and Bulk feed the apply dialog and the bulk buttons.
+	ApplyFigures ReductionApplyFigures
+	Bulk         ReductionBulkFigures
+	// SettingsChanged is true when the Reduction's matching mode, Winner Rule or
+	// exclude-external setting differs from what its plan was computed with. False
+	// for a plan computed before settings were recorded.
+	SettingsChanged bool
+	// LastApply is nil until the first apply.
+	LastApply *ReductionLastApplyView
 }
 
 // ReductionApplyOutcome is what happened to one Cluster in an apply.

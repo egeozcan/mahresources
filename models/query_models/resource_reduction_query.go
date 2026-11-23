@@ -59,8 +59,9 @@ type ResourceReductionQuery struct {
 //
 // Unlike the list query it is applied in memory: the plan is one decoded JSON
 // document, so there is no SQL to scope. The values are the tokens the page's
-// own labels map to: open / reviewed / skipped / applied / stale for Status,
-// identical / near for Tier.
+// own labels map to: open / reviewed / skipped / applied / stale for Status
+// ("open" is every open Cluster, acted on or not; "reviewed" only the acted-on
+// ones; "all" no state filter), identical / near for Tier.
 type ResourceReductionReviewQuery struct {
 	// Status is an OR over the Cluster states the page shows. "reviewed" is not
 	// a state of its own — it is a judgement recorded on an open Cluster — so it
@@ -75,6 +76,16 @@ type ResourceReductionReviewQuery struct {
 	// server-side at all — withheld Clusters are decided at render time and are
 	// deliberately not part of it.
 	NeedsAttention bool `schema:"attention"`
+	// Approval keeps only approved (Checked) or unapproved Clusters: "approved" or
+	// "unapproved". Any other value is ignored.
+	Approval string `schema:"approval"`
+	// Sort orders the filtered Clusters before pagination: "copies" (the default,
+	// most members first), "size" (largest total member file size first) or
+	// "computed" (the plan's own order). Ties break by Cluster id, so pages are
+	// stable across refreshes.
+	Sort string `schema:"sort"`
+	// PageSize is Clusters per page: 20, 50 or 100. Anything else is 20.
+	PageSize int `schema:"pageSize"`
 }
 
 // ResourceReductionEditor updates a Reduction's own settings, as opposed to its
