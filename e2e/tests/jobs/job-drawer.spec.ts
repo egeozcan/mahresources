@@ -2,6 +2,7 @@ import http from 'node:http';
 import { randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { test, expect } from '../../fixtures/base.fixture';
+import { expandNeedsAttention } from '../../helpers/job-panel';
 
 // A download slow enough to be watched: 5 MiB at 64 KiB every 100 ms is about
 // eight seconds, long enough for the live stream to deliver several progress
@@ -259,6 +260,7 @@ test.describe('Jobs drawer', () => {
     await expect(drawer).toHaveAccessibleDescription('Showing 0 active or scheduled jobs and 1 needing attention');
 
     // Acting on the work stays inline; keeping the record waits under More.
+    await expandNeedsAttention(drawer);
     await expect(controls.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
     const pin = controls.getByRole('button', { name: 'Pin', exact: true });
     await expect(pin).toBeHidden();
@@ -338,6 +340,7 @@ test.describe('Jobs drawer', () => {
     const drawer = page.getByRole('dialog', { name: 'Jobs' });
     const row = drawer.locator(`article[data-job-id="${id}"]`);
     const controls = row.getByRole('group', { name: 'Job actions' });
+    await expandNeedsAttention(drawer);
     await controls.locator('summary', { hasText: 'More' }).click();
     const unpin = controls.getByRole('button', { name: 'Unpin', exact: true });
     await unpin.focus();
@@ -388,6 +391,7 @@ test.describe('Jobs drawer', () => {
     await page.keyboard.press('Control+Shift+D');
     const drawer = page.getByRole('dialog', { name: 'Jobs' });
     const first = drawer.locator('article[data-job-id="drawer-dismiss-a"]');
+    await expandNeedsAttention(drawer);
     await first.getByRole('button', { name: 'Dismiss', exact: true }).focus();
     await page.keyboard.press('Enter');
 
@@ -422,6 +426,7 @@ test.describe('Jobs drawer', () => {
     await page.goto('/dashboard');
     await page.keyboard.press('Control+Shift+D');
     const drawer = page.getByRole('dialog', { name: 'Jobs' });
+    await expandNeedsAttention(drawer);
     await drawer.locator('article[data-job-id="drawer-reveal-a"]').getByRole('button', { name: 'Dismiss', exact: true }).focus();
     await page.keyboard.press('Enter');
 
@@ -498,6 +503,7 @@ test.describe('Jobs drawer', () => {
     const drawer = page.getByRole('dialog', { name: 'Jobs' });
     const row = drawer.locator(`article:has(a[href="/job?id=${id}"])`);
     const reason = row.locator('[data-job-panel-failure]');
+    await expandNeedsAttention(drawer);
     await expect(reason).toBeVisible({ timeout: 10_000 });
     await expect(reason).toContainText('Reason:');
     await expect(reason).toContainText('connection refused');

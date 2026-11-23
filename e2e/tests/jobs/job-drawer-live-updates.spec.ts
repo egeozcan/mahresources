@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import type { APIRequestContext, Page, Request } from '@playwright/test';
 import { test, expect } from '../../fixtures/base.fixture';
+import { expandNeedsAttention } from '../../helpers/job-panel';
 
 // Answers at once: /missing/* with a 404, /slow/* over about six seconds,
 // anything else with a few fresh bytes. /held/* streams like /slow/* but stops a
@@ -125,6 +126,7 @@ test.describe('Jobs drawer live updates and reads', () => {
 
       await page.keyboard.press('Control+Shift+D');
       const drawer = drawerOf(page);
+      await expandNeedsAttention(drawer);
       for (const id of ids) await expect(drawer.locator(`article[data-job-id="${id}"]`)).toBeVisible();
       await expect.poll(() => ids.every(id => seen.details.includes(id)), { timeout: 10_000 }).toBe(true);
 
@@ -159,6 +161,7 @@ test.describe('Jobs drawer live updates and reads', () => {
       await page.keyboard.press('Control+Shift+D');
       const drawer = drawerOf(page);
       await expect(drawer.getByRole('status').filter({ hasText: 'Reconnecting' })).toBeVisible({ timeout: 10_000 });
+      await expandNeedsAttention(drawer);
       await expect(drawer.locator(`article[data-job-id="${ids[0]}"]`)).toBeVisible({ timeout: 10_000 });
       await expect(drawer.getByText('No visible jobs yet.')).toBeHidden();
 
@@ -264,6 +267,8 @@ test.describe('Jobs drawer live updates and reads', () => {
     await page.keyboard.press('Control+Shift+D');
     const drawer = drawerOf(page);
     await expect(drawer.locator('#job-panel-group-attention')).toHaveText(/Needs attention\s*\(50\+\)/);
+    // Folded, the group still says it is capped; opened, it says how and links on.
+    await expandNeedsAttention(drawer);
     const more = drawer.locator('[data-job-panel-group-more="attention"]');
     await expect(more).toContainText('Showing the 50 most recent.');
     await expect(more.getByRole('link', { name: 'See every job that needs attention' }))
@@ -282,6 +287,7 @@ test.describe('Jobs drawer live updates and reads', () => {
       for (const tab of [page, other]) {
         await tab.goto('/dashboard');
         await tab.keyboard.press('Control+Shift+D');
+        await expandNeedsAttention(drawerOf(tab));
         await expect(drawerOf(tab).locator(`article[data-job-id="${ids[0]}"]`)).toBeVisible({ timeout: 15_000 });
       }
 

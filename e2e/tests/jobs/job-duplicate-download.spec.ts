@@ -2,6 +2,7 @@ import http from 'node:http';
 import { randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { test, expect } from '../../fixtures/base.fixture';
+import { expandNeedsAttention } from '../../helpers/job-panel';
 
 async function readJob(request: import('@playwright/test').APIRequestContext, id: string) {
   const response = await request.get(`/v1/jobs/${encodeURIComponent(id)}`);
@@ -61,6 +62,7 @@ test('a download of bytes the library already holds fails as a conflict and link
     await page.getByRole('button', { name: 'Open Jobs panel', exact: true }).click();
     const row = page.locator(`[data-job-panel-row][data-job-id="${ids[1]}"]`);
     await expect(row).toContainText('already exists');
+    await expandNeedsAttention(page.getByRole('dialog', { name: 'Jobs' }));
     await row.getByRole('link', { name: 'View existing resource' }).click();
     await expect(page).toHaveURL(new RegExp(`${resourceLocation.replace(/[?]/g, '\\?')}$`));
   } finally {

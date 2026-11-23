@@ -1,5 +1,6 @@
 import { test, expect } from '../../fixtures/a11y.fixture';
 import { gotoMockedJobPage } from '../../helpers/job-page';
+import { expandNeedsAttention } from '../../helpers/job-panel';
 
 test.describe('Job Center panel accessibility', () => {
   async function openPanel(page: import('@playwright/test').Page) {
@@ -94,6 +95,7 @@ test.describe('Job Center panel accessibility', () => {
 
     await openPanel(page);
     const controls = page.getByRole('group', { name: 'Job actions' });
+    await expandNeedsAttention(page.getByRole('dialog', { name: 'Jobs' }));
     await expect(controls).toBeVisible();
     await expect(controls.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
     await checkComponentA11y('#job-center-panel');
@@ -254,6 +256,7 @@ test.describe('Job Center focus in forced colors', () => {
     await expect(drawer).toBeVisible();
     await drawer.evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)));
     const row = drawer.locator(`article[data-job-id="${jobId}"]`);
+    await expandNeedsAttention(drawer);
     await expect(row.getByRole('button', { name: 'Dismiss' })).toBeVisible({ timeout: 10_000 });
 
     await expectPaintedFocus(page, drawer.getByRole('button', { name: 'Close Jobs panel' }), 'the drawer\'s Close button');

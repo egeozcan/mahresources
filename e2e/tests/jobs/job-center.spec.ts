@@ -1,4 +1,5 @@
 import { test, expect } from '../../fixtures/base.fixture';
+import { expandNeedsAttention } from '../../helpers/job-panel';
 
 const DEAD_URL = 'http://127.0.0.1:9/';
 
@@ -698,6 +699,7 @@ test.describe('Job Center', () => {
     await page.getByRole('button', { name: 'Open Jobs panel' }).click();
     const panel = page.getByRole('dialog', { name: 'Jobs' });
     const card = panel.locator('article').filter({ has: page.locator(`a[href="/job?id=${canonicalId}"]`) });
+    await expandNeedsAttention(panel);
     await expect(card.getByText('Pinned by you', { exact: true })).toBeVisible();
 
     await page.goto(`/job?id=${canonicalId}`);
@@ -719,6 +721,7 @@ test.describe('Job Center', () => {
     await trigger.click();
     const panel = page.getByRole('dialog', { name: 'Jobs' });
     await expect(panel).toBeVisible();
+    await expandNeedsAttention(panel);
     await expect(panel.locator(`a[href="/job?id=${canonicalId}"]`).first()).toBeVisible();
     await expect(panel).toContainText('Failed');
     await panel.getByRole('link', { name: 'All jobs', exact: true }).click();

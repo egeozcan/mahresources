@@ -339,6 +339,9 @@ export function jobPanel() {
         finishedLimit: DEFAULT_FINISHED_LIMIT,
         // Whether each group's list had more than it holds.
         groupHasMore: { attention: false, active: false, finished: false },
+        // Needs attention starts folded under its heading, so the work still
+        // running is what the drawer opens on (see toggleAttention).
+        attentionCollapsed: true,
         // Bumped once a second while the drawer is open, so "about 14 s left"
         // counts down between progress frames.
         now: Date.now(),
@@ -550,8 +553,9 @@ export function jobPanel() {
         get attentionJobs() { return this.jobs.filter(job => classifyJobState(job) === 'attention'); },
         get activeJobs() { return panelActiveOrder(this.jobs.filter(job => classifyJobState(job) === 'active')); },
         get finishedJobs() { return this.jobs.filter(job => classifyJobState(job) === 'finished'); },
-        // The drawer's sections, in the order a person acts on them. An empty
-        // section is left out rather than drawn with nothing under it.
+        // The drawer's sections: the work still running, then what needs
+        // attention (collapsed until the reader opens it), then the rest. An
+        // empty section is left out rather than drawn with nothing under it.
         // A group that holds fewer rows than its list had carries `more`, says
         // so (`moreText`), and links to where All jobs shows the rest.
         get groups() {
@@ -560,8 +564,8 @@ export function jobPanel() {
             // it holds only the rest.
             const lists = new Map(panelGroups(this.finishedLimit).map(group => [group.key, group]));
             return [
-                { key: 'attention', title: 'Needs attention', jobs: this.attentionJobs, moreLabel: 'See every job that needs attention' },
                 { key: 'active', title: 'Active and scheduled', jobs: this.activeJobs, moreLabel: 'See every active and scheduled job' },
+                { key: 'attention', title: 'Needs attention', jobs: this.attentionJobs, moreLabel: 'See every job that needs attention', collapsible: true, collapsed: this.attentionCollapsed },
                 { key: 'finished', title: 'Finished, no attention needed', jobs: this.finishedJobs, moreLabel: 'See every finished job' },
             ].filter(group => group.jobs.length > 0).map(group => ({
                 ...group,
@@ -626,7 +630,7 @@ export function jobPanel() {
 
         // `jobIds` names the Jobs whatever asked for the drawer just started (a
         // plugin action run, in the order it started them): the drawer shows one
-        // of them, which may sit far below the failures listed first.
+        // of them, which may sit far down the list or in a folded group.
         openFromEvent(detail = null) {
             const reveal = Array.isArray(detail?.jobIds) ? detail.jobIds.filter(id => typeof id === 'string' && id) : [];
             if (!this.isOpen) {
@@ -677,6 +681,8 @@ export function jobPanel() {
                 await new Promise(resolve => (this.$nextTick ? this.$nextTick(resolve) : resolve()));
             }
             if (!this.isOpen) return;
+            // x-show reveals the rows on the next animation frame.
+            if (this.expandGroupHolding(firstRow())) await new Promise(resolve => afterNextPaint(resolve));
             const title = firstRow()?.querySelector('a[id^="job-panel-title-"]');
             if (!title) {
                 if (read && !this.jobs.some(job => job.id === read.id)) {
@@ -705,6 +711,21 @@ export function jobPanel() {
         // The isOpen watcher returns focus, once the drawer is gone.
         close() {
             this.isOpen = false;
+        },
+
+        toggleAttention() {
+            this.attentionCollapsed = !this.attentionCollapsed;
+        },
+
+        // Opens Needs attention when `element` sits in it folded away: focus
+        // that follows a row there, or a Job the drawer was opened to show,
+        // has nothing to land on while its rows are hidden. Returns whether it
+        // opened, so a caller places focus after the next paint, once x-show
+        // has drawn the rows.
+        expandGroupHolding(element) {
+            if (!this.attentionCollapsed || !element?.closest?.('[data-job-panel-group="attention"]')) return false;
+            this.attentionCollapsed = false;
+            return true;
         },
 
         // The open drawer is aria-modal, and a screen reader may ignore a live
@@ -1965,6 +1986,10 @@ export function jobPanel() {
             };
             const row = rowFor(jobId);
             if (row) {
+                if (this.expandGroupHolding(row)) {
+                    afterNextPaint(() => this.focusRowOrNeighbour(jobId, rows, selectors));
+                    return true;
+                }
                 for (const selector of selectors) if (reveal(row.querySelector(selector))) return true;
                 return false;
             }

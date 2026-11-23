@@ -272,8 +272,11 @@ The **Jobs** button in the header, or Control/Command + Shift + D, opens the
 Jobs drawer on the right. Pressed inside another dialog, such as search, the
 shortcut does not open the drawer over it; that dialog shows and announces
 "Close this dialog first to open Jobs." at the bottom of the screen for ten
-seconds. It groups Jobs into **Needs attention**, **Active and
-scheduled** and **Finished**. A running Job shows its progress bar, the amount
+seconds. It groups Jobs into **Active and scheduled**, **Needs attention**
+and **Finished**, in that order. **Needs attention** starts collapsed: its
+heading is a button that shows the count and opens or closes the group. The
+group opens by itself when focus follows a row into it, or when the drawer
+opens to show a Job listed there. A running Job shows its progress bar, the amount
 completed, its speed, the time left, its metrics and a graph for its speed and
 for each graphed metric. A finished Job shows its average speed.
 

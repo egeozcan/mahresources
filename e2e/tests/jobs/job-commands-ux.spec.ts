@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { test, expect } from '../../fixtures/base.fixture';
 import { gotoMockedJobPage } from '../../helpers/job-page';
 import type { Page, Route } from '@playwright/test';
+import { expandNeedsAttention } from '../../helpers/job-panel';
 
 // The drawer and the detail page read their Jobs from the canonical API. These
 // tests answer those reads themselves, so each one controls exactly which rows
@@ -249,6 +250,7 @@ test.describe('Job commands keep their controls current', () => {
     await page.goto('/dashboard');
     const drawer = await openDrawer(page);
     const row = drawer.locator('article[data-job-id="stale-drawer"]');
+    await expandNeedsAttention(drawer);
     await row.locator('summary').click();
     // Forget cannot be undone: it asks, and its button reads as destructive.
     const forget = row.getByRole('button', { name: 'Forget saved input' });
@@ -316,6 +318,7 @@ test.describe('Job command answers in the drawer', () => {
     await page.goto('/note/new');
     await page.locator('input#Name').fill('Unsaved note title');
     const drawer = await openDrawer(page);
+    await expandNeedsAttention(drawer);
     await drawer.locator('article[data-job-id="retry-stays"]').getByRole('button', { name: 'Retry', exact: true }).click();
 
     const notice = drawer.locator('[data-job-panel-notice]');
@@ -358,6 +361,7 @@ test.describe('Job command answers in the drawer', () => {
     await page.goto('/dashboard');
     let drawer = await openDrawer(page);
     const row = drawer.locator('article[data-job-id="forget-close"]');
+    await expandNeedsAttention(drawer);
     await row.locator('summary').click();
     await row.getByRole('button', { name: 'Forget saved input' }).click();
     await page.getByRole('alertdialog').getByRole('button', { name: 'Forget saved input' }).click();
@@ -384,6 +388,7 @@ test.describe('Job command answers in the drawer', () => {
     await page.goto('/dashboard');
     const drawer = await openDrawer(page);
     const row = drawer.locator('article[data-job-id="undo-dismiss"]');
+    await expandNeedsAttention(drawer);
     await row.getByRole('button', { name: 'Dismiss', exact: true }).click();
     await expect(row).toHaveCount(0);
     const undo = drawer.locator('[data-job-panel-notice]').getByRole('button', { name: 'Undo' });
@@ -410,6 +415,7 @@ test.describe('Jobs drawer keeps focus when its box clears', () => {
 
     await page.goto('/dashboard');
     const drawer = await openDrawer(page);
+    await expandNeedsAttention(drawer);
     await drawer.locator('article[data-job-id="undo-reset"]').getByRole('button', { name: 'Dismiss', exact: true }).click();
     // The Dismiss places focus once its refresh settles: with no row left, on All jobs.
     await expect(drawer.getByRole('link', { name: 'All jobs', exact: true })).toBeFocused();
@@ -530,6 +536,7 @@ test.describe('Jobs drawer keeps focus on the row the reader is on', () => {
     await page.goto('/dashboard');
     const drawer = await openDrawer(page);
     const rowA = drawer.locator('article[data-job-id="focus-a"]');
+    await expandNeedsAttention(drawer);
     await rowA.locator('summary').click();
     await rowA.getByRole('button', { name: 'Forget saved input' }).click();
     await page.getByRole('alertdialog').getByRole('button', { name: 'Forget saved input' }).click();
@@ -550,7 +557,8 @@ test.describe('Jobs drawer keeps focus on the row the reader is on', () => {
     const blocked = withCommands({ ...failedJob('focus-resume', 'Focus resume download'), state: 'blocked', failure: undefined }, [
       ['cancel', 'Cancel', { destructive: true, confirmation: 'Stop this download?' }], ['resume', 'Resume'],
     ]);
-    const store = jobStore([blocked]);
+    // A second failure keeps Needs attention listed while focus-resume runs.
+    const store = jobStore([blocked, failedJob('focus-resume-other', 'Other failed download', { acceptedAt: '2026-09-26T09:00:00Z' })]);
     await serveStore(page, store);
     await page.route('**/v1/jobs/focus-resume/commands/resume', route => {
       store.set('focus-resume', withCommands({ ...store.jobs.get('focus-resume')!, state: 'queued', version: 3 }, [['cancel', 'Cancel', { destructive: true, confirmation: 'Stop this download?' }]]));
@@ -560,17 +568,24 @@ test.describe('Jobs drawer keeps focus on the row the reader is on', () => {
     await page.goto('/dashboard');
     const drawer = await openDrawer(page);
     const row = drawer.locator('article[data-job-id="focus-resume"]');
+    await expandNeedsAttention(drawer);
     await row.getByRole('button', { name: 'Resume', exact: true }).focus();
     await page.keyboard.press('Enter');
     await expect(row.getByRole('button', { name: 'Resume', exact: true })).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => document.activeElement?.closest('article')?.getAttribute('data-job-id'))).toBe('focus-resume');
 
-    // Later the transfer fails: the row moves to Needs attention, and focus
-    // stays on it.
+    // Folded again without moving focus off the row (a pointer click would).
+    const toggle = drawer.locator('[data-job-panel-group-toggle]');
+    await toggle.dispatchEvent('click');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+    // Later the transfer fails: the row moves to Needs attention, which opens
+    // so that focus stays on it.
     store.set('focus-resume', withCommands({ ...failedJob('focus-resume', 'Focus resume download'), version: 4 }, [['retry', 'Retry'], ['dismiss', 'Dismiss', { bulk: true }]]));
     await refreshDrawer(page);
     await expect(drawer.locator('[data-job-panel-group="attention"] article[data-job-id="focus-resume"]')).toHaveCount(1);
     await expect.poll(() => page.evaluate(() => document.activeElement?.closest('article')?.getAttribute('data-job-id'))).toBe('focus-resume');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
     await expect(drawer.getByRole('button', { name: 'Close Jobs panel' })).not.toBeFocused();
   });
 });
@@ -704,6 +719,24 @@ test.describe('Jobs drawer opened for a run that started many jobs', () => {
     expect(await focusedRow()).toBe('bulk-run-59');
   });
 
+  test('opens Needs attention to show a job that already failed', async ({ page }) => {
+    const store = jobStore([
+      runningJob('reveal-running', 'Still running'),
+      failedJob('reveal-failed', 'Failed at once'),
+    ]);
+    await serveStore(page, store);
+    await page.goto('/dashboard');
+    await expect.poll(() => page.evaluate(() => {
+      const root = document.querySelector('[data-testid="job-panel-root"]');
+      return (window as any).Alpine.$data(root).jobs.length;
+    })).toBe(2);
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('jobs-panel-open', { detail: { jobIds: ['reveal-failed'] } })));
+
+    const drawer = page.getByRole('dialog', { name: 'Jobs' });
+    await expect(drawer.getByRole('link', { name: 'Failed at once' })).toBeFocused();
+    await expect(drawer.locator('[data-job-panel-group-toggle]')).toHaveAttribute('aria-expanded', 'true');
+  });
+
   test('offers a link to the job when a full group leaves it out', async ({ page }) => {
     const newer = Array.from({ length: 12 }, (_, index) => ({
       ...failedJob(`newer-finished-${index}`, `Newer finished ${index}`, { acceptedAt: `2026-09-26T11:${String(10 + index).padStart(2, '0')}:00Z` }),
@@ -735,6 +768,38 @@ test.describe('Jobs drawer opened for a run that started many jobs', () => {
 });
 
 test.describe('Needs attention', () => {
+  test('is listed after the running jobs, collapsed, and expands from its heading', async ({ page }) => {
+    const rows = [
+      failedJob('attention-a', 'Failed download A', { acceptedAt: '2026-09-26T10:00:02Z' }),
+      failedJob('attention-b', 'Failed download B', { acceptedAt: '2026-09-26T10:00:01Z' }),
+      runningJob('active-a', 'Running download A'),
+    ];
+    await serveJobs(page, () => rows);
+
+    await page.goto('/dashboard');
+    const drawer = await openDrawer(page);
+    await expect(drawer.locator('article[data-job-id="active-a"]')).toBeVisible();
+    const order = await drawer.locator('[data-job-panel-group]').evaluateAll(sections => sections.map(section => section.getAttribute('data-job-panel-group')));
+    expect(order).toEqual(['active', 'attention']);
+
+    const toggle = drawer.getByRole('button', { name: /Needs attention/ });
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(toggle).toContainText('(2)');
+    const failed = drawer.locator('[data-job-panel-group="attention"] article[data-job-id]');
+    await expect(failed).toHaveCount(2);
+    await expect(failed.first()).toBeHidden();
+
+    await toggle.focus();
+    await page.keyboard.press('Enter');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(failed.first()).toBeVisible();
+    await expect(toggle).toBeFocused();
+
+    await page.keyboard.press('Enter');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(failed.first()).toBeHidden();
+  });
+
   test('a failure somebody retried leaves Needs attention; its retry is what the drawer lists', async ({ page, request }) => {
     const server = http.createServer((_request, response) => {
       response.writeHead(404, { 'Content-Type': 'text/plain' });

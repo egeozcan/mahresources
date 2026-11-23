@@ -98,11 +98,24 @@
                     <template x-for="group in groups" :key="group.key">
                         <section :aria-labelledby="'job-panel-group-' + group.key" :data-job-panel-group="group.key">
                             <h3 :id="'job-panel-group-' + group.key" data-job-panel-group-heading class="sticky top-0 z-10 flex items-baseline gap-2 border-b border-stone-200 bg-stone-50 px-4 py-1.5 font-mono text-xs font-semibold uppercase tracking-wide text-stone-600">
-                                <span x-text="group.title"></span>
-                                <span class="font-normal text-stone-500" x-text="'(' + group.countText + ')'"></span>
+                                {# Needs attention folds under its heading, which is then its disclosure button. #}
+                                <template x-if="group.collapsible">
+                                    <button type="button" @click="toggleAttention()" :aria-expanded="(!group.collapsed).toString()" :aria-controls="'job-panel-group-list-' + group.key" data-job-panel-group-toggle
+                                            class="-mx-1 inline-flex min-h-6 items-baseline gap-2 rounded px-1 font-semibold uppercase tracking-wide hover:text-stone-900 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-700">
+                                        <svg aria-hidden="true" class="h-3 w-3 self-center transition-transform motion-reduce:transition-none" :class="group.collapsed ? '-rotate-90' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6" /></svg>
+                                        <span x-text="group.title"></span>
+                                        <span class="font-normal text-stone-500" x-text="'(' + group.countText + ')'"></span>
+                                    </button>
+                                </template>
+                                <template x-if="!group.collapsible">
+                                    <span class="contents">
+                                        <span x-text="group.title"></span>
+                                        <span class="font-normal text-stone-500" x-text="'(' + group.countText + ')'"></span>
+                                    </span>
+                                </template>
                             </h3>
                             {# role="list": Safari drops list semantics from a list styled without markers. #}
-                            <ul role="list" class="divide-y divide-stone-100 border-b border-stone-200">
+                            <ul role="list" :id="'job-panel-group-list-' + group.key" x-show="!group.collapsed" class="divide-y divide-stone-100 border-b border-stone-200">
                             <template x-for="job in group.jobs" :key="job.id">
                                 <li class="px-4 py-3 hover:bg-stone-50">
                                 <article data-job-panel-row :data-job-id="job.id" :aria-labelledby="'job-panel-title-' + job.id" class="flex items-start gap-3">
@@ -234,7 +247,7 @@
                             </template>
                             </ul>
                             {# A group holds its most recent page; the rest are on All jobs, filtered to the group. #}
-                            <p x-show="group.more" class="border-b border-stone-200 px-4 py-2 text-xs text-stone-600" :data-job-panel-group-more="group.key">
+                            <p x-show="group.more && !group.collapsed" class="border-b border-stone-200 px-4 py-2 text-xs text-stone-600" :data-job-panel-group-more="group.key">
                                 <span x-text="group.moreText"></span>
                                 <a :href="group.moreURL" class="rounded font-medium text-amber-800 underline decoration-amber-300 underline-offset-2 hover:decoration-amber-800 focus:outline-hidden focus:ring-2 focus:ring-amber-700" x-text="group.moreLabel"></a>
                             </p>

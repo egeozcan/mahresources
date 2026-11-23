@@ -396,9 +396,10 @@ Uploading a custom thumbnail does not create a new version -- it only changes th
 
 Open the **Jobs** panel in the header, press **Cmd/Ctrl+Shift+D**, or visit
 `/jobs` for the full Job Center. The panel is a drawer on the right that
-groups work needing attention, active and scheduled work, and recently finished
-work that needs nothing more (**Finished, no attention needed**: succeeded and
-cancelled Jobs, since failed ones are under **Needs attention**). A scheduled Job says when it
+groups active and scheduled work, then work needing attention (collapsed until
+you open its heading), then recently finished work that needs nothing more
+(**Finished, no attention needed**: succeeded and cancelled Jobs, since failed
+ones are under **Needs attention**). A scheduled Job says when it
 starts on the Job Center card, and in the panel and on its page also how long
 that is from now. Only running work shows a moving progress bar; a Job that is
 waiting, paused or stopped shows only what it reported. A running

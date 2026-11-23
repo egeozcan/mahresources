@@ -1185,8 +1185,24 @@ describe('Job Center drawer live progress', () => {
             { id: 'f', state: 'failed', acceptedAt: '2026-09-25T10:00:02Z' },
         ];
         expect(panel.groups.map(group => [group.key, group.jobs.map(job => job.id)])).toEqual([
-            ['attention', ['f']], ['active', ['r']],
+            ['active', ['r']], ['attention', ['f']],
         ]);
+    });
+
+    test('Needs attention starts collapsed, and a row focus follows into it opens it', () => {
+        const panel = jobPanel();
+        panel.jobs = [{ id: 'f', state: 'failed', acceptedAt: '2026-09-25T10:00:02Z' }];
+        expect(panel.groups[0]).toMatchObject({ key: 'attention', collapsible: true, collapsed: true });
+        panel.toggleAttention();
+        expect(panel.groups[0].collapsed).toBe(false);
+        panel.toggleAttention();
+
+        const row = { closest: (selector: string) => (selector === '[data-job-panel-group="attention"]' ? {} : null) };
+        expect(panel.expandGroupHolding({ closest: () => null })).toBe(false);
+        expect(panel.expandGroupHolding(row)).toBe(true);
+        expect(panel.groups[0].collapsed).toBe(false);
+        // Already open: nothing to wait for.
+        expect(panel.expandGroupHolding(row)).toBe(false);
     });
 
     test('the finished group says it holds only finished jobs that need nothing', () => {
