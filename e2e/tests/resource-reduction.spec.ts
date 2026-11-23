@@ -1248,4 +1248,20 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
       }
     });
   }
+
+  test('saving a Custom rule with a duplicate criterion is saved, not reported as a conflict', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR dup rule ${Date.now()}`;
+    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 1);
+    const id = await createReduction(request, baseURL!, label, ids);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}`);
+    await page.getByTestId('reduction-preset').selectOption('custom');
+    const slots = page.getByTestId('winner-rule-slot');
+    await slots.nth(0).selectOption('pixels_desc');
+    await slots.nth(1).selectOption('pixels_desc');
+    await page.getByTestId('reduction-settings-save').click();
+    await expect(page.getByTestId('reduction-settings-saved')).toBeVisible();
+    await expect(page.getByTestId('reduction-settings-notice')).toBeHidden();
+  });
 });

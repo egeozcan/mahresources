@@ -717,7 +717,6 @@ export function registerReductionReviewStore(Alpine) {
         if (!recovered) recovered = await this._recoverApply(requestId);
         this.applyUnknown = '';
       }
-      this.localApplying = false;
 
       if (outcome) {
         this.applyResult = outcome;
@@ -758,6 +757,8 @@ export function registerReductionReviewStore(Alpine) {
       const report = document.getElementById('reduction-apply-result');
       this.closeDialog();
       this.confirmed = null;
+      // Only now: until the dialog is gone it keeps showing the running view, not a dead confirm.
+      this.localApplying = false;
       // After closeDialog's own focus hand-back, so the refusal is where focus ends up.
       if (this.error) setTimeout(() => this.surfaceError(), 20);
       // Focus moves to the report only for a reviewer who stayed with the dialog;
@@ -880,17 +881,38 @@ export function registerReductionReviewStore(Alpine) {
      */
     watchApply() {
       if (this._applyWatch) return;
-      this._applyWatch = setInterval(async () => {
-        try {
-          const response = await fetch(`/reduction.json?id=${this.reductionId}`, { headers: { Accept: 'application/json' } });
-          if (!response.ok) return;
-          const last = (await response.json()).lastApply;
-          if (last && last.running && !last.interrupted) return;
-        } catch {
-          return;
-        }
+      const started = Date.now();
+      let failures = 0;
+      const stop = (message) => {
         clearInterval(this._applyWatch);
         this._applyWatch = null;
+        if (message) {
+          this.error = message;
+          this._announceError(message);
+        }
+      };
+      this._applyWatch = setInterval(async () => {
+        // The same ceiling as recovering a lost response.
+        if (Date.now() - started > RECOVER_DEADLINE_MS) {
+          stop(WATCH_FAILED);
+          return;
+        }
+        try {
+          const response = await fetch(`/reduction.json?id=${this.reductionId}`, { headers: { Accept: 'application/json' } });
+          if (response.status === 403 || response.status === 404) {
+            stop(WATCH_FAILED);
+            return;
+          }
+          if (!response.ok) throw new Error(String(response.status));
+          const last = (await response.json()).lastApply;
+          failures = 0;
+          if (last && last.running && !last.interrupted) return;
+        } catch {
+          failures++;
+          if (failures >= 3) stop(WATCH_FAILED);
+          return;
+        }
+        stop();
         window.location.reload();
       }, APPLY_WATCH_MS);
     },
@@ -985,6 +1007,7 @@ const RECOVER_DEADLINE_MS = 30 * 60 * 1000;
 const RECOVER_SLOW_MS = 10000;
 const RECOVER_UNCHANGED = 4;
 const APPLY_WATCH_MS = 3000;
+const WATCH_FAILED = "Could not check the apply's progress. Reload the page.";
 const UNKNOWN_OUTCOME = 'The result of this apply is unknown: the server has no record of this attempt, and another apply may have run. Check the Applied tab before applying again.';
 
 /** A random id for one apply attempt, echoed in the plan's apply record. */
