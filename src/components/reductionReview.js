@@ -204,7 +204,7 @@ export function registerReductionReviewStore(Alpine) {
       this._clearBar();
       this._centerActive();
       // A refusal is shown where the reviewer is looking, not at the top of a page they have scrolled down.
-      Alpine.watch(() => this.error, (message) => { if (message) this.surfaceError(); });
+      Alpine.watch?.(() => this.error, (message) => { if (message) this.surfaceError(); });
     },
 
     /** On a phone the tab and chip rows scroll sideways: start with the active ones in view. */
