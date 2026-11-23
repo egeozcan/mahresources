@@ -387,7 +387,11 @@ A Cluster withheld from you is left untouched by your apply and does not appear 
 
 The apply request can carry `applyToken`, the digest the review page exposes over the exact approved proposals (each Cluster id, Winner, Losers and their reviewed hashes). When it is sent and the proposals visible at apply time differ in any way, the apply is refused with 409 and nothing is claimed. It can also carry `requestId`, an opaque id of up to 64 characters that is stored in the record so a client that lost the response can tell its own apply from another tab's.
 
-A Cluster an apply has claimed but not yet confirmed is shown as **Merging**, not Applied: its copies still exist. If the process dies in between, the next apply or review of the Reduction settles it once the 30 minute ceiling has passed: copies gone means the merge is confirmed, copies still there means the Cluster is back to open and approved.
+A Cluster an apply has claimed but not yet confirmed is shown as **Merging**, not Applied: its copies still exist. If the process dies in between, the next apply settles it (viewing the page never does). Each claim carries its own token, so a late write from an older claim cannot touch a newer one. The merge counts as done only when the kept copy's `backups` meta holds the record the merge wrote for every removed copy. If all the copies are still there the Cluster goes back to open and approved. Copies gone without that record were deleted by something else, so the Cluster becomes stale: a Resource in it no longer exists.
+
+### Recovering a stale Cluster
+
+Recompute leaves a stale Cluster as it is, so it does not rebuild it. Use **Don't remove** on the copy that changed, or was removed, to reopen the Cluster with the rest, then approve it again. If the kept copy itself changed or is gone, start a new Reduction over the same selection.
 
 ### Stale Clusters
 
@@ -502,7 +506,7 @@ An unknown id, or one you may not fully see, refuses the whole request with the 
 | `pageSize` | `20`, `50`, `100` | `20` |
 | `page` | 1-based | 1 |
 
-`status=open` covers every open Cluster, whether you acted on it or not. `reviewed` still works and means open Clusters you acted on. `status=all` applies no state filter. A Cluster you may not fully see matches no filter, so it appears only with `status=all` and no other filter, as a redacted stub.
+`status=open` covers every open Cluster, whether you acted on it or not. `reviewed` still works and means open Clusters you acted on. `status=all` applies no state filter. A Cluster you may not fully see is left out of every view, `status=all` included, in the page and in its `.json` twin: no stub, no count, no position.
 
 ## Related Pages
 

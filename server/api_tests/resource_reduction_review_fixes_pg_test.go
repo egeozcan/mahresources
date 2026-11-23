@@ -3,6 +3,7 @@
 package api_tests
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -73,4 +74,77 @@ func TestAReviewDecisionWaitsForAndRechecksAMemberLeavingTheSubtreePG(t *testing
 			assert.True(t, findClusterByID(planOf(t, tc, f.red.ID), cluster.ID).Checked, "nothing was written")
 		})
 	}
+}
+
+// Round 3. Two Reductions whose active and ejected members cross must not
+// deadlock: each merge locks its complete member set in one ascending pass, not its
+// active pair first and the ejected members later.
+func TestTwoReductionsWithCrossingEjectedMembersDoNotDeadlockPG(t *testing.T) {
+	tc := SetupPostgresTestEnv(t)
+	owner, restricted := asAdmin()
+
+	ids := clusterOf(t, tc, "r3-cross", 4) // a, b, c, d
+	a, b, c, d := ids[0], ids[1], ids[2], ids[3]
+	setDimensions(t, tc, a, 900, 900)
+	setDimensions(t, tc, b, 100, 100)
+	setDimensions(t, tc, c, 950, 950)
+	setDimensions(t, tc, d, 50, 50)
+
+	r1 := createReduction(t, tc, "Cross one", []uint{a, b, d})
+	p1 := computeReduction(t, tc, r1.ID)
+	override(t, tc, r1.ID, p1.Clusters[0].ID, application_context.ReductionActionEject, d)
+	r2 := createReduction(t, tc, "Cross two", []uint{a, c, d})
+	p2 := computeReduction(t, tc, r2.ID)
+	require.Equal(t, c, p2.Clusters[0].WinnerID)
+	override(t, tc, r2.ID, p2.Clusters[0].ID, application_context.ReductionActionEject, a)
+
+	// Both merges hold their rows before either reaches its precondition.
+	var arrived sync.WaitGroup
+	arrived.Add(2)
+	var once1, once2 sync.Once
+	_ = once1
+	_ = once2
+	restore := application_context.SetReductionPreconditionHookForTest(func() {
+		arrived.Done()
+		done := make(chan struct{})
+		go func() { arrived.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(2500 * time.Millisecond):
+		}
+	})
+	defer restore()
+
+	type res struct {
+		applied, stale int
+		err            error
+	}
+	run := func(id uint, out *res) {
+		current, err := tc.AppCtx.GetResourceReduction(id, owner, restricted)
+		if err != nil {
+			out.err = err
+			return
+		}
+		result, err := tc.AppCtx.ApplyResourceReduction(&query_models.ReductionApply{ID: id, Version: current.Version}, owner, restricted)
+		if err != nil {
+			out.err = err
+			return
+		}
+		out.applied, out.stale = len(result.Applied), len(result.Stale)
+		for _, st := range result.Stale {
+			t.Logf("stale: %s", st.Reason)
+		}
+	}
+	var out1, out2 res
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); run(r1.ID, &out1) }()
+	go func() { defer wg.Done(); run(r2.ID, &out2) }()
+	wg.Wait()
+
+	require.NoError(t, out1.err)
+	require.NoError(t, out2.err)
+	assert.Equal(t, 1, out1.applied)
+	assert.Equal(t, 1, out2.applied)
+	assert.Zero(t, out1.stale+out2.stale, "neither merge was refused as a deadlock victim")
 }

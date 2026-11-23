@@ -1,6 +1,8 @@
 package api_tests
 
 import (
+	"encoding/json"
+	"mahresources/contracts"
 	"testing"
 	"time"
 
@@ -586,53 +588,161 @@ func TestRecomputeKeepsTheLegacyKeepsSmallerWarning(t *testing.T) {
 	assert.True(t, recomputed.Clusters[0].KeepsSmaller, "frozen and carried, with its warning")
 }
 
-// Round 2, P1. A claim is not a completed merge until it is confirmed, and an
-// abandoned one is reconciled from whether its Losers still exist.
-func TestAClaimIsNotAMergeUntilConfirmedAndAbandonedClaimsReconcile(t *testing.T) {
-	for _, gone := range []bool{false, true} {
-		name := "losers still exist"
-		if gone {
-			name = "losers gone"
-		}
+// Round 3. A claim is not a completed merge until confirmed. An abandoned one is
+// settled only inside the next apply's batch claim, from evidence the merge itself
+// committed, and a page read never writes.
+func TestAbandonedClaimsAreSettledByTheNextApplyFromEvidence(t *testing.T) {
+	type outcome struct {
+		state           string
+		merged, checked bool
+	}
+	cases := map[string]struct {
+		prepare func(t *testing.T, tc *TestContext, winner, loser uint)
+		want    outcome
+	}{
+		"losers still exist": {
+			prepare: func(t *testing.T, tc *TestContext, winner, loser uint) {},
+			want:    outcome{models.ReductionClusterOpen, false, true},
+		},
+		"merged, with the merge's own backup record": {
+			prepare: func(t *testing.T, tc *TestContext, winner, loser uint) {
+				require.NoError(t, tc.AppCtx.MergeResources(winner, []uint{loser}, false))
+			},
+			want: outcome{models.ReductionClusterApplied, true, false},
+		},
+		"loser deleted by something else": {
+			prepare: func(t *testing.T, tc *TestContext, winner, loser uint) {
+				require.NoError(t, tc.DB.Where("id = ?", loser).Delete(&models.Resource{}).Error)
+			},
+			want: outcome{models.ReductionClusterStale, false, false},
+		},
+	}
+	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			tc := SetupTestEnv(t)
 			owner, restricted := asAdmin()
-			ids := clusterOf(t, tc, "r2-claim-recover", 2)
+			ids := clusterOf(t, tc, "r3-claim", 2)
 			setDimensions(t, tc, ids[0], 900, 900)
 			red := createReduction(t, tc, "Claimed", ids)
 			plan := computeReduction(t, tc, red.ID)
 			cluster := plan.Clusters[0]
-			claimed := tc.AppCtx.ClaimClusterForApplyForTest(red.ID, cluster.ID, cluster.WinnerID, map[uint]string{ids[0]: "r2-claim-recover", ids[1]: "r2-claim-recover"})
+			claimed := tc.AppCtx.ClaimClusterForApplyForTest(red.ID, cluster.ID, cluster.WinnerID, map[uint]string{ids[0]: "r3-claim", ids[1]: "r3-claim"})
 			require.NotNil(t, claimed)
+			require.NotEmpty(t, claimed.ClaimID)
 
 			review := reviewOf(t, tc, red.ID, 1, &query_models.ResourceReductionReviewQuery{Status: []string{"all"}})
 			assert.Equal(t, 0, review.TabCounts.Applied)
 			assert.Equal(t, 1, review.TabCounts.Merging)
 			assert.Equal(t, "Merging", review.Clusters[0].StateLabel)
-			assert.Equal(t, 1, listProgressOf(t, tc.AppCtx, red.ID).Merging)
 			assert.Zero(t, listProgressOf(t, tc.AppCtx, red.ID).Applied)
 
-			saved := application_context.ReductionApplyCeiling
-			application_context.ReductionApplyCeiling = time.Millisecond
-			defer func() { application_context.ReductionApplyCeiling = saved }()
-			time.Sleep(20 * time.Millisecond)
-			if gone {
-				require.NoError(t, tc.DB.Where("id = ?", ids[1]).Delete(&models.Resource{}).Error)
-			}
+			c.prepare(t, tc, ids[0], ids[1])
 
+			// A page read, however late, writes nothing.
+			before := versionOf(t, tc, red.ID)
 			_, err := tc.AppCtx.GetReductionReview(red.ID, owner, restricted, 1, nil)
 			require.NoError(t, err)
+			assert.Equal(t, before, versionOf(t, tc, red.ID))
+			assert.Equal(t, models.ReductionClusterApplied, planOf(t, tc, red.ID).Clusters[0].State)
+
+			applyReduction(t, tc, red.ID)
 			after := planOf(t, tc, red.ID).Clusters[0]
-			if gone {
-				assert.Equal(t, models.ReductionClusterApplied, after.State)
-				assert.True(t, after.Merged)
-			} else {
-				assert.Equal(t, models.ReductionClusterOpen, after.State)
-				assert.True(t, after.Checked)
-				assert.False(t, after.Merged)
+			assert.Equal(t, c.want, outcome{after.State, after.Merged, after.Checked})
+			if c.want.state == models.ReductionClusterStale {
+				assert.Contains(t, after.StaleReason, "no longer exists")
 			}
 		})
 	}
+}
+
+// A delayed settlement of an old claim must not touch a newer one.
+func TestASettlementOfAnOldClaimDoesNotTouchANewerClaim(t *testing.T) {
+	tc := SetupTestEnv(t)
+	ids := clusterOf(t, tc, "r3-gen", 2)
+	setDimensions(t, tc, ids[0], 900, 900)
+	red := createReduction(t, tc, "Generations", ids)
+	cluster := computeReduction(t, tc, red.ID).Clusters[0]
+	approved := map[uint]string{ids[0]: "r3-gen", ids[1]: "r3-gen"}
+
+	first := tc.AppCtx.ClaimClusterForApplyForTest(red.ID, cluster.ID, cluster.WinnerID, approved)
+	require.NotNil(t, first)
+	applyReduction(t, tc, red.ID) // settles the abandoned first claim back to open, then applies nothing
+	second := tc.AppCtx.ClaimClusterForApplyForTest(red.ID, cluster.ID, cluster.WinnerID, approved)
+	require.NotNil(t, second)
+	require.NotEqual(t, first.ClaimID, second.ClaimID)
+
+	tc.AppCtx.ConfirmClusterMergedForTest(red.ID, cluster.ID, first.ClaimID)
+	after := planOf(t, tc, red.ID).Clusters[0]
+	assert.False(t, after.Merged, "the old claim's confirmation found a different claim and did nothing")
+	assert.Equal(t, second.ClaimID, after.ClaimID)
+	assert.True(t, resourceExists(t, tc, ids[1]))
+}
+
+// A claimed Cluster with a Loser the viewer cannot see stays withheld, whatever
+// happened to that Loser since.
+func TestAClaimedClusterWithAHiddenLoserStaysWithheld(t *testing.T) {
+	tc := SetupTestEnv(t)
+	f := newReductionScopeFixture(t, tc)
+	owner, restricted := asAdmin()
+	ids := clusterOf(t, tc, "r3-hidden-claim", 2)
+	setDimensions(t, tc, ids[0], 900, 900)
+	f.place(t, f.narrow, ids[0])
+	f.place(t, f.wide, ids[1])
+	plan := f.compute(t, ids)
+	cluster := plan.Clusters[0]
+	require.NotNil(t, tc.AppCtx.ClaimClusterForApplyForTest(f.red.ID, cluster.ID, cluster.WinnerID, map[uint]string{ids[0]: "r3-hidden-claim", ids[1]: "r3-hidden-claim"}))
+	require.NoError(t, tc.DB.Where("id = ?", ids[1]).Delete(&models.Resource{}).Error)
+
+	review, err := f.narrowCtx.GetReductionReview(f.red.ID, owner, restricted, 1, nil)
+	require.NoError(t, err)
+	assert.Empty(t, review.Clusters)
+	assert.Equal(t, contracts.ReductionTabCounts{}, review.TabCounts)
+	body, err := json.Marshal(review.Clusters)
+	require.NoError(t, err)
+	assert.NotContains(t, string(body), cluster.ID)
+	assert.Zero(t, listProgressOf(t, f.narrowCtx, f.red.ID).Merging)
+}
+
+// A checked Cluster with every Loser ejected is not an approval anywhere.
+func TestTheListDoesNotCountAnApprovalTheDialogExcludes(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+	ids := clusterOf(t, tc, "r3-list", 2)
+	setDimensions(t, tc, ids[0], 900, 900)
+	red := createReduction(t, tc, "List", ids)
+	plan := computeReduction(t, tc, red.ID)
+	override(t, tc, red.ID, plan.Clusters[0].ID, application_context.ReductionActionEject, ids[1])
+	forced := planOf(t, tc, red.ID)
+	forced.Clusters[0].Checked = true
+	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, forced))
+	assert.Zero(t, listProgressOf(t, tc.AppCtx, red.ID).Approved)
+	assert.Zero(t, reviewOf(t, tc, red.ID, 1, nil).ApplyFigures.Identical.Clusters)
+}
+
+// Recovery from a stale Cluster: "Don't remove" on the copy that changed reopens
+// the rest, and the apply then merges what still holds.
+func TestEjectingTheChangedCopyRecoversAStaleCluster(t *testing.T) {
+	tc := SetupTestEnv(t)
+	ids := clusterOf(t, tc, "r3-recover", 3)
+	setDimensions(t, tc, ids[0], 900, 900)
+	red := createReduction(t, tc, "Recover", ids)
+	plan := computeReduction(t, tc, red.ID)
+	id := plan.Clusters[0].ID
+	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", ids[2]).Update("hash", "changed-bytes").Error)
+
+	first := applyReduction(t, tc, red.ID)
+	require.Len(t, first.Stale, 1)
+	assert.Equal(t, models.ReductionClusterStale, findClusterByID(planOf(t, tc, red.ID), id).State)
+
+	plan = override(t, tc, red.ID, id, application_context.ReductionActionEject, ids[2])
+	assert.Equal(t, models.ReductionClusterOpen, findClusterByID(plan, id).State, "ejecting the changed copy reopens the Cluster")
+	override(t, tc, red.ID, id, application_context.ReductionActionCheck, 0)
+	second := applyReduction(t, tc, red.ID)
+	require.Len(t, second.Applied, 1)
+	assert.False(t, resourceExists(t, tc, ids[1]))
+	assert.True(t, resourceExists(t, tc, ids[2]), "the changed copy was left alone")
 }
 
 // Round 2, UX. A Cluster the page shows as stale for a deleted copy is refused as

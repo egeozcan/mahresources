@@ -49,7 +49,7 @@ func (ctx *MahresourcesContext) GetReductionProgress(reductions []models.Resourc
 			switch cluster.State {
 			case models.ReductionClusterOpen:
 				progress.Open++
-				if cluster.Checked {
+				if cluster.Checked && len(cluster.LoserIDs()) > 0 {
 					progress.Approved++
 				}
 			case models.ReductionClusterSkipped:

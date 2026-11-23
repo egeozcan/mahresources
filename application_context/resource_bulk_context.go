@@ -667,7 +667,34 @@ var resourceSeriesLockChunkSize = 500
 // callers must roll back and retry rather than acquire a newly discovered Series
 // after any Resource lock.
 func lockResourcesAfterSeries(tx *gorm.DB, ids []uint) (map[uint]*models.Resource, error) {
-	ordered := deduplicateUints(ids)
+	return lockResourcesAfterSeriesWith(tx, ids, nil)
+}
+
+// requireAllPresent is gorm.ErrRecordNotFound unless every wanted id that is not
+// optional was found. The count test is the fast path every caller used before.
+func requireAllPresent(wanted []uint, optional map[uint]bool, found int, each func(yield func(uint))) error {
+	if found == len(wanted) {
+		return nil
+	}
+	present := make(map[uint]bool, found)
+	each(func(id uint) { present[id] = true })
+	for _, id := range wanted {
+		if !present[id] && !optional[id] {
+			return gorm.ErrRecordNotFound
+		}
+	}
+	return nil
+}
+
+// lockResourcesAfterSeriesWith is lockResourcesAfterSeries for a caller that also
+// wants some rows held if they exist: an id in optional that is gone is skipped
+// rather than failing the lock, and every id in ids must still be there.
+func lockResourcesAfterSeriesWith(tx *gorm.DB, ids, optional []uint) (map[uint]*models.Resource, error) {
+	isOptional := make(map[uint]bool, len(optional))
+	for _, id := range optional {
+		isOptional[id] = true
+	}
+	ordered := deduplicateUints(append(append([]uint(nil), ids...), optional...))
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
 	if len(ordered) == 0 {
 		return map[uint]*models.Resource{}, nil
@@ -681,8 +708,12 @@ func lockResourcesAfterSeries(tx *gorm.DB, ids []uint) (map[uint]*models.Resourc
 		}
 		observed = append(observed, rows...)
 	}
-	if len(observed) != len(ordered) {
-		return nil, gorm.ErrRecordNotFound
+	if err := requireAllPresent(ordered, isOptional, len(observed), func(yield func(uint)) {
+		for i := range observed {
+			yield(observed[i].ID)
+		}
+	}); err != nil {
+		return nil, err
 	}
 	seriesIDs := make([]uint, 0, len(observed))
 	for i := range observed {
@@ -713,8 +744,12 @@ func lockResourcesAfterSeries(tx *gorm.DB, ids []uint) (map[uint]*models.Resourc
 		}
 		locked = append(locked, rows...)
 	}
-	if len(locked) != len(ordered) {
-		return nil, gorm.ErrRecordNotFound
+	if err := requireAllPresent(ordered, isOptional, len(locked), func(yield func(uint)) {
+		for i := range locked {
+			yield(locked[i].ID)
+		}
+	}); err != nil {
+		return nil, err
 	}
 
 	observedByID := make(map[uint]*uint, len(observed))
@@ -927,6 +962,15 @@ type MergePrecondition func(txCtx *MahresourcesContext) error
 // resource-detail merge form and `mr resources merge` are a person naming a winner
 // they are looking at, with no earlier snapshot to be stale against.
 func (ctx *MahresourcesContext) MergeResourcesExpecting(winnerId uint, loserIds []uint, keepAsVersion bool, precondition MergePrecondition) error {
+	return ctx.MergeResourcesLocking(winnerId, loserIds, keepAsVersion, nil, false, precondition)
+}
+
+// MergeResourcesLocking is MergeResourcesExpecting for a caller whose precondition
+// reads further rows (extraLockIDs) that must hold still for the merge. They are
+// locked in the same canonical pass as the participants, after the Series locks, so
+// two merges whose row sets cross cannot lock them in opposite orders. They are
+// locked only; nothing is done to them.
+func (ctx *MahresourcesContext) MergeResourcesLocking(winnerId uint, loserIds []uint, keepAsVersion bool, extraLockIDs []uint, extrasOptional bool, precondition MergePrecondition) error {
 	if len(loserIds) == 0 || winnerId == 0 {
 		return errors.New("incorrect parameters")
 	}
@@ -982,8 +1026,14 @@ func (ctx *MahresourcesContext) MergeResourcesExpecting(winnerId uint, loserIds 
 		}
 		transactionCtx.db, tx = rescoped, rescoped
 
-		participantIDs := append(append(make([]uint, 0, len(loserIds)+1), loserIds...), winnerId)
-		participants, err := lockResourcesAfterSeries(tx, participantIDs)
+		participantIDs := append(append(make([]uint, 0, len(loserIds)+1+len(extraLockIDs)), loserIds...), winnerId)
+		var optionalIDs []uint
+		if extrasOptional {
+			optionalIDs = extraLockIDs
+		} else {
+			participantIDs = append(participantIDs, extraLockIDs...)
+		}
+		participants, err := lockResourcesAfterSeriesWith(tx, participantIDs, optionalIDs)
 		if err != nil {
 			return err
 		}

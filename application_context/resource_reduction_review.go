@@ -37,12 +37,6 @@ const ReductionClustersPerPage = 20
 // every checked Cluster across the whole plan, and hiding skipped ones from the
 // page must not change what Apply would do.
 func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, ownerRestricted bool, page int, query *query_models.ResourceReductionReviewQuery) (*contracts.ReductionReview, error) {
-	// An abandoned claim is settled first: it is a write, and the read below must
-	// not be the one that finds it half done.
-	if row, err := ctx.loadReductionForUpdate(id, ownerUserID, ownerRestricted); err == nil {
-		ctx.reconcileAbandonedClaims(row)
-	}
-
 	// One snapshot for every read in the page: the version, the reachability
 	// query, the hydration and the counts. Read apart, a Resource moving between
 	// two of them let a Cluster be counted and paginated as visible and then

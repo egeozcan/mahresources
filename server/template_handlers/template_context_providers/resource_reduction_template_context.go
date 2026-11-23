@@ -171,6 +171,10 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 			return addErrContext(err, baseContext)
 		}
 
+		// One source for the whole page: the version the figures and the apply token
+		// were read at, not an earlier read of the row.
+		reduction = review.Reduction
+
 		if redirect := outOfRangePageRedirect(request, int64(review.ClusterCount), review.PageSize, page); redirect != nil {
 			return redirect
 		}

@@ -290,6 +290,10 @@ type ReductionCluster struct {
 	// reading a missing member as "merged away" rather than "outside your access"
 	// needs this stronger statement.
 	Merged bool `json:"merged,omitempty"`
+	// ClaimID is the random token of the claim that took this Cluster out of play.
+	// Every write that settles that claim (confirm, demote, release, reconcile) must
+	// present it, so a delayed settlement of an old claim cannot touch a newer one.
+	ClaimID string `json:"claimId,omitempty"`
 }
 
 // ReductionMember is one Resource in a Cluster.
