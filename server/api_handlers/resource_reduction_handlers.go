@@ -203,6 +203,35 @@ func GetResourceReductionOverrideHandler(ctx ResourceReductionContext) func(http
 	}
 }
 
+// GetResourceReductionBulkHandler handles POST /v1/reduction/clusters: check or
+// uncheck many Clusters in one write. The response carries the new version so the
+// page can make its next decision without a reload, and says how many Clusters
+// were left alone because they need individual review.
+func GetResourceReductionBulkHandler(ctx ResourceReductionContext) func(http.ResponseWriter, *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var bulk query_models.ReductionBulkOverride
+		if err := tryFillStructValuesFromRequest(&bulk, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		owner, restricted := reductionScope(auth.PrincipalFromContext(request.Context()))
+		result, err := ctx.BulkOverrideReductionClusters(&bulk, owner, restricted)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"id":          bulk.ID,
+			"version":     result.Version,
+			"changed":     result.Changed,
+			"needsReview": result.NeedsReview,
+		})
+	}
+}
+
 // GetResourceReductionApplyHandler handles POST /v1/reduction/apply.
 //
 // The response is a per-Cluster report rather than an ok/not-ok, because applying

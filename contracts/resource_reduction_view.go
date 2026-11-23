@@ -221,3 +221,14 @@ func (r *ReductionApplyResult) DestroyedCount() int {
 	}
 	return total
 }
+
+// ReductionBulkResult is what a bulk check or uncheck did.
+type ReductionBulkResult struct {
+	// Version is the Reduction's version after the write.
+	Version uint `json:"version"`
+	// Changed is how many Clusters flipped between approved and not approved.
+	Changed int `json:"changed"`
+	// NeedsReview is how many Clusters a check left alone because they need
+	// individual review (lossy, oversized or keeping a lower-resolution copy).
+	NeedsReview int `json:"needsReview"`
+}

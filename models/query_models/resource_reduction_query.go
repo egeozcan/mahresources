@@ -131,3 +131,24 @@ type ReductionApply struct {
 	ID      uint `json:"id" schema:"id"`
 	Version uint `json:"version" schema:"version"`
 }
+
+// ReductionBulkOverride checks or unchecks many Clusters in one write, with exactly
+// one way of naming them: the ids the page rendered, or every open Identical
+// Cluster.
+type ReductionBulkOverride struct {
+	ID      uint `json:"id" schema:"id"`
+	Version uint `json:"version" schema:"version"`
+	// Action is "check" or "uncheck".
+	Action string `json:"action" schema:"action"`
+	// ClusterIDs are the Clusters to act on, any tier. Exactly one of ClusterIDs
+	// and AllIdentical must be given.
+	ClusterIDs []string `json:"clusterIds" schema:"clusterIds"`
+	// AllIdentical acts on every open Identical Cluster in the whole plan, never on
+	// the Near-Identical tier, so approval of perceptual matches across pages the
+	// reviewer has not seen stays impossible.
+	AllIdentical bool `json:"allIdentical" schema:"allIdentical"`
+	// ExpectedCount is how many Clusters the caller believes AllIdentical names (the
+	// number on its button). Required with AllIdentical; a different number is
+	// refused with 409 so a stale button cannot approve more than it said.
+	ExpectedCount *uint `json:"expectedCount" schema:"expectedCount"`
+}

@@ -111,7 +111,9 @@ func statusCodeForError(err error, fallback int) int {
 	}
 	if errors.Is(err, application_context.ErrReductionConflict) ||
 		errors.Is(err, application_context.ErrReductionBusy) ||
-		errors.Is(err, application_context.ErrReductionClusterSettled) {
+		errors.Is(err, application_context.ErrReductionClusterSettled) ||
+		errors.Is(err, application_context.ErrReductionCountMismatch) ||
+		errors.Is(err, application_context.ErrReductionClusterNotOpen) {
 		return http.StatusConflict
 	}
 	// A refusal about the request rather than about the state of the row: an
@@ -120,7 +122,9 @@ func statusCodeForError(err error, fallback int) int {
 	// All are 400, because the request is missing something it must carry.
 	if errors.Is(err, application_context.ErrReductionOversizedUnexpanded) ||
 		errors.Is(err, application_context.ErrReductionRestoreUnpaired) ||
-		errors.Is(err, application_context.ErrReductionRestoreOutsider) {
+		errors.Is(err, application_context.ErrReductionRestoreOutsider) ||
+		errors.Is(err, application_context.ErrReductionBulkTarget) ||
+		errors.Is(err, application_context.ErrReductionBulkNeedsCount) {
 		return http.StatusBadRequest
 	}
 

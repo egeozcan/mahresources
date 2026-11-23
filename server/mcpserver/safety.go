@@ -250,6 +250,7 @@ var mutating = map[string]bool{
 
 	"createResourceReduction": true, "overrideResourceReductionCluster": true,
 	"computeResourceReduction": true, "editResourceReduction": true,
+	"bulkCheckResourceReductionClusters": true,
 
 	"createOrUpdateRelation": true, "editRelationDescription": true, "editRelationName": true,
 	"createRelationType": true, "editRelationTypeDescription": true,
