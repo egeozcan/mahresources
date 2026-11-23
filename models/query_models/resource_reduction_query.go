@@ -153,6 +153,9 @@ type ReductionApply struct {
 	// the apply record so a client that lost the response can tell its own attempt
 	// from another tab's.
 	RequestID string `json:"requestId" schema:"requestId"`
+	// SettleOnly runs only the reconciliation of Clusters an earlier batch claimed
+	// and never finished, and merges nothing.
+	SettleOnly bool `json:"settleOnly" schema:"settleOnly"`
 }
 
 // ReductionBulkOverride checks or unchecks many Clusters in one write, with exactly

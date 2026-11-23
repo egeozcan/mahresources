@@ -19,6 +19,9 @@ type ReductionMemberView struct {
 	Resource *models.Resource
 	IsWinner bool
 	IsLoser  bool
+	// Changed marks a member whose bytes (or match to the Winner) failed an apply's
+	// revalidation; the Cluster is stale because of it.
+	Changed bool
 	// DistanceLabel is the stored perceptual distance in words, and empty when
 	// there is none — a Winner, or any member of an Identical Cluster. It is a
 	// rendered label for the same reason DecidedByLabel is, and for one more: a
@@ -50,6 +53,9 @@ type ReductionClusterView struct {
 	// LoserCount is how many copies this Cluster would remove: members that are
 	// neither the Winner nor ejected. Zero means there is nothing to approve.
 	LoserCount int
+	// WinnerChanged is true when the kept copy itself is among the changed members,
+	// so ejecting the others does not help.
+	WinnerChanged bool
 	// Withheld counts members the current principal may not see. A Cluster with
 	// any is not actionable: applying it would destroy Resources the reviewer was
 	// never shown.
@@ -227,6 +233,10 @@ type ReductionApplyOutcome struct {
 type ReductionApplyResult struct {
 	Applied []ReductionApplyOutcome `json:"applied"`
 	Stale   []ReductionApplyOutcome `json:"stale"`
+	// Changed counts approved Clusters another decision moved before their turn
+	// (unchecked, skipped, ejected, recomputed). They are not stale and are not on
+	// the Stale tab.
+	Changed int `json:"changed"`
 }
 
 // DestroyedCount is how many Resources this apply actually merged away.

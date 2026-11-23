@@ -962,15 +962,34 @@ type MergePrecondition func(txCtx *MahresourcesContext) error
 // resource-detail merge form and `mr resources merge` are a person naming a winner
 // they are looking at, with no earlier snapshot to be stale against.
 func (ctx *MahresourcesContext) MergeResourcesExpecting(winnerId uint, loserIds []uint, keepAsVersion bool, precondition MergePrecondition) error {
-	return ctx.MergeResourcesLocking(winnerId, loserIds, keepAsVersion, nil, false, precondition)
+	return ctx.MergeResourcesLocking(winnerId, loserIds, keepAsVersion, nil, false, MergeHooks{Precondition: precondition})
 }
+
+// MergeHooks are a caller's steps inside the merge's own transaction.
+//
+// BeforeLocks runs first, before any Series or Resource lock: it is where a caller
+// that keeps its own row consistent with the merge takes that row's lock, so the
+// order is always its row, then the Series, then the Resources. Precondition runs
+// after the participants are locked. InTx runs after everything is deleted and
+// written, still before the commit, so what it writes commits with the merge or
+// not at all.
+type MergeHooks struct {
+	BeforeLocks  func(txCtx *MahresourcesContext) error
+	Precondition MergePrecondition
+	InTx         func(txCtx *MahresourcesContext) error
+}
+
+// ErrMergeParticipantUnavailable is the lock pass finding a participant missing or,
+// for a scoped caller judged against the subtree as it is now, not theirs.
+var ErrMergeParticipantUnavailable = errors.New("a Resource in this merge is gone or no longer visible")
 
 // MergeResourcesLocking is MergeResourcesExpecting for a caller whose precondition
 // reads further rows (extraLockIDs) that must hold still for the merge. They are
 // locked in the same canonical pass as the participants, after the Series locks, so
 // two merges whose row sets cross cannot lock them in opposite orders. They are
 // locked only; nothing is done to them.
-func (ctx *MahresourcesContext) MergeResourcesLocking(winnerId uint, loserIds []uint, keepAsVersion bool, extraLockIDs []uint, extrasOptional bool, precondition MergePrecondition) error {
+func (ctx *MahresourcesContext) MergeResourcesLocking(winnerId uint, loserIds []uint, keepAsVersion bool, extraLockIDs []uint, extrasOptional bool, hooks MergeHooks) error {
+	precondition := hooks.Precondition
 	if len(loserIds) == 0 || winnerId == 0 {
 		return errors.New("incorrect parameters")
 	}
@@ -1033,7 +1052,15 @@ func (ctx *MahresourcesContext) MergeResourcesLocking(winnerId uint, loserIds []
 		} else {
 			participantIDs = append(participantIDs, extraLockIDs...)
 		}
+		if hooks.BeforeLocks != nil {
+			if err := hooks.BeforeLocks(transactionCtx); err != nil {
+				return err
+			}
+		}
 		participants, err := lockResourcesAfterSeriesWith(tx, participantIDs, optionalIDs)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			err = fmt.Errorf("%w: %w", ErrMergeParticipantUnavailable, err)
+		}
 		if err != nil {
 			return err
 		}
@@ -1217,6 +1244,12 @@ func (ctx *MahresourcesContext) MergeResourcesLocking(winnerId uint, loserIds []
 			}
 		} else if transactionCtx.Config.DbType == constants.DbTypeSqlite {
 			if err := tx.Exec("update resources set meta = json_patch(COALESCE(nullif(meta, 'null'), '{}'), ?) where id = ?", string(backups), winner.ID).Error; err != nil {
+				return err
+			}
+		}
+
+		if hooks.InTx != nil {
+			if err := hooks.InTx(transactionCtx); err != nil {
 				return err
 			}
 		}

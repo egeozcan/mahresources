@@ -294,6 +294,10 @@ type ReductionCluster struct {
 	// Every write that settles that claim (confirm, demote, release, reconcile) must
 	// present it, so a delayed settlement of an old claim cannot touch a newer one.
 	ClaimID string `json:"claimId,omitempty"`
+	// ChangedMembers are the members whose bytes (or, on the Near tier, whose
+	// perceptual match to the Winner) failed the apply's revalidation. Cleared when
+	// the Cluster is reopened.
+	ChangedMembers []uint `json:"changedMembers,omitempty"`
 }
 
 // ReductionMember is one Resource in a Cluster.

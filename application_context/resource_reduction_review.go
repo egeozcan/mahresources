@@ -150,11 +150,11 @@ func (ctx *MahresourcesContext) getReductionReview(id uint, ownerUserID *uint, o
 		}
 		if cluster.Tier == models.ReductionTierIdentical {
 			figures.bulk.IdenticalOpen++
-			if !cluster.Checked && !clusterNeedsAttention(cluster) && len(cluster.LoserIDs()) > 0 {
+			if !clusterApproved(cluster) && !clusterNeedsAttention(cluster) && len(cluster.LoserIDs()) > 0 {
 				figures.bulk.IdenticalApprovable++
 			}
 		}
-		if !cluster.Checked || len(cluster.LoserIDs()) == 0 {
+		if !clusterApproved(cluster) {
 			continue
 		}
 		eligible = append(eligible, cluster)
@@ -593,7 +593,7 @@ func filterReviewClusters(clusters []*models.ReductionCluster, visible map[uint]
 		if query.NeedsAttention && !clusterNeedsAttention(c) {
 			continue
 		}
-		if (query.Approval == "approved" && !c.Checked) || (query.Approval == "unapproved" && c.Checked) {
+		if (query.Approval == "approved" && !clusterApproved(c)) || (query.Approval == "unapproved" && clusterApproved(c)) {
 			continue
 		}
 		out = append(out, c)
@@ -658,12 +658,14 @@ func buildClusterViews(clusters []*models.ReductionCluster, resources map[uint]*
 				Resource:        resource,
 				IsWinner:        member.ResourceID == cluster.WinnerID,
 				IsLoser:         member.IsLoser(cluster.WinnerID),
+				Changed:         containsUint(cluster.ChangedMembers, member.ResourceID),
 				DistanceLabel:   reductionDistanceLabel(member.Distance),
 				TagCount:        associations[member.ResourceID].Tags,
 				NoteCount:       associations[member.ResourceID].Notes,
 				GroupCount:      associations[member.ResourceID].Groups,
 			})
 		}
+		view.WinnerChanged = containsUint(cluster.ChangedMembers, cluster.WinnerID)
 		view.Position = len(views) + 1
 		view.NeedsAttention = clusterNeedsAttention(cluster)
 		if cluster.KeepsSmaller {
@@ -772,7 +774,7 @@ func reductionStateLabel(cluster *models.ReductionCluster) string {
 	case models.ReductionClusterStale:
 		return "Stale"
 	}
-	if cluster.Checked {
+	if clusterApproved(cluster) {
 		return "Approved"
 	}
 	if cluster.Reviewed {
@@ -961,4 +963,20 @@ func applyToken(clusters []*models.ReductionCluster) string {
 		fmt.Fprintf(hash, "%s|%s|%s\n", parts[0], parts[1], strings.Join(losers, ","))
 	}
 	return hex.EncodeToString(hash.Sum(nil))[:32]
+}
+
+// clusterApproved is the one meaning of "approved" a count, a filter, a label and an
+// apply share: checked, and with at least one copy it would remove. A checked
+// Cluster whose every Loser was ejected (an older plan can hold one) is not.
+func clusterApproved(c *models.ReductionCluster) bool {
+	return c.Checked && len(c.LoserIDs()) > 0
+}
+
+func containsUint(list []uint, v uint) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }

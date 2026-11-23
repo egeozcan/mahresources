@@ -76,6 +76,9 @@ func (ctx *MahresourcesContext) bulkOverrideReductionClustersOnce(request *query
 	if EffectiveReductionStatus(reduction) == models.ReductionStatusComputing {
 		return nil, nil, ErrReductionBusy
 	}
+	if request.Version != reduction.Version {
+		return nil, nil, ErrReductionConflict
+	}
 	plan, err := DecodeReductionPlan(reduction.Plan)
 	if err != nil {
 		return nil, nil, err
@@ -129,7 +132,7 @@ func (ctx *MahresourcesContext) bulkOverrideReductionClustersOnce(request *query
 	if err != nil {
 		return nil, nil, err
 	}
-	updated, err := ctx.casReductionAndReloadHolding(reduction.ID, request.Version, map[string]any{"plan": encoded}, ownerUserID, ownerRestricted, targets)
+	updated, err := ctx.casReductionAndReloadHolding(reduction.ID, reduction.Version, map[string]any{"plan": encoded}, ownerUserID, ownerRestricted, targets)
 	if err != nil {
 		return nil, nil, err
 	}

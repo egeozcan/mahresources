@@ -414,6 +414,14 @@ func (ctx *MahresourcesContext) computeReductionPlan(jobCtx context.Context, red
 	for _, cluster := range previous.Clusters {
 		if cluster.State == models.ReductionClusterApplied {
 			carried = append(carried, cluster)
+			// A claim that is not confirmed is a keep decision in flight (or stranded
+			// by a crash): its Resources stay out of the pool until it settles, or a
+			// recompute could propose the Winner as a Loser of a new Cluster.
+			if !cluster.Merged {
+				for _, member := range cluster.Members {
+					excluded[member.ResourceID] = true
+				}
+			}
 			continue
 		}
 		if !cluster.Frozen() {

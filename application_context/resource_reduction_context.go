@@ -223,7 +223,10 @@ func (ctx *MahresourcesContext) UpdateResourceReductionSettings(editor *query_mo
 		if err != nil || len(updates) == 0 {
 			return existing, err
 		}
-		return ctx.casReductionAndReload(existing.ID, editor.Version, updates, ownerUserID, ownerRestricted)
+		if editor.Version != existing.Version {
+			return nil, ErrReductionConflict
+		}
+		return ctx.casReductionAndReload(existing.ID, existing.Version, updates, ownerUserID, ownerRestricted)
 	})
 }
 

@@ -258,6 +258,7 @@ func GetResourceReductionApplyHandler(ctx ResourceReductionContext) func(http.Re
 		_ = json.NewEncoder(writer).Encode(map[string]any{
 			"applied":   result.Applied,
 			"stale":     result.Stale,
+			"changed":   result.Changed,
 			"destroyed": result.DestroyedCount(),
 		})
 	}

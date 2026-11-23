@@ -591,7 +591,7 @@ func TestRecomputeKeepsTheLegacyKeepsSmallerWarning(t *testing.T) {
 // Round 3. A claim is not a completed merge until confirmed. An abandoned one is
 // settled only inside the next apply's batch claim, from evidence the merge itself
 // committed, and a page read never writes.
-func TestAbandonedClaimsAreSettledByTheNextApplyFromEvidence(t *testing.T) {
+func TestAbandonedClaimsAreSettledByTheNextApply(t *testing.T) {
 	type outcome struct {
 		state           string
 		merged, checked bool
@@ -604,11 +604,11 @@ func TestAbandonedClaimsAreSettledByTheNextApplyFromEvidence(t *testing.T) {
 			prepare: func(t *testing.T, tc *TestContext, winner, loser uint) {},
 			want:    outcome{models.ReductionClusterOpen, false, true},
 		},
-		"merged, with the merge's own backup record": {
+		"merged by something else, not by this claim": {
 			prepare: func(t *testing.T, tc *TestContext, winner, loser uint) {
 				require.NoError(t, tc.AppCtx.MergeResources(winner, []uint{loser}, false))
 			},
-			want: outcome{models.ReductionClusterApplied, true, false},
+			want: outcome{models.ReductionClusterStale, false, false},
 		},
 		"loser deleted by something else": {
 			prepare: func(t *testing.T, tc *TestContext, winner, loser uint) {
@@ -671,9 +671,9 @@ func TestASettlementOfAnOldClaimDoesNotTouchANewerClaim(t *testing.T) {
 	require.NotNil(t, second)
 	require.NotEqual(t, first.ClaimID, second.ClaimID)
 
-	tc.AppCtx.ConfirmClusterMergedForTest(red.ID, cluster.ID, first.ClaimID)
+	tc.AppCtx.ReleaseClaimForTest(red.ID, cluster.ID, first.ClaimID)
 	after := planOf(t, tc, red.ID).Clusters[0]
-	assert.False(t, after.Merged, "the old claim's confirmation found a different claim and did nothing")
+	assert.Equal(t, models.ReductionClusterApplied, after.State, "the old claim's settlement found a different claim and did nothing")
 	assert.Equal(t, second.ClaimID, after.ClaimID)
 	assert.True(t, resourceExists(t, tc, ids[1]))
 }
@@ -778,5 +778,216 @@ func TestClusterViewCarriesTheLoserCount(t *testing.T) {
 		if m.ResourceID != ids[0] {
 			assert.True(t, m.Ejected, "the ejected members carry Ejected")
 		}
+	}
+}
+
+// Round 4 A. The merge and its confirmation are one transaction, and the merge only
+// goes ahead while the claim it was started for is still current.
+func TestAMergeWhoseClaimWasReplacedDeletesNothing(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+	ids := clusterOf(t, tc, "r4-claimlost", 2)
+	setDimensions(t, tc, ids[0], 900, 900)
+	red := createReduction(t, tc, "Claim lost", ids)
+	computeReduction(t, tc, red.ID)
+
+	restore := application_context.SetReductionApplyAfterClaimHookForTest(func() {
+		forced := planOf(t, tc, red.ID)
+		forced.Clusters[0].ClaimID = "someone-else"
+		current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+		require.NoError(t, err)
+		require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, forced))
+	})
+	defer restore()
+
+	result := applyReduction(t, tc, red.ID)
+	assert.Empty(t, result.Applied)
+	assert.Empty(t, result.Stale)
+	assert.Equal(t, 1, result.Changed)
+	assert.True(t, resourceExists(t, tc, ids[0]) && resourceExists(t, tc, ids[1]), "nothing was deleted")
+	assert.Equal(t, "someone-else", planOf(t, tc, red.ID).Clusters[0].ClaimID)
+}
+
+func TestASuccessfulApplyCommitsTheMergedMarkWithTheMerge(t *testing.T) {
+	tc := SetupTestEnv(t)
+	ids := clusterOf(t, tc, "r4-atomic", 2)
+	setDimensions(t, tc, ids[0], 900, 900)
+	red := createReduction(t, tc, "Atomic", ids)
+	computeReduction(t, tc, red.ID)
+	result := applyReduction(t, tc, red.ID)
+	require.Len(t, result.Applied, 1)
+	cluster := planOf(t, tc, red.ID).Clusters[0]
+	assert.True(t, cluster.Merged)
+	assert.Equal(t, models.ReductionClusterApplied, cluster.State)
+	assert.False(t, resourceExists(t, tc, ids[1]))
+}
+
+// Round 4 B. A recompute leaves the members of an unsettled claim alone.
+func TestRecomputeKeepsAnUnsettledClaimsMembersOutOfThePool(t *testing.T) {
+	tc := SetupTestEnv(t)
+	ids := clusterOf(t, tc, "r4-recompute", 2)
+	setDimensions(t, tc, ids[0], 900, 900)
+	red := createReduction(t, tc, "Recompute claim", ids)
+	plan := computeReduction(t, tc, red.ID)
+	require.NotNil(t, tc.AppCtx.ClaimClusterForApplyForTest(red.ID, plan.Clusters[0].ID, plan.Clusters[0].WinnerID,
+		map[uint]string{ids[0]: "r4-recompute", ids[1]: "r4-recompute"}))
+	after := computeReduction(t, tc, red.ID)
+	require.Len(t, after.Clusters, 1, "no second Cluster was made over the same Resources")
+	assert.Equal(t, models.ReductionClusterApplied, after.Clusters[0].State)
+}
+
+// Round 4 C. A merge that cannot see a member on the subtree as it is now releases
+// the claim and says nothing, even though the request's own binding still sees it.
+func TestAMergeRefusedOnFreshScopeReleasesTheClaimWithoutNamingIt(t *testing.T) {
+	tc := SetupTestEnv(t)
+	f := newReductionScopeFixture(t, tc)
+	child, err := tc.AppCtx.CreateGroup(&query_models.GroupCreator{Name: "Child", OwnerId: f.narrow.ID})
+	require.NoError(t, err)
+	// The allow-list is a snapshot at bind time, so rebind now the tree is complete.
+	f.wideCtx, f.narrowCtx = scopedTo(t, tc, f.wide.ID), scopedTo(t, tc, f.narrow.ID)
+	ids := clusterOf(t, tc, "r4-fresh", 2)
+	setDimensions(t, tc, ids[0], 900, 900)
+	f.place(t, child, ids...)
+	plan := f.compute(t, ids)
+
+	restore := application_context.SetReductionApplyAfterClaimHookForTest(func() {
+		require.NoError(t, tc.DB.Model(&models.Group{}).Where("id = ?", child.ID).Update("owner_id", f.wide.ID).Error)
+	})
+	defer restore()
+
+	err, applied, stale := f.narrowApply(t, nil, nil)
+	require.NoError(t, err)
+	assert.Zero(t, applied)
+	assert.Zero(t, stale, "nothing is reported")
+	assert.True(t, resourceExists(t, tc, ids[1]))
+	after := findClusterByID(planOf(t, tc, f.red.ID), plan.Clusters[0].ID)
+	assert.Equal(t, models.ReductionClusterOpen, after.State)
+	assert.True(t, after.Checked)
+}
+
+// Round 4 D. A request that names a version other than the loaded one is refused.
+func TestAWriteNamingAnotherVersionIsRefused(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+	ids := clusterOf(t, tc, "r4-version", 2)
+	red := createReduction(t, tc, "Versions", ids)
+	plan := computeReduction(t, tc, red.ID)
+	id := plan.Clusters[0].ID
+	next := versionOf(t, tc, red.ID) + 1
+
+	_, err := tc.AppCtx.ApplyResourceReduction(&query_models.ReductionApply{ID: red.ID, Version: next}, owner, restricted)
+	assert.ErrorIs(t, err, application_context.ErrReductionConflict)
+	_, err = tc.AppCtx.OverrideReductionCluster(&query_models.ReductionOverride{ID: red.ID, Version: next, ClusterID: id, Action: application_context.ReductionActionUncheck}, owner, restricted)
+	assert.ErrorIs(t, err, application_context.ErrReductionConflict)
+	_, err = tc.AppCtx.BulkOverrideReductionClusters(&query_models.ReductionBulkOverride{ID: red.ID, Version: next, Action: "uncheck", ClusterIDs: []string{id}}, owner, restricted)
+	assert.ErrorIs(t, err, application_context.ErrReductionConflict)
+	_, err = tc.AppCtx.UpdateResourceReductionSettings(&query_models.ResourceReductionEditor{ID: red.ID, Version: next, Name: "x"}, owner, restricted)
+	assert.ErrorIs(t, err, application_context.ErrReductionConflict)
+	assert.True(t, resourceExists(t, tc, ids[0]) && resourceExists(t, tc, ids[1]))
+}
+
+// Round 4 E. A Cluster another decision moved before its turn is "changed", not
+// stale: the Stale tab does not gain it.
+func TestAClusterUncheckedMidBatchIsChangedNotStale(t *testing.T) {
+	tc := SetupTestEnv(t)
+	a := clusterOf(t, tc, "r4-changed-a", 2)
+	b := clusterOf(t, tc, "r4-changed-b", 2)
+	red := createReduction(t, tc, "Changed", append(append([]uint{}, a...), b...))
+	plan := computeReduction(t, tc, red.ID)
+	first := plan.Clusters[0].ID
+	second := plan.Clusters[1].ID
+
+	calls := 0
+	restore := application_context.SetReductionApplyAfterClaimHookForTest(func() {
+		calls++
+		if calls == 1 {
+			override(t, tc, red.ID, second, application_context.ReductionActionUncheck, 0)
+		}
+	})
+	defer restore()
+	result := applyReduction(t, tc, red.ID)
+	_ = first
+	assert.Len(t, result.Applied, 1)
+	assert.Empty(t, result.Stale)
+	assert.Equal(t, 1, result.Changed)
+	assert.Zero(t, planOf(t, tc, red.ID).LastApply.Stale, "lastApply equals what the Stale tab gains")
+	assert.Zero(t, reviewOf(t, tc, red.ID, 1, nil).TabCounts.Stale)
+}
+
+// Round 4 F. A legacy checked Cluster with nothing to remove is not "Approved".
+func TestALegacyEmptyProposalIsNotApprovedAnywhere(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+	ids := clusterOf(t, tc, "r4-legacy-empty", 2)
+	setDimensions(t, tc, ids[0], 900, 900)
+	red := createReduction(t, tc, "Legacy empty", ids)
+	plan := computeReduction(t, tc, red.ID)
+	override(t, tc, red.ID, plan.Clusters[0].ID, application_context.ReductionActionEject, ids[1])
+	forced := planOf(t, tc, red.ID)
+	forced.Clusters[0].Checked = true
+	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, forced))
+
+	approved := reviewOf(t, tc, red.ID, 1, &query_models.ResourceReductionReviewQuery{Approval: "approved"})
+	assert.Empty(t, approved.Clusters)
+	unapproved := reviewOf(t, tc, red.ID, 1, &query_models.ResourceReductionReviewQuery{Approval: "unapproved"})
+	require.Len(t, unapproved.Clusters, 1)
+	assert.Equal(t, "Not approved", unapproved.Clusters[0].StateLabel)
+}
+
+// Round 4 G. A failed revalidation records which copies changed and whether the
+// kept one is among them.
+func TestStaleRecordsWhichCopiesChanged(t *testing.T) {
+	tc := SetupTestEnv(t)
+	ids := clusterOf(t, tc, "r4-which", 3)
+	setDimensions(t, tc, ids[0], 900, 900)
+	red := createReduction(t, tc, "Which", ids)
+	computeReduction(t, tc, red.ID)
+	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", ids[2]).Update("hash", "changed-2").Error)
+	applyReduction(t, tc, red.ID)
+
+	review := reviewOf(t, tc, red.ID, 1, &query_models.ResourceReductionReviewQuery{Status: []string{"stale"}})
+	require.Len(t, review.Clusters, 1)
+	view := review.Clusters[0]
+	assert.False(t, view.WinnerChanged)
+	for _, m := range view.Members {
+		assert.Equal(t, m.ResourceID == ids[2], m.Changed, "only the copy whose bytes changed is marked")
+	}
+
+	// And when the kept copy itself changed.
+	tc2 := SetupTestEnv(t)
+	ids2 := clusterOf(t, tc2, "r4-which-winner", 2)
+	setDimensions(t, tc2, ids2[0], 900, 900)
+	red2 := createReduction(t, tc2, "Which winner", ids2)
+	computeReduction(t, tc2, red2.ID)
+	require.NoError(t, tc2.DB.Model(&models.Resource{}).Where("id = ?", ids2[0]).Update("hash", "changed-w").Error)
+	applyReduction(t, tc2, red2.ID)
+	assert.True(t, reviewOf(t, tc2, red2.ID, 1, &query_models.ResourceReductionReviewQuery{Status: []string{"stale"}}).Clusters[0].WinnerChanged)
+}
+
+// Round 4 H. settleOnly releases a stranded claim and merges nothing.
+func TestSettleOnlyReleasesAStrandedClaimAndMergesNothing(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+	a := clusterOf(t, tc, "r4-settle-a", 2)
+	b := clusterOf(t, tc, "r4-settle-b", 2)
+	setDimensions(t, tc, a[0], 900, 900)
+	red := createReduction(t, tc, "Settle", append(append([]uint{}, a...), b...))
+	plan := computeReduction(t, tc, red.ID)
+	cluster := clusterFor(plan, a[0])
+	require.NotNil(t, tc.AppCtx.ClaimClusterForApplyForTest(red.ID, cluster.ID, cluster.WinnerID, map[uint]string{a[0]: "r4-settle-a", a[1]: "r4-settle-a"}))
+
+	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	result, err := tc.AppCtx.ApplyResourceReduction(&query_models.ReductionApply{ID: red.ID, Version: current.Version, SettleOnly: true}, owner, restricted)
+	require.NoError(t, err)
+	assert.Empty(t, result.Applied)
+	after := planOf(t, tc, red.ID)
+	assert.Equal(t, models.ReductionClusterOpen, findClusterByID(after, cluster.ID).State)
+	assert.True(t, findClusterByID(after, cluster.ID).Checked)
+	assert.Nil(t, after.LastApply, "no apply was recorded")
+	for _, id := range append(append([]uint{}, a...), b...) {
+		assert.True(t, resourceExists(t, tc, id), "nothing was merged, the other approved Cluster included")
 	}
 }

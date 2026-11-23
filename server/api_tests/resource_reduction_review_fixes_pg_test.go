@@ -167,3 +167,50 @@ func TestASecondMergeKeepsTheEarlierMergesBackupRecordPG(t *testing.T) {
 	assert.Contains(t, meta, fmt.Sprintf("resource_%d", first.ID), "the first merge's record survived")
 	assert.Contains(t, meta, fmt.Sprintf("resource_%d", second.ID))
 }
+
+// Round 4. A decision on one Reduction and an apply on another, over overlapping
+// members, both take the Reduction row first and then the members, so neither can
+// hold what the other waits for.
+func TestAnOverrideAndAnApplyOnOverlappingMembersDoNotDeadlockPG(t *testing.T) {
+	tc := SetupPostgresTestEnv(t)
+	owner, restricted := asAdmin()
+	ids := clusterOf(t, tc, "r4-overlap", 3) // a, b, c
+	a, b, c := ids[0], ids[1], ids[2]
+	setDimensions(t, tc, a, 900, 900)
+	setDimensions(t, tc, b, 100, 100)
+	setDimensions(t, tc, c, 50, 50)
+
+	r1 := createReduction(t, tc, "Overlap apply", []uint{a, b})
+	computeReduction(t, tc, r1.ID)
+	r2 := createReduction(t, tc, "Overlap override", []uint{b, c})
+	p2 := computeReduction(t, tc, r2.ID)
+
+	// The apply holds its rows for a moment inside the merge.
+	restore := application_context.SetReductionPreconditionHookForTest(func() { time.Sleep(700 * time.Millisecond) })
+	defer restore()
+
+	applied := make(chan int, 1)
+	go func() {
+		current, _ := tc.AppCtx.GetResourceReduction(r1.ID, owner, restricted)
+		result, err := tc.AppCtx.ApplyResourceReduction(&query_models.ReductionApply{ID: r1.ID, Version: current.Version}, owner, restricted)
+		if err != nil {
+			applied <- -1
+			return
+		}
+		applied <- len(result.Applied)
+	}()
+	time.Sleep(200 * time.Millisecond)
+
+	current, err := tc.AppCtx.GetResourceReduction(r2.ID, owner, restricted)
+	require.NoError(t, err)
+	_, err = tc.AppCtx.OverrideReductionCluster(&query_models.ReductionOverride{
+		ID: r2.ID, Version: current.Version, ClusterID: p2.Clusters[0].ID, Action: application_context.ReductionActionUncheck,
+	}, owner, restricted)
+	assert.NoError(t, err, "the decision waited for the apply and then went through")
+	select {
+	case n := <-applied:
+		assert.Equal(t, 1, n)
+	case <-time.After(20 * time.Second):
+		t.Fatal("the apply never finished")
+	}
+}

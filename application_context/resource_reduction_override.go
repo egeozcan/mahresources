@@ -88,6 +88,11 @@ func (ctx *MahresourcesContext) overrideReductionClusterOnce(override *query_mod
 	if EffectiveReductionStatus(reduction) == models.ReductionStatusComputing {
 		return nil, ErrReductionBusy
 	}
+	// The plan below is the one at the loaded version; a request that names another
+	// is refused, and the write is made against the loaded one.
+	if override.Version != reduction.Version {
+		return nil, ErrReductionConflict
+	}
 
 	plan, err := DecodeReductionPlan(reduction.Plan)
 	if err != nil {
@@ -135,7 +140,7 @@ func (ctx *MahresourcesContext) overrideReductionClusterOnce(override *query_mod
 	if err != nil {
 		return nil, err
 	}
-	return ctx.casReductionAndReloadHolding(reduction.ID, override.Version, map[string]any{"plan": encoded}, ownerUserID, ownerRestricted, []*models.ReductionCluster{cluster})
+	return ctx.casReductionAndReloadHolding(reduction.ID, reduction.Version, map[string]any{"plan": encoded}, ownerUserID, ownerRestricted, []*models.ReductionCluster{cluster})
 }
 
 func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, override *query_models.ReductionOverride, rule []string) error {
@@ -157,6 +162,7 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 		if cluster.State == models.ReductionClusterStale {
 			cluster.State = models.ReductionClusterOpen
 			cluster.StaleReason = ""
+			cluster.ChangedMembers = nil
 		}
 		// Nothing left to remove: approving it would count a Cluster that merges
 		// nothing in "N approved".
@@ -221,6 +227,7 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 	case ReductionActionReopen:
 		cluster.State = models.ReductionClusterOpen
 		cluster.StaleReason = ""
+		cluster.ChangedMembers = nil
 		cluster.Reviewed = true
 		return nil
 
@@ -243,6 +250,7 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 		if cluster.State == models.ReductionClusterSkipped || cluster.State == models.ReductionClusterStale {
 			cluster.State = models.ReductionClusterOpen
 			cluster.StaleReason = ""
+			cluster.ChangedMembers = nil
 		}
 		return nil
 
@@ -308,6 +316,7 @@ func (ctx *MahresourcesContext) promoteMember(cluster *models.ReductionCluster, 
 	if cluster.State == models.ReductionClusterStale {
 		cluster.State = models.ReductionClusterOpen
 		cluster.StaleReason = ""
+		cluster.ChangedMembers = nil
 	}
 
 	if cluster.Tier == models.ReductionTierNear {

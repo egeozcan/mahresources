@@ -387,11 +387,11 @@ A Cluster withheld from you is left untouched by your apply and does not appear 
 
 The apply request can carry `applyToken`, the digest the review page exposes over the exact approved proposals (each Cluster id, Winner, Losers and their reviewed hashes). When it is sent and the proposals visible at apply time differ in any way, the apply is refused with 409 and nothing is claimed. It can also carry `requestId`, an opaque id of up to 64 characters that is stored in the record so a client that lost the response can tell its own apply from another tab's.
 
-A Cluster an apply has claimed but not yet confirmed is shown as **Merging**, not Applied: its copies still exist. If the process dies in between, the next apply settles it (viewing the page never does). Each claim carries its own token, so a late write from an older claim cannot touch a newer one. The merge counts as done only when the kept copy's `backups` meta holds the record the merge wrote for every removed copy. If all the copies are still there the Cluster goes back to open and approved. Copies gone without that record were deleted by something else, so the Cluster becomes stale: a Resource in it no longer exists.
+A Cluster an apply has claimed but not yet merged is shown as **Merging**, not Applied: its copies still exist. The merge and the mark that it happened commit in one database transaction, so a Cluster that is claimed and not marked merged was not merged. Each claim carries its own token, and the merge refuses to run unless the claim it started under is still the Cluster's current one. If the process dies in between, the next apply settles the Cluster (viewing the page never does): all its copies still there means it goes back to open and approved, and a copy gone means it becomes stale, because a Resource in it no longer exists. A lone stranded claim can be settled without applying anything else by sending `settleOnly: true` to the apply route.
 
 ### Recovering a stale Cluster
 
-Recompute leaves a stale Cluster as it is, so it does not rebuild it. Use **Don't remove** on the copy that changed, or was removed, to reopen the Cluster with the rest, then approve it again. If the kept copy itself changed or is gone, start a new Reduction over the same selection.
+Recompute leaves a stale Cluster as it is, so it does not rebuild it. The card marks the copy whose bytes changed, and says when it is the kept copy itself. Use **Don't remove** on a marked copy, or one that was removed, to reopen the Cluster with the rest, then approve it again. If the kept copy itself changed or is gone, start a new Reduction over the same selection.
 
 ### Stale Clusters
 
@@ -400,6 +400,8 @@ Immediately before each merge, the Cluster is revalidated. It is refused, marked
 - A member no longer exists. For an account confined to a Group subtree, a member that is gone and one that is out of its reach look the same, so such a Cluster is withheld instead: it is left untouched and not reported
 - A member's content hash no longer matches what the plan recorded. A version upload changes the bytes without touching the similarity pairs, which is why the plan snapshots each member's hash
 - On the Near-Identical tier, the stored pair between the Winner and a Loser no longer holds
+
+An approved Cluster that another decision moved before the batch reached it (unchecked, skipped, ejected from, or recomputed) is not stale. It is counted as changed in the result and does not appear on the Stale tab.
 
 One stale Cluster never refuses the whole batch. Ejected members are exempt from all of these checks, because an ejected Resource is not part of the Cluster and is left untouched.
 
