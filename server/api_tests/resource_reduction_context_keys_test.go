@@ -2,6 +2,8 @@ package api_tests
 
 import (
 	"encoding/json"
+	"fmt"
+	"mahresources/contracts"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -106,4 +108,35 @@ func TestReviewPageContextKeysNeverExposeAWithheldCluster(t *testing.T) {
 		assert.Equal(t, 0, figures["identical"].(pongo2.Context)["clusters"])
 		assert.Equal(t, 0, figures["identical"].(pongo2.Context)["losers"])
 	}
+}
+
+func TestReviewSelectionNamesAreVisibleOnesOnly(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+	wide, err := tc.AppCtx.CreateGroup(&query_models.GroupCreator{Name: "Wide"})
+	require.NoError(t, err)
+	narrow, err := tc.AppCtx.CreateGroup(&query_models.GroupCreator{Name: "Narrow", OwnerId: wide.ID})
+	require.NoError(t, err)
+	var ids []uint
+	for i := 0; i < 23; i++ {
+		r := addResourceWithBody(t, tc, fmt.Sprintf("sel-%02d.txt", i), fmt.Sprintf("sel body %d", i))
+		ids = append(ids, r.ID)
+		require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", r.ID).Update("owner_id", narrow.ID).Error)
+	}
+	hidden := addResourceWithBody(t, tc, "hidden-sel.txt", "hidden sel")
+	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", hidden.ID).Update("owner_id", wide.ID).Error)
+
+	red, err := tc.AppCtx.CreateOrExtendResourceReduction(&query_models.ResourceReductionCreator{
+		Name: "Names", ResourceIds: append(ids, hidden.ID), GroupIds: []uint{narrow.ID, wide.ID},
+	}, owner, restricted)
+	require.NoError(t, err)
+
+	sel := reviewPageContext(t, scopedTo(t, tc, narrow.ID), red.ID, "")["reviewSelection"].(pongo2.Context)
+	resources := sel["resources"].([]contracts.ReductionNamedRef)
+	assert.Len(t, resources, 20)
+	assert.Equal(t, 3, sel["moreResources"], "the hidden Resource is not counted")
+	groups := sel["groups"].([]contracts.ReductionNamedRef)
+	require.Len(t, groups, 1)
+	assert.Equal(t, "Narrow", groups[0].Name)
+	assert.Equal(t, 0, sel["moreGroups"])
 }

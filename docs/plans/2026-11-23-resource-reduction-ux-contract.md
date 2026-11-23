@@ -123,3 +123,7 @@ One residual: `lastApply` holds counts of what the last apply did. For a viewer 
 - `Approve page` should send `clusterIds` from the rendered `clusters[].id`, skipping withheld stubs (their `id` is empty).
 - Apply is still synchronous; reload after a lost response and read `lastApply`.
 - Whole-library clustering walks the library through the scoped handle in id pages. Identical-tier compute on a very large library is slower than a group-scoped one (no `GROUP BY hash` shortcut yet).
+
+## 7. Addendum: `reviewSelection` (D8)
+
+Top-level review-page key (also in `.json`): `reviewSelection = {groups: [{id, name}], resources: [{id, name}], moreGroups, moreResources}`. First 20 of each by id, only what the viewer can see; invisible ones are in neither the lists nor `more*`. Empty lists for a whole-library Reduction (`extentAll`). Cost: one visibility read plus one name read per kind, through the scoped handle.

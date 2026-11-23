@@ -132,6 +132,8 @@ func ResourceReductionCreateContextProvider(_ ResourceReductionPageContext) func
 	return func(request *http.Request) pongo2.Context {
 		return pongo2.Context{
 			"pageTitle": "New Resource Reduction",
+			// The vocabulary for the Winner Rule's Custom preset.
+			"winnerCriteria": allWinnerCriteria(),
 		}.Update(StaticTemplateCtx(request))
 	}
 }
@@ -240,6 +242,21 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 			"settingsChanged": review.SettingsChanged,
 			"lastApply":       describeLastApplyContext(review.LastApply),
 			"extentAll":       review.ExtentAll,
+			// The selection by name, first 20 of each by id, visible ones only.
+			"reviewSelection": pongo2.Context{
+				"groups":        review.SelectionGroups,
+				"resources":     review.SelectionResources,
+				"moreGroups":    review.MoreGroups,
+				"moreResources": review.MoreResources,
+			},
+			// Links of the tabs, chips and sort form, each the current query with one
+			// thing changed.
+			"reviewNav": reviewNav(request.URL.Query(), uint(id), reviewQuery.Status[0], map[string]int{
+				models.ReductionClusterOpen:    review.TabCounts.Open,
+				models.ReductionClusterSkipped: review.TabCounts.Skipped,
+				models.ReductionClusterStale:   review.TabCounts.Stale,
+				models.ReductionClusterApplied: review.TabCounts.Applied,
+			}),
 		}.Update(baseContext)
 	}
 }

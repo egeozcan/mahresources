@@ -190,7 +190,16 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 		extentSize = 0
 	}
 
+	selection, err := ctx.reductionSelectionNames(storedExtent, extent)
+	if err != nil {
+		return nil, err
+	}
+
 	return &contracts.ReductionReview{
+		SelectionGroups:     selection.groups,
+		SelectionResources:  selection.resources,
+		MoreGroups:          selection.moreGroups,
+		MoreResources:       selection.moreResources,
 		Reduction:           reduction,
 		Status:              EffectiveReductionStatus(reduction),
 		Coverage:            coverage,
@@ -212,6 +221,68 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 		SettingsChanged:     reductionSettingsChanged(reduction, plan.Settings),
 		LastApply:           describeLastApply(plan.LastApply),
 	}, nil
+}
+
+type reductionSelection struct {
+	groups, resources         []contracts.ReductionNamedRef
+	moreGroups, moreResources int
+}
+
+const reductionSelectionNamesShown = 20
+
+// reductionSelectionNames names the first 20 Groups and Resources of the selection
+// the caller may see. Visibility is the scoped handle's: ids it cannot read are
+// neither listed nor counted.
+func (ctx *MahresourcesContext) reductionSelectionNames(stored models.ResourceReductionExtent, resolved *ReductionExtent) (*reductionSelection, error) {
+	out := &reductionSelection{}
+	if stored.All {
+		return out, nil
+	}
+	var groupIDs []uint
+	for _, chunk := range chunkUints(dedupeUints(stored.GroupIDs), idChunk) {
+		var found []uint
+		if err := ctx.db.Model(&models.Group{}).Where("groups.id IN ?", chunk).Pluck("groups.id", &found).Error; err != nil {
+			return nil, err
+		}
+		groupIDs = append(groupIDs, found...)
+	}
+	sort.Slice(groupIDs, func(i, j int) bool { return groupIDs[i] < groupIDs[j] })
+	resourceIDs := mapKeys(resolved.ResourceIDs)
+	sort.Slice(resourceIDs, func(i, j int) bool { return resourceIDs[i] < resourceIDs[j] })
+
+	if len(groupIDs) > reductionSelectionNamesShown {
+		out.moreGroups = len(groupIDs) - reductionSelectionNamesShown
+		groupIDs = groupIDs[:reductionSelectionNamesShown]
+	}
+	if len(resourceIDs) > reductionSelectionNamesShown {
+		out.moreResources = len(resourceIDs) - reductionSelectionNamesShown
+		resourceIDs = resourceIDs[:reductionSelectionNamesShown]
+	}
+	if len(groupIDs) > 0 {
+		var rows []struct {
+			ID   uint
+			Name string
+		}
+		if err := ctx.db.Model(&models.Group{}).Select("groups.id, groups.name").Where("groups.id IN ?", groupIDs).Order("groups.id").Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			out.groups = append(out.groups, contracts.ReductionNamedRef{ID: r.ID, Name: r.Name})
+		}
+	}
+	if len(resourceIDs) > 0 {
+		var rows []struct {
+			ID   uint
+			Name string
+		}
+		if err := ctx.db.Model(&models.Resource{}).Select("resources.id, resources.name").Where("resources.id IN ?", resourceIDs).Order("resources.id").Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			out.resources = append(out.resources, contracts.ReductionNamedRef{ID: r.ID, Name: r.Name})
+		}
+	}
+	return out, nil
 }
 
 // reviewFigures gathers what one pass over the plan counts.

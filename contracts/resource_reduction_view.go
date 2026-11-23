@@ -169,6 +169,14 @@ type ReductionReview struct {
 	// ExtentAll is true for a whole-library Reduction: everything the caller can
 	// access, with no named Resources or Groups.
 	ExtentAll bool
+	// SelectionGroups and SelectionResources are the first 20 (by id) named Groups
+	// and Resources of the selection the caller may see, and MoreGroups and
+	// MoreResources how many further visible ones there are. Ones they cannot see
+	// are in neither. Empty for a whole-library Reduction.
+	SelectionGroups    []ReductionNamedRef
+	SelectionResources []ReductionNamedRef
+	MoreGroups         int
+	MoreResources      int
 
 	// TabCounts is how many visible Clusters sit on each status tab, whatever the
 	// current filters are.
@@ -247,4 +255,10 @@ type ReductionProgress struct {
 	Skipped  int
 	Stale    int
 	Applied  int
+}
+
+// ReductionNamedRef is an entity's id and name.
+type ReductionNamedRef struct {
+	ID   uint   `json:"id"`
+	Name string `json:"name"`
 }
