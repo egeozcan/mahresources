@@ -245,6 +245,9 @@ type ReductionApplyResult struct {
 	// (unchecked, skipped, ejected, recomputed). They are not stale and are not on
 	// the Stale tab.
 	Changed int `json:"changed"`
+	// Errors counts Clusters the batch could not read (a database failure). They are
+	// neither stale nor changed, and are still approved.
+	Errors int `json:"errors"`
 }
 
 // DestroyedCount is how many Resources this apply actually merged away.

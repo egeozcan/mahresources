@@ -429,35 +429,24 @@ func (ctx *MahresourcesContext) refreshLossy(cluster *models.ReductionCluster, r
 //
 // Asked through the scoped handle, so "deleted" and "outside your subtree" are
 // one answer, which is what keeps the refusal from being an oracle. A Loser of a
-// Cluster whose merge is confirmed is exempt: it was destroyed by this very row,
-// so its absence is the record of what happened rather than something withheld —
-// the same rule the render applies.
+// Cluster whose merge is confirmed no longer exists, so for a scoped caller it is
+// judged by the owning Group recorded when it was merged (withMergedHistory), the
+// same rule the render applies.
 func (ctx *MahresourcesContext) clusterFullyVisible(cluster *models.ReductionCluster) (bool, error) {
 	// Nothing is withheld from an unconfined caller: a missing member is a deleted
 	// one, and the Cluster reads as stale (see reviewReach).
 	if !ctx.isScopedPrincipal() {
 		return true, nil
 	}
-	wanted := make([]uint, 0, len(cluster.Members))
-	for _, member := range cluster.Members {
-		if cluster.Merged && member.IsLoser(cluster.WinnerID) {
-			continue
-		}
-		wanted = append(wanted, member.ResourceID)
-	}
-	if len(wanted) == 0 {
-		return true, nil
-	}
-	found, err := ctx.loadResourcesByID(wanted)
+	one := []*models.ReductionCluster{cluster}
+	visible, err := ctx.visibleMemberIDs(reductionMemberIDs(one))
 	if err != nil {
 		return false, err
 	}
-	for _, id := range wanted {
-		if found[id] == nil {
-			return false, nil
-		}
+	if visible, err = ctx.withMergedHistory(one, visible); err != nil {
+		return false, err
 	}
-	return true, nil
+	return !clusterWithheld(cluster, visible), nil
 }
 
 func findCluster(plan *models.ResourceReductionPlan, id string) *models.ReductionCluster {

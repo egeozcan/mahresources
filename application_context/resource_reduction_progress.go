@@ -74,9 +74,13 @@ func (ctx *MahresourcesContext) reductionProgress(reductions []models.ResourceRe
 	for id, plan := range plans {
 		plan := plan
 		ctx.readDeletions(&plan, visible)
+		planVisible, err := ctx.withMergedHistory(plan.Clusters, visible)
+		if err != nil {
+			return nil, err
+		}
 		var progress contracts.ReductionProgress
 		for _, cluster := range plan.Clusters {
-			if ctx.isScopedPrincipal() && clusterWithheld(cluster, visible) {
+			if ctx.isScopedPrincipal() && clusterWithheld(cluster, planVisible) {
 				continue
 			}
 			progress.Clusters++

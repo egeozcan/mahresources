@@ -602,18 +602,70 @@ func filterReviewClusters(clusters []*models.ReductionCluster, visible map[uint]
 	return out
 }
 
-// clusterWithheld reports whether a Cluster reaches a Resource the caller may
-// not see — except a Loser of a Cluster whose merge is confirmed, which was
-// destroyed by this very row and is not hidden from the reviewer who performed
-// the deletion (the same exception buildClusterViews applies).
+// clusterWithheld reports whether a Cluster reaches a Resource the caller may not
+// see. The visibility map has to have been settled for merged history first
+// (withMergedHistory, reviewReach): a Loser that no longer exists is in it only if
+// its recorded owner is still in the viewer's reach.
 func clusterWithheld(c *models.ReductionCluster, visible map[uint]bool) bool {
 	for _, member := range c.Members {
-		mergedAway := c.Merged && member.IsLoser(c.WinnerID)
-		if !visible[member.ResourceID] && !mergedAway {
+		if !visible[member.ResourceID] {
 			return true
 		}
 	}
 	return false
+}
+
+// withMergedHistory settles the visibility of the Losers of confirmed merges, which
+// no longer exist to be asked. An unconfined caller needs nothing (every member is
+// visible to them). For a scoped one a merged Loser counts as visible only if its
+// recorded owning Group is inside their current subtree, so an apply by someone
+// else cannot show them a Cluster that reached outside it. A Cluster merged before
+// owners were recorded has no record and stays withheld. The map is copied before it
+// is changed, since callers share one across Reductions.
+func (ctx *MahresourcesContext) withMergedHistory(clusters []*models.ReductionCluster, visible map[uint]bool) (map[uint]bool, error) {
+	if !ctx.isScopedPrincipal() {
+		return visible, nil
+	}
+	var owners []uint
+	for _, c := range clusters {
+		if c.State == models.ReductionClusterApplied && c.Merged {
+			for _, id := range c.LoserOwners {
+				if id != 0 {
+					owners = append(owners, id)
+				}
+			}
+		}
+	}
+	if len(owners) == 0 {
+		return visible, nil
+	}
+	reachable := map[uint]bool{}
+	for _, chunk := range chunkUints(dedupeUints(owners), idChunk) {
+		var found []uint
+		if err := ctx.db.Model(&models.Group{}).Where("groups.id IN ?", chunk).Pluck("groups.id", &found).Error; err != nil {
+			return nil, err
+		}
+		for _, id := range found {
+			reachable[id] = true
+		}
+	}
+	out := make(map[uint]bool, len(visible))
+	for id, ok := range visible {
+		out[id] = ok
+	}
+	for _, c := range clusters {
+		if c.State != models.ReductionClusterApplied || !c.Merged {
+			continue
+		}
+		for _, member := range c.Members {
+			if member.IsLoser(c.WinnerID) {
+				if owner, ok := c.LoserOwners[member.ResourceID]; ok && owner != 0 && reachable[owner] {
+					out[member.ResourceID] = true
+				}
+			}
+		}
+	}
+	return out, nil
 }
 
 // buildClusterViews hydrates a set of Clusters into the page's views, checking
@@ -674,7 +726,10 @@ func buildClusterViews(clusters []*models.ReductionCluster, resources map[uint]*
 				view.LeftOutCount++
 			}
 		}
-		view.WinnerChanged = containsUint(cluster.ChangedMembers, cluster.WinnerID)
+		// The kept copy changed, or (for someone nothing is withheld from) is gone: either
+		// way ejecting the others does not help.
+		view.WinnerChanged = containsUint(cluster.ChangedMembers, cluster.WinnerID) ||
+			(!scoped && cluster.State == models.ReductionClusterStale && resources[cluster.WinnerID] == nil)
 		view.Position = len(views) + 1
 		view.NeedsAttention = clusterNeedsAttention(cluster)
 		if cluster.KeepsSmaller {
@@ -901,6 +956,9 @@ func (ctx *MahresourcesContext) deriveKeepsSmallerForOldPlan(plan *models.Resour
 func (ctx *MahresourcesContext) reviewReach(plan *models.ResourceReductionPlan, ids []uint) (map[uint]bool, error) {
 	visible, err := ctx.visibleMemberIDs(ids)
 	if err != nil {
+		return nil, err
+	}
+	if visible, err = ctx.withMergedHistory(plan.Clusters, visible); err != nil {
 		return nil, err
 	}
 	ctx.readDeletions(plan, visible)

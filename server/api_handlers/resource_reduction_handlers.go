@@ -259,6 +259,7 @@ func GetResourceReductionApplyHandler(ctx ResourceReductionContext) func(http.Re
 			"applied":   result.Applied,
 			"stale":     result.Stale,
 			"changed":   result.Changed,
+			"errors":    result.Errors,
 			"destroyed": result.DestroyedCount(),
 		})
 	}

@@ -298,6 +298,12 @@ type ReductionCluster struct {
 	// perceptual match to the Winner) failed the apply's revalidation. Cleared when
 	// the Cluster is reopened.
 	ChangedMembers []uint `json:"changedMembers,omitempty"`
+	// LoserOwners records, when the merge deletes the Losers, the Group that owned
+	// each one (0 for none). A scoped viewer can see a merged Cluster only if every
+	// recorded owner is inside their current subtree: the Losers no longer exist to
+	// be asked. A Cluster merged before this was recorded has none, and fails closed
+	// for a scoped viewer.
+	LoserOwners map[uint]uint `json:"loserOwners,omitempty"`
 }
 
 // ReductionMember is one Resource in a Cluster.

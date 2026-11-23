@@ -2,6 +2,7 @@ package api_tests
 
 import (
 	"encoding/json"
+	"fmt"
 	"mahresources/contracts"
 	"testing"
 	"time"
@@ -1160,4 +1161,106 @@ func TestSettleableClaimsCountsVisibleStrandedClaimsIgnoringFilters(t *testing.T
 	full, err := tc.AppCtx.GetReductionReview(f.red.ID, owner, restricted, 1, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 2, full.SettleableClaims)
+}
+
+// Round 6 P0-1. An admin's merge must not expose to a scoped owner a Cluster whose
+// Loser sat outside their subtree. The Loser's owning Group is recorded at merge
+// time and judged against the viewer's current scope.
+func TestAnAdminsMergeDoesNotExposeAHiddenLoserToAScopedOwner(t *testing.T) {
+	tc := SetupTestEnv(t)
+	f := newReductionScopeFixture(t, tc)
+	owner, restricted := asAdmin()
+
+	hidden := clusterOf(t, tc, "r6-hidden", 2)
+	visible := clusterOf(t, tc, "r6-visible", 2)
+	setDimensions(t, tc, hidden[0], 900, 900)
+	setDimensions(t, tc, visible[0], 900, 900)
+	f.place(t, f.narrow, hidden[0])
+	f.place(t, f.wide, hidden[1])
+	f.place(t, f.narrow, visible...)
+	f.compute(t, append(append([]uint{}, hidden...), visible...))
+
+	applyReduction(t, tc, f.red.ID) // the administrator applies both
+
+	review, err := f.narrowCtx.GetReductionReview(f.red.ID, owner, restricted, 1, &query_models.ResourceReductionReviewQuery{Status: []string{"applied"}})
+	require.NoError(t, err)
+	assert.Equal(t, 1, review.TabCounts.Applied, "only the Cluster whose Loser was inside their subtree")
+	require.Len(t, review.Clusters, 1)
+	body, err := json.Marshal(review.Clusters)
+	require.NoError(t, err)
+	assert.NotContains(t, string(body), fmt.Sprintf(`"resourceId":%d`, hidden[1]), "the hidden Loser's id never appears")
+	assert.Equal(t, 1, listProgressOf(t, f.narrowCtx, f.red.ID).Applied)
+
+	// An applied Cluster with no record of where its Losers lived fails closed for a
+	// scoped viewer and stays visible to an unrestricted one.
+	legacy := planOf(t, tc, f.red.ID)
+	for _, c := range legacy.Clusters {
+		c.LoserOwners = nil
+	}
+	current, err := tc.AppCtx.GetResourceReduction(f.red.ID, owner, restricted)
+	require.NoError(t, err)
+	require.NoError(t, tc.AppCtx.OverwritePlanForTest(f.red.ID, current.Version, legacy))
+	scoped, err := f.narrowCtx.GetReductionReview(f.red.ID, owner, restricted, 1, nil)
+	require.NoError(t, err)
+	assert.Zero(t, scoped.TabCounts.Applied)
+	full, err := tc.AppCtx.GetReductionReview(f.red.ID, owner, restricted, 1, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, full.TabCounts.Applied)
+}
+
+// Round 6 P0-2. A reviewer whose account changed after the claim is treated exactly
+// like one who lost visibility: the claim is released and nothing is reported.
+func TestAnAccountChangedAfterTheClaimReleasesTheClaimSilently(t *testing.T) {
+	tc := SetupTestEnv(t)
+	f := newReductionScopeFixture(t, tc)
+	ids := clusterOf(t, tc, "r6-account", 2)
+	setDimensions(t, tc, ids[0], 900, 900)
+	f.place(t, f.narrow, ids...)
+	plan := f.compute(t, ids)
+
+	restore := application_context.SetReductionApplyAfterClaimHookForTest(func() {
+		require.NoError(t, tc.DB.Model(&models.User{}).Where("username = ?", "account-2").Update("scope_group_id", f.wide.ID).Error)
+	})
+	defer restore()
+	err, applied, stale := f.narrowApply(t, nil, nil)
+	require.NoError(t, err)
+	assert.Zero(t, applied)
+	assert.Zero(t, stale, "no ids are named")
+	after := findClusterByID(planOf(t, tc, f.red.ID), plan.Clusters[0].ID)
+	assert.Equal(t, models.ReductionClusterOpen, after.State)
+	assert.True(t, after.Checked)
+	assert.True(t, resourceExists(t, tc, ids[1]))
+}
+
+// Round 6 P0-3. A scoped caller's apply leaves a stranded claim alone when it
+// cannot tell a deleted member from one out of its reach.
+func TestAScopedApplyLeavesAClaimWithAMissingMemberAlone(t *testing.T) {
+	tc := SetupTestEnv(t)
+	f := newReductionScopeFixture(t, tc)
+	ids := clusterOf(t, tc, "r6-recovery", 2)
+	setDimensions(t, tc, ids[0], 900, 900)
+	f.place(t, f.narrow, ids...)
+	plan := f.compute(t, ids)
+	cluster := plan.Clusters[0]
+	require.NotNil(t, tc.AppCtx.ClaimClusterForApplyForTest(f.red.ID, cluster.ID, cluster.WinnerID, map[uint]string{ids[0]: "r6-recovery", ids[1]: "r6-recovery"}))
+	require.NoError(t, tc.DB.Where("id = ?", ids[1]).Delete(&models.Resource{}).Error)
+
+	err, applied, stale := f.narrowApply(t, nil, nil)
+	require.NoError(t, err)
+	assert.Zero(t, applied)
+	assert.Zero(t, stale, "a scoped caller is not told a member was deleted")
+	assert.Equal(t, models.ReductionClusterApplied, findClusterByID(planOf(t, tc, f.red.ID), cluster.ID).State, "the claim is left for an unrestricted caller")
+}
+
+// Round 6 P2. For an unrestricted viewer a missing Winner on a stale card is a
+// deleted one, so the card can say to start a new Reduction.
+func TestADeletedKeptCopyReadsAsTheWinnerChanged(t *testing.T) {
+	tc := SetupTestEnv(t)
+	ids := clusterOf(t, tc, "r6-winner-gone", 2)
+	setDimensions(t, tc, ids[0], 900, 900)
+	red := createReduction(t, tc, "Winner gone", ids)
+	computeReduction(t, tc, red.ID)
+	require.NoError(t, tc.DB.Where("id = ?", ids[0]).Delete(&models.Resource{}).Error)
+	view := reviewOf(t, tc, red.ID, 1, &query_models.ResourceReductionReviewQuery{Status: []string{"stale"}}).Clusters[0]
+	assert.True(t, view.WinnerChanged)
 }

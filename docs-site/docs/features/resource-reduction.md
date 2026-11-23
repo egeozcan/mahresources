@@ -235,7 +235,7 @@ Each tab is a link with a count over the Clusters you can see. The counts ignore
 
 ### The Cluster card
 
-The header reads "Identical · 3 copies" or "Near-Identical · 2 copies", with a state label, **Approve** (a toggle that reads **Approved ✓** when on) and **Skip**. A skipped Cluster shows **Reopen** instead.
+The header reads "Identical · 3 copies" or "Near-Identical · 2 copies", with a state label, **Approve** (a toggle whose label stays **Approve**; a check mark and its pressed state show that it is on) and **Skip**. A skipped Cluster shows **Reopen** instead.
 
 One sentence says why the kept copy was chosen:
 
@@ -371,7 +371,7 @@ You may eject a member while a batch runs and it will be spared. A Cluster that 
 
 ### The result
 
-When the response arrives, a banner at the top reads "Applied N Cluster(s), removed N cop(ies)." and "This does not free disk space." If any Cluster could not be applied, it adds a link to the **Stale** tab and lists each Cluster id with its reason.
+When the response arrives, a banner at the top reads "Applied N Cluster(s), removed N cop(ies)." and "This does not free disk space." If any Cluster could not be applied, it adds a link to the **Stale** tab and lists each one by its kept copy's name with its reason. Approved Clusters that another decision moved before the batch reached them (unchecked, skipped or changed in another tab) are not stale; they are counted as changed (`changed` in the response) and are not on the Stale tab. A Cluster the batch could not even read because of a database failure is counted in `errors` and stays approved.
 
 ### The last apply record
 
@@ -387,11 +387,13 @@ A Cluster withheld from you is left untouched by your apply and does not appear 
 
 The apply request can carry `applyToken`, the digest the review page exposes over the exact approved proposals (each Cluster id, Winner, Losers and their reviewed hashes). When it is sent and the proposals visible at apply time differ in any way, the apply is refused with 409 and nothing is claimed. It can also carry `requestId`, an opaque id of up to 64 characters that is stored in the record so a client that lost the response can tell its own apply from another tab's.
 
-A Cluster an apply has claimed but not yet merged is shown as **Merging**, not Applied: its copies still exist. The merge and the mark that it happened commit in one database transaction, so a Cluster that is claimed and not marked merged was not merged. Each claim carries its own token, and the merge refuses to run unless the claim it started under is still the Cluster's current one. If the process dies in between, the next apply settles the Cluster (viewing the page never does): all its copies still there means it goes back to open and approved, and a copy gone means it becomes stale, because a Resource in it no longer exists. A lone stranded claim can be settled without applying anything else by sending `settleOnly: true` to the apply route.
+A Cluster an apply has claimed but not yet merged is shown as **Merging**, not Applied: its copies still exist. The merge and the mark that it happened commit in one database transaction, so a Cluster that is claimed and not marked merged was not merged. Each claim carries its own token, and the merge refuses to run unless the claim it started under is still the Cluster's current one. If the process dies in between, the next apply settles the Cluster (viewing the page never does): all its copies still there means it goes back to open and approved, and a copy gone means it becomes stale, because a Resource in it no longer exists. The review page shows **Finish the interrupted apply** whenever it can see a stranded claim that nothing is running on; it sends `settleOnly: true` to the apply route, which settles those Clusters and merges nothing else.
+
+An applied Cluster stays visible to an account confined to a Group subtree only while that account could see everything in it. The removed copies no longer exist, so the merge records which Group owned each one. The Cluster is shown only if the kept copy is visible now and every recorded owner is inside the account's current subtree. A Cluster applied before this record existed is hidden from confined accounts and stays visible to unrestricted ones. So an administrator's apply never reveals to a confined owner a Cluster that reached outside their subtree.
 
 ### Recovering a stale Cluster
 
-Recompute leaves a stale Cluster as it is, so it does not rebuild it. The card marks the copy whose bytes changed, and says when it is the kept copy itself. Use **Don't remove** on a marked copy, or one that was removed, to reopen the Cluster with the rest, then approve it again. If the kept copy itself changed or is gone, start a new Reduction over the same selection.
+Recompute leaves a stale Cluster as it is, so it does not rebuild it. The card marks the copy whose bytes changed, and says when it is the kept copy itself. Use **Don't remove** on a marked copy, or one that was removed, to reopen the Cluster with the rest, then approve it again. If the kept copy itself changed or was deleted, start a new Reduction over the same selection.
 
 ### Stale Clusters
 

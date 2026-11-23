@@ -169,3 +169,11 @@ Top-level review-page key (also in `.json`): `reviewSelection = {groups: [{id, n
 - A merge refusal after the claim (changed bytes, lost pair) carries the failing members: `Members[j].Changed` and `WinnerChanged` are set on the demoted Cluster too.
 - List `Progress` is computed from the plans and member visibility read in one snapshot.
 - `clusters[i].MergedCount` (copies a confirmed merge removed) and `clusters[i].LeftOutCount` (ejected members left alone). An applied card should say "N copies removed, M left out".
+
+## 12. Addendum: round 6
+
+- Applied-history visibility. The merge records `loserOwners` (resource id to owning Group id, 0 for none) on the Cluster in the merge transaction. For a scoped viewer an applied (merged) Cluster is visible only if the Winner is visible now and every recorded owner is in their current subtree; a Cluster without the record is withheld for scoped viewers and visible to unrestricted ones. This governs the Applied tab, counts, list `Progress`, `lastApply` counts and overrides alike.
+- A reviewer whose account changed after the claim gets the same treatment as one who lost visibility: the claim is released and the outcome omitted.
+- Claim reconciliation (batch claim and `settleOnly`) runs in one transaction: Reduction row lock, then each claimed Cluster's members locked and checked through the current scope. A scoped caller leaves a claim it cannot fully see untouched (it cannot tell deleted from out of reach); only an unrestricted caller turns a claim with a missing member stale.
+- The apply response gains `errors` (int): Clusters the batch could not read; neither stale nor changed, still approved. Hitting the deadline just stops the batch.
+- `cluster.WinnerChanged` is also true for an unrestricted viewer when the kept copy is deleted (stale card): the card should say to start a new Reduction.
