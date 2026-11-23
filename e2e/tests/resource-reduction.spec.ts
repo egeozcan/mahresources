@@ -388,6 +388,15 @@ test.describe('Resource Reduction', () => {
     await expect(left).toHaveAttribute('data-ejected', 'true');
     await expect(left.getByTestId('member-role')).toHaveText('Not included');
     await expect(left.getByRole('button', { name: 'Include again' })).toBeVisible();
+
+    // With every other copy kept there is nothing to approve: text, not a toggle.
+    await expect(cluster.getByTestId('cluster-nothing-to-remove')).toHaveText('Nothing to remove: every other copy is kept.');
+    await expect(cluster.getByTestId('cluster-approve')).toHaveCount(0);
+
+    // Including the copy again brings the toggle back.
+    await left.getByRole('button', { name: 'Include again' }).click();
+    await expect(cluster.getByTestId('cluster-approve')).toHaveCount(1);
+    await expect(cluster.getByTestId('cluster-nothing-to-remove')).toHaveCount(0);
   });
 
   test('the apply dialog states the figures, applying removes the copies and the Open tab follows', async ({ page, apiClient, request, baseURL }) => {

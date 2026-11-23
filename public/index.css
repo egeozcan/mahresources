@@ -5260,3 +5260,9 @@ progress.export-progress-bar::-moz-progress-bar {
         flex: 1 1 auto;
     }
 }
+
+.reduction-nothing {
+    font-size: 0.8125rem;
+    color: #44403c;
+    align-self: center;
+}
