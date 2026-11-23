@@ -112,7 +112,7 @@ func (ctx *MahresourcesContext) overrideReductionClusterOnce(override *query_mod
 		return nil, ErrReductionClusterSettled
 	}
 
-	if err := ctx.applyOverride(cluster, override); err != nil {
+	if err := ctx.applyOverride(cluster, override, DecodeWinnerRule(reduction.WinnerRule)); err != nil {
 		return nil, err
 	}
 
@@ -123,10 +123,10 @@ func (ctx *MahresourcesContext) overrideReductionClusterOnce(override *query_mod
 	return ctx.casReductionAndReload(reduction.ID, override.Version, map[string]any{"plan": encoded}, ownerUserID, ownerRestricted)
 }
 
-func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, override *query_models.ReductionOverride) error {
+func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, override *query_models.ReductionOverride, rule []string) error {
 	switch override.Action {
 	case ReductionActionPromote:
-		return ctx.promoteMember(cluster, override.ResourceID)
+		return ctx.promoteMember(cluster, override.ResourceID, rule)
 
 	case ReductionActionEject:
 		member := findMember(cluster, override.ResourceID)
@@ -146,7 +146,7 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 		// The curation warning is about which Losers hold what, so it changes with
 		// the membership. Leaving it stale after an ejection warns about a copy that
 		// is no longer going anywhere.
-		return ctx.refreshLossy(cluster)
+		return ctx.refreshLossy(cluster, rule)
 
 	case ReductionActionRestore:
 		member := findMember(cluster, override.ResourceID)
@@ -190,7 +190,7 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 		// And after a restore it changes the other way: the member coming back may
 		// be the one holding the description the Winner lacks, and merging it away
 		// with no warning is exactly what D8b exists to prevent.
-		return ctx.refreshLossy(cluster)
+		return ctx.refreshLossy(cluster, rule)
 
 	case ReductionActionSkip:
 		cluster.State = models.ReductionClusterSkipped
@@ -242,7 +242,7 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 // The Identical tier needs no re-check. Hash equality is transitive, so the
 // members are a true equivalence class and any of them is as good a Winner as any
 // other.
-func (ctx *MahresourcesContext) promoteMember(cluster *models.ReductionCluster, resourceID uint) error {
+func (ctx *MahresourcesContext) promoteMember(cluster *models.ReductionCluster, resourceID uint, rule []string) error {
 	member := findMember(cluster, resourceID)
 	if member == nil {
 		return ErrReductionMemberNotFound
@@ -271,7 +271,9 @@ func (ctx *MahresourcesContext) promoteMember(cluster *models.ReductionCluster, 
 	member.EjectedReason = ""
 	member.Distance = nil
 	cluster.Reviewed = true
-	cluster.DecidedBy = ""
+	// No rule picked this Winner, the reviewer did. The page says so, and the
+	// keeps-smaller warning is never suppressed for it.
+	cluster.DecidedBy = models.ManualCriterion
 	cluster.Margin = ""
 	cluster.Undecided = false
 	if cluster.State == models.ReductionClusterStale {
@@ -284,7 +286,7 @@ func (ctx *MahresourcesContext) promoteMember(cluster *models.ReductionCluster, 
 			return err
 		}
 	}
-	return ctx.refreshLossy(cluster)
+	return ctx.refreshLossy(cluster, rule)
 }
 
 // rejustifyAgainstWinner ejects every Loser with no stored pair to the current
@@ -357,10 +359,12 @@ func (ctx *MahresourcesContext) distanceToWinner(winnerID, memberID uint) (uint8
 	return best, found, nil
 }
 
-// refreshLossy recomputes the curation warning after a change of Winner: which
-// fields a merge would now discard is a property of the Winner, not of the
-// Cluster.
-func (ctx *MahresourcesContext) refreshLossy(cluster *models.ReductionCluster) error {
+// refreshLossy recomputes the curation warnings after a change of Winner or of
+// membership: which fields a merge would now discard, and whether it would now
+// discard a higher-resolution copy, are properties of the Winner and the
+// remaining members, not of the Cluster. The rule is what tells a deliberately
+// smaller Winner (pixels_asc first) from a mistaken one.
+func (ctx *MahresourcesContext) refreshLossy(cluster *models.ReductionCluster, rule []string) error {
 	ids := make([]uint, 0, len(cluster.Members))
 	for _, member := range cluster.Members {
 		if !member.Ejected {
@@ -378,6 +382,7 @@ func (ctx *MahresourcesContext) refreshLossy(cluster *models.ReductionCluster) e
 		}
 	}
 	cluster.Lossy = lossyFields(candidates, cluster.WinnerID)
+	cluster.KeepsSmaller = keepsSmaller(candidates, cluster.WinnerID, rule, cluster.DecidedBy)
 	return nil
 }
 

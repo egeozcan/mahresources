@@ -185,3 +185,10 @@ func TestFilterReviewClustersMergedLosersAreNotWithheld(t *testing.T) {
 	})
 	require.Len(t, got, 1, "the confirmed merge keeps the Cluster visible to its reviewer")
 }
+
+// A Cluster keeping a lower-resolution copy asks for individual review, like a
+// lossy or oversized one: a bulk approval must never sweep it up.
+func TestKeepsSmallerNeedsAttention(t *testing.T) {
+	assert.True(t, clusterNeedsAttention(&models.ReductionCluster{KeepsSmaller: true}))
+	assert.False(t, clusterNeedsAttention(&models.ReductionCluster{}))
+}

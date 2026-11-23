@@ -360,13 +360,14 @@ func reviewClusterStatusMatches(c *models.ReductionCluster, wanted map[string]bo
 
 // clusterNeedsAttention is the plan-level counterpart of the page's curation
 // markers: a Cluster whose merge would discard something (Lossy) or one that is
-// large enough to demand expanding before it can be checked (Oversized).
+// large enough to demand expanding before it can be checked (Oversized), or one
+// that would keep a lower-resolution copy than one it removes (KeepsSmaller).
 // Withheld Clusters are decided at render time — the membership is re-checked
 // against the caller's scope — so they cannot take part in a filter over the
 // stored plan, and an inaccessible Cluster is not one the reviewer can act on
 // anyway.
 func clusterNeedsAttention(c *models.ReductionCluster) bool {
-	return len(c.Lossy) > 0 || c.Oversized
+	return len(c.Lossy) > 0 || c.Oversized || c.KeepsSmaller
 }
 
 // loadResourcesByID reads the named Resources through the caller's scoped handle.

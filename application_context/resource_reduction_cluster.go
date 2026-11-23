@@ -124,6 +124,7 @@ func buildCluster(tier string, candidates []clusterCandidate, rule []string) *mo
 		State:     models.ReductionClusterOpen,
 	}
 	cluster.Lossy = lossyFields(kept, winner.Resource.ID)
+	cluster.KeepsSmaller = keepsSmaller(kept, winner.Resource.ID, rule, cluster.DecidedBy)
 	applyTierDefaults(cluster)
 	return cluster
 }
@@ -181,6 +182,45 @@ func lossyFields(candidates []clusterCandidate, winnerID uint) []string {
 		}
 	}
 	return lossy
+}
+
+// keepsSmaller reports whether the Winner has fewer pixels than a copy that would
+// be removed.
+//
+// Pixels only, because a smaller *file* at the same resolution is usually the
+// better copy, and comparing sizes would flag every Cluster under the "Smallest
+// file" preset. A copy with no known resolution cannot be compared, so it never
+// raises the flag on either side.
+//
+// Suppressed when the rule's first criterion is pixels_asc, since the reviewer
+// asked for the smaller copy. Not suppressed once the reviewer has promoted a
+// member by hand (decidedBy is manual): that mis-click is exactly what this
+// exists to catch.
+func keepsSmaller(candidates []clusterCandidate, winnerID uint, rule []string, decidedBy string) bool {
+	if decidedBy != models.ManualCriterion && len(rule) > 0 && rule[0] == models.WinnerCriterionPixelsAsc {
+		return false
+	}
+	var winner *models.Resource
+	for i := range candidates {
+		if candidates[i].Resource.ID == winnerID {
+			winner = candidates[i].Resource
+			break
+		}
+	}
+	if winner == nil || pixelsOf(winner) == 0 {
+		return false
+	}
+	for i := range candidates {
+		other := candidates[i].Resource
+		if other.ID != winnerID && pixelsOf(other) > pixelsOf(winner) {
+			return true
+		}
+	}
+	return false
+}
+
+func pixelsOf(r *models.Resource) uint64 {
+	return uint64(r.Width) * uint64(r.Height)
 }
 
 func contains(list []string, value string) bool {
