@@ -1205,7 +1205,14 @@ func (ctx *MahresourcesContext) MergeResourcesLocking(winnerId uint, loserIds []
 		}
 
 		if transactionCtx.Config.DbType == constants.DbTypePosgres {
-			if err := tx.Exec("update resources set meta = COALESCE(nullif(meta, 'null'::jsonb), '{}'::jsonb) || ? where id = ?", backups, winner.ID).Error; err != nil {
+			// Merged one level down: `||` is shallow, so writing {"backups": ...}
+			// would replace the records of every earlier merge into this Winner,
+			// where SQLite's json_patch below keeps them.
+			innerBackups, err := json.Marshal(deletedResBackups)
+			if err != nil {
+				return err
+			}
+			if err := tx.Exec("update resources set meta = jsonb_set(COALESCE(nullif(meta, 'null'::jsonb), '{}'::jsonb), '{backups}', COALESCE(nullif(meta->'backups', 'null'::jsonb), '{}'::jsonb) || ?::jsonb) where id = ?", string(innerBackups), winner.ID).Error; err != nil {
 				return err
 			}
 		} else if transactionCtx.Config.DbType == constants.DbTypeSqlite {

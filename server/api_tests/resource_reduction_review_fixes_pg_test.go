@@ -3,6 +3,7 @@
 package api_tests
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -147,4 +148,22 @@ func TestTwoReductionsWithCrossingEjectedMembersDoNotDeadlockPG(t *testing.T) {
 	assert.Equal(t, 1, out1.applied)
 	assert.Equal(t, 1, out2.applied)
 	assert.Zero(t, out1.stale+out2.stale, "neither merge was refused as a deadlock victim")
+}
+
+// A second merge into the same Winner must keep the first merge's backup record.
+// Postgres's `||` is shallow and used to replace the whole backups object; SQLite's
+// json_patch already merged recursively.
+func TestASecondMergeKeepsTheEarlierMergesBackupRecordPG(t *testing.T) {
+	tc := SetupPostgresTestEnv(t)
+	winner := addResourceWithBody(t, tc, "w.txt", "winner body")
+	first := addResourceWithBody(t, tc, "a.txt", "first body")
+	second := addResourceWithBody(t, tc, "b.txt", "second body")
+
+	require.NoError(t, tc.AppCtx.MergeResources(winner.ID, []uint{first.ID}, false))
+	require.NoError(t, tc.AppCtx.MergeResources(winner.ID, []uint{second.ID}, false))
+
+	var meta string
+	require.NoError(t, tc.DB.Raw("SELECT meta::text FROM resources WHERE id = ?", winner.ID).Scan(&meta).Error)
+	assert.Contains(t, meta, fmt.Sprintf("resource_%d", first.ID), "the first merge's record survived")
+	assert.Contains(t, meta, fmt.Sprintf("resource_%d", second.ID))
 }
