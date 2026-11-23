@@ -177,8 +177,13 @@ test.describe('Resource Reduction accessibility', () => {
     // Every per-member button of one kind has its own accessible name.
     const names = await page.getByTestId('member-promote').evaluateAll((els) => els.map((el) => el.textContent?.replace(/\s+/g, ' ').trim()));
     expect(new Set(names).size).toBe(names.length);
-    // One tab stop per member for the preview and the name together.
-    await expect(page.locator('[data-testid="reduction-member"] a[data-lightbox-item]').first()).toHaveAttribute('tabindex', '-1');
+    // The preview is one named, keyboard-operable control per member.
+    const preview = page.locator('[data-testid="reduction-member"] a[data-lightbox-item]').first();
+    await expect(preview).toHaveAttribute('role', 'button');
+    await expect(preview).toHaveAttribute('aria-label', /^Preview /);
+    await preview.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('[data-lightbox-open], .lightbox, [role="dialog"]').first()).toBeVisible();
   });
 
   test('closing the shortcuts list with Escape returns focus to the Cluster it was opened from', async ({ page, apiClient, request, baseURL }) => {

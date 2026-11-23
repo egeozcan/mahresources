@@ -11,7 +11,7 @@ describe('plural', () => {
 });
 
 describe('defaultReductionName', () => {
-  const date = /\d{4}-\d{2}-\d{2}$/;
+  const date = /\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
   it('names the selection and the date', () => {
     expect(defaultReductionName({ all: true })).toMatch(/^Duplicates in everything, /);
     expect(defaultReductionName({ resources: 12 })).toMatch(/^Duplicates in 12 Resources, /);

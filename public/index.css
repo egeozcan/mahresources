@@ -5179,3 +5179,84 @@ progress.export-progress-bar::-moz-progress-bar {
 .mrql-compact .card-image img { width: 100%; height: 100%; object-fit: cover; }
 .mrql-compact .card-description { max-height: 4.5rem; overflow: hidden; }
 .mrql-compact .card { margin-bottom: 0; }
+
+
+/* Resource Reduction, round 2. */
+.compare-back {
+    margin-bottom: 0.5rem;
+    font-size: 0.875rem;
+}
+
+.compare-back a {
+    color: #92400e;
+    text-decoration: underline;
+}
+
+.reduction-sortbox-summary::before {
+    content: "\25B8";
+    margin-right: 0.5rem;
+}
+
+.reduction-sortbox[open] > .reduction-sortbox-summary::before {
+    content: "\25BE";
+}
+
+@media (max-width: 639px) {
+    /* The rows scroll sideways: fade their trailing edge as the hint. */
+    .reduction-tabs,
+    .reduction-chips {
+        -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.75rem), transparent);
+        mask-image: linear-gradient(to right, #000 calc(100% - 1.75rem), transparent);
+    }
+
+    /* A notice that only repeats history on a tab with nothing to apply: one line. */
+    .reduction-notice--oneline {
+        flex-wrap: nowrap;
+    }
+
+    .reduction-notice--oneline > p {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+}
+
+/* A short viewport (a landscape phone, 200% zoom): the apply bar becomes one slim row. */
+@media (max-height: 500px) {
+    .reduction-bar {
+        flex-wrap: nowrap;
+        gap: 0.5rem;
+        padding: 0.25rem 0.5rem;
+        margin-top: -3.5rem;
+    }
+
+    .reduction-clusters-region--bar {
+        padding-bottom: 4rem;
+    }
+
+    .reduction-bar .reduction-btn {
+        min-height: 2.25rem;
+    }
+
+    .reduction-bar-actions {
+        flex-wrap: nowrap;
+    }
+
+    .reduction-apply-wrap {
+        flex-direction: row;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .reduction-apply-warning {
+        font-size: 0.625rem;
+        text-align: left;
+        max-width: 7rem;
+        line-height: 1.1;
+    }
+
+    .reduction-bar-notice {
+        flex: 1 1 auto;
+    }
+}

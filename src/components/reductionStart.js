@@ -98,3 +98,32 @@ export function reductionCardAction({ id, version }) {
     },
   };
 }
+
+/**
+ * The compare page's way back to the Reduction it was opened from
+ * (`?from=reduction:<id>`). The id is read as an integer and the link shows only
+ * once the server has agreed the viewer can open that Reduction: the review's own
+ * JSON twin answers with an error for one they may not see.
+ */
+export function reductionBackLink() {
+  return {
+    href: '',
+    label: '',
+    async init() {
+      const match = /^reduction:(\d+)$/.exec(new URLSearchParams(window.location.search).get('from') || '');
+      if (!match) return;
+      const id = Number(match[1]);
+      if (!Number.isSafeInteger(id) || id <= 0) return;
+      try {
+        const response = await fetch(`/reduction.json?id=${id}&pageSize=20`, { headers: { Accept: 'application/json' } });
+        if (!response.ok) return;
+        const page = await response.json();
+        if (!page?.raw?.name) return;
+        this.label = `Back to ${page.raw.name}`;
+        this.href = `/reduction?id=${id}`;
+      } catch {
+        // No link is better than a wrong one.
+      }
+    },
+  };
+}

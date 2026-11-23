@@ -27,7 +27,7 @@
      data-reduction-checked="{{ review.CheckedCount }}"
      data-reduction-checked-losers="{{ review.CheckedLoserCount }}">
     {# The state the store is seeded from, and re-read from each refreshed page. #}
-    <script type="application/json" data-reduction-state>{"id": {{ raw.ID }}, "version": {{ raw.Version }}, "status": "{{ reduction.StatusEffective }}", "jobId": "{{ raw.ComputeJobID|escapejs }}", "checked": {{ review.CheckedCount }}, "checkedLosers": {{ review.CheckedLoserCount }}, "open": {{ tabCounts.open }}, "tab": "{{ statusTab }}", "figures": {{ applyFigures|json|safe }}, "bulk": {{ bulk|json|safe }}, "applying": {% if lastApply and lastApply.running and not lastApply.interrupted %}true{% else %}false{% endif %}, "lastApplyStartedAt": "{% if lastApply %}{{ lastApply.startedAt|escapejs }}{% endif %}", "settings": {"name": "{{ raw.Name|escapejs }}", "matchingMode": "{{ raw.MatchingMode|escapejs }}", "winnerRule": [{% for criterion in winnerRule %}"{{ criterion.token|escapejs }}"{% if not forloop.Last %}, {% endif %}{% endfor %}], "keepAsVersionNear": {% if raw.KeepAsVersionNear %}true{% else %}false{% endif %}, "keepAsVersionIdentical": {% if raw.KeepAsVersionIdentical %}true{% else %}false{% endif %}}}</script>
+    <script type="application/json" data-reduction-state>{"id": {{ raw.ID }}, "version": {{ raw.Version }}, "status": "{{ reduction.StatusEffective }}", "jobId": "{{ raw.ComputeJobID|escapejs }}", "checked": {{ review.CheckedCount }}, "checkedLosers": {{ review.CheckedLoserCount }}, "open": {{ tabCounts.open }}, "tab": "{{ statusTab }}", "figures": {{ applyFigures|json|safe }}, "bulk": {{ bulk|json|safe }}, "applying": {% if lastApply and lastApply.running and not lastApply.interrupted %}true{% else %}false{% endif %}, "applyToken": "{{ applyToken|escapejs }}", "lastApplyStartedAt": "{% if lastApply %}{{ lastApply.startedAt|escapejs }}{% endif %}", "settings": {"name": "{{ raw.Name|escapejs }}", "matchingMode": "{{ raw.MatchingMode|escapejs }}", "winnerRule": [{% for criterion in winnerRule %}"{{ criterion.token|escapejs }}"{% if not forloop.Last %}, {% endif %}{% endfor %}], "keepAsVersionNear": {% if raw.KeepAsVersionNear %}true{% else %}false{% endif %}, "keepAsVersionIdentical": {% if raw.KeepAsVersionIdentical %}true{% else %}false{% endif %}}}</script>
 
     <div data-reduction-live="head">
         <section class="reduction-status" aria-labelledby="reduction-status-heading" data-testid="reduction-status-header" data-reduction-status="{{ reduction.StatusEffective }}">
@@ -94,7 +94,7 @@
 
         {# The last apply, from the plan, so a closed tab or a dropped connection is answered on reload. #}
         {% if lastApply %}
-        <div class="reduction-notice{% if lastApply.interrupted %} reduction-notice--warn{% elif lastApply.running %} reduction-notice--info{% endif %}"
+        <div class="reduction-notice{% if statusTab != "open" %} reduction-notice--oneline{% endif %}{% if lastApply.interrupted %} reduction-notice--warn{% elif lastApply.running %} reduction-notice--info{% endif %}"
              role="status" data-testid="reduction-last-apply"
              x-show="!$store.reductionReview.applyCounts">
             {% if lastApply.interrupted %}
@@ -113,6 +113,12 @@
             {% endif %}
         </div>
         {% endif %}
+
+        {# The apply is running and the reviewer closed its dialog. #}
+        <div class="reduction-notice reduction-notice--info" role="status" data-testid="reduction-apply-background-notice"
+             x-show="$store.reductionReview.localApplying && !$store.reductionReview.dialog" x-cloak>
+            <p>Applying <span x-text="$store.reductionReview.applyingCount"></span> Cluster<span x-text="$store.reductionReview.applyingCount === 1 ? '' : 's'"></span> in the background. This page updates when it finishes.</p>
+        </div>
 
         {# An apply whose response never arrived: said plainly while the plan is read for the answer. #}
         <div class="reduction-notice reduction-notice--info" role="status" x-show="$store.reductionReview.applyUnknown" x-cloak
@@ -160,7 +166,7 @@
     <div data-reduction-live="body">
         {% if showReview %}
             {% if extent.enteredSince %}
-            <div class="reduction-notice reduction-notice--warn" key="reduction-drift" data-testid="reduction-drift">
+            <div class="reduction-notice reduction-notice--warn{% if statusTab != "open" %} reduction-notice--oneline{% endif %}" key="reduction-drift" data-testid="reduction-drift">
                 <p>{{ extent.enteredSince }} Resource{% if extent.enteredSince != 1 %}s{% endif %} added since the last run. Recompute to include {% if extent.enteredSince != 1 %}them{% else %}it{% endif %}.</p>
             </div>
             {% endif %}
@@ -459,6 +465,8 @@
                 </p>
             </fieldset>
 
+            {# Visible as well as announced (the announcement is the live region; this is for everyone else). #}
+            <p class="reduction-notice reduction-notice--warn" x-show="notice" x-cloak x-text="notice" data-testid="reduction-settings-notice"></p>
             <p class="text-sm text-red-800" role="alert" x-show="error" x-cloak x-text="error" data-testid="reduction-settings-error"></p>
             <p class="text-sm text-green-800" role="status" x-show="saved" x-cloak data-testid="reduction-settings-saved">Settings saved.</p>
             <div class="flex gap-2">

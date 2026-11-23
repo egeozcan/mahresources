@@ -92,7 +92,7 @@
             {% endif %}
         </p>
 
-        {% if cluster.State != "applied" %}
+        {% if cluster.State != "applied" and cluster.State != "stale" %}
         <div class="reduction-cluster-controls">
             {% if cluster.State == "skipped" %}
             <button type="button" data-testid="cluster-reopen" class="reduction-btn"
@@ -118,6 +118,15 @@
         </div>
         {% endif %}
     </header>
+
+    {% if cluster.State == "stale" %}
+    {# A stale Cluster is a record of why it cannot be applied, not a proposal: no approve, skip or per-copy buttons. #}
+    <div class="reduction-warning" role="note" key="stale" data-testid="cluster-stale-reason">
+        <p><strong>This Cluster cannot be applied:</strong>
+        {% if cluster.StaleReason %}{{ cluster.StaleReason }}.{% else %}it no longer matches what was reviewed.{% endif %}
+        Recompute to find it again if the copies still exist.</p>
+    </div>
+    {% endif %}
 
     {% if cluster.KeepsSmaller %}
     <div class="reduction-warning" role="note" key="keeps-smaller" data-testid="cluster-keeps-smaller">

@@ -65,6 +65,11 @@
                         <p id="reduction-dialog-body" class="mt-2 text-sm text-stone-800" role="status"
                            x-text="$store.reductionReview.applyUnknown || 'You can leave this page; the server finishes the batch.'">You can leave this page; the server finishes the batch.</p>
                         <progress class="reduction-progress-bar mt-3" aria-label="Applying"></progress>
+                        <div class="mt-4 flex justify-end">
+                            <button type="button" autofocus data-testid="reduction-apply-background"
+                                    @click="$store.reductionReview.continueInBackground()"
+                                    class="reduction-btn">Continue in background</button>
+                        </div>
                     </div>
                 </template>
 

@@ -847,7 +847,7 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     await page.getByTestId('reduction-cluster').first().getByTestId('cluster-skip').click();
     await expect(page.getByTestId('reduction-error')).toBeVisible();
     await expect(near).not.toBeChecked();
-    await expect(page.getByText('These settings were changed elsewhere')).toBeVisible();
+    await expect(page.getByTestId('reduction-settings-notice')).toContainText('These settings were changed elsewhere');
   });
 
   test('the first Cluster is within reach on a phone', async ({ page, apiClient, request, baseURL }) => {
@@ -863,5 +863,75 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     expect(header!.y - (title!.y + title!.height)).toBeLessThan(460);
     await expect(page.getByTestId('reduction-shortcuts-button')).toBeHidden();
     await expect(page.locator('#sidebar-disclosure summary')).toHaveText('Settings');
+  });
+
+  test('a stale Cluster is a record: no approve, skip or member buttons, and the reason is on the card', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR stale ${Date.now()}`;
+    const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);
+    const extra = await makeIdenticalPair(request, baseURL!, apiClient, `${label} other`);
+    const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID, extra.keeper.ID, extra.twin.ID]);
+    await computeAndWait(request, baseURL!, id);
+
+    // One copy disappears elsewhere; applying the other Cluster marks nothing stale, but
+    // the apply of this one refuses it.
+    const gone = await request.post(`${baseURL}/v1/resource/delete?Id=${twin.ID}`);
+    expect(gone.ok()).toBeTruthy();
+    await page.goto(`/reduction?id=${id}&status=stale`);
+    const stale = page.locator('[data-cluster-state="stale"]').first();
+    if (await stale.count() === 0) {
+      // Not marked stale until the review notices: apply once to make it so.
+      await page.goto(`/reduction?id=${id}`);
+      await page.getByTestId('reduction-apply').click();
+      await page.getByRole('alertdialog').getByRole('button', { name: /^Apply \d+ Clusters?$/ }).click();
+      await expect(page.getByTestId('reduction-apply-result')).toBeVisible({ timeout: 20_000 });
+      await page.goto(`/reduction?id=${id}&status=stale`);
+    }
+    const card = page.locator('[data-cluster-state="stale"]').first();
+    await expect(card).toBeVisible();
+    await expect(card.getByTestId('cluster-stale-reason')).toContainText('cannot be applied');
+    await expect(card.getByTestId('cluster-approve')).toHaveCount(0);
+    await expect(card.getByTestId('cluster-skip')).toHaveCount(0);
+    await expect(card.getByTestId('member-promote')).toHaveCount(0);
+  });
+
+  test('the running apply dialog can be left without cancelling it', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR background ${Date.now()}`;
+    const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);
+    const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID]);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}`);
+    await page.route('**/v1/reduction/apply', async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await route.continue();
+    });
+    await page.getByTestId('reduction-apply').click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Apply 1 Cluster' }).click();
+    const background = page.getByTestId('reduction-apply-background');
+    await expect(background).toBeFocused();
+    await background.click();
+    await expect(page.getByTestId('reduction-dialog')).toBeHidden();
+    await expect(page.getByTestId('reduction-apply-background-notice')).toBeVisible();
+    // The apply was not cancelled: its report arrives.
+    await expect(page.getByTestId('reduction-apply-result')).toContainText('Applied 1 Cluster, removed 1 copy.', { timeout: 20_000 });
+  });
+
+  test('Compare offers a way back to the Reduction it was opened from', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR compare back ${Date.now()}`;
+    const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);
+    const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID]);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}`);
+    await page.getByTestId('member-compare').first().click();
+    await page.waitForURL(/\/resource\/compare/);
+    const back = page.getByTestId('compare-back-to-reduction');
+    await expect(back).toHaveText(`Back to ${label}`);
+    await back.click();
+    await expect(page).toHaveURL(new RegExp(`/reduction\\?id=${id}`));
+
+    // An id that is not a Reduction the viewer can open shows nothing.
+    await page.goto(`/resource/compare?r1=${keeper.ID}&r2=${twin.ID}&from=reduction:99999999`);
+    await expect(page.getByTestId('compare-back-to-reduction')).toBeHidden();
   });
 });

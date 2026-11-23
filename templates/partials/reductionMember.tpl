@@ -8,7 +8,7 @@
 {% if not member.Resource %}
 <div class="reduction-member reduction-member--gone" data-testid="reduction-member-withheld">
     <p class="text-xs text-stone-600 max-w-[10rem]">
-        {% if cluster.Merged %}Merged and removed.{% else %}Resource unavailable.{% endif %}
+        {% if cluster.Merged %}Merged and removed.{% elif cluster.State == "stale" %}Removed elsewhere.{% else %}Resource unavailable.{% endif %}
     </p>
 </div>
 {% else %}
@@ -37,7 +37,8 @@
 
     <a href="/v1/resource/view?id={{ member.Resource.ID }}&v={{ member.Resource.Hash }}#{{ member.Resource.ContentType }}"
        @click.prevent="$store.lightbox.openFromClick($event, {{ member.Resource.ID }}, '{{ member.Resource.ContentType|escapejs }}')"
-       tabindex="-1" aria-hidden="true"
+       role="button" aria-label="Preview {{ member.Resource.Name }}"
+       @keydown.space.prevent="$el.click()"
        data-lightbox-item
        data-resource-id="{{ member.Resource.ID }}"
        data-content-type="{{ member.Resource.ContentType }}"
@@ -46,7 +47,7 @@
        data-resource-width="{{ member.Resource.Width }}"
        data-resource-height="{{ member.Resource.Height }}">
         <img height="160" src="/v1/resource/preview?id={{ member.Resource.ID }}&height=160&v={{ member.Resource.Hash }}"
-             alt="Preview of {{ member.Resource.Name }}" loading="lazy" decoding="async">
+             alt="" loading="lazy" decoding="async">
     </a>
     <p class="reduction-member-name">
         <a class="reduction-member-link" href="/resource?id={{ member.Resource.ID }}" title="{{ member.Resource.Name }}">{{ member.Resource.Name }}</a>
@@ -92,7 +93,7 @@
     </ul>
 
     <div class="reduction-member-actions">
-    {% if cluster.State != "applied" %}
+    {% if cluster.State != "applied" and cluster.State != "stale" %}
         {% if not member.IsWinner and not member.Ejected %}
         <button type="button" data-testid="member-promote" class="reduction-btn reduction-btn--small"
                 :disabled="$store.reductionReview.busy"
@@ -102,7 +103,7 @@
         {# Story 24 wants the two-up look from every Cluster, and the compare page takes exactly two Resources, #}
         {# so the pair worth looking at is this copy against the kept one that would absorb it.               #}
         <a class="reduction-btn reduction-btn--small" data-testid="member-compare"
-           href="/resource/compare?r1={{ cluster.Winner.ID }}&r2={{ member.ResourceID }}">Compare<span class="sr-only"> {{ member.Resource.Name }} with the kept copy</span></a>
+           href="/resource/compare?r1={{ cluster.Winner.ID }}&r2={{ member.ResourceID }}&from=reduction:{{ raw.ID }}">Compare<span class="sr-only"> {{ member.Resource.Name }} with the kept copy</span></a>
         {% endif %}
         {# "Include again" undoes a "Don't remove" by re-proposing the deletion, which an out-of-selection member may never be part of. #}
         {% if member.Ejected and member.InExtent %}

@@ -137,12 +137,16 @@ export function registerReductionReviewStore(Alpine) {
     confirmed: null,
     // The previous apply's start time, so a lost response can tell a new record from an old one.
     lastApplyStartedAt: '',
+    // The digest of the exact approved proposals the figures describe; Apply is bound to it.
+    applyToken: '',
     // The server's settings values as of the last page read, for the Settings form.
     serverSettings: null,
     // The counts the apply banner reports, from the response or from the plan.
     applyCounts: null,
     // Set while the outcome of an apply is not known (a lost response).
     applyUnknown: '',
+    // The reviewer sent the running dialog to the background.
+    backgrounded: false,
     // An apply running here, and one the plan says is running (another tab's, or a
     // lost response's). Either blocks every write.
     localApplying: false,
@@ -192,7 +196,19 @@ export function registerReductionReviewStore(Alpine) {
         // Without storage the sentence has no reason to give, and nothing says there was one.
       }
       if (this.status === 'computing') this.watchCompute();
+      if (this.serverApplying) this.watchApply();
       this._clearBar();
+      this._centerActive();
+    },
+
+    /** On a phone the tab and chip rows scroll sideways: start with the active ones in view. */
+    _centerActive() {
+      for (const selector of ['.reduction-tabs', '.reduction-chips']) {
+        const row = document.querySelector(selector);
+        const active = row?.querySelector('[aria-current]');
+        if (!row || !active || row.scrollWidth <= row.clientWidth) continue;
+        row.scrollLeft = Math.max(0, active.offsetLeft - (row.clientWidth - active.offsetWidth) / 2);
+      }
     },
 
     /**
@@ -235,6 +251,7 @@ export function registerReductionReviewStore(Alpine) {
       // From the plan: another tab's apply blocks this one's, and a finished one
       // does not.
       this.serverApplying = state.applying;
+      this.applyToken = state.applyToken || '';
       this.lastApplyStartedAt = state.lastApplyStartedAt || '';
       this.serverSettings = state.settings || null;
       this.figuresStale = false;
@@ -425,8 +442,12 @@ export function registerReductionReviewStore(Alpine) {
     },
 
     escapeDialog() {
-      // A running apply cannot be dismissed; the server finishes it either way.
-      if (this.applying) return;
+      // A running apply cannot be cancelled, but the dialog can be left: the
+      // server finishes the batch either way.
+      if (this.applying) {
+        this.continueInBackground();
+        return;
+      }
       this.closeDialog();
     },
 
@@ -491,6 +512,7 @@ export function registerReductionReviewStore(Alpine) {
       }
       this.confirmed = {
         version: this.version,
+        token: this.applyToken,
         checked: this.checkedCount,
         losers: this.checkedLoserCount,
         figures: JSON.parse(JSON.stringify(this.figures)),
@@ -518,9 +540,14 @@ export function registerReductionReviewStore(Alpine) {
       this.error = '';
       this.applyUnknown = '';
       this.bulkNotice = null;
+      // The previous attempt's report is not this attempt's: clear it, so a refusal
+      // here cannot re-announce, re-navigate or re-focus an earlier success.
+      this.applyCounts = null;
+      this.applyResult = null;
+      this.backgrounded = false;
+      const requestId = newRequestId();
       // The dialog's buttons are about to be replaced; keep focus on the dialog.
-      setTimeout(() => document.querySelector('[data-testid="reduction-dialog"]')?.focus(), 0);
-      const previousStart = this.lastApplyStartedAt;
+      setTimeout(() => (document.querySelector('[data-testid="reduction-apply-background"]') || document.querySelector('[data-testid="reduction-dialog"]'))?.focus(), 0);
       let outcome = null;
       let lost = false;
       try {
@@ -529,7 +556,7 @@ export function registerReductionReviewStore(Alpine) {
           response = await fetch('/v1/reduction/apply', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify(applyRequest(this.reductionId, confirmed)),
+            body: JSON.stringify(applyRequest(this.reductionId, confirmed, requestId)),
           });
         } catch {
           // No response at all: the request may or may not have been processed.
@@ -559,7 +586,7 @@ export function registerReductionReviewStore(Alpine) {
       if (lost) {
         this.applyUnknown = 'The result of this apply is unknown; checking…';
         window.mahAnnounce?.(this.applyUnknown, { assertive: true });
-        recovered = await this._recoverApply(previousStart);
+        recovered = await this._recoverApply(requestId);
         this.applyUnknown = '';
       }
       this.localApplying = false;
@@ -602,25 +629,29 @@ export function registerReductionReviewStore(Alpine) {
       const report = document.getElementById('reduction-apply-result');
       this.closeDialog();
       this.confirmed = null;
-      if (this.applyCounts && report) {
+      // Focus moves to the report only for a reviewer who stayed with the dialog;
+      // one who sent it to the background keeps their place.
+      if (this.applyCounts && report && !this.backgrounded) {
         this._opener = null;
         setTimeout(() => report.focus(), 0);
       }
+      this.backgrounded = false;
     },
 
     /**
      * After a response that never arrived, find out what the server did: read the
-     * plan's own apply record until it says finished (or interrupted).
+     * plan's own apply record until it carries this attempt's request id and says
+     * finished (or interrupted).
      *
-     * The server writes the record at the claim, before it touches a Cluster, so a
-     * request that reached it shows up within moments. When the record is still the
-     * one from before after a few reads, the request never arrived, and that is said
-     * without claiming more than was seen.
+     * Only a record with this attempt's id is this attempt's result. A different or
+     * missing id means another apply (another tab, an older server) and is never
+     * reported as ours: the outcome is then unknown, and the Applied tab is where
+     * to look.
      *
-     * Resolves to {record} (a finished or interrupted apply) or {message}.
+     * Resolves to {record} (this attempt's finished or interrupted apply) or {message}.
      */
-    async _recoverApply(previousStart) {
-      let unchanged = 0;
+    async _recoverApply(requestId) {
+      let foreign = 0;
       for (let i = 0; i < RECOVER_TRIES; i++) {
         await new Promise((resolve) => setTimeout(resolve, i === 0 ? RECOVER_FIRST_MS : RECOVER_MS));
         let last;
@@ -631,21 +662,53 @@ export function registerReductionReviewStore(Alpine) {
         } catch {
           continue;
         }
-        const isNew = last && last.startedAt && last.startedAt !== previousStart;
-        if (!isNew && !(last && last.running)) {
-          unchanged++;
-          if (unchanged >= RECOVER_UNCHANGED) {
-            return { message: 'The server has no record of this apply, so it most likely never arrived and nothing was applied. Reload the page to check.' };
+        if (last && last.requestId === requestId) {
+          if (last.interrupted) {
+            return { message: 'This apply was interrupted on the server. Applied Clusters are on the Applied tab; the rest are still approved.', record: last.finishedAt ? last : null };
           }
+          if (!last.running && last.finishedAt) return { record: last };
+          foreign = 0;
           continue;
         }
-        unchanged = 0;
-        if (last.interrupted) {
-          return { message: 'The apply was interrupted on the server. Applied Clusters are on the Applied tab; the rest are still approved.', record: last.finishedAt ? last : null };
+        // Not ours (or not yet recorded). Give the server a few reads to record ours.
+        if (!(last && last.running)) {
+          foreign++;
+          if (foreign >= RECOVER_UNCHANGED) {
+            return { message: UNKNOWN_OUTCOME };
+          }
         }
-        if (!last.running && last.finishedAt) return { record: last };
       }
       return { message: 'The apply is still running on the server. Reload the page in a minute to see the result.' };
+    },
+
+    /** Close the running dialog without cancelling anything: the server keeps going. */
+    continueInBackground() {
+      if (!this.applying) return;
+      this.backgrounded = true;
+      window.mahAnnounce?.('The apply continues in the background. This page updates when it finishes.');
+      this.closeDialog();
+    },
+
+    /**
+     * An apply the plan says is running that this page did not start (another tab's,
+     * or this one's before a reload): read the record until it finishes, then reload
+     * to show the result.
+     */
+    watchApply() {
+      if (this._applyWatch) return;
+      this._applyWatch = setInterval(async () => {
+        try {
+          const response = await fetch(`/reduction.json?id=${this.reductionId}`, { headers: { Accept: 'application/json' } });
+          if (!response.ok) return;
+          const last = (await response.json()).lastApply;
+          if (last && last.running && !last.interrupted) return;
+        } catch {
+          return;
+        }
+        clearInterval(this._applyWatch);
+        this._applyWatch = null;
+        window.location.reload();
+      }, APPLY_WATCH_MS);
     },
 
     /**
@@ -735,13 +798,21 @@ const RECOVER_FIRST_MS = 1000;
 const RECOVER_MS = 2000;
 const RECOVER_TRIES = 300;
 const RECOVER_UNCHANGED = 4;
+const APPLY_WATCH_MS = 3000;
+const UNKNOWN_OUTCOME = 'The result of this apply is unknown: the server has no record of this attempt, and another apply may have run. Check the Applied tab before applying again.';
+
+/** A random id for one apply attempt, echoed in the plan's apply record. */
+function newRequestId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+}
 
 /**
  * The apply request. The version and the figures are the ones the dialog showed,
  * so the server can refuse when the plan has moved on since the reviewer saw them.
  */
-function applyRequest(id, confirmed) {
-  return { id, version: confirmed.version, expectedClusters: confirmed.checked, expectedLosers: confirmed.losers };
+function applyRequest(id, confirmed, requestId) {
+  return { id, version: confirmed.version, applyToken: confirmed.token, requestId };
 }
 
 const ANNOUNCEMENTS = {

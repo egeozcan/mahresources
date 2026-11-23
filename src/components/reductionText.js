@@ -7,12 +7,11 @@ export function plural(count, one, many) {
 export const CLUSTER_NOUN = ['Cluster', 'Clusters'];
 export const COPIES = ['copy', 'copies'];
 
-/** YYYY-MM-DD in the reviewer's own time zone. */
+/** YYYY-MM-DD HH:MM in the reviewer's own time zone. */
 export function today() {
   const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${now.getFullYear()}-${month}-${day}`;
+  const two = (n) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())} ${two(now.getHours())}:${two(now.getMinutes())}`;
 }
 
 /**

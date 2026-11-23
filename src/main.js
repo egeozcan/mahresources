@@ -127,7 +127,7 @@ import { resourceUpload } from './components/resourceUpload.js';
 import { setupDownloadListRefresh } from './components/downloadListRefresh.js';
 import { reductionBulkAction } from './components/resourceReductionBulk.js';
 import { reductionCreateForm } from './components/resourceReductionCreate.js';
-import { reductionLibraryStart, reductionCardAction } from './components/reductionStart.js';
+import { reductionLibraryStart, reductionCardAction, reductionBackLink } from './components/reductionStart.js';
 import { registerReductionReviewStore } from './components/reductionReview.js';
 import { reductionSettingsForm } from './components/reductionSettings.js';
 
@@ -278,6 +278,7 @@ Alpine.data('reductionBulkAction', reductionBulkAction);
 Alpine.data('reductionCreateForm', reductionCreateForm);
 Alpine.data('reductionSettingsForm', reductionSettingsForm);
 Alpine.data('reductionLibraryStart', reductionLibraryStart);
+Alpine.data('reductionBackLink', reductionBackLink);
 Alpine.data('reductionCardAction', reductionCardAction);
 Alpine.data('bulkAction', bulkAction);
 
