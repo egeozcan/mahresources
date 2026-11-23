@@ -154,4 +154,41 @@ test.describe('Resource Reduction accessibility', () => {
     await page.keyboard.press('Enter');
     await expect(page.getByTestId('reduction-clusters-region')).toBeFocused();
   });
+
+  test('the skip link comes before the sidebar and the member buttons say which file they act on', async ({ page, apiClient, request, baseURL }) => {
+    const id = await computedReduction(apiClient, request, baseURL!, `RR a11y names ${Date.now()}`, 'sample-image-13.png');
+    await page.goto(`/reduction?id=${id}`);
+
+    // Tab until the skip link: it must come before any control of the settings sidebar.
+    let reachedSidebar = false;
+    let skipAt = -1;
+    for (let i = 0; i < 40 && skipAt < 0; i++) {
+      await page.keyboard.press('Tab');
+      const where = await page.evaluate(() => {
+        const el = document.activeElement as HTMLElement | null;
+        return { skip: el?.dataset?.testid === 'reduction-skip-link', sidebar: !!el?.closest('#reduction-settings, aside') };
+      });
+      if (where.sidebar) reachedSidebar = true;
+      if (where.skip) skipAt = i;
+    }
+    expect(skipAt).toBeGreaterThanOrEqual(0);
+    expect(reachedSidebar).toBe(false);
+
+    // Every per-member button of one kind has its own accessible name.
+    const names = await page.getByTestId('member-promote').evaluateAll((els) => els.map((el) => el.textContent?.replace(/\s+/g, ' ').trim()));
+    expect(new Set(names).size).toBe(names.length);
+    // One tab stop per member for the preview and the name together.
+    await expect(page.locator('[data-testid="reduction-member"] a[data-lightbox-item]').first()).toHaveAttribute('tabindex', '-1');
+  });
+
+  test('closing the shortcuts list with Escape returns focus to the Cluster it was opened from', async ({ page, apiClient, request, baseURL }) => {
+    const id = await computedReduction(apiClient, request, baseURL!, `RR a11y focus ${Date.now()}`, 'sample-image-9.png');
+    await page.goto(`/reduction?id=${id}`);
+    const card = page.getByTestId('reduction-cluster').first();
+    await card.focus();
+    await page.keyboard.press('?');
+    await expect(page.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(card).toBeFocused();
+  });
 });

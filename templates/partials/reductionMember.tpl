@@ -37,6 +37,7 @@
 
     <a href="/v1/resource/view?id={{ member.Resource.ID }}&v={{ member.Resource.Hash }}#{{ member.Resource.ContentType }}"
        @click.prevent="$store.lightbox.openFromClick($event, {{ member.Resource.ID }}, '{{ member.Resource.ContentType|escapejs }}')"
+       tabindex="-1" aria-hidden="true"
        data-lightbox-item
        data-resource-id="{{ member.Resource.ID }}"
        data-content-type="{{ member.Resource.ContentType }}"
@@ -90,30 +91,30 @@
         {% endif %}
     </ul>
 
-    {% if cluster.State != "applied" %}
     <div class="reduction-member-actions">
+    {% if cluster.State != "applied" %}
         {% if not member.IsWinner and not member.Ejected %}
         <button type="button" data-testid="member-promote" class="reduction-btn reduction-btn--small"
                 :disabled="$store.reductionReview.busy"
-                @click="$store.reductionReview.act('{{ cluster.ID }}', 'promote', {{ member.ResourceID }})">Keep this instead</button>
+                @click="$store.reductionReview.act('{{ cluster.ID }}', 'promote', {{ member.ResourceID }})">Keep this instead<span class="sr-only"> ({{ member.Resource.Name }})</span></button>
         {% endif %}
         {% if member.IsLoser and cluster.Winner and not member.Ejected %}
         {# Story 24 wants the two-up look from every Cluster, and the compare page takes exactly two Resources, #}
         {# so the pair worth looking at is this copy against the kept one that would absorb it.               #}
         <a class="reduction-btn reduction-btn--small" data-testid="member-compare"
-           href="/resource/compare?r1={{ cluster.Winner.ID }}&r2={{ member.ResourceID }}">Compare</a>
+           href="/resource/compare?r1={{ cluster.Winner.ID }}&r2={{ member.ResourceID }}">Compare<span class="sr-only"> {{ member.Resource.Name }} with the kept copy</span></a>
         {% endif %}
         {# "Include again" undoes a "Don't remove" by re-proposing the deletion, which an out-of-selection member may never be part of. #}
         {% if member.Ejected and member.InExtent %}
         <button type="button" data-testid="member-restore" class="reduction-btn reduction-btn--small"
                 :disabled="$store.reductionReview.busy"
-                @click="$store.reductionReview.act('{{ cluster.ID }}', 'restore', {{ member.ResourceID }})">Include again</button>
+                @click="$store.reductionReview.act('{{ cluster.ID }}', 'restore', {{ member.ResourceID }})">Include again<span class="sr-only"> ({{ member.Resource.Name }})</span></button>
         {% elif not member.IsWinner and not member.Ejected %}
         <button type="button" data-testid="member-eject" class="reduction-btn reduction-btn--small"
                 :disabled="$store.reductionReview.busy"
-                @click="$store.reductionReview.act('{{ cluster.ID }}', 'eject', {{ member.ResourceID }})">Don't remove</button>
+                @click="$store.reductionReview.act('{{ cluster.ID }}', 'eject', {{ member.ResourceID }})">Don't remove<span class="sr-only"> ({{ member.Resource.Name }})</span></button>
         {% endif %}
-    </div>
     {% endif %}
+    </div>
 </div>
 {% endif %}

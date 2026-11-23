@@ -18,7 +18,7 @@
             {% if hasActiveFilter %}
                 {% include "/partials/listEmpty.tpl" with label="Resource Reductions" createUrl="/reduction/new" %}
             {% else %}
-                <div class="detail-empty space-y-3" data-testid="reductions-empty" x-data="reductionLibraryStart">
+                <div class="detail-empty reduction-empty space-y-3" data-testid="reductions-empty" x-data="reductionLibraryStart">
                     <p class="text-stone-700 max-w-2xl">
                         A Resource Reduction finds copies of the same file and near-identical images, lets you choose which copy to keep, and merges the rest into it. Nothing is removed until you review and apply.
                     </p>

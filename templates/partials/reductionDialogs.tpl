@@ -22,7 +22,7 @@
                     <div>
                         <div class="px-5 pt-5 pb-3">
                             <h2 id="reduction-dialog-title" class="text-lg font-medium font-mono text-stone-900">
-                                Apply <span x-text="$store.reductionReview.checkedCount"></span> Cluster<span x-text="$store.reductionReview.checkedCount === 1 ? '' : 's'"></span>?
+                                Apply <span x-text="$store.reductionReview.confirmed?.checked"></span> Cluster<span x-text="$store.reductionReview.confirmed?.checked === 1 ? '' : 's'"></span>?
                             </h2>
                             <div id="reduction-dialog-body" class="mt-2 text-sm text-stone-800 space-y-2" data-testid="reduction-apply-figures">
                                 <template x-for="tier in $store.reductionReview.tierSummaries()" :key="tier.key">
@@ -31,11 +31,11 @@
                                         <span x-text="tier.detail"></span>
                                     </p>
                                 </template>
-                                <template x-if="$store.reductionReview.figures.keepsSmaller > 0">
+                                <template x-if="$store.reductionReview.confirmed?.figures?.keepsSmaller > 0">
                                     <p class="text-amber-900" data-testid="reduction-apply-keeps-smaller">
-                                        <span x-text="$store.reductionReview.figures.keepsSmaller"></span>
-                                        approved Cluster<span x-text="$store.reductionReview.figures.keepsSmaller === 1 ? '' : 's'"></span>
-                                        keep<span x-text="$store.reductionReview.figures.keepsSmaller === 1 ? 's' : ''"></span>
+                                        <span x-text="$store.reductionReview.confirmed.figures.keepsSmaller"></span>
+                                        approved Cluster<span x-text="$store.reductionReview.confirmed.figures.keepsSmaller === 1 ? '' : 's'"></span>
+                                        keep<span x-text="$store.reductionReview.confirmed.figures.keepsSmaller === 1 ? 's' : ''"></span>
                                         a lower-resolution copy than one they remove.
                                         <a class="underline" :href="$store.reductionReview.keepsSmallerHref()">Review them</a>
                                     </p>
@@ -51,7 +51,7 @@
                             <button type="button" data-testid="reduction-apply-confirm"
                                     @click="$store.reductionReview.confirmApply()"
                                     class="reduction-btn reduction-btn--danger"
-                                    x-text="'Apply ' + $store.reductionReview.checkedCount + ' Cluster' + ($store.reductionReview.checkedCount === 1 ? '' : 's')"></button>
+                                    x-text="'Apply ' + $store.reductionReview.confirmed?.checked + ' Cluster' + ($store.reductionReview.confirmed?.checked === 1 ? '' : 's')"></button>
                         </div>
                     </div>
                 </template>
@@ -62,7 +62,8 @@
                         <h2 id="reduction-dialog-title" class="text-lg font-medium font-mono text-stone-900">
                             Applying <span x-text="$store.reductionReview.applyingCount"></span> Cluster<span x-text="$store.reductionReview.applyingCount === 1 ? '' : 's'"></span>&hellip;
                         </h2>
-                        <p id="reduction-dialog-body" class="mt-2 text-sm text-stone-800" role="status">You can leave this page; the server finishes the batch.</p>
+                        <p id="reduction-dialog-body" class="mt-2 text-sm text-stone-800" role="status"
+                           x-text="$store.reductionReview.applyUnknown || 'You can leave this page; the server finishes the batch.'">You can leave this page; the server finishes the batch.</p>
                         <progress class="reduction-progress-bar mt-3" aria-label="Applying"></progress>
                     </div>
                 </template>

@@ -1,5 +1,18 @@
 {% extends "/layouts/base.tpl" %}
 
+{# Before the sidebar in the tab order: base.tpl renders this block ahead of the content grid. #}
+{% block skiplinks %}
+{% if raw.ComputedAt and reduction.StatusEffective != "computing" %}
+<nav aria-label="Skip links">
+<a href="#reduction-clusters" data-testid="reduction-skip-link"
+   class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:p-3 focus:bg-white focus:text-amber-800 focus:underline">Skip to Clusters</a>
+</nav>
+{% endif %}
+{% endblock %}
+
+{# What the mobile panel is: the review's Settings and Delete, not filters. #}
+{% block sidebarLabel %}Settings{% endblock %}
+
 {% block body %}
 {# The review is one column: status, notices, tabs, the Clusters, a sticky apply bar and a collapsed About. #}
 {# Everything between data-reduction-live and the bar is re-rendered in place after each action, by       #}
@@ -14,12 +27,7 @@
      data-reduction-checked="{{ review.CheckedCount }}"
      data-reduction-checked-losers="{{ review.CheckedLoserCount }}">
     {# The state the store is seeded from, and re-read from each refreshed page. #}
-    <script type="application/json" data-reduction-state>{"id": {{ raw.ID }}, "version": {{ raw.Version }}, "status": "{{ reduction.StatusEffective }}", "jobId": "{{ raw.ComputeJobID|escapejs }}", "checked": {{ review.CheckedCount }}, "checkedLosers": {{ review.CheckedLoserCount }}, "open": {{ tabCounts.open }}, "tab": "{{ statusTab }}", "figures": {{ applyFigures|json|safe }}, "bulk": {{ bulk|json|safe }}, "applying": {% if lastApply and lastApply.running and not lastApply.interrupted %}true{% else %}false{% endif %}}</script>
-
-    {% if showReview %}
-    <a href="#reduction-clusters" data-testid="reduction-skip-link"
-       class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:p-3 focus:bg-white focus:text-amber-800 focus:underline">Skip to Clusters</a>
-    {% endif %}
+    <script type="application/json" data-reduction-state>{"id": {{ raw.ID }}, "version": {{ raw.Version }}, "status": "{{ reduction.StatusEffective }}", "jobId": "{{ raw.ComputeJobID|escapejs }}", "checked": {{ review.CheckedCount }}, "checkedLosers": {{ review.CheckedLoserCount }}, "open": {{ tabCounts.open }}, "tab": "{{ statusTab }}", "figures": {{ applyFigures|json|safe }}, "bulk": {{ bulk|json|safe }}, "applying": {% if lastApply and lastApply.running and not lastApply.interrupted %}true{% else %}false{% endif %}, "lastApplyStartedAt": "{% if lastApply %}{{ lastApply.startedAt|escapejs }}{% endif %}", "settings": {"name": "{{ raw.Name|escapejs }}", "matchingMode": "{{ raw.MatchingMode|escapejs }}", "winnerRule": [{% for criterion in winnerRule %}"{{ criterion.token|escapejs }}"{% if not forloop.Last %}, {% endif %}{% endfor %}], "keepAsVersionNear": {% if raw.KeepAsVersionNear %}true{% else %}false{% endif %}, "keepAsVersionIdentical": {% if raw.KeepAsVersionIdentical %}true{% else %}false{% endif %}}}</script>
 
     <div data-reduction-live="head">
         <section class="reduction-status" aria-labelledby="reduction-status-heading" data-testid="reduction-status-header" data-reduction-status="{{ reduction.StatusEffective }}">
@@ -41,6 +49,10 @@
                 <button type="button" class="reduction-btn reduction-btn--primary" data-testid="reduction-compute"
                         :disabled="$store.reductionReview.busy"
                         @click="$store.reductionReview.compute()">Try again</button>
+                {% endif %}
+                {% if showReview %}
+                <button type="button" class="reduction-btn reduction-btn--link reduction-shortcuts-btn" data-testid="reduction-shortcuts-button"
+                        aria-haspopup="dialog" @click="$store.reductionReview.openDialog('shortcuts', $event)">Keyboard shortcuts</button>
                 {% endif %}
                 <a href="#reduction-settings" class="reduction-btn reduction-btn--link" data-testid="reduction-settings-link"
                    @click.prevent="$store.reductionReview.focusSettings()">Settings</a>
@@ -84,11 +96,13 @@
         {% if lastApply %}
         <div class="reduction-notice{% if lastApply.interrupted %} reduction-notice--warn{% elif lastApply.running %} reduction-notice--info{% endif %}"
              role="status" data-testid="reduction-last-apply"
-             x-show="!$store.reductionReview.applyResult">
+             x-show="!$store.reductionReview.applyCounts">
             {% if lastApply.interrupted %}
             <p>The last apply was interrupted. Applied Clusters are on the Applied tab; the rest are still approved.</p>
             {% elif lastApply.running %}
             <p>An apply started at {{ lastApply.startedAt|slice:"11:16" }} is running. Reload to see the result.</p>
+            {% elif lastApply.countsHidden %}
+            <p>The last apply finished, {{ lastApply.startedAt|slice:"0:10" }} {{ lastApply.startedAt|slice:"11:16" }}.</p>
             {% else %}
             <p>
                 Last apply, {{ lastApply.startedAt|slice:"0:10" }} {{ lastApply.startedAt|slice:"11:16" }}:
@@ -100,18 +114,25 @@
         </div>
         {% endif %}
 
-        {# The report of the apply this page just ran: what merged, what was refused and why. #}
+        {# An apply whose response never arrived: said plainly while the plan is read for the answer. #}
+        <div class="reduction-notice reduction-notice--info" role="status" x-show="$store.reductionReview.applyUnknown" x-cloak
+             x-text="$store.reductionReview.applyUnknown" data-testid="reduction-apply-unknown"></div>
+
+        {# The report of the apply this page just ran (or recovered): what merged, what was refused and why. #}
         <div class="reduction-notice reduction-notice--ok" id="reduction-apply-result" tabindex="-1" role="status"
-             x-show="$store.reductionReview.applyResult" x-cloak data-testid="reduction-apply-result">
-            <p class="font-medium text-stone-900">
-                Applied <span x-text="$store.reductionReview.applyResult?.applied?.length || 0"></span> Cluster(s),
-                removed <span x-text="$store.reductionReview.applyResult?.destroyed || 0"></span> cop(ies).
-            </p>
+             x-show="$store.reductionReview.applyCounts" x-cloak data-testid="reduction-apply-result">
+            <p class="font-medium text-stone-900" x-text="$store.reductionReview.applySummary()"></p>
             <p class="text-sm">This does not free disk space.</p>
+            <template x-if="$store.reductionReview.applyCounts?.stale && !$store.reductionReview.applyResult?.stale?.length">
+                <p class="mt-2 text-sm text-amber-900">
+                    <span x-text="$store.reductionReview.applyCounts.stale + ($store.reductionReview.applyCounts.stale === 1 ? ' Cluster' : ' Clusters')"></span>
+                    could not be applied. <a class="underline" :href="'/reduction?id={{ raw.ID }}&status=stale'">See the Stale tab</a>.
+                </p>
+            </template>
             <template x-if="$store.reductionReview.applyResult?.stale?.length">
                 <div class="mt-2">
                     <p class="text-sm text-amber-900">
-                        <span x-text="$store.reductionReview.applyResult.stale.length"></span> Cluster(s) could not be applied.
+                        <span x-text="$store.reductionReview.applyResult.stale.length + ($store.reductionReview.applyResult.stale.length === 1 ? ' Cluster' : ' Clusters')"></span> could not be applied.
                         <a class="underline" :href="'/reduction?id={{ raw.ID }}&status=stale'">See the Stale tab</a>.
                     </p>
                     <ul class="list-disc list-inside text-sm text-stone-800">
@@ -143,7 +164,7 @@
                 <p>{{ extent.enteredSince }} Resource{% if extent.enteredSince != 1 %}s{% endif %} added since the last run. Recompute to include {% if extent.enteredSince != 1 %}them{% else %}it{% endif %}.</p>
             </div>
             {% endif %}
-            {% if settingsChanged %}
+            {% if settingsChanged and statusTab == "open" %}
             <div class="reduction-notice reduction-notice--warn" key="reduction-settings-changed" data-testid="reduction-settings-changed">
                 <p>Settings changed since the last run. Recompute to apply them to Clusters you have not acted on.</p>
                 <button type="button" class="reduction-btn" :disabled="$store.reductionReview.busy || $store.reductionReview.applying" @click="$store.reductionReview.compute()">Recompute</button>
@@ -177,28 +198,31 @@
                     <li><a href="{{ reviewNav.clearHref }}" class="reduction-chip reduction-chip--clear" data-testid="reduction-clear-filters">Clear filters</a></li>
                     {% endif %}
                 </ul>
-                <form method="get" action="/reduction" class="reduction-sort" aria-label="Sort and page size">
-                    {% for field in reviewNav.hidden %}<input type="hidden" name="{{ field.name }}" value="{{ field.value }}">{% endfor %}
-                    <label class="text-sm text-stone-700">Sort
-                        <select name="sort" data-testid="reduction-sort" class="reduction-select" @change="$el.form.requestSubmit()">
-                            <option value="copies"{% if reviewSort == "copies" %} selected{% endif %}>Most copies first</option>
-                            <option value="size"{% if reviewSort == "size" %} selected{% endif %}>Largest files first</option>
-                            <option value="computed"{% if reviewSort == "computed" %} selected{% endif %}>Computed order</option>
-                        </select>
-                    </label>
-                    <label class="text-sm text-stone-700">Per page
-                        <select name="pageSize" data-testid="reduction-page-size" class="reduction-select" @change="$el.form.requestSubmit()">
-                            {% for size in pageSizes %}<option value="{{ size }}"{% if size == pageSize %} selected{% endif %}>{{ size }}</option>{% endfor %}
-                        </select>
-                    </label>
-                    <noscript><button type="submit" class="reduction-btn">Sort</button></noscript>
-                </form>
-                <button type="button" class="reduction-btn reduction-btn--link" data-testid="reduction-shortcuts-button"
-                        aria-haspopup="dialog" @click="$store.reductionReview.openDialog('shortcuts', $event)">Keyboard shortcuts</button>
+                {# A disclosure on a phone, plain controls from 640px up. `open` is the server's default (right with no script) and is closed on a narrow screen by the x-init; the morph keeps whatever the reviewer chose (data-keep-open). #}
+                <details class="reduction-sortbox" open data-keep-open data-testid="reduction-sortbox"
+                         x-data x-init="const narrow = window.matchMedia('(max-width: 639px)'); $el.open = !narrow.matches; narrow.addEventListener('change', () => { $el.open = !narrow.matches; })">
+                    <summary class="reduction-sortbox-summary">Sort and page size</summary>
+                    <form method="get" action="/reduction" class="reduction-sort" aria-label="Sort and page size">
+                        {% for field in reviewNav.hidden %}<input type="hidden" name="{{ field.name }}" value="{{ field.value }}">{% endfor %}
+                        <label class="text-sm text-stone-700">Sort
+                            <select name="sort" data-testid="reduction-sort" class="reduction-select" @change="$el.form.requestSubmit()">
+                                <option value="copies"{% if reviewSort == "copies" %} selected{% endif %}>Most copies first</option>
+                                <option value="size"{% if reviewSort == "size" %} selected{% endif %}>Largest files first</option>
+                                <option value="computed"{% if reviewSort == "computed" %} selected{% endif %}>Computed order</option>
+                            </select>
+                        </label>
+                        <label class="text-sm text-stone-700">Per page
+                            <select name="pageSize" data-testid="reduction-page-size" class="reduction-select" @change="$el.form.requestSubmit()">
+                                {% for size in pageSizes %}<option value="{{ size }}"{% if size == pageSize %} selected{% endif %}>{{ size }}</option>{% endfor %}
+                            </select>
+                        </label>
+                        <noscript><button type="submit" class="reduction-btn">Sort</button></noscript>
+                    </form>
+                </details>
             </div>
 
             {# Keyboard shortcuts act only while focus is inside this region (WCAG 2.1.4). #}
-            <section id="reduction-clusters" tabindex="-1" class="reduction-clusters-region" aria-labelledby="reduction-clusters-heading"
+            <section id="reduction-clusters" tabindex="-1" class="reduction-clusters-region{% if statusTab == "open" %} reduction-clusters-region--bar{% endif %}" aria-labelledby="reduction-clusters-heading"
                      data-testid="reduction-clusters-region"
                      @keydown="$store.reductionReview.onKey($event)">
                 <h2 id="reduction-clusters-heading" class="reduction-clusters-title">
@@ -208,7 +232,7 @@
                     {% for cluster in clusters %}
                         {% include "/partials/reductionCluster.tpl" %}
                     {% empty %}
-                        <div class="detail-empty" data-testid="reduction-empty">
+                        <div class="detail-empty reduction-empty" data-testid="reduction-empty">
                             {% if reviewFilterActive %}
                                 No Clusters match these filters.
                             {% elif tabCounts.open|add:tabCounts.skipped|add:tabCounts.stale|add:tabCounts.applied == 0 %}
@@ -227,7 +251,7 @@
     {% if showReview %}
     {# The apply bar. Sticky inside the main column so the cards scroll under it; the Clusters region has bottom padding of its own height. #}
     <div class="reduction-bar" data-testid="reduction-apply-bar" role="region" aria-label="Apply approved Clusters"
-         x-show="$store.reductionReview.openCount > 0 || $store.reductionReview.checkedCount > 0" x-cloak
+         x-show="$store.reductionReview.tab === 'open' && ($store.reductionReview.openCount > 0 || $store.reductionReview.checkedCount > 0)" x-cloak
          @keydown.escape="$store.reductionReview.closeMore()">
         <p class="reduction-bar-counts" data-testid="reduction-checked-summary">
             <span x-text="$store.reductionReview.checkedCount">{{ review.CheckedCount }}</span> approved
@@ -258,7 +282,7 @@
             </div>
             <div class="reduction-apply-wrap">
                 <button type="button" class="reduction-btn reduction-btn--danger" data-testid="reduction-apply"
-                        :disabled="$store.reductionReview.busy || $store.reductionReview.applying || $store.reductionReview.checkedCount === 0"
+                        :disabled="$store.reductionReview.busy || $store.reductionReview.applying || $store.reductionReview.refreshing > 0 || ($store.reductionReview.checkedCount === 0 && !$store.reductionReview.figuresStale)"
                         aria-describedby="reduction-apply-warning"
                         @click="$store.reductionReview.apply($event)" x-text="'Apply ' + $store.reductionReview.checkedCount + ' Cluster' + ($store.reductionReview.checkedCount === 1 ? '' : 's') + '\u2026'">Apply {{ review.CheckedCount }} Cluster{% if review.CheckedCount != 1 %}s{% endif %}…</button>
                 <span id="reduction-apply-warning" class="reduction-apply-warning">Applying cannot be undone.</span>

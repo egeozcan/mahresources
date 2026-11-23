@@ -102,14 +102,11 @@ func reviewNav(values url.Values, reductionID uint, statusTab string, tabCounts 
 	} {
 		q := base()
 		q.Del("tier")
-		for _, t := range []string{models.ReductionTierIdentical, models.ReductionTierNear} {
-			if t == tier.key {
-				if !tierActive[t] {
-					q.Add("tier", t)
-				}
-			} else if tierActive[t] {
-				q.Add("tier", t)
-			}
+		// The two tiers are one choice, not two switches: both on is the same list as
+		// neither, so a chip never adds itself beside the other. Clicking the active
+		// chip clears the choice; clicking the other one switches to it.
+		if !tierActive[tier.key] {
+			q.Add("tier", tier.key)
 		}
 		tiers = append(tiers, pongo2.Context{"label": tier.label, "href": href(q), "active": tierActive[tier.key]})
 	}

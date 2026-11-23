@@ -1,11 +1,14 @@
 {% extends "/layouts/base.tpl" %}
 
+{# No sidebar here: nothing to put in it, and an empty "Filters and details" disclosure is noise. #}
+{% block contentModifier %} content--no-sidebar{% endblock %}
+
 {% block body %}
 <form class="space-y-6" method="post" action="/v1/reduction"
       x-data="reductionCreateForm" @submit.prevent="submit($el)" :aria-busy="busy">
     <p class="text-sm text-stone-600">
         Find copies of the same file and near-identical images, choose which copy to keep, and merge the rest into it.
-        Nothing is removed until you review and apply.
+        Nothing is removed until you review and apply. A Reduction tidies your library, one entry per image with the others' tags, notes and groups merged in; it does not free disk space.
     </p>
 
     <fieldset class="space-y-6" :disabled="busy">
@@ -14,7 +17,7 @@
             <label for="name" class="block text-xs font-mono font-medium text-stone-600">Name</label>
             <input type="text" name="name" id="name" autocomplete="off" aria-describedby="name-description"
                    class="mt-1 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
-            <p id="name-description" class="mt-1 text-sm text-stone-500">Default: Resource Reduction.</p>
+            <p id="name-description" class="mt-1 text-sm text-stone-500">Left empty, it is named after what you choose and today's date.</p>
         </div>
 
         <fieldset class="space-y-1">
@@ -81,9 +84,7 @@
                         <option value="oldest">Oldest copy</option>
                         <option value="custom">Custom</option>
                     </select>
-                    <p class="mt-1 text-xs text-stone-600" x-show="preset === 'best'">Highest resolution, then largest file, then added first.</p>
-                    <p class="mt-1 text-xs text-stone-600" x-show="preset === 'smallest'" x-cloak>Smallest file, then highest resolution, then added first.</p>
-                    <p class="mt-1 text-xs text-stone-600" x-show="preset === 'oldest'" x-cloak>Added first, then highest resolution, then largest file.</p>
+                    <p class="mt-1 text-xs text-stone-600" x-text="presetHint"></p>
                 </div>
 
                 <div x-show="preset === 'custom'" x-cloak data-testid="reduction-custom-rule">
@@ -111,7 +112,7 @@
                 Find duplicates now
             </label>
             <p id="reduction-compute-hint" class="mt-1 text-xs text-stone-600">
-                A Reduction tidies your library: one entry per image, with the others' tags, notes and groups merged in. It does not free disk space.
+                Starts the search as soon as the Reduction is created. Nothing is removed until you review and apply.
             </p>
         </div>
     </fieldset>

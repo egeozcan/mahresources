@@ -415,7 +415,7 @@ test.describe('Resource Reduction', () => {
     await dialog.getByRole('button', { name: 'Apply 1 Cluster' }).click();
 
     const result = page.getByTestId('reduction-apply-result');
-    await expect(result).toContainText('Applied 1 Cluster(s), removed 1 cop(ies).');
+    await expect(result).toContainText('Applied 1 Cluster, removed 1 copy.');
     await expect(result).toContainText('This does not free disk space.');
     // The Applied tab holds it now, and the page is back on Open.
     await expect(page.getByTestId('reduction-tab-applied')).toContainText('(1)');
@@ -559,7 +559,7 @@ test.describe('Resource Reduction', () => {
     await expect(attention.getByTestId('cluster-keeps-smaller')).toBeVisible();
 
     await page.getByTestId('reduction-approve-page').click();
-    await expect(page.getByTestId('reduction-bulk-notice')).toContainText('1 need individual review.');
+    await expect(page.getByTestId('reduction-bulk-notice')).toContainText('1 needs individual review.');
     await expect(attention.getByTestId('cluster-approve')).toHaveAttribute('aria-pressed', 'false');
     const others = page.locator('[data-testid="reduction-cluster"]').filter({ hasNot: page.getByTestId('cluster-keeps-smaller') });
     await expect(others.first().getByTestId('cluster-approve')).toHaveAttribute('aria-pressed', 'true');
@@ -747,5 +747,111 @@ test.describe('Resource Reduction', () => {
     const lastBox = await last.boundingBox();
     const barBox = await bar.boundingBox();
     expect(lastBox!.y + lastBox!.height).toBeLessThanOrEqual(barBox!.y + 1);
+  });
+});
+
+
+test.describe('Resource Reduction review fixes (round 1)', () => {
+  test('the apply bar is only on the Open tab', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR bar ${Date.now()}`;
+    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 2);
+    const id = await createReduction(request, baseURL!, label, ids);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}`);
+    await expect(page.getByTestId('reduction-apply-bar')).toBeVisible();
+    await page.getByTestId('reduction-cluster').first().getByTestId('cluster-skip').click();
+    await page.goto(`/reduction?id=${id}&status=skipped`);
+    await expect(page.getByTestId('reduction-cluster')).toHaveCount(1);
+    await expect(page.getByTestId('reduction-apply-bar')).toBeHidden();
+  });
+
+  for (const viewport of [{ width: 1440, height: 800 }, { width: 390, height: 844 }]) {
+    test(`focus is never hidden under the apply bar at ${viewport.width}px`, async ({ page, apiClient, request, baseURL }) => {
+      const label = `RR focus ${viewport.width} ${Date.now()}`;
+      const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 6);
+      const id = await createReduction(request, baseURL!, label, ids);
+      await computeAndWait(request, baseURL!, id);
+
+      await page.setViewportSize(viewport);
+      await page.goto(`/reduction?id=${id}`);
+      const bar = page.getByTestId('reduction-apply-bar');
+      await expect(bar).toBeVisible();
+      const approve = page.getByTestId('cluster-approve').last();
+      await approve.focus();
+      // Walk forward through every control of the last cards; each one the browser
+      // scrolls into view must end above the bar's top edge.
+      for (let i = 0; i < 12; i++) {
+        await page.keyboard.press('Tab');
+        const focused = await page.evaluate(() => {
+          const el = document.activeElement as HTMLElement | null;
+          if (!el || !el.closest('[data-reduction-clusters]')) return null;
+          const box = el.getBoundingClientRect();
+          const barBox = document.querySelector('.reduction-bar')!.getBoundingClientRect();
+          return { bottom: box.bottom, barTop: barBox.top };
+        });
+        if (!focused) break;
+        expect(focused.bottom).toBeLessThanOrEqual(focused.barTop + 1);
+      }
+    });
+  }
+
+  test('a lost apply response is reported as unknown, then as the plan recorded it', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR lost ${Date.now()}`;
+    const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);
+    const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID]);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}`);
+    // The server processes the apply; the browser never sees the answer.
+    await page.route('**/v1/reduction/apply', async (route) => {
+      await route.fetch();
+      await route.abort('connectionreset');
+    });
+    await page.getByTestId('reduction-apply').click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Apply 1 Cluster' }).click();
+
+    await expect(page.getByTestId('reduction-apply-result')).toContainText('Applied 1 Cluster, removed 1 copy.', { timeout: 20_000 });
+    await expect(page.getByTestId('reduction-error')).toBeHidden();
+  });
+
+  test('the Settings form follows a change made elsewhere instead of undoing it', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR baseline ${Date.now()}`;
+    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 2);
+    const id = await createReduction(request, baseURL!, label, ids);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}`);
+    const near = page.locator('#keepAsVersionNear');
+    await expect(near).toBeChecked();
+
+    // Another tab turns the flag off.
+    const list = await (await request.get(`${baseURL}/v1/reductions`)).json();
+    const row = list.reductions.find((r: { id: number }) => r.id === id);
+    const edit = await request.post(`${baseURL}/v1/reduction/edit`, {
+      data: { id, version: row.version, name: row.name, matchingMode: 'both', keepAsVersionNear: false },
+    });
+    expect(edit.ok()).toBeTruthy();
+
+    // This tab's next action is refused (stale version) and re-reads the page.
+    await page.getByTestId('reduction-cluster').first().getByTestId('cluster-skip').click();
+    await expect(page.getByTestId('reduction-error')).toBeVisible();
+    await expect(near).not.toBeChecked();
+    await expect(page.getByText('These settings were changed elsewhere')).toBeVisible();
+  });
+
+  test('the first Cluster is within reach on a phone', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR phone ${Date.now()}`;
+    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 2);
+    const id = await createReduction(request, baseURL!, label, ids);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/reduction?id=${id}`);
+    const title = await page.locator('#page-title').boundingBox();
+    const header = await page.getByTestId('reduction-cluster').first().locator('h3').boundingBox();
+    expect(header!.y - (title!.y + title!.height)).toBeLessThan(460);
+    await expect(page.getByTestId('reduction-shortcuts-button')).toBeHidden();
+    await expect(page.locator('#sidebar-disclosure summary')).toHaveText('Settings');
   });
 });

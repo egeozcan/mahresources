@@ -24,12 +24,13 @@ func TestReviewNavChipsToggleOneParamAndDropThePage(t *testing.T) {
 	if !tiers[0]["active"].(bool) || tiers[1]["active"].(bool) {
 		t.Fatalf("identical should be the only active tier chip: %#v", tiers)
 	}
-	// Clicking the active chip removes it; clicking the other adds it. Neither
+	// Clicking the active chip removes it; clicking the other switches to it (the
+	// tiers are one choice: both on would be the same list as neither). Neither
 	// carries `page`, and both keep the sort and the status.
 	if got, want := tiers[0]["href"], "/reduction?id=7&sort=size&status=open"; got != want {
 		t.Errorf("active tier chip href = %v, want %v", got, want)
 	}
-	if got, want := tiers[1]["href"], "/reduction?id=7&sort=size&status=open&tier=identical&tier=near"; got != want {
+	if got, want := tiers[1]["href"], "/reduction?id=7&sort=size&status=open&tier=near"; got != want {
 		t.Errorf("inactive tier chip href = %v, want %v", got, want)
 	}
 }

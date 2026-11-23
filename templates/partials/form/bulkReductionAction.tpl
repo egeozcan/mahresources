@@ -21,7 +21,7 @@
         Find duplicates
     </button>
 
-    <div id="{{ panelId }}" x-show="open" x-cloak x-collapse class="absolute {% if reductionOwnerId %}right-0 z-20{% else %}left-0 top-full z-40{% endif %} mt-2 p-3 bg-white border border-stone-200 rounded-md shadow-sm w-80 max-w-[calc(100vw-2rem)]">
+    <div id="{{ panelId }}" x-ref="panel" x-show="open" x-cloak x-collapse class="absolute {% if reductionOwnerId %}right-0 z-20{% else %}left-0 top-full z-40{% endif %} mt-2 p-3 bg-white border border-stone-200 rounded-md shadow-sm w-80 max-w-[calc(100vw-2rem)]">
         <p class="mb-1 text-sm font-medium text-stone-800" x-text="heading()" data-testid="bulk-reduction-heading"></p>
         <p class="mb-2 text-xs text-stone-600">Nothing is removed until you review and apply.</p>
         {% if reductionOwnerId %}
@@ -45,7 +45,7 @@
 
         <div x-show="mode === 'new'" class="mt-2">
             <label class="block text-sm font-medium font-mono text-stone-700" for="{{ panelId }}-name">Name</label>
-            <input id="{{ panelId }}-name" type="text" x-model="name" placeholder="Resource Reduction"
+            <input id="{{ panelId }}-name" type="text" x-model="name" placeholder="Named after your selection and today's date"
                    data-testid="bulk-reduction-name"
                    class="mt-1 block w-full rounded-md border-stone-300 shadow-sm text-sm focus:border-amber-600 focus:ring-amber-600">
             <label class="flex items-center gap-2 mt-2 text-sm text-stone-700">
