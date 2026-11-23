@@ -340,7 +340,7 @@ export function registerReductionReviewStore(Alpine) {
         window.mahAnnounce?.(ANNOUNCEMENTS[action] || 'Cluster updated.');
       } catch (err) {
         this.error = err.message;
-        window.mahAnnounce?.(`Could not update Cluster: ${err.message}`, { assertive: true });
+        this._announceError(`Could not update Cluster: ${err.message}`);
         // Re-render from server truth (best effort) so the page never shows a
         // decision that will not be applied.
         try {
@@ -405,7 +405,7 @@ export function registerReductionReviewStore(Alpine) {
         window.mahAnnounce?.(text);
       } catch (err) {
         this.error = err.message;
-        window.mahAnnounce?.(`Could not update Clusters: ${err.message}`, { assertive: true });
+        this._announceError(`Could not update Clusters: ${err.message}`);
         // A count that has moved, or a plan that has: show the truth.
         try { await this.refresh(); } catch { this.figuresStale = true; /* the action's own error stays */ }
       } finally {
@@ -445,6 +445,16 @@ export function registerReductionReviewStore(Alpine) {
       if (q) url.searchParams.set('fq', q);
       if (clusterId) url.searchParams.set('fa', clusterId);
       link.setAttribute('href', `${url.pathname}${url.search}`);
+    },
+
+    /**
+     * Announce a refusal, unless the apply bar's own alert is on screen: that one is
+     * a live region and says the same thing, so a second announcement is a repeat.
+     */
+    _announceError(text) {
+      const bar = document.querySelector('[data-testid="reduction-bar-error"]');
+      if (this.barShown && bar) return;
+      window.mahAnnounce?.(text, { assertive: true });
     },
 
     /** The error as a sentence. */
@@ -580,7 +590,7 @@ export function registerReductionReviewStore(Alpine) {
           await this.refresh();
         } catch (err) {
           this.error = `The approved totals could not be confirmed (${err.message}), so nothing was applied. Reload the page and try again.`;
-          window.mahAnnounce?.(this.error, { assertive: true });
+          this._announceError(this.error);
           return;
         }
         if (this.checkedCount === 0) {
@@ -696,7 +706,7 @@ export function registerReductionReviewStore(Alpine) {
       let { outcome = null, lost = false, error = null } = first;
       if (error) {
         this.error = error.message;
-        window.mahAnnounce?.(`Nothing was applied: ${error.message}`, { assertive: true });
+        this._announceError(`Nothing was applied: ${error.message}`);
       }
 
       if (lost) {
@@ -719,7 +729,7 @@ export function registerReductionReviewStore(Alpine) {
         this.applyCounts = { applied: last.applied || 0, removed: last.removed || 0, stale: last.stale || 0, hidden: !!last.countsHidden };
       } else if (lost) {
         this.error = recovered?.message || 'The result of this apply could not be determined. Reload the page to see what happened.';
-        window.mahAnnounce?.(this.error, { assertive: true });
+        this._announceError(this.error);
       }
 
       if (this.applyCounts) {
@@ -830,7 +840,7 @@ export function registerReductionReviewStore(Alpine) {
         window.mahAnnounce?.('The interrupted apply was settled.');
       } catch (err) {
         this.error = err.message;
-        window.mahAnnounce?.(`Could not settle the interrupted apply: ${err.message}`, { assertive: true });
+        this._announceError(`Could not settle the interrupted apply: ${err.message}`);
         try { await this.refresh(); } catch { this.figuresStale = true; }
       } finally {
         this.busy = false;

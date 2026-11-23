@@ -170,7 +170,9 @@
         {% for member in cluster.Members %}{% if not member.IsWinner %}{% include "/partials/reductionMember.tpl" %}{% endif %}{% endfor %}
     </div>
 
+    {% if cluster.State != "stale" %}
     <p class="reduction-footnote" key="footnote">Removed copies' tags, notes and groups move to the kept copy.</p>
+    {% endif %}
 </article>
 {% endif %}
 {% endif %}

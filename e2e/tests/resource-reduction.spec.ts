@@ -1123,6 +1123,12 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     await page.route('**/v1/reduction/apply', (route) => route.fulfill({
       status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'this Reduction changed since you confirmed it' }),
     }));
+    await page.evaluate(() => {
+      const w = window as unknown as { __announced: string[]; mahAnnounce: (text: string, ...rest: unknown[]) => void };
+      w.__announced = [];
+      const original = w.mahAnnounce;
+      w.mahAnnounce = (text: string, ...rest: unknown[]) => { w.__announced.push(text); original?.(text, ...rest); };
+    });
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
     await page.getByTestId('reduction-apply').click();
     await page.getByRole('alertdialog').getByRole('button', { name: /^Apply \d+ Clusters?$/ }).click();
@@ -1133,6 +1139,9 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     await expect(error).toBeInViewport();
     await expect(error).toBeFocused();
     await expect(error.getByRole('button', { name: 'Reload' })).toBeVisible();
+    // The bar's alert is the announcement: no second one for the same refusal.
+    const announced = await page.evaluate(() => (window as unknown as { __announced: string[] }).__announced);
+    expect(announced.filter((text) => /Nothing was applied/.test(text))).toEqual([]);
   });
 
   test('the apply bar sits in the flow on a short screen, so it never covers the tabs', async ({ page, apiClient, request, baseURL }) => {
@@ -1218,4 +1227,25 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     await expect(card.getByTestId('member-eject')).toHaveCount(0);
     await expect(card.getByTestId('member-promote')).toHaveCount(0);
   });
+
+  for (const width of [320, 390]) {
+    test(`the group page's Resources panel header fits at ${width}px`, async ({ page, apiClient }) => {
+      const label = `RR header ${width} ${Date.now()}`;
+      const category = await apiClient.createCategory(label);
+      const group = await apiClient.createGroup({ name: label, categoryId: category.ID });
+      await apiClient.createResource({ filePath: path.join(__dirname, '../test-assets/sample-image-10.png'), name: `${label} r`, ownerId: group.ID });
+
+      await page.setViewportSize({ width, height: 800 });
+      await page.goto(`/group?id=${group.ID}`);
+      const header = page.locator('.detail-panel-header').filter({ has: page.getByRole('heading', { name: 'Resources', exact: true }) });
+      const controls = header.locator('.detail-panel-actions').locator('a:visible, button:visible');
+      expect(await controls.count()).toBeGreaterThan(1);
+      for (let i = 0; i < await controls.count(); i++) {
+        const box = await controls.nth(i).boundingBox();
+        expect(box, `control ${i}`).not.toBeNull();
+        expect(box!.x).toBeGreaterThanOrEqual(0);
+        expect(box!.x + box!.width).toBeLessThanOrEqual(width + 1);
+      }
+    });
+  }
 });
