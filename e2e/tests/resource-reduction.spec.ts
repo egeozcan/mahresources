@@ -432,6 +432,11 @@ test.describe('Resource Reduction', () => {
     const result = page.getByTestId('reduction-apply-result');
     await expect(result).toContainText('Applied 1 Cluster, removed 1 copy.');
     await expect(result).toContainText('This does not free disk space.');
+    // The Applied card says what was removed.
+    await page.goto(`/reduction?id=${id}&status=applied`);
+    await expect(page.getByTestId('reduction-cluster').first()).toContainText('1 copy removed.');
+    await page.goto(`/reduction?id=${id}`);
+    await page.getByTestId('reduction-apply-result').waitFor({ state: 'hidden' });
     // The Applied tab holds it now, and the page is back on Open.
     await expect(page.getByTestId('reduction-tab-applied')).toContainText('(1)');
     await expect(page.getByTestId('reduction-tab-open')).toHaveAttribute('aria-current', 'page');

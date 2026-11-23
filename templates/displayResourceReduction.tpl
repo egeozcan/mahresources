@@ -58,6 +58,11 @@
                 <button type="button" class="reduction-btn reduction-btn--link reduction-shortcuts-btn" data-testid="reduction-shortcuts-button"
                         aria-haspopup="dialog" @click="$store.reductionReview.openDialog('shortcuts', $event)">Keyboard shortcuts</button>
                 {% endif %}
+                {% if settleableClaims > 0 %}
+                <button type="button" class="reduction-btn" data-testid="reduction-settle"
+                        :disabled="$store.reductionReview.busy || $store.reductionReview.applying"
+                        @click="$store.reductionReview.settleOnly()">Finish the interrupted apply</button>
+                {% endif %}
                 <a href="#reduction-settings" class="reduction-btn reduction-btn--link" data-testid="reduction-settings-link"
                    @click.prevent="$store.reductionReview.focusSettings()">Settings</a>
             </span>
@@ -249,10 +254,7 @@
                             {% if reviewFilterActive %}
                                 No Clusters match these filters.
                             {% elif statusTab == "open" and tabCounts.merging %}
-                                {{ tabCounts.merging }} Cluster{% if tabCounts.merging != 1 %}s are{% else %} is{% endif %} being merged. If an apply was interrupted, finish it here; otherwise reload in a moment.
-                                <button type="button" class="reduction-btn mt-2" data-testid="reduction-settle"
-                                        :disabled="$store.reductionReview.busy || $store.reductionReview.applying"
-                                        @click="$store.reductionReview.settleOnly()">Finish the interrupted apply</button>
+                                {{ tabCounts.merging }} Cluster{% if tabCounts.merging != 1 %}s are{% else %} is{% endif %} being merged. Reload in a moment to see the result.
                             {% elif tabCounts.open|add:tabCounts.skipped|add:tabCounts.stale|add:tabCounts.applied == 0 %}
                                 No copies found in this selection. See About this Reduction for how much of it could be checked.
                             {% else %}
