@@ -640,10 +640,14 @@ export function registerReductionReviewStore(Alpine) {
         // Keep listening to the request as well as the plan: a refusal that arrives
         // first is the answer (and is shown as one), a recovered record is the answer
         // otherwise. A response that merely failed (lost) leaves it to the plan.
+        // While the request is in flight the plan's answers are provisional: only a
+        // record carrying this attempt's id ends the wait early, and "unknown" is
+        // never concluded before the request has itself failed without an answer.
         const cancel = { stop: false };
-        const recovery = this._recoverApply(requestId, cancel).then((result) => ({ recovered: result }));
-        const definitive = sending.then((result) => (result.lost ? new Promise(() => {}) : result));
-        const second = await Promise.race([definitive, recovery]);
+        const recoveryRun = this._recoverApply(requestId, cancel);
+        const byRecord = recoveryRun.then((result) => (result.record ? { recovered: result } : new Promise(() => {})));
+        const byRequest = sending.then(async (result) => (result.lost ? { recovered: await recoveryRun } : result));
+        const second = await Promise.race([byRequest, byRecord]);
         cancel.stop = true;
         if (second.recovered) {
           first = { lost: true };

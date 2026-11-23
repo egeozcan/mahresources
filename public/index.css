@@ -5337,3 +5337,13 @@ progress.export-progress-bar::-moz-progress-bar {
         padding-bottom: 0;
     }
 }
+
+/* The approval toggle always reads "Approve"; pressed adds a check beside it. */
+.reduction-approve-check {
+    display: none;
+    margin-right: 0.375rem;
+}
+
+.reduction-approve[aria-pressed="true"] .reduction-approve-check {
+    display: inline;
+}

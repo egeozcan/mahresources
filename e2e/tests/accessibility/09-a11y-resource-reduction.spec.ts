@@ -233,4 +233,15 @@ test.describe('Resource Reduction accessibility', () => {
     await page.keyboard.press('Enter');
     await expect(page.getByTestId('reduction-apply-bar')).toBeFocused();
   });
+
+  test('the approval toggle is named "Approve" in both states (WCAG 2.5.3)', async ({ page, apiClient, request, baseURL }) => {
+    const id = await computedReduction(apiClient, request, baseURL!, `RR a11y approve name ${Date.now()}`, 'sample-image-4.png');
+    await page.goto(`/reduction?id=${id}`);
+    const toggle = page.getByTestId('reduction-cluster').first().getByRole('button', { name: 'Approve', exact: true });
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await expect(toggle).toContainText('Approve');
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await expect(toggle).toHaveText('Approve');
+  });
 });

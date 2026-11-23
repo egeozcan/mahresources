@@ -111,8 +111,8 @@
                     disabled
                     :disabled="$store.reductionReview.busy || !$store.reductionReview.isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})"
                     @click="$store.reductionReview.toggleApproval('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %}, $event)">
-                <span class="sr-only">Approve</span>
-                <span aria-hidden="true">{% if cluster.Checked %}Approved &#10003;{% else %}Approve{% endif %}</span>
+                {# The visible text is the name in both states (WCAG 2.5.3); the state is aria-pressed, shown as a check and a filled button. #}
+                <span class="reduction-approve-check" aria-hidden="true">&#10003;</span>Approve
             </button>
             {% endif %}
             <button type="button" data-testid="cluster-skip" class="reduction-btn"
