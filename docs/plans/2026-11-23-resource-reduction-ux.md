@@ -376,8 +376,65 @@ Reduction and starts it through the D5 flow, landing on the D4 progress view.
 
 ## Implementation slices
 
-1. Backend B1-B8 with tests.
-2. Review page D1, D2, D3, D9.
-3. D4, D5, D7, D8, D11.
-4. D10 list page, D6 keyboard (first to drop if scope must shrink).
-5. Docs, screenshots, full suites, review loop.
+- [x] 1. Backend B1-B8 with tests.
+- [x] 2. Review page D1, D2, D3, D9.
+- [x] 3. D4, D5, D7, D8, D11.
+- [x] 4. D10 list page, D6 keyboard.
+- [x] 5. Docs, full suites, review loop. Screenshots: see Review.
+
+## Review
+
+Built in three lanes (backend, review page, entry points), then seven review rounds. Each
+round ran an external code review (pi, GPT-6.2-sol high; DeepSeek V4 Pro and a fresh Code
+Reviewer agent in round 7, after the GPT provider's filter refused the prompts) and a live
+browser UX/accessibility review at 1440, 390 and 320 px. Every finding was reproduced
+with a failing test before its fix where a test could reach it.
+
+| Round | Code review | UX review |
+|-------|-------------|-----------|
+| 1 | P0 6, P1 7, P2 2 | P0 0, P1 5, P2 17 |
+| 2 | P0 4, P1 8, P2 1 | P0 0, P1 2, P2 9 |
+| 3 | P0 2, P1 6, P2 4 | P0 0, P1 1, P2 3 |
+| 4 | P0 4, P1 6, P2 2 | P0 0, P1 2, P2 4 |
+| 5 | P0 2, P1 5, P2 3 | P0 0, P1 1, P2 3 |
+| 6 | P0 3, P1 2, P2 4 | P0 0, P1 2, P2 1 |
+| 7 | P0 0, P1 0, P2 5 | P0 0, P1 1, P2 2 |
+| final | | P0 0, P1 0, P2 0 |
+
+Where the design moved from the plan:
+
+- **Apply is bound to the exact proposals shown** (`applyToken`, a digest over each
+  approved Cluster's Winner, Losers and reviewed hashes), not to totals: equal totals let
+  a swapped Cluster through.
+- **A merge is confirmed inside its own transaction** (`MergeHooks`: the Reduction row is
+  locked first, the claim id checked, the Cluster marked merged in the transaction that
+  deletes the Losers). Two rounds of reconciling a claim after the commit produced new
+  races each time; removing the gap removed the class. Lock order is Reduction row, then
+  Series, then Resources, everywhere.
+- **Visibility has one rule** (`reviewReach` / `clusterWithheld`, all members including
+  ejected ones) used by the list, tabs, figures, bulk, overrides, apply and reconciliation.
+  Applied history records each Loser's owning group at merge time so a scoped owner never
+  sees a Cluster an administrator merged outside their subtree.
+- `LastApply` records counts per request id; a scoped viewer whose access narrowed sees the
+  record without numbers.
+- Promote and eject clear approval; a Cluster with no Loser cannot be approved.
+
+Found along the way and fixed although they predate this branch: the Postgres merge
+replaced the Winner's whole `backups` object on a second merge (now `jsonb_set`); the
+single-Cluster override had the same scope-recheck hole as bulk; the docs claimed every
+upload creates a version row (a never-versioned Resource has only a virtual v1); and the
+detail-page description inline-edit spec raced the markdown editor's mount.
+
+Declined, with reason: re-binding the subtree allow-list mid-request. It is bound once per
+request across the whole application (`docs/architecture/authentication-and-roles.md`).
+
+Verification at the final head: full Go suite (SQLite) green; Postgres Go suites
+(`./mrql/... ./server/api_tests/...`, plus `./application_context/ -run 'Reduction|Merge'`)
+green; full E2E browser + CLI on SQLite 2999 passed, 0 failed. Postgres E2E: 2993 passed,
+2 failed, 5 flaky; both failures (`phase3-sweeps` "Queries: the first item is within one
+viewport" and the auth-mode `cli-doctest`) fail identically on master: the Postgres harness
+connects as a superuser, so saved SQL queries are disabled (HTTP 503). The flaky five are
+page-load timeouts outside this feature. One unrelated HLS
+timing test (`TestSeparateAudioRenditionIsMuxedIn`) failed once under load in a
+concurrent run; the branch does not touch `hls/`, and it passed 10/10 on master and in
+the final run.
