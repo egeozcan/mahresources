@@ -13,13 +13,13 @@
 
 export const PRESETS = {
   best: ['pixels_desc', 'size_desc', 'created_asc'],
-  smallest: ['size_asc', 'created_asc'],
+  smallest: ['size_asc', 'pixels_desc', 'created_asc'],
   oldest: ['created_asc', 'pixels_desc', 'size_desc'],
 };
 
 const HINTS = {
   best: 'Highest resolution first, then the largest file, then the oldest copy.',
-  smallest: 'The smallest file first, then the oldest copy.',
+  smallest: 'The smallest file first, then the highest resolution, then the oldest copy.',
   oldest: 'The oldest copy first, then the highest resolution, then the largest file.',
   custom: '',
 };

@@ -1,13 +1,9 @@
 import { createAndOpen } from './reductionStart.js';
+import { PRESETS as WINNER_PRESETS } from './reductionSettings.js';
 
-// Winner Rule presets. Best quality is models.DefaultWinnerRule(). The others
-// lead with their name and fall back to resolution, then age, so a tie on the
-// first criterion still picks the better copy.
-export const WINNER_PRESETS = {
-  best: ['pixels_desc', 'size_desc', 'created_asc'],
-  smallest: ['size_asc', 'pixels_desc', 'created_asc'],
-  oldest: ['created_asc', 'pixels_desc', 'size_desc'],
-};
+// The Winner Rule presets are the review page's Settings presets, so a Reduction
+// created with one is shown with that same preset rather than as Custom.
+export { WINNER_PRESETS };
 
 const CUSTOM_SLOTS = 5;
 
