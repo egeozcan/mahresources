@@ -117,22 +117,21 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 		if cluster.State != models.ReductionClusterOpen {
 			continue
 		}
-		reachable, whole := true, true
-		for _, member := range cluster.Members {
-			if !visible[member.ResourceID] {
-				whole = false
-				if !member.Ejected {
-					reachable = false
-				}
-			}
+		// One rule for every count, filter and apply: a Cluster that reaches a
+		// Resource the caller may not see, an ejected member included, is withheld.
+		// An ejected member is untouched by a merge but still part of what the
+		// Cluster says about the library, and the tabs and bulk approval already
+		// leave such a Cluster out.
+		if clusterWithheld(cluster, visible) {
+			continue
 		}
-		if cluster.Tier == models.ReductionTierIdentical && whole {
+		if cluster.Tier == models.ReductionTierIdentical {
 			figures.bulk.IdenticalOpen++
 			if !clusterNeedsAttention(cluster) {
 				figures.bulk.IdenticalApprovable++
 			}
 		}
-		if !cluster.Checked || !reachable {
+		if !cluster.Checked {
 			continue
 		}
 		figures.checked++

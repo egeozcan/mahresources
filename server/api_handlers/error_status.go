@@ -113,6 +113,7 @@ func statusCodeForError(err error, fallback int) int {
 		errors.Is(err, application_context.ErrReductionBusy) ||
 		errors.Is(err, application_context.ErrReductionClusterSettled) ||
 		errors.Is(err, application_context.ErrReductionCountMismatch) ||
+		errors.Is(err, application_context.ErrReductionApplyFiguresChanged) ||
 		errors.Is(err, application_context.ErrReductionClusterNotOpen) {
 		return http.StatusConflict
 	}

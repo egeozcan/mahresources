@@ -174,8 +174,8 @@ func TestLastApplyDoesNotCountWithheldClusters(t *testing.T) {
 	require.NoError(t, err)
 	result, err := narrowCtx.ApplyResourceReduction(&query_models.ReductionApply{ID: red.ID, Version: current.Version}, owner, restricted)
 	require.NoError(t, err)
-	require.Len(t, result.Stale, 1)
-	require.True(t, result.Stale[0].Withheld)
+	assert.Empty(t, result.Stale, "a withheld Cluster is omitted from the response")
+	assert.Empty(t, result.Applied)
 
 	last := planOf(t, tc, red.ID).LastApply
 	require.NotNil(t, last)

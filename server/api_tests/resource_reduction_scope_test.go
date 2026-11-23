@@ -142,7 +142,7 @@ func TestAClusterIsRefusedWhenTheReviewersScopeHasShrunk(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Empty(t, result.Applied)
-	require.Len(t, result.Stale, 1)
+	assert.Empty(t, result.Stale, "a Cluster they can no longer see is left untouched and unreported")
 	assert.True(t, resourceExists(t, tc, loser.ID),
 		"a Resource they may no longer see is not destroyed by a Cluster computed when they could")
 }
@@ -197,13 +197,12 @@ func TestAWithheldClusterIsNeitherCountedNorNamed(t *testing.T) {
 	}, owner, restricted)
 	require.NoError(t, err)
 
-	require.Len(t, result.Stale, 1)
-	outcome := result.Stale[0]
-	assert.True(t, outcome.Withheld)
-	assert.Empty(t, outcome.ClusterID, "the id is derived from the member ids and would recover them")
-	assert.Zero(t, outcome.WinnerID)
-	assert.Empty(t, outcome.LoserIDs)
+	assert.Empty(t, result.Stale, "the id is derived from the member ids, so the result names nothing")
+	assert.Empty(t, result.Applied)
 	assert.True(t, resourceExists(t, tc, loser.ID))
+	untouched := planOf(t, tc, red.ID).Clusters[0]
+	assert.Equal(t, models.ReductionClusterOpen, untouched.State, "and writes nothing to it")
+	assert.True(t, untouched.Checked)
 
 	// The admin, who may see both, gets the whole picture.
 	adminReview, err := tc.AppCtx.GetReductionReview(red.ID, owner, restricted, 1, nil)

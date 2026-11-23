@@ -134,6 +134,15 @@ type ReductionOverride struct {
 type ReductionApply struct {
 	ID      uint `json:"id" schema:"id"`
 	Version uint `json:"version" schema:"version"`
+	// ExpectedClusters and ExpectedLosers are the figures the caller confirmed: how
+	// many approved Clusters, and how many copies in them, the apply dialog named.
+	// When given, the apply is refused with 409 and nothing is merged unless the
+	// approved Clusters the caller can see right now add up to exactly those
+	// numbers. The version alone cannot say so, because what a caller may see
+	// changes without the plan changing (a scope change). Each is checked only when
+	// present.
+	ExpectedClusters *uint `json:"expectedClusters" schema:"expectedClusters"`
+	ExpectedLosers   *uint `json:"expectedLosers" schema:"expectedLosers"`
 }
 
 // ReductionBulkOverride checks or unchecks many Clusters in one write, with exactly

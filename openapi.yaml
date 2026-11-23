@@ -2079,6 +2079,12 @@ components:
             type: object
         ReductionApply:
             properties:
+                expectedClusters:
+                    nullable: true
+                    type: integer
+                expectedLosers:
+                    nullable: true
+                    type: integer
                 id:
                     type: integer
                 version:
