@@ -5301,3 +5301,9 @@ progress.export-progress-bar::-moz-progress-bar {
         font-size: 0.625rem;
     }
 }
+
+.reduction-badge--changed {
+    background: #fffbeb;
+    color: #78350f;
+    border-color: #f59e0b;
+}

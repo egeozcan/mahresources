@@ -11,7 +11,7 @@
         {% if cluster.Merged %}Merged and removed.{% elif cluster.State == "stale" %}Removed elsewhere.{% else %}Resource unavailable.{% endif %}
     </p>
     {# A copy that is gone is left out of a stale Cluster the same way as one that is not: this reopens the rest for review. #}
-    {% if cluster.State == "stale" and not member.IsWinner and not member.Ejected %}
+    {% if cluster.State == "stale" and not member.IsWinner and not member.Ejected and not cluster.WinnerChanged %}
     <button type="button" data-testid="member-eject" class="reduction-btn reduction-btn--small"
             :disabled="$store.reductionReview.busy"
             @click="$store.reductionReview.act('{{ cluster.ID }}', 'eject', {{ member.ResourceID }})">Don't remove<span class="sr-only"> (the copy that was removed elsewhere)</span></button>
@@ -31,6 +31,9 @@
             <span class="reduction-badge reduction-badge--ejected" data-testid="member-role">Not included</span>
         {% else %}
             <span class="reduction-badge reduction-badge--remove" data-testid="member-role">Remove</span>
+        {% endif %}
+        {% if member.Changed %}
+            <span class="reduction-badge reduction-badge--changed" data-testid="member-changed">{% if member.IsWinner %}Kept copy changed{% else %}This copy changed{% endif %}</span>
         {% endif %}
         {% if not member.InExtent %}
             <span class="reduction-badge reduction-badge--outside">Outside the selection</span>
@@ -100,7 +103,7 @@
 
     <div class="reduction-member-actions">
     {% if cluster.State == "stale" %}
-        {% if not member.IsWinner and not member.Ejected %}
+        {% if not member.IsWinner and not member.Ejected and not cluster.WinnerChanged %}
         <button type="button" data-testid="member-eject" class="reduction-btn reduction-btn--small"
                 :disabled="$store.reductionReview.busy"
                 @click="$store.reductionReview.act('{{ cluster.ID }}', 'eject', {{ member.ResourceID }})">Don't remove<span class="sr-only"> ({{ member.Resource.Name }})</span></button>

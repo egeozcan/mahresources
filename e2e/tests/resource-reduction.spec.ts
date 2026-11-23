@@ -1077,4 +1077,29 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     await expect(page.getByTestId('reduction-apply-unknown')).toBeHidden();
     await expect(page.getByTestId('reduction-apply-result')).toBeHidden();
   });
+
+  test('a stale Cluster marks the copy whose bytes changed', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR changed ${Date.now()}`;
+    const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);
+    const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID]);
+    await computeAndWait(request, baseURL!, id);
+
+    // The twin's bytes change after the review was computed.
+    const other = path.join(__dirname, '../test-assets/sample-image-3.png');
+    const upload = await request.post(`${baseURL}/v1/resource/versions?resourceId=${twin.ID}`, {
+      multipart: { file: { name: 'other.png', mimeType: 'image/png', buffer: (await import('fs')).readFileSync(other) }, comment: 'changed after review' },
+    });
+    expect(upload.ok()).toBeTruthy();
+
+    await page.goto(`/reduction?id=${id}`);
+    await page.getByTestId('reduction-apply').click();
+    await page.getByRole('alertdialog').getByRole('button', { name: /^Apply \d+ Clusters?$/ }).click();
+    await expect(page.getByTestId('reduction-apply-result')).toBeVisible({ timeout: 20_000 });
+    // The report links to the Stale tab, not to a card that may be on another page.
+    await page.goto(`/reduction?id=${id}&status=stale`);
+    const card = page.locator('[data-cluster-state="stale"]').first();
+    await expect(card).toBeVisible();
+    await expect(card.getByTestId('member-changed').first()).toBeVisible();
+    await expect(card.getByTestId('cluster-stale-reason')).toContainText('cannot be applied');
+  });
 });

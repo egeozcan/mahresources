@@ -542,7 +542,8 @@ export function registerReductionReviewStore(Alpine) {
       // A scoped viewer's own apply can include Clusters they can no longer see:
       // the plan then withholds the numbers.
       if (counts.hidden) return 'The apply finished.';
-      return `Applied ${plural(counts.applied, ...CLUSTER_NOUN)}, removed ${plural(counts.removed, ...COPIES)}.`;
+      const changed = counts.changed ? ` ${plural(counts.changed, ...CLUSTER_NOUN)} changed by another decision and ${counts.changed === 1 ? 'was' : 'were'} left alone.` : '';
+      return `Applied ${plural(counts.applied, ...CLUSTER_NOUN)}, removed ${plural(counts.removed, ...COPIES)}.${changed}`;
     },
 
     async confirmApply() {
@@ -640,7 +641,7 @@ export function registerReductionReviewStore(Alpine) {
 
       if (outcome) {
         this.applyResult = outcome;
-        this.applyCounts = { applied: outcome.applied?.length || 0, removed: outcome.destroyed || 0, stale: outcome.stale?.length || 0 };
+        this.applyCounts = { applied: outcome.applied?.length || 0, removed: outcome.destroyed || 0, stale: outcome.stale?.length || 0, changed: outcome.changed || 0 };
       } else if (recovered?.record) {
         this.applyResult = null;
         const last = recovered.record;
@@ -726,6 +727,32 @@ export function registerReductionReviewStore(Alpine) {
         }
       }
       return { message: 'The apply is still running on the server. Reload the page in a minute to see the result.' };
+    },
+
+    /**
+     * Settle Clusters an interrupted apply left claimed ("Merging"). Merges
+     * nothing and records no apply; the server refuses while one is running.
+     */
+    async settleOnly() {
+      if (this.busy || this.applying) return;
+      this.busy = true;
+      this.error = '';
+      try {
+        const response = await fetch('/v1/reduction/apply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ id: this.reductionId, version: this.version, settleOnly: true }),
+        });
+        if (!response.ok) throw new Error(await window.errorMessageFromResponse(response));
+        await this.refresh();
+        window.mahAnnounce?.('The interrupted apply was settled.');
+      } catch (err) {
+        this.error = err.message;
+        window.mahAnnounce?.(`Could not settle the interrupted apply: ${err.message}`, { assertive: true });
+        try { await this.refresh(); } catch { this.figuresStale = true; }
+      } finally {
+        this.busy = false;
+      }
     },
 
     /** Close the running dialog without cancelling anything: the server keeps going. */

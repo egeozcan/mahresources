@@ -152,7 +152,7 @@
                                 <template x-if="outcome.withheld"><span x-text="outcome.reason"></span></template>
                                 <template x-if="!outcome.withheld">
                                     <span>
-                                        <a :href="'/reduction?id={{ raw.ID }}&status=stale#cluster-' + outcome.clusterId + '-heading'" class="underline" x-text="outcome.clusterId"></a>
+                                        <a :href="'/reduction?id={{ raw.ID }}&status=stale'" class="underline" x-text="outcome.clusterId"></a>
                                         &mdash; <span x-text="outcome.reason"></span>
                                     </span>
                                 </template>
@@ -247,7 +247,10 @@
                             {% if reviewFilterActive %}
                                 No Clusters match these filters.
                             {% elif statusTab == "open" and tabCounts.merging %}
-                                {{ tabCounts.merging }} Cluster{% if tabCounts.merging != 1 %}s are{% else %} is{% endif %} being merged. Reload in a moment to see the result.
+                                {{ tabCounts.merging }} Cluster{% if tabCounts.merging != 1 %}s are{% else %} is{% endif %} being merged. If an apply was interrupted, finish it here; otherwise reload in a moment.
+                                <button type="button" class="reduction-btn mt-2" data-testid="reduction-settle"
+                                        :disabled="$store.reductionReview.busy || $store.reductionReview.applying"
+                                        @click="$store.reductionReview.settleOnly()">Finish the interrupted apply</button>
                             {% elif tabCounts.open|add:tabCounts.skipped|add:tabCounts.stale|add:tabCounts.applied == 0 %}
                                 No copies found in this selection. See About this Reduction for how much of it could be checked.
                             {% else %}
