@@ -41,7 +41,7 @@ func TestReviewPageContextCarriesTheNewKeys(t *testing.T) {
 	assert.Equal(t, false, page["settingsChanged"])
 	assert.Nil(t, page["lastApply"])
 	assert.False(t, page["reviewFilterActive"].(bool), "the default tab is not a filter the reviewer set")
-	assert.Equal(t, pongo2.Context{"open": 1, "skipped": 1, "stale": 0, "applied": 0}, page["tabCounts"])
+	assert.Equal(t, pongo2.Context{"open": 1, "skipped": 1, "stale": 0, "applied": 0, "merging": 0}, page["tabCounts"])
 	assert.Len(t, page["clusters"], 1, "only the open Cluster is on the default view")
 
 	skipped := reviewPageContext(t, tc.AppCtx, red.ID, "&status=skipped&sort=size&pageSize=50&approval=bogus")
@@ -101,7 +101,7 @@ func TestReviewPageContextKeysNeverExposeAWithheldCluster(t *testing.T) {
 		assert.NotContains(t, rendered, hiddenID, "query %q", query)
 		assert.NotContains(t, rendered, "ctx-hidden-hash", "query %q", query)
 
-		assert.Equal(t, pongo2.Context{"open": 0, "skipped": 0, "stale": 0, "applied": 0}, page["tabCounts"],
+		assert.Equal(t, pongo2.Context{"open": 0, "skipped": 0, "stale": 0, "applied": 0, "merging": 0}, page["tabCounts"],
 			"the hidden Cluster is on no tab (query %q)", query)
 		assert.Equal(t, 0, page["bulk"].(pongo2.Context)["identicalOpen"])
 		figures := page["applyFigures"].(pongo2.Context)

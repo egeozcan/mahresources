@@ -34,6 +34,12 @@ var (
 	ErrReductionClusterNotFound = errors.New("no such Cluster in this Resource Reduction")
 	// ErrReductionMemberNotFound is an id no member of that Cluster carries.
 	ErrReductionMemberNotFound = errors.New("no such member in this Cluster")
+	// ErrReductionNothingToRemove refuses approving a Cluster whose every copy is
+	// kept: a merge that removes nothing.
+	ErrReductionNothingToRemove = errors.New("every copy in this Cluster is kept, so there is nothing to approve")
+	// ErrReductionClusterStale refuses approving a Cluster that was made stale by a
+	// Resource that is gone.
+	ErrReductionClusterStale = errors.New("this Cluster is stale and cannot be approved: a Resource in it no longer exists. Don't remove that copy, or recompute")
 	// ErrReductionClusterSettled refuses an override on a Cluster whose merge has
 	// already happened. Its Losers do not exist any more.
 	ErrReductionClusterSettled = errors.New("this Cluster has already been applied")
@@ -110,6 +116,15 @@ func (ctx *MahresourcesContext) overrideReductionClusterOnce(override *query_mod
 	}
 	if cluster.State == models.ReductionClusterApplied {
 		return nil, ErrReductionClusterSettled
+	}
+	// Read the way the page does, so a Cluster the page shows as stale for a deleted
+	// copy is refused as stale, not as unknown.
+	if !ctx.isScopedPrincipal() {
+		visible, err := ctx.visibleMemberIDs(reductionMemberIDs([]*models.ReductionCluster{cluster}))
+		if err != nil {
+			return nil, err
+		}
+		ctx.readDeletions(&models.ResourceReductionPlan{Clusters: []*models.ReductionCluster{cluster}}, visible)
 	}
 
 	if err := ctx.applyOverride(cluster, override, planWinnerRule(reduction, &plan)); err != nil {
@@ -216,6 +231,12 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 		// three-hundred-files-behind-one-checkbox the rule exists to prevent.
 		if cluster.Oversized && !override.AcknowledgeOversized {
 			return ErrReductionOversizedUnexpanded
+		}
+		if cluster.State == models.ReductionClusterStale && cluster.StaleReason == staleReasonDeleted {
+			return ErrReductionClusterStale
+		}
+		if len(cluster.LoserIDs()) == 0 {
+			return ErrReductionNothingToRemove
 		}
 		cluster.Checked = true
 		cluster.Reviewed = true

@@ -2079,6 +2079,8 @@ components:
             type: object
         ReductionApply:
             properties:
+                applyToken:
+                    type: string
                 expectedClusters:
                     nullable: true
                     type: integer
@@ -2087,6 +2089,8 @@ components:
                     type: integer
                 id:
                     type: integer
+                requestId:
+                    type: string
                 version:
                     type: integer
             type: object

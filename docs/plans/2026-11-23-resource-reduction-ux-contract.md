@@ -20,7 +20,7 @@ All combine; unknown values fall back to the default and never error.
 | `pageSize` | `20`, `50`, `100` | `20` | anything else is 20 |
 | `page` | 1-based | 1 | unchanged |
 
-A Cluster the viewer may not fully see ("withheld") matches no status, tier, approval or attention filter and is on no tab, so the default view never shows withheld stubs. They only appear with `status=all` and no other filter, as redacted stubs (unchanged).
+A Cluster the viewer may not fully see ("withheld") is absent from every view: no tab, no filter including `status=all`, no count, no page position, in the HTML and the `.json` twin. A stub is no longer rendered; only a Cluster that becomes unreachable between the page's reads and its hydration could still produce one, and the review reads from one snapshot to prevent that.
 
 ### 1.2 New and changed top-level context keys
 
@@ -135,3 +135,13 @@ Top-level review-page key (also in `.json`): `reviewSelection = {groups: [{id, n
 - Deleted members. For an unrestricted principal a pending (open or skipped) Cluster with a non-ejected member that no longer exists (typically merged away by another Reduction) reads as `stale` with `staleReason` `a Resource in this Cluster no longer exists`, unapproved, in the review tabs, filters, `applyFigures`, bulk and the list `Progress`, all through one rule (`reviewReach`). Its `Members[i].Resource` is null for the deleted one and `Withheld` is 0, so the card must tolerate a missing Resource. A scope-confined principal cannot tell deleted from out of scope: the Cluster stays withheld and in no count. The reading is not persisted by a page view.
 - Ejecting the last Loser clears `checked`. Promoting any member clears `checked` (the reviewer approves the new proposal).
 - `stateLabel`: `Approved` (open, checked), `Not approved` (open, unchecked, acted on, e.g. after Reopen), `Open` (untouched), plus Skipped, Applied and Stale as before.
+
+## 9. Addendum: round 2
+
+- `applyToken` (top-level review key, 32 hex characters): digest over the approved, open, fully visible Clusters with at least one Loser (cluster id, Winner and its reviewed hash, each Loser with its reviewed hash). `POST /v1/reduction/apply` accepts `applyToken`; when present it must equal the server's current token or the apply is `409` and nothing is claimed. `expectedClusters` and `expectedLosers` remain optional.
+- `POST /v1/reduction/apply` accepts `requestId` (at most 64 characters). It is stored in the record and returned as `lastApply.requestId` so the client can match its own attempt.
+- A claimed but unconfirmed Cluster (state applied, `merged` false) is `Merging`: `tabCounts.merging` (new key), list `Progress.Merging`, `stateLabel` `Merging`. `Applied` counts and the `applied` status filter cover confirmed merges only. An abandoned claim older than the apply ceiling is settled by the next apply or review render.
+- A member that leaves the caller's access after the claim (an ejected one too) releases the claim back to open and approved and the apply reports nothing about it.
+- A Cluster with no Loser left cannot be approved: single check answers `409 every copy in this Cluster is kept, so there is nothing to approve`, bulk check skips it, and apply ignores it.
+- Approving a Cluster that is stale because a Resource in it is gone answers `409 this Cluster is stale and cannot be approved: ...`, not "no such Cluster". `stateLabel` for stale is `Stale`; the reason is in `staleReason`.
+- A recompute keeps the keeps-smaller warning of legacy frozen Clusters it carries over.

@@ -18,6 +18,7 @@ func reviewCluster(tier string, state string, reviewed bool) *models.ReductionCl
 		Tier:     tier,
 		State:    state,
 		Reviewed: reviewed,
+		Merged:   state == models.ReductionClusterApplied,
 	}
 }
 

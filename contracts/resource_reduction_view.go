@@ -76,7 +76,10 @@ type ReductionTabCounts struct {
 	Open    int
 	Skipped int
 	Stale   int
+	// Applied counts Clusters whose merge is confirmed. Merging counts the ones an
+	// apply has claimed but not confirmed yet: copies still exist.
 	Applied int
+	Merging int
 }
 
 // ReductionTierFigures is what an apply would do to one tier: the approved
@@ -114,6 +117,8 @@ type ReductionLastApplyView struct {
 	Applied    int
 	Removed    int
 	Stale      int
+	// RequestID is the client id the apply was sent with, if any.
+	RequestID string
 	// Running is true while the record has no FinishedAt. Interrupted is true when
 	// it has been running for longer than the apply ceiling, which means the
 	// process died or the batch was abandoned: Clusters it did not reach are still
@@ -186,7 +191,9 @@ type ReductionReview struct {
 	TabCounts ReductionTabCounts
 	// ApplyFigures and Bulk feed the apply dialog and the bulk buttons.
 	ApplyFigures ReductionApplyFigures
-	Bulk         ReductionBulkFigures
+	// ApplyToken binds an apply to the exact proposals the dialog showed.
+	ApplyToken string
+	Bulk       ReductionBulkFigures
 	// SettingsChanged is true when the Reduction's matching mode, Winner Rule or
 	// exclude-external setting differs from what its plan was computed with. False
 	// for a plan computed before settings were recorded.
@@ -252,7 +259,9 @@ type ReductionProgress struct {
 	Approved int
 	Skipped  int
 	Stale    int
-	Applied  int
+	// Applied is confirmed merges only; Merging is claimed and not yet confirmed.
+	Applied int
+	Merging int
 }
 
 // ReductionNamedRef is an entity's id and name.

@@ -143,6 +143,16 @@ type ReductionApply struct {
 	// present.
 	ExpectedClusters *uint `json:"expectedClusters" schema:"expectedClusters"`
 	ExpectedLosers   *uint `json:"expectedLosers" schema:"expectedLosers"`
+	// ApplyToken is the review's `applyToken`: a digest of the exact proposals the
+	// dialog confirmed (each approved Cluster's id, Winner, Losers and reviewed
+	// hashes). Equal totals cannot stand in for it, because a different pair with
+	// the same counts is a different merge. When sent it must match exactly, or the
+	// apply is refused with 409 before anything is claimed.
+	ApplyToken string `json:"applyToken" schema:"applyToken"`
+	// RequestID is an opaque client-chosen id (at most 64 characters), stored with
+	// the apply record so a client that lost the response can tell its own attempt
+	// from another tab's.
+	RequestID string `json:"requestId" schema:"requestId"`
 }
 
 // ReductionBulkOverride checks or unchecks many Clusters in one write, with exactly

@@ -198,6 +198,8 @@ type ReductionLastApply struct {
 	// ClusterIDs are the Clusters the counts above are about (applied and stale).
 	// The page shows the counts only to a viewer who may still see all of them.
 	ClusterIDs []string `json:"clusterIds,omitempty"`
+	// RequestID is the client's own id for the apply that wrote this record.
+	RequestID string `json:"requestId,omitempty"`
 }
 
 // ReductionCoverage reports how much of the Extent the clustering could actually

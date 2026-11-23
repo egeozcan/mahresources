@@ -393,3 +393,262 @@ func TestKeepsSmallerIsDerivedForAPlanStoredBeforeTheFlag(t *testing.T) {
 	assert.Equal(t, 1, result.NeedsReview)
 	assert.False(t, findClusterByID(planOf(t, tc, red.ID), legacy.Clusters[0].ID).Checked)
 }
+
+// Round 2, P0. Equal totals can stand for a different merge: one approved pair
+// leaves the reviewer's subtree and another enters. The token binds the apply to the
+// exact proposals the dialog showed.
+func TestApplyTokenBindsTheExactProposalsNotTheTotals(t *testing.T) {
+	tc := SetupTestEnv(t)
+	f := newReductionScopeFixture(t, tc)
+	owner, restricted := asAdmin()
+
+	p1 := clusterOf(t, tc, "r2-token-1", 2)
+	p2 := clusterOf(t, tc, "r2-token-2", 2)
+	f.place(t, f.narrow, p1...)
+	f.place(t, f.narrow, p2[0])
+	f.place(t, f.wide, p2[1])
+	f.compute(t, append(append([]uint{}, p1...), p2...))
+
+	seen, err := f.narrowCtx.GetReductionReview(f.red.ID, owner, restricted, 1, nil)
+	require.NoError(t, err)
+	require.Len(t, seen.ApplyToken, 32)
+	require.Equal(t, 1, seen.ApplyFigures.Identical.Clusters)
+
+	// p1 leaves, p2 arrives: still one Cluster and one copy.
+	f.place(t, f.wide, p1[1])
+	f.place(t, f.narrow, p2[1])
+	now, err := f.narrowCtx.GetReductionReview(f.red.ID, owner, restricted, 1, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, now.ApplyFigures.Identical.Clusters)
+	require.Equal(t, 1, now.ApplyFigures.Identical.Losers)
+	assert.NotEqual(t, seen.ApplyToken, now.ApplyToken)
+
+	current, err := f.narrowCtx.GetResourceReduction(f.red.ID, owner, restricted)
+	require.NoError(t, err)
+	_, err = f.narrowCtx.ApplyResourceReduction(&query_models.ReductionApply{
+		ID: f.red.ID, Version: current.Version, ApplyToken: seen.ApplyToken,
+		ExpectedClusters: uintPtr(1), ExpectedLosers: uintPtr(1),
+	}, owner, restricted)
+	assert.ErrorIs(t, err, application_context.ErrReductionApplyFiguresChanged)
+	assert.True(t, resourceExists(t, tc, p2[0]) && resourceExists(t, tc, p2[1]), "nothing was merged")
+	assert.Nil(t, planOf(t, tc, f.red.ID).LastApply, "and nothing was claimed")
+
+	result, err := f.narrowCtx.ApplyResourceReduction(&query_models.ReductionApply{
+		ID: f.red.ID, Version: current.Version, ApplyToken: now.ApplyToken, RequestID: "req-123",
+	}, owner, restricted)
+	require.NoError(t, err)
+	assert.Len(t, result.Applied, 1)
+	assert.Equal(t, "req-123", planOf(t, tc, f.red.ID).LastApply.RequestID, "the client's id is recorded")
+	review, err := f.narrowCtx.GetReductionReview(f.red.ID, owner, restricted, 1, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "req-123", review.LastApply.RequestID)
+
+	_, err = f.narrowCtx.ApplyResourceReduction(&query_models.ReductionApply{
+		ID: f.red.ID, Version: versionOf(t, tc, f.red.ID), RequestID: string(make([]byte, 65)),
+	}, owner, restricted)
+	assert.Error(t, err, "the id is bounded")
+}
+
+// Round 2, P0. A member (an ejected one included) leaving the caller's access after
+// the claim stops the merge, hands the claim back, and reports nothing.
+func TestAMemberLeavingAccessAfterTheClaimReleasesTheClaimSilently(t *testing.T) {
+	for _, name := range []string{"ejected", "active"} {
+		t.Run(name, func(t *testing.T) {
+			tc := SetupTestEnv(t)
+			f := newReductionScopeFixture(t, tc)
+			owner, restricted := asAdmin()
+
+			ids := clusterOf(t, tc, "r2-claim-"+name, 3)
+			setDimensions(t, tc, ids[0], 900, 900)
+			setDimensions(t, tc, ids[1], 400, 400)
+			setDimensions(t, tc, ids[2], 100, 100)
+			f.place(t, f.narrow, ids...)
+			plan := f.compute(t, ids)
+			cluster := plan.Clusters[0]
+			current, err := f.wideCtx.GetResourceReduction(f.red.ID, owner, restricted)
+			require.NoError(t, err)
+			_, err = f.wideCtx.OverrideReductionCluster(&query_models.ReductionOverride{
+				ID: f.red.ID, Version: current.Version, ClusterID: cluster.ID,
+				Action: application_context.ReductionActionEject, ResourceID: ids[2],
+			}, owner, restricted)
+			require.NoError(t, err)
+
+			leaving := ids[2]
+			if name == "active" {
+				leaving = ids[1]
+			}
+			restore := application_context.SetReductionApplyAfterClaimHookForTest(func() { f.place(t, f.wide, leaving) })
+			defer restore()
+
+			err, applied, stale := f.narrowApply(t, nil, nil)
+			require.NoError(t, err)
+			assert.Zero(t, applied)
+			assert.Zero(t, stale, "no outcome, so no ids")
+			assert.True(t, resourceExists(t, tc, ids[1]))
+			after := findClusterByID(planOf(t, tc, f.red.ID), cluster.ID)
+			assert.Equal(t, models.ReductionClusterOpen, after.State, "the claim was released")
+			assert.True(t, after.Checked)
+			assert.False(t, after.Merged)
+		})
+	}
+}
+
+// Round 2, P0. A withheld Cluster is out before anything is counted or paginated,
+// whatever the query, nil included.
+func TestAReviewWithNoQueryHasNoWithheldStubs(t *testing.T) {
+	tc := SetupTestEnv(t)
+	f := newReductionScopeFixture(t, tc)
+	owner, restricted := asAdmin()
+	ids := clusterOf(t, tc, "r2-nostub", 2)
+	f.place(t, f.narrow, ids[0])
+	f.place(t, f.wide, ids[1])
+	f.compute(t, ids)
+	review, err := f.narrowCtx.GetReductionReview(f.red.ID, owner, restricted, 1, nil)
+	require.NoError(t, err)
+	assert.Empty(t, review.Clusters)
+	assert.Zero(t, review.ClusterCount)
+}
+
+// Round 2, P1. A Cluster with nothing left to remove cannot be approved again.
+func TestAClusterWithNothingToRemoveCannotBeApproved(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+	ids := clusterOf(t, tc, "r2-empty", 2)
+	setDimensions(t, tc, ids[0], 900, 900)
+	red := createReduction(t, tc, "Empty", ids)
+	plan := computeReduction(t, tc, red.ID)
+	id := plan.Clusters[0].ID
+	override(t, tc, red.ID, id, application_context.ReductionActionEject, ids[1])
+
+	assert.ErrorIs(t, overrideErr(t, tc, red.ID, id, application_context.ReductionActionCheck, 0), application_context.ErrReductionNothingToRemove)
+	result, err := tc.AppCtx.BulkOverrideReductionClusters(&query_models.ReductionBulkOverride{
+		ID: red.ID, Version: versionOf(t, tc, red.ID), Action: "check", ClusterIDs: []string{id},
+	}, owner, restricted)
+	require.NoError(t, err)
+	assert.Zero(t, result.Changed)
+	assert.False(t, findClusterByID(planOf(t, tc, red.ID), id).Checked)
+
+	// Even handed to apply already approved, it is not eligible and not reported.
+	forced := planOf(t, tc, red.ID)
+	forced.Clusters[0].Checked = true
+	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, forced))
+	review := reviewOf(t, tc, red.ID, 1, nil)
+	assert.Zero(t, review.ApplyFigures.Identical.Clusters)
+	applied := applyReduction(t, tc, red.ID)
+	assert.Empty(t, applied.Applied)
+	assert.Empty(t, applied.Stale)
+}
+
+// Round 2, P1. A deleted ejected copy does not block unrelated decisions for an
+// unrestricted reviewer.
+func TestADeletedEjectedCopyDoesNotBlockADecision(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+	ids := clusterOf(t, tc, "r2-ejdel", 3)
+	setDimensions(t, tc, ids[0], 900, 900)
+	other := clusterOf(t, tc, "r2-ejdel-other", 2)
+	red := createReduction(t, tc, "Ejected deleted", append(append([]uint{}, ids...), other...))
+	plan := computeReduction(t, tc, red.ID)
+	override(t, tc, red.ID, clusterFor(plan, ids[0]).ID, application_context.ReductionActionEject, ids[2])
+	require.NoError(t, tc.DB.Where("id = ?", ids[2]).Delete(&models.Resource{}).Error)
+
+	result, err := tc.AppCtx.BulkOverrideReductionClusters(&query_models.ReductionBulkOverride{
+		ID: red.ID, Version: versionOf(t, tc, red.ID), Action: "uncheck",
+		ClusterIDs: []string{clusterFor(plan, ids[0]).ID, clusterFor(plan, other[0]).ID},
+	}, owner, restricted)
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.Changed)
+}
+
+// Round 2, P1. A recompute that carries a legacy frozen Cluster over keeps its
+// keeps-smaller warning.
+func TestRecomputeKeepsTheLegacyKeepsSmallerWarning(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+	big := addWithHash(t, tc, "big.txt", "big body", "r2-legacy")
+	small := addWithHash(t, tc, "small.txt", "small body", "r2-legacy")
+	setDimensions(t, tc, big.ID, 1600, 1066)
+	setDimensions(t, tc, small.ID, 400, 266)
+	red := createReduction(t, tc, "Legacy recompute", []uint{big.ID, small.ID})
+	plan := computeReduction(t, tc, red.ID)
+	plan = override(t, tc, red.ID, plan.Clusters[0].ID, application_context.ReductionActionPromote, small.ID)
+	legacy := plan
+	legacy.Settings = nil
+	legacy.Clusters[0].KeepsSmaller = false
+	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, legacy))
+
+	recomputed := computeReduction(t, tc, red.ID)
+	require.NotNil(t, recomputed.Settings)
+	assert.True(t, recomputed.Clusters[0].KeepsSmaller, "frozen and carried, with its warning")
+}
+
+// Round 2, P1. A claim is not a completed merge until it is confirmed, and an
+// abandoned one is reconciled from whether its Losers still exist.
+func TestAClaimIsNotAMergeUntilConfirmedAndAbandonedClaimsReconcile(t *testing.T) {
+	for _, gone := range []bool{false, true} {
+		name := "losers still exist"
+		if gone {
+			name = "losers gone"
+		}
+		t.Run(name, func(t *testing.T) {
+			tc := SetupTestEnv(t)
+			owner, restricted := asAdmin()
+			ids := clusterOf(t, tc, "r2-claim-recover", 2)
+			setDimensions(t, tc, ids[0], 900, 900)
+			red := createReduction(t, tc, "Claimed", ids)
+			plan := computeReduction(t, tc, red.ID)
+			cluster := plan.Clusters[0]
+			claimed := tc.AppCtx.ClaimClusterForApplyForTest(red.ID, cluster.ID, cluster.WinnerID, map[uint]string{ids[0]: "r2-claim-recover", ids[1]: "r2-claim-recover"})
+			require.NotNil(t, claimed)
+
+			review := reviewOf(t, tc, red.ID, 1, &query_models.ResourceReductionReviewQuery{Status: []string{"all"}})
+			assert.Equal(t, 0, review.TabCounts.Applied)
+			assert.Equal(t, 1, review.TabCounts.Merging)
+			assert.Equal(t, "Merging", review.Clusters[0].StateLabel)
+			assert.Equal(t, 1, listProgressOf(t, tc.AppCtx, red.ID).Merging)
+			assert.Zero(t, listProgressOf(t, tc.AppCtx, red.ID).Applied)
+
+			saved := application_context.ReductionApplyCeiling
+			application_context.ReductionApplyCeiling = time.Millisecond
+			defer func() { application_context.ReductionApplyCeiling = saved }()
+			time.Sleep(20 * time.Millisecond)
+			if gone {
+				require.NoError(t, tc.DB.Where("id = ?", ids[1]).Delete(&models.Resource{}).Error)
+			}
+
+			_, err := tc.AppCtx.GetReductionReview(red.ID, owner, restricted, 1, nil)
+			require.NoError(t, err)
+			after := planOf(t, tc, red.ID).Clusters[0]
+			if gone {
+				assert.Equal(t, models.ReductionClusterApplied, after.State)
+				assert.True(t, after.Merged)
+			} else {
+				assert.Equal(t, models.ReductionClusterOpen, after.State)
+				assert.True(t, after.Checked)
+				assert.False(t, after.Merged)
+			}
+		})
+	}
+}
+
+// Round 2, UX. A Cluster the page shows as stale for a deleted copy is refused as
+// stale, with a message that says so, and the label does not blame the apply.
+func TestApprovingAClusterStaleForADeletedCopySaysSo(t *testing.T) {
+	tc := SetupTestEnv(t)
+	ids := clusterOf(t, tc, "r2-stale-msg", 2)
+	red := createReduction(t, tc, "Stale msg", ids)
+	plan := computeReduction(t, tc, red.ID)
+	require.NoError(t, tc.DB.Where("id = ?", ids[1]).Delete(&models.Resource{}).Error)
+
+	err := overrideErr(t, tc, red.ID, plan.Clusters[0].ID, application_context.ReductionActionCheck, 0)
+	assert.ErrorIs(t, err, application_context.ErrReductionClusterStale)
+	assert.Contains(t, err.Error(), "stale")
+
+	review := reviewOf(t, tc, red.ID, 1, &query_models.ResourceReductionReviewQuery{Status: []string{"stale"}})
+	require.Len(t, review.Clusters, 1)
+	assert.Equal(t, "Stale", review.Clusters[0].StateLabel)
+}

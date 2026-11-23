@@ -57,7 +57,11 @@ func (ctx *MahresourcesContext) GetReductionProgress(reductions []models.Resourc
 			case models.ReductionClusterStale:
 				progress.Stale++
 			case models.ReductionClusterApplied:
-				progress.Applied++
+				if cluster.Merged {
+					progress.Applied++
+				} else {
+					progress.Merging++
+				}
 			}
 		}
 		out[id] = progress

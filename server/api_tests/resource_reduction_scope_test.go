@@ -130,9 +130,8 @@ func TestAClusterIsRefusedWhenTheReviewersScopeHasShrunk(t *testing.T) {
 
 	review, err := narrowCtx.GetReductionReview(red.ID, owner, restricted, 1, nil)
 	require.NoError(t, err)
-	require.Len(t, review.Clusters, 1)
-	assert.Equal(t, 1, review.Clusters[0].Withheld,
-		"the render says a member is outside what they may see")
+	assert.Empty(t, review.Clusters, "a Cluster with a member outside what they may see is not on the page at all")
+	assert.Zero(t, review.ClusterCount)
 
 	current, err := narrowCtx.GetResourceReduction(red.ID, owner, restricted)
 	require.NoError(t, err)
@@ -247,7 +246,7 @@ func TestAWithheldClusterIsRedactedOnTheJSONSurfaceToo(t *testing.T) {
 	narrowCtx := scopedTo(t, tc, narrow.ID)
 	review, err := narrowCtx.GetReductionReview(red.ID, owner, restricted, 1, nil)
 	require.NoError(t, err)
-	require.Len(t, review.Clusters, 1)
+	assert.Empty(t, review.Clusters, "no stub either")
 
 	// Whatever serialises this view — the HTML, or the .json twin of the same page
 	// — finds nothing in it.
@@ -258,7 +257,6 @@ func TestAWithheldClusterIsRedactedOnTheJSONSurfaceToo(t *testing.T) {
 	assert.NotContains(t, rendered, "hidden-content-hash", "not the reviewed content hash")
 	assert.NotContains(t, rendered, fmt.Sprintf(`"resourceId":%d`, loser.ID), "not the member ids")
 	assert.NotContains(t, rendered, "identical", "not even the tier")
-	assert.Contains(t, rendered, `"Withheld":1`)
 }
 
 // The Extent counts the page shows are counted as the current principal sees
@@ -392,20 +390,12 @@ func TestReductionReviewFilterCannotProbeWithheldClusters(t *testing.T) {
 
 	scoped := scopedTo(t, tc, mine.ID)
 
-	// Unfiltered: the visible Cluster and one stub.
+	// Unfiltered: the visible Cluster, and nothing for the other, not even a stub.
 	unfiltered, err := scoped.GetReductionReview(red.ID, owner, restricted, 1, nil)
 	require.NoError(t, err)
-	require.Len(t, unfiltered.Clusters, 2)
-	visibleCount, withheldCount := 0, 0
-	for _, view := range unfiltered.Clusters {
-		if view.Withheld > 0 {
-			withheldCount++
-		} else {
-			visibleCount++
-		}
-	}
-	assert.Equal(t, 1, visibleCount, "the Cluster inside the subtree renders")
-	assert.Equal(t, 1, withheldCount, "the one outside renders as a stub")
+	require.Len(t, unfiltered.Clusters, 1)
+	assert.Zero(t, unfiltered.Clusters[0].Withheld)
+	assert.Equal(t, 1, unfiltered.ClusterCount)
 
 	// Tier=identical: the visible one matches and the stub is absent.
 	byTier, err := scoped.GetReductionReview(red.ID, owner, restricted, 1, &query_models.ResourceReductionReviewQuery{

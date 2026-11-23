@@ -1,9 +1,12 @@
 package application_context
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"mahresources/contracts"
@@ -34,6 +37,29 @@ const ReductionClustersPerPage = 20
 // every checked Cluster across the whole plan, and hiding skipped ones from the
 // page must not change what Apply would do.
 func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, ownerRestricted bool, page int, query *query_models.ResourceReductionReviewQuery) (*contracts.ReductionReview, error) {
+	// An abandoned claim is settled first: it is a write, and the read below must
+	// not be the one that finds it half done.
+	if row, err := ctx.loadReductionForUpdate(id, ownerUserID, ownerRestricted); err == nil {
+		ctx.reconcileAbandonedClaims(row)
+	}
+
+	// One snapshot for every read in the page: the version, the reachability
+	// query, the hydration and the counts. Read apart, a Resource moving between
+	// two of them let a Cluster be counted and paginated as visible and then
+	// rendered as withheld.
+	var review *contracts.ReductionReview
+	err := ctx.withReadSnapshot(func(snap *MahresourcesContext) error {
+		var err error
+		review, err = snap.getReductionReview(id, ownerUserID, ownerRestricted, page, query)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return review, nil
+}
+
+func (ctx *MahresourcesContext) getReductionReview(id uint, ownerUserID *uint, ownerRestricted bool, page int, query *query_models.ResourceReductionReviewQuery) (*contracts.ReductionReview, error) {
 	reduction, err := ctx.loadReductionForUpdate(id, ownerUserID, ownerRestricted)
 	if err != nil {
 		return nil, err
@@ -78,10 +104,9 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 	}
 	tabCounts := countReviewTabs(plan.Clusters, visible)
 
-	candidates := plan.Clusters
-	if reviewQueryActive(query) {
-		candidates = filterReviewClusters(plan.Clusters, visible, query)
-	}
+	// Withheld Clusters are out before anything is counted or paginated, whatever
+	// the query: not a stub, not a position.
+	candidates := filterReviewClusters(plan.Clusters, visible, query)
 	clusterCount := len(candidates)
 	candidates, err = ctx.sortReviewClusters(candidates, visible, query)
 	if err != nil {
@@ -116,6 +141,7 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 	// is one more Cluster, with two Resources in it" about Clusters the page
 	// otherwise refuses to describe.
 	figures := reviewFigures{}
+	var eligible []*models.ReductionCluster
 	for _, cluster := range plan.Clusters {
 		if cluster.State != models.ReductionClusterOpen {
 			continue
@@ -130,13 +156,14 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 		}
 		if cluster.Tier == models.ReductionTierIdentical {
 			figures.bulk.IdenticalOpen++
-			if !cluster.Checked && !clusterNeedsAttention(cluster) {
+			if !cluster.Checked && !clusterNeedsAttention(cluster) && len(cluster.LoserIDs()) > 0 {
 				figures.bulk.IdenticalApprovable++
 			}
 		}
-		if !cluster.Checked {
+		if !cluster.Checked || len(cluster.LoserIDs()) == 0 {
 			continue
 		}
+		eligible = append(eligible, cluster)
 		figures.checked++
 		figures.checkedLosers += len(cluster.LoserIDs())
 		tier := &figures.apply.Identical
@@ -219,6 +246,7 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 		ExtentAll:           storedExtent.All,
 		TabCounts:           tabCounts,
 		ApplyFigures:        figures.apply,
+		ApplyToken:          applyToken(eligible),
 		Bulk:                figures.bulk,
 		SettingsChanged:     reductionSettingsChanged(reduction, plan.Settings),
 		LastApply:           ctx.scopeLastApply(describeLastApply(plan.LastApply), plan.LastApply, plan.Clusters, visible),
@@ -331,6 +359,7 @@ func describeLastApply(last *models.ReductionLastApply) *contracts.ReductionLast
 		Applied:     last.Applied,
 		Removed:     last.Removed,
 		Stale:       last.Stale,
+		RequestID:   last.RequestID,
 		Running:     running,
 		Interrupted: running && time.Since(last.StartedAt) > ReductionApplyCeiling,
 	}
@@ -401,7 +430,11 @@ func countReviewTabs(clusters []*models.ReductionCluster, visible map[uint]bool)
 		case models.ReductionClusterStale:
 			counts.Stale++
 		case models.ReductionClusterApplied:
-			counts.Applied++
+			if c.Merged {
+				counts.Applied++
+			} else {
+				counts.Merging++
+			}
 		}
 	}
 	return counts
@@ -540,6 +573,9 @@ func (ctx *MahresourcesContext) visibleMemberIDs(ids []uint) (map[uint]bool, err
 // Cluster's own fields are ever consulted. This is what stops the filter itself
 // from becoming an oracle for the redacted fields.
 func filterReviewClusters(clusters []*models.ReductionCluster, visible map[uint]bool, query *query_models.ResourceReductionReviewQuery) []*models.ReductionCluster {
+	if query == nil {
+		query = &query_models.ResourceReductionReviewQuery{}
+	}
 	status := make(map[string]bool, len(query.Status))
 	for _, s := range query.Status {
 		status[s] = true
@@ -684,7 +720,8 @@ func reviewClusterStatusMatches(c *models.ReductionCluster, wanted map[string]bo
 	case models.ReductionClusterSkipped:
 		return wanted[models.ReductionClusterSkipped]
 	case models.ReductionClusterApplied:
-		return wanted[models.ReductionClusterApplied]
+		// A claim not yet confirmed is not an applied Cluster: its copies still exist.
+		return wanted[models.ReductionClusterApplied] && c.Merged
 	case models.ReductionClusterStale:
 		return wanted[models.ReductionClusterStale]
 	}
@@ -733,9 +770,12 @@ func reductionStateLabel(cluster *models.ReductionCluster) string {
 	case models.ReductionClusterSkipped:
 		return "Skipped"
 	case models.ReductionClusterApplied:
+		if !cluster.Merged {
+			return "Merging"
+		}
 		return "Applied"
 	case models.ReductionClusterStale:
-		return "Stale — refused at apply"
+		return "Stale"
 	}
 	if cluster.Checked {
 		return "Approved"
@@ -805,7 +845,7 @@ func (ctx *MahresourcesContext) deriveKeepsSmallerForOldPlan(plan *models.Resour
 	}
 	var open []*models.ReductionCluster
 	for _, cluster := range plan.Clusters {
-		if cluster.State == models.ReductionClusterOpen {
+		if cluster.State != models.ReductionClusterApplied {
 			open = append(open, cluster)
 		}
 	}
@@ -901,4 +941,29 @@ func (ctx *MahresourcesContext) visibleOrAll(ids []uint) (map[uint]bool, error) 
 		}
 	}
 	return visible, nil
+}
+
+// applyToken is the digest an apply is bound to: for every approved, eligible
+// Cluster (in id order) its id, Winner and reviewed hash, and each Loser with the
+// hash it was reviewed as holding. Two different sets of proposals with the same
+// totals have different tokens.
+func applyToken(clusters []*models.ReductionCluster) string {
+	sorted := append([]*models.ReductionCluster(nil), clusters...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
+	hash := sha256.New()
+	for _, cluster := range sorted {
+		parts := []string{cluster.ID, strconv.FormatUint(uint64(cluster.WinnerID), 10)}
+		var losers []string
+		for _, member := range cluster.Members {
+			entry := strconv.FormatUint(uint64(member.ResourceID), 10) + "@" + member.Hash
+			if member.ResourceID == cluster.WinnerID {
+				parts[1] += "@" + member.Hash
+			} else if member.IsLoser(cluster.WinnerID) {
+				losers = append(losers, entry)
+			}
+		}
+		sort.Strings(losers)
+		fmt.Fprintf(hash, "%s|%s|%s\n", parts[0], parts[1], strings.Join(losers, ","))
+	}
+	return hex.EncodeToString(hash.Sum(nil))[:32]
 }

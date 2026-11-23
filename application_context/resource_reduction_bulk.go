@@ -101,12 +101,16 @@ func (ctx *MahresourcesContext) bulkOverrideReductionClustersOnce(request *query
 	if checking {
 		counted = 0
 		for _, cluster := range targets {
-			if !cluster.Checked && !clusterNeedsAttention(cluster) {
+			if !cluster.Checked && !clusterNeedsAttention(cluster) && len(cluster.LoserIDs()) > 0 {
 				counted++
 			}
 		}
 	}
 	for _, cluster := range targets {
+		// Nothing to remove: not approvable, and not something to review either.
+		if checking && len(cluster.LoserIDs()) == 0 {
+			continue
+		}
 		if checking && clusterNeedsAttention(cluster) {
 			result.NeedsReview++
 			continue

@@ -227,8 +227,11 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 				"skipped": review.TabCounts.Skipped,
 				"stale":   review.TabCounts.Stale,
 				"applied": review.TabCounts.Applied,
+				// Claimed by an apply and not yet confirmed: copies still exist.
+				"merging": review.TabCounts.Merging,
 			},
 			// What the apply dialog states, per tier, over approved visible Clusters.
+			"applyToken": review.ApplyToken,
 			"applyFigures": pongo2.Context{
 				"identical":    tierFigures(review.ApplyFigures.Identical),
 				"near":         tierFigures(review.ApplyFigures.Near),
@@ -300,6 +303,7 @@ func describeLastApplyContext(last *contracts.ReductionLastApplyView) any {
 		// True when applied, removed and stale were zeroed because they count
 		// Clusters the viewer may no longer see.
 		"countsHidden": last.CountsHidden,
+		"requestId":    last.RequestID,
 	}
 }
 

@@ -370,6 +370,13 @@ func (ctx *MahresourcesContext) computeReductionPlan(jobCtx context.Context, red
 	if err != nil {
 		return plan, version, err
 	}
+	// A plan from before the keeps-smaller flag has no recorded settings, and this
+	// compute is about to write them, which would end the read-time derivation. The
+	// frozen Clusters it carries over are therefore given their flag now, under the
+	// rule they were made with.
+	if err := ctx.deriveKeepsSmallerForOldPlan(&previous, reduction); err != nil {
+		return plan, version, err
+	}
 	rule := DecodeWinnerRule(reduction.WinnerRule)
 
 	if progress != nil {

@@ -355,6 +355,10 @@ func (ctx *MahresourcesContext) casReductionAndReloadHolding(id, expectedVersion
 // of these rows waits for this transaction, while two decisions on overlapping
 // Clusters need not wait for each other. The Loser of a Cluster whose merge is
 // confirmed is exempt, as everywhere: it no longer exists.
+//
+// An unconfined caller has nothing hidden from them, so a member that is gone is a
+// deleted one and blocks nothing (a deleted ejected copy must not stop an unrelated
+// approval); the rows that exist are still locked. A scoped caller fails closed.
 func (ctx *MahresourcesContext) lockClusterMembersVisible(clusters []*models.ReductionCluster) error {
 	var wanted []uint
 	for _, cluster := range clusters {
@@ -379,7 +383,7 @@ func (ctx *MahresourcesContext) lockClusterMembersVisible(clusters []*models.Red
 		}
 		found += len(ids)
 	}
-	if found != len(wanted) {
+	if found != len(wanted) && ctx.isScopedPrincipal() {
 		return ErrReductionClusterNotFound
 	}
 	return nil

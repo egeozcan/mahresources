@@ -64,12 +64,21 @@ func TestListProgressCountsEachStatus(t *testing.T) {
 		pairCluster("g", models.ReductionClusterApplied, false, 13, 14),
 		pairCluster("h", models.ReductionClusterStale, false, 15, 16),
 	})
+	// Two of the three applied Clusters have a confirmed merge; one is only claimed.
+	var plan models.ResourceReductionPlan
+	require.NoError(t, json.Unmarshal(red.Plan, &plan))
+	for _, c := range plan.Clusters {
+		c.Merged = c.ID == "e" || c.ID == "f"
+	}
+	encoded, err := json.Marshal(plan)
+	require.NoError(t, err)
+	require.NoError(t, tc.DB.Model(&models.ResourceReduction{}).Where("id = ?", red.ID).Update("plan", types.JSON(encoded)).Error)
 	draft := &models.ResourceReduction{Name: "Never computed", Status: models.ReductionStatusDraft, MatchingMode: models.MatchingModeBothTiers}
 	require.NoError(t, tc.DB.Create(draft).Error)
 
 	owner, restricted := asAdmin()
 	progress := progressOf(t, tc.AppCtx, owner, restricted)
-	assert.Equal(t, contracts.ReductionProgress{Clusters: 8, Open: 3, Approved: 2, Skipped: 1, Stale: 1, Applied: 3}, progress[red.ID])
+	assert.Equal(t, contracts.ReductionProgress{Clusters: 8, Open: 3, Approved: 2, Skipped: 1, Stale: 1, Applied: 2, Merging: 1}, progress[red.ID])
 	assert.Equal(t, contracts.ReductionProgress{}, progress[draft.ID], "an uncomputed Reduction has nothing to count")
 }
 
@@ -148,7 +157,7 @@ func TestListProgressOverAPageOfLargePlans(t *testing.T) {
 				p.Approved++
 			}
 		case models.ReductionClusterApplied:
-			p.Applied++
+			p.Merging++ // these fixtures are claimed, not confirmed
 		case models.ReductionClusterSkipped:
 			p.Skipped++
 		}

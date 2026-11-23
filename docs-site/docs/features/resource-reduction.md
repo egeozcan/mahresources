@@ -383,13 +383,17 @@ The Reduction stores a record of its last apply: when it started and finished, h
 | Running | "An apply started at 16:40 is running. Reload to see the result." **Apply** is disabled |
 | Interrupted | "The last apply was interrupted. Applied Clusters are on the Applied tab; the rest are still approved." Shown when a running record is older than the 30 minute ceiling |
 
-The stale count excludes Clusters withheld from you, so you cannot learn how many existed. The record is historical: for an account whose access has since narrowed, `applied` and `removed` can still count Clusters that are now out of its reach.
+A Cluster withheld from you is left untouched by your apply and does not appear in its result, so you cannot learn how many existed. The record keeps the ids of the Clusters its counts are about. An account whose access has since narrowed is shown the counts only while it can still see every one of those Clusters; otherwise the record shows its times and state without numbers (`countsHidden`). An unrestricted account always sees them.
+
+The apply request can carry `applyToken`, the digest the review page exposes over the exact approved proposals (each Cluster id, Winner, Losers and their reviewed hashes). When it is sent and the proposals visible at apply time differ in any way, the apply is refused with 409 and nothing is claimed. It can also carry `requestId`, an opaque id of up to 64 characters that is stored in the record so a client that lost the response can tell its own apply from another tab's.
+
+A Cluster an apply has claimed but not yet confirmed is shown as **Merging**, not Applied: its copies still exist. If the process dies in between, the next apply or review of the Reduction settles it once the 30 minute ceiling has passed: copies gone means the merge is confirmed, copies still there means the Cluster is back to open and approved.
 
 ### Stale Clusters
 
 Immediately before each merge, the Cluster is revalidated. It is refused, marked **stale**, named in the result and kept in the Reduction when:
 
-- A member no longer exists, or is no longer one you may see
+- A member no longer exists. For an account confined to a Group subtree, a member that is gone and one that is out of its reach look the same, so such a Cluster is withheld instead: it is left untouched and not reported
 - A member's content hash no longer matches what the plan recorded. A version upload changes the bytes without touching the similarity pairs, which is why the plan snapshots each member's hash
 - On the Near-Identical tier, the stored pair between the Winner and a Loser no longer holds
 
