@@ -991,3 +991,173 @@ func TestSettleOnlyReleasesAStrandedClaimAndMergesNothing(t *testing.T) {
 		assert.True(t, resourceExists(t, tc, id), "nothing was merged, the other approved Cluster included")
 	}
 }
+
+// Round 5 P0-1. A scoped caller's settle-only never changes the version because of a
+// claim they cannot see.
+func TestSettleOnlyLeavesTheVersionAloneForAHiddenClaim(t *testing.T) {
+	tc := SetupTestEnv(t)
+	f := newReductionScopeFixture(t, tc)
+	owner, restricted := asAdmin()
+	ids := clusterOf(t, tc, "r5-hidden-settle", 2)
+	setDimensions(t, tc, ids[0], 900, 900)
+	f.place(t, f.narrow, ids[0])
+	f.place(t, f.wide, ids[1])
+	plan := f.compute(t, ids)
+	cluster := plan.Clusters[0]
+	require.NotNil(t, tc.AppCtx.ClaimClusterForApplyForTest(f.red.ID, cluster.ID, cluster.WinnerID, map[uint]string{ids[0]: "r5-hidden-settle", ids[1]: "r5-hidden-settle"}))
+
+	before := versionOf(t, tc, f.red.ID)
+	_, err := f.narrowCtx.ApplyResourceReduction(&query_models.ReductionApply{ID: f.red.ID, Version: before, SettleOnly: true}, owner, restricted)
+	require.NoError(t, err)
+	assert.Equal(t, before, versionOf(t, tc, f.red.ID), "nothing visible needed settling, so nothing changed")
+	assert.Equal(t, models.ReductionClusterApplied, findClusterByID(planOf(t, tc, f.red.ID), cluster.ID).State)
+
+	// An unrestricted caller settles it.
+	_, err = tc.AppCtx.ApplyResourceReduction(&query_models.ReductionApply{ID: f.red.ID, Version: before, SettleOnly: true}, owner, restricted)
+	require.NoError(t, err)
+	assert.Equal(t, models.ReductionClusterOpen, findClusterByID(planOf(t, tc, f.red.ID), cluster.ID).State)
+}
+
+// Round 5 P0-2. Recording a stale outcome is under the same full-member visibility
+// check as the merge: a Cluster that left scope (an ejected member included) is
+// omitted, not reported.
+func TestAStaleOutcomeIsOmittedWhenTheClusterLeftScope(t *testing.T) {
+	tc := SetupTestEnv(t)
+	f := newReductionScopeFixture(t, tc)
+	owner, restricted := asAdmin()
+	ids := clusterOf(t, tc, "r5-stale-scope", 3)
+	setDimensions(t, tc, ids[0], 900, 900)
+	setDimensions(t, tc, ids[1], 400, 400)
+	setDimensions(t, tc, ids[2], 100, 100)
+	f.place(t, f.narrow, ids...)
+	plan := f.compute(t, ids)
+	current, err := f.wideCtx.GetResourceReduction(f.red.ID, owner, restricted)
+	require.NoError(t, err)
+	_, err = f.wideCtx.OverrideReductionCluster(&query_models.ReductionOverride{
+		ID: f.red.ID, Version: current.Version, ClusterID: plan.Clusters[0].ID,
+		Action: application_context.ReductionActionEject, ResourceID: ids[2],
+	}, owner, restricted)
+	require.NoError(t, err)
+	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", ids[1]).Update("hash", "changed-r5").Error)
+
+	restore := application_context.SetReductionApplyBeforeStaleHookForTest(func() { f.place(t, f.wide, ids[2]) })
+	defer restore()
+	err, applied, stale := f.narrowApply(t, nil, nil)
+	require.NoError(t, err)
+	assert.Zero(t, applied)
+	assert.Zero(t, stale, "the Cluster left scope, so nothing is reported")
+	after := findClusterByID(planOf(t, tc, f.red.ID), plan.Clusters[0].ID)
+	assert.Equal(t, models.ReductionClusterOpen, after.State, "and nothing is recorded")
+}
+
+// Round 5 P1-3. A decision made between the failed revalidation and the stale write
+// wins: the Cluster is "changed", not stale, and is not marked.
+func TestAConcurrentDecisionBeatsAStaleWriteAndIsCountedAsChanged(t *testing.T) {
+	tc := SetupTestEnv(t)
+	ids := clusterOf(t, tc, "r5-concurrent", 2)
+	setDimensions(t, tc, ids[0], 900, 900)
+	red := createReduction(t, tc, "Concurrent", ids)
+	plan := computeReduction(t, tc, red.ID)
+	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", ids[1]).Update("hash", "changed-r5c").Error)
+	restore := application_context.SetReductionApplyBeforeStaleHookForTest(func() {
+		override(t, tc, red.ID, plan.Clusters[0].ID, application_context.ReductionActionUncheck, 0)
+	})
+	defer restore()
+
+	result := applyReduction(t, tc, red.ID)
+	assert.Empty(t, result.Stale)
+	assert.Equal(t, 1, result.Changed)
+	after := planOf(t, tc, red.ID)
+	assert.Equal(t, models.ReductionClusterOpen, after.Clusters[0].State, "the reviewer's uncheck stands")
+	assert.Zero(t, after.LastApply.Stale)
+}
+
+// Round 5 P1-4. A change made after the claim is named on the stale Cluster.
+func TestAChangeAfterTheClaimNamesTheChangedCopy(t *testing.T) {
+	tc := SetupTestEnv(t)
+	ids := clusterOf(t, tc, "r5-afterclaim", 2)
+	setDimensions(t, tc, ids[0], 900, 900)
+	red := createReduction(t, tc, "After claim", ids)
+	computeReduction(t, tc, red.ID)
+	restore := application_context.SetReductionApplyAfterClaimHookForTest(func() {
+		require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", ids[0]).Update("hash", "changed-winner").Error)
+	})
+	defer restore()
+	result := applyReduction(t, tc, red.ID)
+	require.Len(t, result.Stale, 1)
+	view := reviewOf(t, tc, red.ID, 1, &query_models.ResourceReductionReviewQuery{Status: []string{"stale"}}).Clusters[0]
+	assert.True(t, view.WinnerChanged, "the kept copy is named as the one that changed")
+}
+
+// Round 5 P2-5. Stale transitions made while settling are in a normal apply's result
+// and lastApply.stale; settle-only counts nothing.
+func TestAppliesCountTheirReconciliationTransitions(t *testing.T) {
+	setup := func(t *testing.T) (*TestContext, uint, string) {
+		tc := SetupTestEnv(t)
+		ids := clusterOf(t, tc, "r5-recon", 2)
+		setDimensions(t, tc, ids[0], 900, 900)
+		red := createReduction(t, tc, "Recon", ids)
+		plan := computeReduction(t, tc, red.ID)
+		cluster := plan.Clusters[0]
+		require.NotNil(t, tc.AppCtx.ClaimClusterForApplyForTest(red.ID, cluster.ID, cluster.WinnerID, map[uint]string{ids[0]: "r5-recon", ids[1]: "r5-recon"}))
+		require.NoError(t, tc.DB.Where("id = ?", ids[1]).Delete(&models.Resource{}).Error)
+		return tc, red.ID, cluster.ID
+	}
+	t.Run("normal apply", func(t *testing.T) {
+		tc, id, clusterID := setup(t)
+		result := applyReduction(t, tc, id)
+		require.Len(t, result.Stale, 1)
+		assert.Equal(t, clusterID, result.Stale[0].ClusterID)
+		assert.Equal(t, 1, planOf(t, tc, id).LastApply.Stale)
+	})
+	t.Run("settle only", func(t *testing.T) {
+		tc, id, _ := setup(t)
+		owner, restricted := asAdmin()
+		result, err := tc.AppCtx.ApplyResourceReduction(&query_models.ReductionApply{ID: id, Version: versionOf(t, tc, id), SettleOnly: true}, owner, restricted)
+		require.NoError(t, err)
+		assert.Empty(t, result.Stale)
+		assert.Nil(t, planOf(t, tc, id).LastApply)
+	})
+}
+
+// Round 5 P2-7 and 8.
+func TestAppliedCardsCountMergedAndLeftOutCopies(t *testing.T) {
+	tc := SetupTestEnv(t)
+	ids := clusterOf(t, tc, "r5-merged", 3)
+	setDimensions(t, tc, ids[0], 900, 900)
+	red := createReduction(t, tc, "Merged count", ids)
+	plan := computeReduction(t, tc, red.ID)
+	override(t, tc, red.ID, plan.Clusters[0].ID, application_context.ReductionActionEject, ids[2])
+	applyReduction(t, tc, red.ID)
+	view := reviewOf(t, tc, red.ID, 1, &query_models.ResourceReductionReviewQuery{Status: []string{"applied"}}).Clusters[0]
+	assert.Equal(t, 1, view.MergedCount)
+	assert.Equal(t, 1, view.LeftOutCount)
+}
+
+func TestSettleableClaimsCountsVisibleStrandedClaimsIgnoringFilters(t *testing.T) {
+	tc := SetupTestEnv(t)
+	f := newReductionScopeFixture(t, tc)
+	owner, restricted := asAdmin()
+	mine := clusterOf(t, tc, "r5-settleable-a", 2)
+	hidden := clusterOf(t, tc, "r5-settleable-b", 2)
+	other := clusterOf(t, tc, "r5-settleable-c", 2)
+	f.place(t, f.narrow, mine...)
+	f.place(t, f.narrow, hidden[0])
+	f.place(t, f.wide, hidden[1])
+	f.place(t, f.narrow, other...)
+	plan := f.compute(t, append(append(append([]uint{}, mine...), hidden...), other...))
+	claim := func(id uint) {
+		c := clusterFor(plan, id)
+		require.NotNil(t, tc.AppCtx.ClaimClusterForApplyForTest(f.red.ID, c.ID, c.WinnerID, map[uint]string{c.Members[0].ResourceID: c.Members[0].Hash, c.Members[1].ResourceID: c.Members[1].Hash}))
+	}
+	claim(mine[0])
+	claim(hidden[0])
+
+	query := &query_models.ResourceReductionReviewQuery{Status: []string{"skipped"}}
+	narrow, err := f.narrowCtx.GetReductionReview(f.red.ID, owner, restricted, 1, query)
+	require.NoError(t, err)
+	assert.Equal(t, 1, narrow.SettleableClaims, "the hidden claim is not counted, and the filter does not matter")
+	full, err := tc.AppCtx.GetReductionReview(f.red.ID, owner, restricted, 1, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, full.SettleableClaims)
+}

@@ -66,6 +66,16 @@ func SetReductionPreconditionHookForTest(hook func()) (restore func()) {
 	return func() { reductionPreconditionHook = nil }
 }
 
+// reductionApplyBeforeStaleHook runs after a failed revalidation and before the
+// stale outcome is recorded. Only a test sets it.
+var reductionApplyBeforeStaleHook func()
+
+// SetReductionApplyBeforeStaleHookForTest installs it and returns the remover.
+func SetReductionApplyBeforeStaleHookForTest(hook func()) (restore func()) {
+	reductionApplyBeforeStaleHook = hook
+	return func() { reductionApplyBeforeStaleHook = nil }
+}
+
 // reductionApplyAfterClaimHook runs between a Cluster's claim and its merge. Only
 // a test sets it.
 var reductionApplyAfterClaimHook func()
@@ -157,12 +167,14 @@ func (ctx *MahresourcesContext) ApplyResourceReduction(request *query_models.Red
 	if err != nil {
 		return nil, err
 	}
-	plan, startedAt, err := ctx.claimReductionApplyBatch(reduction, request.RequestID)
+	plan, startedAt, settled, err := ctx.claimReductionApplyBatch(reduction, request.RequestID)
 	if err != nil {
 		return nil, err
 	}
 
-	result := &contracts.ReductionApplyResult{}
+	// Claims settled on the way in that turned out stale are part of this apply's
+	// result and of lastApply.stale, since the Stale tab gained them.
+	result := &contracts.ReductionApplyResult{Stale: settled}
 	for _, planned := range plan.Clusters {
 		if planned.State != models.ReductionClusterOpen || !planned.Checked || !eligible[planned.ID] {
 			continue
@@ -236,33 +248,33 @@ func (ctx *MahresourcesContext) eligibleApplyClusters(reduction *models.Resource
 // claimReductionApplyBatch takes the batch-level claim: one compare-and-set on the
 // caller's version that also records the apply as running. Written once here and
 // completed once by finishReductionApplyBatch, not by each Cluster's claim.
-func (ctx *MahresourcesContext) claimReductionApplyBatch(reduction *models.ResourceReduction, requestID string) (models.ResourceReductionPlan, time.Time, error) {
+func (ctx *MahresourcesContext) claimReductionApplyBatch(reduction *models.ResourceReduction, requestID string) (models.ResourceReductionPlan, time.Time, []contracts.ReductionApplyOutcome, error) {
 	plan, err := DecodeReductionPlan(reduction.Plan)
 	if err != nil {
-		return plan, time.Time{}, err
+		return plan, time.Time{}, nil, err
 	}
 	// A batch still running, and not yet past its ceiling, owns the Reduction. A
 	// second request that read a version after the first one's claim would win the
 	// compare-and-set below and overwrite the record while both loops ran. Past the
 	// ceiling the record is an interrupted one, and a new apply may proceed.
 	if last := plan.LastApply; last != nil && last.FinishedAt == nil && time.Since(last.StartedAt) <= ReductionApplyCeiling {
-		return plan, time.Time{}, ErrReductionConflict
+		return plan, time.Time{}, nil, ErrReductionConflict
 	}
-	ctx.reconcileClaims(&plan)
+	settled := ctx.reconcileClaims(&plan)
 	startedAt := time.Now()
 	plan.LastApply = &models.ReductionLastApply{StartedAt: startedAt, RequestID: requestID}
 	encoded, err := encodeJSON(plan)
 	if err != nil {
-		return plan, startedAt, err
+		return plan, startedAt, settled, err
 	}
 	claimed, err := ctx.casReduction(reduction.ID, reduction.Version, map[string]any{"plan": encoded})
 	if err != nil {
-		return plan, startedAt, err
+		return plan, startedAt, settled, err
 	}
 	if !claimed {
-		return plan, startedAt, ErrReductionConflict
+		return plan, startedAt, settled, ErrReductionConflict
 	}
-	return plan, startedAt, nil
+	return plan, startedAt, settled, nil
 }
 
 // finishReductionApplyBatch completes the record the claim wrote. A withheld
@@ -403,12 +415,20 @@ func (ctx *MahresourcesContext) applyOneCluster(reductionID uint, clusterID stri
 			reason = staleReasonDeleted
 		}
 		report.Reason = reason
+		if reductionApplyBeforeStaleHook != nil {
+			reductionApplyBeforeStaleHook()
+		}
 		// Marked stale only if the Cluster is still the one that failed. The
 		// refusal was derived from a snapshot, and a reviewer who ejected the
 		// offending member while this ran has already removed the reason for it —
-		// re-reading and marking it stale anyway would discard their fix and
-		// uncheck a Cluster they had approved.
-		ctx.markClusterStale(reductionID, clusterID, reason, clusterFingerprint(cluster), failed)
+		// recording it stale anyway would discard their fix and uncheck a Cluster
+		// they had approved. Counted only once it has committed.
+		switch ctx.recordStaleLocked(reductionID, cluster, reason, failed) {
+		case staleSuperseded:
+			return clusterApplyOutcome{Changed: true}
+		case staleHidden:
+			return clusterApplyOutcome{Omit: true}
+		}
 		return clusterApplyOutcome{Report: report}
 	}
 
@@ -482,9 +502,18 @@ func (ctx *MahresourcesContext) applyOneCluster(reductionID uint, clusterID stri
 		// Settled on a context of its own: if the batch's deadline is what failed
 		// the merge, writing the demotion on that same context would fail too and
 		// strand the Cluster marked applied over Losers that still exist.
+		var refusal *mergeRefusal
+		var changedIDs []uint
+		if errors.As(err, &refusal) {
+			changedIDs = refusal.ids
+		}
 		settle, cancel := ctx.settlementContext()
 		defer cancel()
-		settle.demoteClusterToStale(reductionID, clusterID, claimed.ClaimID, reason)
+		// Counted as stale only once the transition has committed; a claim settled by
+		// someone else in the meantime is a change, not a finding.
+		if !settle.demoteClusterToStale(reductionID, clusterID, claimed.ClaimID, reason, changedIDs) {
+			return clusterApplyOutcome{Changed: true}
+		}
 		return clusterApplyOutcome{Report: report}
 	}
 
@@ -519,6 +548,16 @@ func (ctx *MahresourcesContext) ClaimClusterForApplyForTest(reductionID uint, cl
 func (ctx *MahresourcesContext) ReleaseClaimForTest(reductionID uint, clusterID, claimID string) {
 	ctx.releaseClaim(reductionID, clusterID, claimID)
 }
+
+// mergeRefusal is a merge refused because of particular members, carried so the
+// stale Cluster can say which.
+type mergeRefusal struct {
+	cause error
+	ids   []uint
+}
+
+func (e *mergeRefusal) Error() string { return e.cause.Error() }
+func (e *mergeRefusal) Unwrap() error { return e.cause }
 
 // errClaimLost is a merge finding, inside its transaction, that the claim it was
 // started for is no longer the Cluster's current one.
@@ -654,14 +693,15 @@ func (ctx *MahresourcesContext) reductionMergePrecondition(cluster *models.Reduc
 		if err != nil {
 			return err
 		}
+		var changed []uint
 		for id, hash := range expected {
-			resource := resources[id]
-			if resource == nil {
-				return fmt.Errorf("%w: resource %d is gone", ErrMergeContentChanged, id)
+			if resource := resources[id]; resource == nil || resource.Hash != hash {
+				changed = append(changed, id)
 			}
-			if resource.Hash != hash {
-				return fmt.Errorf("%w: resource %d", ErrMergeContentChanged, id)
-			}
+		}
+		if len(changed) > 0 {
+			sort.Slice(changed, func(i, j int) bool { return changed[i] < changed[j] })
+			return &mergeRefusal{cause: fmt.Errorf("%w: resources %v", ErrMergeContentChanged, changed), ids: changed}
 		}
 
 		if cluster.Tier != models.ReductionTierNear {
@@ -675,10 +715,14 @@ func (ctx *MahresourcesContext) reductionMergePrecondition(cluster *models.Reduc
 		for _, pair := range pairs {
 			paired[pair.ResourceID] = true
 		}
+		var unpaired []uint
 		for _, id := range cluster.LoserIDs() {
 			if !paired[id] {
-				return fmt.Errorf("%w: resource %d", ErrMergePairGone, id)
+				unpaired = append(unpaired, id)
 			}
+		}
+		if len(unpaired) > 0 {
+			return &mergeRefusal{cause: fmt.Errorf("%w: resources %v", ErrMergePairGone, unpaired), ids: unpaired}
 		}
 		return nil
 	}
@@ -687,13 +731,14 @@ func (ctx *MahresourcesContext) reductionMergePrecondition(cluster *models.Reduc
 // demoteClusterToStale takes back a claim whose merge was refused. Unlike
 // markClusterStale it acts on a Cluster this batch has already marked applied,
 // which is the only writer that may move one off that state.
-func (ctx *MahresourcesContext) demoteClusterToStale(reductionID uint, clusterID, claimID, reason string) {
-	_ = ctx.mutateCluster(reductionID, clusterID, func(cluster *models.ReductionCluster) bool {
+func (ctx *MahresourcesContext) demoteClusterToStale(reductionID uint, clusterID, claimID, reason string, changed []uint) bool {
+	return ctx.mutateCluster(reductionID, clusterID, func(cluster *models.ReductionCluster) bool {
 		if cluster.State != models.ReductionClusterApplied || cluster.ClaimID != claimID {
 			return false
 		}
 		cluster.State = models.ReductionClusterStale
 		cluster.StaleReason = reason
+		cluster.ChangedMembers = changed
 		cluster.AppliedAt = nil
 		cluster.Checked = false
 		return true
@@ -790,23 +835,82 @@ func clusterFingerprint(cluster *models.ReductionCluster) string {
 	return strconv.FormatUint(uint64(cluster.WinnerID), 10) + "->" + strings.Join(parts, ",")
 }
 
-func (ctx *MahresourcesContext) markClusterStale(reductionID uint, clusterID, reason, fingerprint string, changed []uint) {
-	_ = ctx.mutateCluster(reductionID, clusterID, func(cluster *models.ReductionCluster) bool {
-		if cluster.State != models.ReductionClusterOpen {
-			return false
+// staleWrite is what recording a stale outcome came to.
+type staleWrite int
+
+const (
+	staleRecorded   staleWrite = iota // the Cluster is now stale
+	staleSuperseded                   // another decision got there first
+	staleHidden                       // the Cluster left the caller's scope
+)
+
+// recordStaleLocked records a Cluster as stale the way the merge does its work:
+// the Reduction row first, then every member (ejected ones included) through the
+// caller's scope as it is now, locked in canonical order, and only then the write.
+// It refuses to write unless the Cluster is still open and approved with the very
+// proposal that failed revalidation, so a decision made in between stands; and a
+// Cluster that left the caller's scope is neither recorded nor reported.
+func (ctx *MahresourcesContext) recordStaleLocked(reductionID uint, failed *models.ReductionCluster, reason string, changed []uint) staleWrite {
+	fingerprint := clusterFingerprint(failed)
+	outcome := staleSuperseded
+	err := ctx.WithTransaction(func(txCtx *MahresourcesContext) error {
+		outcome = staleSuperseded
+		if txCtx.db.Dialector.Name() == "postgres" {
+			var locked models.ResourceReduction
+			if err := txCtx.db.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&locked, reductionID).Error; err != nil {
+				return err
+			}
 		}
-		if fingerprint != "" && clusterFingerprint(cluster) != fingerprint {
-			return false
+		rescoped, err := txCtx.rescopeTx(txCtx.db)
+		if err != nil {
+			return err
 		}
-		cluster.State = models.ReductionClusterStale
-		cluster.StaleReason = reason
-		cluster.ChangedMembers = changed
+		txCtx.db = rescoped
+		row, err := txCtx.loadReductionForUpdate(reductionID, nil, false)
+		if err != nil {
+			return err
+		}
+		plan, err := DecodeReductionPlan(row.Plan)
+		if err != nil {
+			return err
+		}
+		current := findCluster(&plan, failed.ID)
+		if current == nil || current.State != models.ReductionClusterOpen || !clusterApproved(current) || clusterFingerprint(current) != fingerprint {
+			return nil
+		}
+		if err := txCtx.lockClusterMembersVisible([]*models.ReductionCluster{current}); err != nil {
+			if errors.Is(err, ErrReductionClusterNotFound) {
+				outcome = staleHidden
+				return nil
+			}
+			return err
+		}
+		current.State = models.ReductionClusterStale
+		current.StaleReason = reason
+		current.ChangedMembers = changed
 		// Unchecked, so the next apply does not walk into the same refusal, and
 		// frozen, so a recompute leaves it where the reviewer can look at it.
-		cluster.Checked = false
-		cluster.Reviewed = true
-		return true
+		current.Checked = false
+		current.Reviewed = true
+		encoded, err := encodeJSON(plan)
+		if err != nil {
+			return err
+		}
+		ok, err := txCtx.casReduction(row.ID, row.Version, map[string]any{"plan": encoded})
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrReductionConflict
+		}
+		outcome = staleRecorded
+		return nil
 	})
+	if err != nil {
+		ctx.logReductionWriteFailure(reductionID, failed.ID, err)
+		return staleHidden
+	}
+	return outcome
 }
 
 // mutateCluster applies one change to one Cluster under the version
@@ -921,9 +1025,29 @@ func newClaimID() string {
 // claim is about to write under the version compare-and-set, after the
 // running-apply refusal: no live batch is on these Clusters, and a late settlement
 // from an older claim finds a different claim id and does nothing.
-func (ctx *MahresourcesContext) reconcileClaims(plan *models.ResourceReductionPlan) {
+func (ctx *MahresourcesContext) reconcileClaims(plan *models.ResourceReductionPlan) []contracts.ReductionApplyOutcome {
+	var stale []contracts.ReductionApplyOutcome
+	// A scoped caller settles only what they can fully see. A claim they cannot see
+	// is left for an unrestricted caller, because settling it would change the row
+	// (and its version) on the strength of a Cluster they have no business knowing.
+	var visible map[uint]bool
+	if ctx.isScopedPrincipal() {
+		var claimed []*models.ReductionCluster
+		for _, cluster := range plan.Clusters {
+			if cluster.State == models.ReductionClusterApplied && !cluster.Merged {
+				claimed = append(claimed, cluster)
+			}
+		}
+		var err error
+		if visible, err = ctx.visibleMemberIDs(reductionMemberIDs(claimed)); err != nil {
+			return nil
+		}
+	}
 	for _, cluster := range plan.Clusters {
 		if cluster.State != models.ReductionClusterApplied || cluster.Merged {
+			continue
+		}
+		if visible != nil && clusterWithheld(cluster, visible) {
 			continue
 		}
 		ids := make([]uint, 0, len(cluster.Members))
@@ -943,7 +1067,11 @@ func (ctx *MahresourcesContext) reconcileClaims(plan *models.ResourceReductionPl
 		cluster.State, cluster.Checked, cluster.AppliedAt = models.ReductionClusterStale, false, nil
 		cluster.StaleReason = staleReasonDeleted
 		cluster.ClaimID = ""
+		stale = append(stale, contracts.ReductionApplyOutcome{
+			ClusterID: cluster.ID, Tier: cluster.Tier, WinnerID: cluster.WinnerID, LoserIDs: cluster.LoserIDs(), Reason: staleReasonDeleted,
+		})
 	}
+	return stale
 }
 
 // settleReductionClaims is an apply that only settles: the same refusals and the
@@ -962,7 +1090,7 @@ func (ctx *MahresourcesContext) settleReductionClaims(reduction *models.Resource
 	if err != nil {
 		return nil, err
 	}
-	ctx.reconcileClaims(&plan)
+	_ = ctx.reconcileClaims(&plan)
 	after, err := encodeJSON(plan)
 	if err != nil {
 		return nil, err

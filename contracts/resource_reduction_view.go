@@ -53,6 +53,10 @@ type ReductionClusterView struct {
 	// LoserCount is how many copies this Cluster would remove: members that are
 	// neither the Winner nor ejected. Zero means there is nothing to approve.
 	LoserCount int
+	// MergedCount is how many copies a confirmed merge removed, and LeftOutCount how
+	// many members were ejected and so left alone. An applied card says both.
+	MergedCount  int
+	LeftOutCount int
 	// WinnerChanged is true when the kept copy itself is among the changed members,
 	// so ejecting the others does not help.
 	WinnerChanged bool
@@ -202,7 +206,11 @@ type ReductionReview struct {
 	ApplyFigures ReductionApplyFigures
 	// ApplyToken binds an apply to the exact proposals the dialog showed.
 	ApplyToken string
-	Bulk       ReductionBulkFigures
+	// SettleableClaims counts Clusters an apply claimed and never finished that the
+	// viewer can fully see and that no running apply owns: what settle-only can
+	// release. Independent of the page's filters.
+	SettleableClaims int
+	Bulk             ReductionBulkFigures
 	// SettingsChanged is true when the Reduction's matching mode, Winner Rule or
 	// exclude-external setting differs from what its plan was computed with. False
 	// for a plan computed before settings were recorded.

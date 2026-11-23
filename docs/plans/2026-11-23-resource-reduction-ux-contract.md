@@ -159,3 +159,13 @@ Top-level review-page key (also in `.json`): `reviewSelection = {groups: [{id, n
 - A recompute leaves the members of an unconfirmed claim out of the candidate pool.
 - A merge that cannot see a member on the subtree as it is now releases the claim and reports nothing.
 - `approvalFilter`, `stateLabel` and every count use one predicate: checked with at least one Loser.
+
+## 11. Addendum: round 5
+
+- `settleableClaims` (top-level review key, int): Clusters claimed and not merged that the viewer can fully see, when no running apply owns them. Independent of filters and tabs. Show the recovery button when it is above 0.
+- Settle-only and the reconciliation in a normal apply settle only claims the caller can fully see; a hidden claim is left for an unrestricted caller, and when nothing visible needs settling the version does not change.
+- A normal apply's `stale` list and `lastApply.stale` include the visible Clusters its reconciliation turned stale (a copy was deleted). `settleOnly` returns and records nothing.
+- Recording a stale outcome takes the Reduction row, then every member of the Cluster in canonical order through the caller's scope as it is now, and writes only if the Cluster is still open and approved with the proposal that failed. A Cluster that left scope is omitted; one a decision superseded counts as `changed`. A stale count is added only after the transition commits.
+- A merge refusal after the claim (changed bytes, lost pair) carries the failing members: `Members[j].Changed` and `WinnerChanged` are set on the demoted Cluster too.
+- List `Progress` is computed from the plans and member visibility read in one snapshot.
+- `clusters[i].MergedCount` (copies a confirmed merge removed) and `clusters[i].LeftOutCount` (ejected members left alone). An applied card should say "N copies removed, M left out".

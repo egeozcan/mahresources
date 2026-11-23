@@ -17,6 +17,40 @@ import (
 // A plan that cannot be decoded counts as empty rather than failing the list: one
 // damaged row must not take the page down, and the review page reports the error.
 func (ctx *MahresourcesContext) GetReductionProgress(reductions []models.ResourceReduction) (map[uint]contracts.ReductionProgress, error) {
+	var out map[uint]contracts.ReductionProgress
+	// One snapshot for the plans and the visibility of their members. The rows the
+	// caller holds were read earlier; read apart from the visibility query, a merge
+	// committing in between would count a Cluster as withheld that was visible both
+	// before and after it. The plans are re-read here, inside the snapshot.
+	err := ctx.withReadSnapshot(func(snap *MahresourcesContext) error {
+		var err error
+		out, err = snap.reductionProgress(reductions)
+		return err
+	})
+	return out, err
+}
+
+func (ctx *MahresourcesContext) reductionProgress(reductions []models.ResourceReduction) (map[uint]contracts.ReductionProgress, error) {
+	if len(reductions) > 0 {
+		ids := make([]uint, len(reductions))
+		for i := range reductions {
+			ids[i] = reductions[i].ID
+		}
+		var fresh []models.ResourceReduction
+		if err := ctx.db.Select("id", "plan").Where("id IN ?", ids).Find(&fresh).Error; err != nil {
+			return nil, err
+		}
+		plans := make(map[uint]models.ResourceReduction, len(fresh))
+		for _, row := range fresh {
+			plans[row.ID] = row
+		}
+		reductions = append([]models.ResourceReduction(nil), reductions...)
+		for i := range reductions {
+			if row, ok := plans[reductions[i].ID]; ok {
+				reductions[i].Plan = row.Plan
+			}
+		}
+	}
 	out := make(map[uint]contracts.ReductionProgress, len(reductions))
 	plans := make(map[uint]models.ResourceReductionPlan, len(reductions))
 	for i := range reductions {

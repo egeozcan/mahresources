@@ -236,6 +236,8 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 			},
 			// What the apply dialog states, per tier, over approved visible Clusters.
 			"applyToken": review.ApplyToken,
+			// Stranded claims the viewer can settle, whatever the filters show.
+			"settleableClaims": review.SettleableClaims,
 			"applyFigures": pongo2.Context{
 				"identical":    tierFigures(review.ApplyFigures.Identical),
 				"near":         tierFigures(review.ApplyFigures.Near),

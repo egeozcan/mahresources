@@ -241,6 +241,7 @@ func (ctx *MahresourcesContext) getReductionReview(id uint, ownerUserID *uint, o
 		TabCounts:           tabCounts,
 		ApplyFigures:        figures.apply,
 		ApplyToken:          applyToken(eligible),
+		SettleableClaims:    settleableClaims(&plan, visible),
 		Bulk:                figures.bulk,
 		SettingsChanged:     reductionSettingsChanged(reduction, plan.Settings),
 		LastApply:           ctx.scopeLastApply(describeLastApply(plan.LastApply), plan.LastApply, plan.Clusters, visible),
@@ -665,6 +666,14 @@ func buildClusterViews(clusters []*models.ReductionCluster, resources map[uint]*
 				GroupCount:      associations[member.ResourceID].Groups,
 			})
 		}
+		if cluster.State == models.ReductionClusterApplied && cluster.Merged {
+			view.MergedCount = len(cluster.LoserIDs())
+		}
+		for _, member := range cluster.Members {
+			if member.Ejected {
+				view.LeftOutCount++
+			}
+		}
 		view.WinnerChanged = containsUint(cluster.ChangedMembers, cluster.WinnerID)
 		view.Position = len(views) + 1
 		view.NeedsAttention = clusterNeedsAttention(cluster)
@@ -979,4 +988,20 @@ func containsUint(list []uint, v uint) bool {
 		}
 	}
 	return false
+}
+
+// settleableClaims counts the Clusters settle-only could release for this viewer:
+// claimed and not merged, fully visible to them, with no running apply that owns
+// them. Filters do not enter into it.
+func settleableClaims(plan *models.ResourceReductionPlan, visible map[uint]bool) int {
+	if last := plan.LastApply; last != nil && last.FinishedAt == nil && time.Since(last.StartedAt) <= ReductionApplyCeiling {
+		return 0
+	}
+	n := 0
+	for _, cluster := range plan.Clusters {
+		if cluster.State == models.ReductionClusterApplied && !cluster.Merged && !clusterWithheld(cluster, visible) {
+			n++
+		}
+	}
+	return n
 }
