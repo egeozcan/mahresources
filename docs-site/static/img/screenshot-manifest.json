@@ -492,7 +492,7 @@
     },
     "reduction-overview.png": {
       "page": "/reduction?id=1",
-      "description": "Resource Reduction review page, top: the \"cannot be undone\" banner, State, Extent (2 Resources and 1 Group, reaching 6), the coverage line, and the first Cluster",
+      "description": "Resource Reduction review page, top: status and Recompute, the Open/Skipped/Stale/Applied tabs, filter chips, the first Cluster with its Approve and Skip buttons, the sticky apply bar, and the Settings panel",
       "seedDependencies": [
         "categories",
         "groups",
@@ -500,17 +500,17 @@
         "tags",
         "reductions"
       ],
-      "seedDetails": "14 resources across 12 groups, including one byte-identical pair (a version upload gives two rows one content hash) and two near-identical pairs (a full-size image and a real downscale of it), plus three Resource Reductions",
+      "seedDetails": "13 resources across 9 groups, including one byte-identical pair (a version upload gives two rows one content hash) and two near-identical pairs (a full-size image and a real downscale of it), plus three Resource Reductions (one computed, one not computed yet, one identical-only)",
       "viewport": {
         "width": 1200,
         "height": 800
       },
       "interactions": [],
-      "capturedDate": "2026-08-26"
+      "capturedDate": "2026-11-23"
     },
     "reduction-review.png": {
       "page": "/reduction?id=1",
-      "description": "Two Clusters under review: an Identical Cluster arriving checked, chosen by \"created first\", and a Near-Identical Cluster arriving unchecked, chosen by \"highest resolution, by 4x the pixels\", with per-member Make Winner, Compare and Eject controls",
+      "description": "Two Clusters under review: an Identical Cluster arriving approved, chosen by \"created first\", and a Near-Identical Cluster arriving open, chosen by \"highest resolution, by 4x the pixels\", with per-member Keep this instead, Compare and Don't remove controls and the sticky apply bar",
       "seedDependencies": [
         "categories",
         "groups",
@@ -518,7 +518,7 @@
         "tags",
         "reductions"
       ],
-      "seedDetails": "14 resources across 12 groups, including one byte-identical pair (a version upload gives two rows one content hash) and two near-identical pairs (a full-size image and a real downscale of it), plus three Resource Reductions",
+      "seedDetails": "13 resources across 9 groups, including one byte-identical pair (a version upload gives two rows one content hash) and two near-identical pairs (a full-size image and a real downscale of it), plus three Resource Reductions (one computed, one not computed yet, one identical-only)",
       "viewport": {
         "width": 1200,
         "height": 800
@@ -526,45 +526,45 @@
       "interactions": [
         "scrolled to the Clusters heading, clear of the sticky header"
       ],
-      "capturedDate": "2026-08-26"
+      "capturedDate": "2026-11-23"
     },
     "reduction-list.png": {
       "page": "/reductions",
-      "description": "The Resource Reductions list: three Reductions with their creation date, status (two ready to review, one not computed yet) and matching mode, beside the status filter",
+      "description": "The Resource Reductions list: three Reductions with their status (two ready to review, one not computed yet), approval progress and matching mode, beside the status filter",
       "seedDependencies": [
         "categories",
         "groups",
         "resources",
         "reductions"
       ],
-      "seedDetails": "14 resources across 12 groups, including one byte-identical pair (a version upload gives two rows one content hash) and two near-identical pairs (a full-size image and a real downscale of it), plus three Resource Reductions",
+      "seedDetails": "13 resources across 9 groups, including one byte-identical pair (a version upload gives two rows one content hash) and two near-identical pairs (a full-size image and a real downscale of it), plus three Resource Reductions (one computed, one not computed yet, one identical-only)",
       "viewport": {
         "width": 1200,
         "height": 800
       },
       "interactions": [],
-      "capturedDate": "2026-08-26"
+      "capturedDate": "2026-11-23"
     },
     "reduction-bulk-action.png": {
       "page": "/resources",
-      "description": "The resources bulk bar with the Resource Reduction panel open: start a new Reduction or add to an existing one, a name field, and the selected count",
+      "description": "The resources bulk bar with the Find duplicates panel open: start a new Resource Reduction or add to an existing one, a name field, and the selected count",
       "seedDependencies": [
         "categories",
         "groups",
         "resources",
         "tags"
       ],
-      "seedDetails": "14 resources across 12 groups, including one byte-identical pair (a version upload gives two rows one content hash) and two near-identical pairs (a full-size image and a real downscale of it), plus three Resource Reductions",
+      "seedDetails": "13 resources across 9 groups, including one byte-identical pair (a version upload gives two rows one content hash) and two near-identical pairs (a full-size image and a real downscale of it), plus three Resource Reductions (one computed, one not computed yet, one identical-only)",
       "viewport": {
         "width": 1200,
         "height": 800
       },
       "interactions": [
         "clicked Select All",
-        "clicked Resource Reduction",
+        "clicked Find duplicates",
         "typed a Reduction name"
       ],
-      "capturedDate": "2026-08-26"
+      "capturedDate": "2026-11-23"
     }
   }
 }
