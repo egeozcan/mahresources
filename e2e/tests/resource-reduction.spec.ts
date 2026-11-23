@@ -934,4 +934,42 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     await page.goto(`/resource/compare?r1=${keeper.ID}&r2=${twin.ID}&from=reduction:99999999`);
     await expect(page.getByTestId('compare-back-to-reduction')).toBeHidden();
   });
+
+  test('a refused second apply does not replay the first success', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR second ${Date.now()}`;
+    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 2);
+    const id = await createReduction(request, baseURL!, label, ids);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}`);
+    // Leave the second Cluster unapproved, so the first apply takes only the first.
+    await page.getByTestId('reduction-cluster').nth(1).getByTestId('cluster-approve').click();
+    await expect(page.getByTestId('reduction-cluster').nth(1).getByTestId('cluster-approve')).toHaveAttribute('aria-pressed', 'false');
+    await page.getByTestId('reduction-apply').click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Apply 1 Cluster' }).click();
+    await expect(page.getByTestId('reduction-apply-result')).toContainText('Applied 1 Cluster, removed 1 copy.', { timeout: 20_000 });
+
+    // Approve what is left and have the server refuse the next apply.
+    await page.getByTestId('reduction-cluster').first().getByTestId('cluster-approve').click();
+    await expect(page.getByTestId('reduction-apply')).toBeEnabled();
+    await page.route('**/v1/reduction/apply', (route) => route.fulfill({
+      status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'this Reduction changed since you confirmed it' }),
+    }));
+    await page.evaluate(() => {
+      const w = window as unknown as { __announced: string[]; mahAnnounce: (text: string) => void };
+      w.__announced = [];
+      const original = w.mahAnnounce;
+      w.mahAnnounce = (text: string, ...rest: unknown[]) => { w.__announced.push(text); (original as (...a: unknown[]) => void)?.(text, ...rest); };
+    });
+    const urlBefore = page.url();
+    await page.getByTestId('reduction-apply').click();
+    await page.getByRole('alertdialog').getByRole('button', { name: /^Apply \d+ Clusters?$/ }).click();
+
+    await expect(page.getByTestId('reduction-error')).toBeVisible();
+    await expect(page.getByTestId('reduction-apply-result')).toBeHidden();
+    const announced = await page.evaluate(() => (window as unknown as { __announced: string[] }).__announced);
+    expect(announced.some((text) => /applied/i.test(text) && !/Nothing was applied/.test(text))).toBe(false);
+    expect(page.url()).toBe(urlBefore);
+    await expect(page.locator('#reduction-apply-result')).not.toBeFocused();
+  });
 });
