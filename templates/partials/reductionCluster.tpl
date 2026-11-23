@@ -39,206 +39,124 @@
     </p>
 </article>
 {% else %}
-<article class="card reduction-cluster"
+{% if cluster.State == "applied" %}
+{# An applied Cluster is a record, not a decision: one line and the kept copy. #}
+<article class="card reduction-cluster reduction-cluster--applied"
          key="{{ cluster.ID }}"
+         tabindex="-1"
          data-testid="reduction-cluster"
          data-cluster-id="{{ cluster.ID }}"
          data-cluster-tier="{{ cluster.Tier }}"
+         data-cluster-state="applied"
+         aria-labelledby="cluster-{{ cluster.ID }}-heading">
+    <h3 class="reduction-cluster-title" id="cluster-{{ cluster.ID }}-heading">
+        {% if cluster.Tier == "identical" %}Identical{% else %}Near-Identical{% endif %} &middot; {{ cluster.Members|length }} copies
+    </h3>
+    <p class="text-sm text-stone-700">
+        <span class="reduction-state" data-testid="cluster-state">{{ cluster.StateLabel }}</span>.
+        {% if cluster.Winner %}Kept <a class="reduction-link" href="/resource?id={{ cluster.Winner.ID }}">{{ cluster.Winner.Name }}</a>.{% endif %}
+        The other copies were merged into it and removed.
+    </p>
+</article>
+{% else %}
+<article class="card reduction-cluster{% if cluster.NeedsAttention %} reduction-cluster--attention{% endif %}"
+         key="{{ cluster.ID }}"
+         tabindex="-1"
+         data-testid="reduction-cluster"
+         data-cluster-id="{{ cluster.ID }}"
+         data-cluster-tier="{{ cluster.Tier }}"
+         data-cluster-state="{% if cluster.State == "skipped" %}skipped{% elif cluster.State == "stale" %}stale{% else %}open{% endif %}"
+         data-cluster-oversized="{% if cluster.Oversized %}true{% else %}false{% endif %}"
          data-lightbox-scope
          aria-labelledby="cluster-{{ cluster.ID }}-heading">
 
-    <header class="card-header card-header--compact">
-        <div class="card-title-section">
-            <h3 class="card-title" id="cluster-{{ cluster.ID }}-heading">
-                {% if cluster.Tier == "identical" %}
-                    Identical Resources
-                {% else %}
-                    Near-Identical Resources
-                {% endif %}
-                <span class="text-stone-500 font-normal">&mdash; {{ cluster.Members|length }} Resources</span>
+    <header class="reduction-cluster-head" key="head">
+        <div class="reduction-cluster-heading">
+            <h3 class="reduction-cluster-title" id="cluster-{{ cluster.ID }}-heading">
+                {% if cluster.Tier == "identical" %}Identical{% else %}Near-Identical{% endif %}
+                &middot; {{ cluster.Members|length }} copies
             </h3>
-            <div class="card-meta">
-                <span class="card-meta-item">
-                    <span class="card-meta-label">Winner:</span>
-                    {% if cluster.Winner %}
-                        <a href="/resource?id={{ cluster.Winner.ID }}" class="card-meta-link">{{ cluster.Winner.Name }}</a>
-                    {% else %}
-                        <span class="text-stone-500">withheld</span>
-                    {% endif %}
-                </span>
-                <span class="card-meta-item" data-testid="cluster-decided-by">
-                    {% if cluster.Undecided %}
-                        <span class="text-amber-800">Tied on all criteria. Lowest ID selected.</span>
-                    {% else %}
-                        <span class="card-meta-label">Chosen by:</span>
-                        {{ cluster.DecidedByLabel }}{% if cluster.Margin %}, by {{ cluster.Margin }}{% endif %}
-                    {% endif %}
-                </span>
-                <span class="card-meta-item">
-                    <span class="card-meta-label">Status:</span>
-                    <span data-testid="cluster-state">{{ cluster.StateLabel }}</span>
-                </span>
-            </div>
+            <span class="reduction-state" data-testid="cluster-state">{{ cluster.StateLabel }}</span>
         </div>
 
-        {% if cluster.State != "applied" %}
-        <div class="flex items-center gap-2 flex-wrap">
-            <label class="flex items-center gap-2 text-sm text-stone-700">
-                {# Every reason to disable this lives inside the binding. Alpine removes #}
-                {# the attribute whenever the binding evaluates false, so a *separate*    #}
-                {# static one would be stripped at init and the control would come back   #}
-                {# to life. The bare `disabled` is the pre-init state: this does nothing  #}
-                {# until Alpine has wired it, and nothing at all if Alpine never arrives. #}
-                {# A Cluster reaching outside the reviewer's access renders no controls   #}
-                {# whatever, above.                                                       #}
-                <input type="checkbox"
-                       data-testid="cluster-checkbox"
-                       {% if cluster.Checked %}checked{% endif %}
-                       autocomplete="off"
-                       {# Browser form restoration on back-navigation repaints saved     #}
-                       {# checkbox states by control index. The card set changes while   #}
-                       {# the reviewer works, so a saved state can land on the wrong     #}
-                       {# cluster's box — a phantom this page must not show. The box is  #}
-                       {# server-rendered and morph-repaired instead.                    #}
-                       disabled
-                       :disabled="$store.reductionReview.busy || !$store.reductionReview.isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})"
-                       @change="$store.reductionReview.check('{{ cluster.ID }}', $event.target.checked, {% if cluster.Oversized %}true{% else %}false{% endif %}, $event)"
-                       class="reduction-control rounded border-stone-300 text-amber-700 focus:ring-amber-600">
-                Include in reduction
-            </label>
-
-            {% if cluster.State == "skipped" %}
-            <button type="button" data-testid="cluster-reopen"
-                    :disabled="$store.reductionReview.busy"
-                    @click="$store.reductionReview.act('{{ cluster.ID }}', 'reopen')"
-                    class="reduction-action">Reopen</button>
+        {# The reason is one sentence. A Cluster the reviewer re-chose says so, and a tie says what broke it. #}
+        <p class="reduction-reason" data-testid="cluster-decided-by">
+            {% if cluster.Winner %}
+                {% if cluster.Undecided %}
+                    All copies tie on every criterion; keeping the one added first.
+                {% else %}
+                    Keeping &ldquo;{{ cluster.Winner.Name }}&rdquo;: {{ cluster.DecidedByLabel }}{% if cluster.Margin %}, {{ cluster.Margin }}{% endif %}.
+                {% endif %}
             {% else %}
-            <button type="button" data-testid="cluster-skip"
+                The kept copy is withheld.
+            {% endif %}
+        </p>
+
+        {% if cluster.State != "applied" %}
+        <div class="reduction-cluster-controls">
+            {% if cluster.State == "skipped" %}
+            <button type="button" data-testid="cluster-reopen" class="reduction-btn"
+                    :disabled="$store.reductionReview.busy"
+                    @click="$store.reductionReview.act('{{ cluster.ID }}', 'reopen')">Reopen</button>
+            {% else %}
+            {# aria-pressed with a constant accessible name: the visible text changes, the name does not. #}
+            {# The disabled binding holds every reason; a static one would be stripped at init.            #}
+            <button type="button" data-testid="cluster-approve" class="reduction-btn reduction-approve"
+                    aria-pressed="{% if cluster.Checked %}true{% else %}false{% endif %}"
+                    :aria-keyshortcuts="$store.reductionReview.shortcutsOn ? 'A' : null"
+                    disabled
                     :disabled="$store.reductionReview.busy || !$store.reductionReview.isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})"
-                    @click="$store.reductionReview.act('{{ cluster.ID }}', 'skip')"
-                    class="reduction-action">Skip</button>
+                    @click="$store.reductionReview.toggleApproval('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %}, $event)">
+                <span class="sr-only">Approve</span>
+                <span aria-hidden="true">{% if cluster.Checked %}Approved &#10003;{% else %}Approve{% endif %}</span>
+            </button>
+            <button type="button" data-testid="cluster-skip" class="reduction-btn"
+                    :aria-keyshortcuts="$store.reductionReview.shortcutsOn ? 'S' : null"
+                    :disabled="$store.reductionReview.busy || !$store.reductionReview.isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})"
+                    @click="$store.reductionReview.act('{{ cluster.ID }}', 'skip')">Skip</button>
             {% endif %}
         </div>
         {% endif %}
     </header>
 
+    {% if cluster.KeepsSmaller %}
+    <div class="reduction-warning" role="note" key="keeps-smaller" data-testid="cluster-keeps-smaller">
+        <p>The kept copy has a lower resolution than a copy being removed ({{ cluster.KeptDimensions }} vs {{ cluster.LargerDimensions }}).</p>
+        {% if cluster.State != "skipped" and cluster.LargestMemberID %}
+        <button type="button" data-testid="cluster-keep-larger" class="reduction-btn"
+                :disabled="$store.reductionReview.busy"
+                @click="$store.reductionReview.act('{{ cluster.ID }}', 'promote', {{ cluster.LargestMemberID }})">Keep the larger copy instead</button>
+        {% endif %}
+    </div>
+    {% endif %}
+
     {% if cluster.Lossy %}
-    <p class="text-sm text-amber-800 px-3" role="note" data-testid="cluster-lossy">
-        Merging will discard these fields from one or more Losers: {{ cluster.Lossy|join:", " }}.
+    <p class="reduction-warning reduction-warning--text" role="note" key="lossy" data-testid="cluster-lossy">
+        Merging will discard these fields from one or more removed copies: {{ cluster.Lossy|join:", " }}.
     </p>
     {% endif %}
 
     {% if cluster.Oversized %}
-    <p class="text-sm text-amber-800 px-3" role="note" data-testid="cluster-oversized">
-        Large Near-Identical Cluster. Expand to review before including it.
+    <p class="reduction-warning reduction-warning--text" role="note" key="oversized" data-testid="cluster-oversized">
+        Large Near-Identical Cluster. Expand to review before approving it.
     </p>
-    <p class="px-3" x-show="!$store.reductionReview.isExpanded('{{ cluster.ID }}', true)">
-        <button type="button" data-testid="cluster-expand"
+    <p class="px-3" key="expand" x-show="!$store.reductionReview.isExpanded('{{ cluster.ID }}', true)">
+        <button type="button" data-testid="cluster-expand" class="reduction-btn"
+                :aria-keyshortcuts="$store.reductionReview.shortcutsOn ? 'X' : null"
                 @click="$store.reductionReview.expand('{{ cluster.ID }}')"
-                aria-controls="cluster-{{ cluster.ID }}-members"
-                class="reduction-action">Show {{ cluster.Members|length }} resources</button>
+                aria-controls="cluster-{{ cluster.ID }}-members">Show {{ cluster.Members|length }} copies</button>
     </p>
     {% endif %}
 
-    <div class="reduction-cluster-members flex flex-wrap gap-3 p-3"
+    <div class="reduction-cluster-members" key="members"
          id="cluster-{{ cluster.ID }}-members"
          x-show="$store.reductionReview.isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})">
-        {% for member in cluster.Members %}
-        {# A member with no Resource behind it is one of two things, and they read  #}
-        {# very differently. On an applied Cluster it is a Loser this Reduction just #}
-        {# merged away, which is the record of what happened. Anywhere else it is a  #}
-        {# Resource outside what this reviewer may see, and it is rendered as a      #}
-        {# placeholder and nothing else — no id, no role, no distance, no controls,  #}
-        {# because printing any of those answers "what is over there?" for somebody  #}
-        {# whose whole confinement is that they may not ask.                         #}
-        {% if not member.Resource %}
-        <div class="reduction-member" data-testid="reduction-member-withheld">
-            <p class="text-xs text-stone-500 max-w-[10rem]">
-                {% if cluster.Merged %}Merged and deleted.{% else %}Resource unavailable.{% endif %}
-            </p>
-        </div>
-        {% else %}
-        <div class="reduction-member{% if member.IsWinner %} reduction-member--winner{% endif %}{% if member.Ejected %} reduction-member--ejected{% endif %}"
-             data-testid="reduction-member"
-             data-resource-id="{{ member.ResourceID }}"
-             {% if member.IsWinner %}data-winner="true"{% endif %}
-             {% if member.Ejected %}data-ejected="true"{% endif %}>
-            {% if member.Resource %}
-                <a href="/v1/resource/view?id={{ member.Resource.ID }}&v={{ member.Resource.Hash }}#{{ member.Resource.ContentType }}"
-                   @click.prevent="$store.lightbox.openFromClick($event, {{ member.Resource.ID }}, '{{ member.Resource.ContentType|escapejs }}')"
-                   data-lightbox-item
-                   data-resource-id="{{ member.Resource.ID }}"
-                   data-content-type="{{ member.Resource.ContentType }}"
-                   data-resource-name="{{ member.Resource.Name }}"
-                   data-resource-hash="{{ member.Resource.Hash }}"
-                   data-resource-width="{{ member.Resource.Width }}"
-                   data-resource-height="{{ member.Resource.Height }}">
-                    <img height="120" src="/v1/resource/preview?id={{ member.Resource.ID }}&height=120&v={{ member.Resource.Hash }}"
-                         alt="Preview of {{ member.Resource.Name }}" loading="lazy" decoding="async">
-                </a>
-                <p class="text-xs text-stone-700 mt-1 max-w-[10rem] truncate">
-                    <a class="reduction-member-link" href="/resource?id={{ member.Resource.ID }}" title="{{ member.Resource.Name }}">{{ member.Resource.Name }}</a>
-                </p>
-                <p class="text-xs text-stone-500">
-                    {% if member.Resource.Width %}{{ member.Resource.Width }}&times;{{ member.Resource.Height }} &middot; {% endif %}
-                    {{ member.Resource.FileSize | humanReadableSize }}
-                </p>
-            {% endif %}
-
-            <p class="text-xs mt-1">
-                {% if member.IsWinner %}
-                    <span class="reduction-badge reduction-badge--winner">Winner</span>
-                {% elif member.Ejected %}
-                    <span class="reduction-badge reduction-badge--ejected">Ejected</span>
-                {% else %}
-                    <span class="reduction-badge reduction-badge--loser">Will be deleted</span>
-                {% endif %}
-                {% if not member.InExtent %}
-                    <span class="reduction-badge reduction-badge--outside">Outside the Extent</span>
-                {% endif %}
-                {% if member.DistanceLabel %}
-                    <span class="reduction-badge reduction-badge--distance">{{ member.DistanceLabel }}</span>
-                {% endif %}
-            </p>
-
-            {% if cluster.State != "applied" %}
-            <div class="flex flex-wrap gap-1 mt-1">
-                {% if not member.IsWinner and not member.Ejected %}
-                <button type="button" data-testid="member-promote"
-                        :disabled="$store.reductionReview.busy"
-                        @click="$store.reductionReview.act('{{ cluster.ID }}', 'promote', {{ member.ResourceID }})"
-                        class="reduction-action reduction-action--small">Make Winner</button>
-                {% endif %}
-                {% if member.IsLoser and cluster.Winner and not member.Ejected %}
-                {# Story 24 wants the two-up look from *every* Cluster, and the      #}
-                {# compare page takes exactly two Resources — so the pair that is    #}
-                {# worth looking at is this Loser against the Winner that would      #}
-                {# absorb it, offered once per Loser rather than once per Cluster.   #}
-                <a class="reduction-action reduction-action--small"
-                   data-testid="member-compare"
-                   href="/resource/compare?r1={{ cluster.Winner.ID }}&r2={{ member.ResourceID }}">Compare</a>
-                {% endif %}
-                {# "Put back" is for undoing an ejection, and it works by re-proposing the #}
-                {# deletion — which an out-of-Extent member may never be part of. Its    #}
-                {# only way out of "Ejected" is a promotion, and the server refuses a    #}
-                {# restore of it in any case; the button is simply not drawn.            #}
-                {% if member.Ejected and member.InExtent %}
-                <button type="button" data-testid="member-restore"
-                        :disabled="$store.reductionReview.busy"
-                        @click="$store.reductionReview.act('{{ cluster.ID }}', 'restore', {{ member.ResourceID }})"
-                        class="reduction-action reduction-action--small">Restore</button>
-                {% elif not member.IsWinner and not member.Ejected %}
-                <button type="button" data-testid="member-eject"
-                        :disabled="$store.reductionReview.busy"
-                        @click="$store.reductionReview.act('{{ cluster.ID }}', 'eject', {{ member.ResourceID }})"
-                        class="reduction-action reduction-action--small">Eject</button>
-                {% endif %}
-            </div>
-            {% endif %}
-        </div>
-        {% endif %}
-        {% endfor %}
+        {# The kept copy first, then the rest in the plan's order. #}
+        {% for member in cluster.Members %}{% if member.IsWinner %}{% include "/partials/reductionMember.tpl" %}{% endif %}{% endfor %}
+        {% for member in cluster.Members %}{% if not member.IsWinner %}{% include "/partials/reductionMember.tpl" %}{% endif %}{% endfor %}
     </div>
 
+    <p class="reduction-footnote" key="footnote">Removed copies' tags, notes and groups move to the kept copy.</p>
 </article>
+{% endif %}
 {% endif %}
