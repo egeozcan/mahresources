@@ -120,7 +120,7 @@ func (ctx *MahresourcesContext) overrideReductionClusterOnce(override *query_mod
 	if err != nil {
 		return nil, err
 	}
-	return ctx.casReductionAndReload(reduction.ID, override.Version, map[string]any{"plan": encoded}, ownerUserID, ownerRestricted)
+	return ctx.casReductionAndReloadHolding(reduction.ID, override.Version, map[string]any{"plan": encoded}, ownerUserID, ownerRestricted, []*models.ReductionCluster{cluster})
 }
 
 func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, override *query_models.ReductionOverride, rule []string) error {

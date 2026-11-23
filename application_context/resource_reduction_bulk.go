@@ -107,7 +107,7 @@ func (ctx *MahresourcesContext) bulkOverrideReductionClustersOnce(request *query
 	if err != nil {
 		return nil, nil, err
 	}
-	updated, err := ctx.casReductionAndReload(reduction.ID, request.Version, map[string]any{"plan": encoded}, ownerUserID, ownerRestricted)
+	updated, err := ctx.casReductionAndReloadHolding(reduction.ID, request.Version, map[string]any{"plan": encoded}, ownerUserID, ownerRestricted, targets)
 	if err != nil {
 		return nil, nil, err
 	}
