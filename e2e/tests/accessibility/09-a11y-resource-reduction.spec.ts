@@ -12,6 +12,34 @@
 import path from 'path';
 import { test, expect } from '../../fixtures/a11y.fixture';
 
+
+async function computedReduction(
+  apiClient: { createResource: (d: { filePath: string; name: string }) => Promise<{ ID: number }> },
+  request: import('@playwright/test').APIRequestContext,
+  baseURL: string,
+  label: string,
+  asset: string,
+  compute = true,
+): Promise<number> {
+  const filePath = path.join(__dirname, '../../test-assets', asset);
+  const keeper = await apiClient.createResource({ filePath, name: `${label} keeper` });
+  const twin = await apiClient.createResource({ filePath, name: `${label} twin` });
+  const stored = await request.get(`${baseURL}/v1/resource/view?id=${keeper.ID}`);
+  const bytes = Buffer.from(await stored.body());
+  await request.post(`${baseURL}/v1/resource/versions?resourceId=${twin.ID}`, {
+    multipart: { file: { name: 'twin.png', mimeType: 'image/png', buffer: bytes }, comment: 'identical' },
+  });
+  const created = await request.post(`${baseURL}/v1/reduction`, { data: { name: label, resourceIds: [keeper.ID, twin.ID] } });
+  const { id, version } = await created.json();
+  if (!compute) return id;
+  await request.post(`${baseURL}/v1/reduction/compute`, { data: { id, version } });
+  await expect.poll(async () => {
+    const current = await (await request.get(`${baseURL}/v1/reductions`)).json();
+    return current.reductions.find((r: { id: number }) => r.id === id)?.status;
+  }, { timeout: 30_000 }).toBe('ready');
+  return id;
+}
+
 test.describe('Resource Reduction accessibility', () => {
   test('the creation page has no accessibility violations', async ({ page, checkA11y }) => {
     const response = await page.goto('/reduction/new');
@@ -64,29 +92,40 @@ test.describe('Resource Reduction accessibility', () => {
     await checkA11y();
   });
 
+  test('a Reduction that was never computed has no accessibility violations', async ({ page, checkA11y, apiClient, request, baseURL }) => {
+    const id = await computedReduction(apiClient, request, baseURL!, `RR a11y draft ${Date.now()}`, 'sample-image-13.png', false);
+    await page.goto(`/reduction?id=${id}`);
+    await expect(page.getByRole('button', { name: 'Find duplicates' })).toBeVisible();
+    await checkA11y();
+  });
+
+  test('the apply dialog and the shortcuts dialog have no accessibility violations and return focus', async ({ page, checkA11y, apiClient, request, baseURL }) => {
+    const id = await computedReduction(apiClient, request, baseURL!, `RR a11y dialogs ${Date.now()}`, 'sample-image-14.png');
+    await page.goto(`/reduction?id=${id}`);
+    await expect(page.getByTestId('reduction-apply-bar')).toBeVisible();
+
+    const apply = page.getByTestId('reduction-apply');
+    await apply.click();
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    await checkA11y();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(apply).toBeFocused();
+
+    const shortcuts = page.getByTestId('reduction-shortcuts-button');
+    await shortcuts.click();
+    const list = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
+    await expect(list).toBeVisible();
+    await checkA11y();
+    await page.keyboard.press('Escape');
+    await expect(list).toBeHidden();
+    await expect(shortcuts).toBeFocused();
+  });
+
   test('every Cluster control is reachable and operable from the keyboard', async ({ page, apiClient, request, baseURL }) => {
-    const label = `RR keys ${Date.now()}`;
-    const filePath = path.join(__dirname, '../../test-assets/sample-image-12.png');
-
-    const keeper = await apiClient.createResource({ filePath, name: `${label} keeper` });
-    const twin = await apiClient.createResource({ filePath, name: `${label} twin` });
-    const stored = await request.get(`${baseURL}/v1/resource/view?id=${keeper.ID}`);
-    const bytes = Buffer.from(await stored.body());
-    await request.post(`${baseURL}/v1/resource/versions?resourceId=${twin.ID}`, {
-      multipart: { file: { name: 'twin.png', mimeType: 'image/png', buffer: bytes }, comment: 'identical' },
-    });
-
-    const created = await request.post(`${baseURL}/v1/reduction`, {
-      data: { name: label, resourceIds: [keeper.ID, twin.ID] },
-    });
-    const { id } = await created.json();
-    const list = await (await request.get(`${baseURL}/v1/reductions`)).json();
-    const row = list.reductions.find((r: { id: number }) => r.id === id);
-    await request.post(`${baseURL}/v1/reduction/compute`, { data: { id, version: row.version } });
-    await expect.poll(async () => {
-      const current = await (await request.get(`${baseURL}/v1/reductions`)).json();
-      return current.reductions.find((r: { id: number }) => r.id === id)?.status;
-    }, { timeout: 30_000 }).toBe('ready');
+    const id = await computedReduction(apiClient, request, baseURL!, `RR keys ${Date.now()}`, 'sample-image-12.png');
 
     await page.goto(`/reduction?id=${id}`);
     const cluster = page.getByTestId('reduction-cluster').first();
@@ -102,10 +141,17 @@ test.describe('Resource Reduction accessibility', () => {
       cluster.locator(`[data-testid="reduction-member"][data-resource-id="${loserId}"]`),
     ).toHaveAttribute('data-winner', 'true');
 
-    // The checkbox is a real checkbox, so Space toggles it.
-    const checkbox = cluster.getByTestId('cluster-checkbox');
-    await checkbox.focus();
+    // The approval is a toggle button, so Space flips it and it says so.
+    const approve = cluster.getByTestId('cluster-approve');
+    await expect(approve).toHaveAttribute('aria-pressed', 'true');
+    await approve.focus();
     await page.keyboard.press('Space');
-    await expect(checkbox).not.toBeChecked();
+    await expect(approve).toHaveAttribute('aria-pressed', 'false');
+
+    // The skip link lands in the Clusters region.
+    await page.reload();
+    await page.getByTestId('reduction-skip-link').focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('reduction-clusters-region')).toBeFocused();
   });
 });

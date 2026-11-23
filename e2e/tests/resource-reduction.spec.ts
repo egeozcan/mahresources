@@ -103,6 +103,37 @@ async function computeAndWait(request: APIRequestContext, baseURL: string, id: n
   }, { timeout: 30_000 }).toBe('ready');
 }
 
+/**
+ * An Identical pair whose second copy is recorded as smaller (300x400 against
+ * 600x800). Same bytes, so one content hash; the edit endpoint sets the
+ * dimensions, which is how a Cluster can keep a smaller copy without a perceptual
+ * hash (the hash worker is off under test).
+ */
+async function makeSmallerTwinPair(
+  request: APIRequestContext,
+  baseURL: string,
+  apiClient: { createResource: (data: { filePath: string; name: string }) => Promise<{ ID: number; Name: string }> },
+  label: string,
+): Promise<{ keeper: number; twin: number }> {
+  const keeper = await apiClient.createResource({
+    filePath: path.join(__dirname, '../test-assets/compare-scale-600x800.png'), name: `${label} big original`,
+  });
+  const twin = await apiClient.createResource({
+    filePath: path.join(__dirname, '../test-assets/sample-image-3.png'), name: `${label} small twin`,
+  });
+  const stored = await request.get(`${baseURL}/v1/resource/view?id=${keeper.ID}`);
+  const upload = await request.post(`${baseURL}/v1/resource/versions?resourceId=${twin.ID}`, {
+    multipart: {
+      file: { name: 'twin.png', mimeType: 'image/png', buffer: Buffer.from(await stored.body()) },
+      comment: 'made identical to the keeper',
+    },
+  });
+  expect(upload.ok()).toBeTruthy();
+  const edit = await request.post(`${baseURL}/v1/resource/edit`, { form: { ID: String(twin.ID), Width: '300', Height: '400' } });
+  expect(edit.ok()).toBeTruthy();
+  return { keeper: keeper.ID, twin: twin.ID };
+}
+
 // Waits for every CSS transition running on the page to end. Selecting an item
 // collapses the bulk bar's "select all" row, which slides the bar's buttons up,
 // and a Reduction panel animates its height open: a click aimed at a control while
@@ -122,17 +153,6 @@ async function openReductionPanel(page: Page, trigger: Locator) {
   await trigger.click();
   await expect(trigger).toHaveAttribute('aria-expanded', 'true');
   await transitionsSettled(page);
-}
-
-// Clicks the checkbox of a Cluster the click will remove from the filtered list.
-// The card is addressed by its Cluster id rather than by position, and clicked
-// once: uncheck() verifies the state after its click, and finding its element
-// detached by the refresh it re-resolves the locator, so a positional one lands
-// on the next Cluster's checkbox and unchecks that one too.
-async function clickLeavingCluster(page: Page, card: Locator) {
-  const clusterId = await card.getAttribute('data-cluster-id');
-  expect(clusterId).toBeTruthy();
-  await page.locator(`[data-cluster-id="${clusterId}"]`).getByTestId('cluster-checkbox').click();
 }
 
 test.describe('Resource Reduction', () => {
@@ -288,8 +308,8 @@ test.describe('Resource Reduction', () => {
     await expect(page.getByTestId('reduction-external-resources')).toContainText('excluded from matching');
   });
 
-  test('an Identical Cluster arrives checked, and the page says what decided it', async ({ page, apiClient, request, baseURL }) => {
-    const label = `RR checked ${Date.now()}`;
+  test('an Identical Cluster arrives approved, and the page says what it keeps and why', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR approved ${Date.now()}`;
     const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);
     const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID]);
     await computeAndWait(request, baseURL!, id);
@@ -300,9 +320,11 @@ test.describe('Resource Reduction', () => {
     await expect(cluster).toBeVisible();
     await expect(cluster).toHaveAttribute('data-cluster-tier', 'identical');
     // Byte-identity is a fact, so the friction is not here.
-    await expect(cluster.getByTestId('cluster-checkbox')).toBeChecked();
-    await expect(cluster.getByTestId('cluster-decided-by')).toContainText(/Chosen by|Tied on all criteria/);
-    await expect(page.getByText('cannot be undone')).toBeVisible();
+    await expect(cluster.getByTestId('cluster-approve')).toHaveAttribute('aria-pressed', 'true');
+    await expect(cluster.getByTestId('cluster-decided-by')).toContainText(/Keeping .*:|All copies tie/);
+    await expect(cluster.getByTestId('member-role').first()).toHaveText('Keep');
+    await expect(cluster.getByText('Remove', { exact: true })).toBeVisible();
+    await expect(page.getByText('Applying cannot be undone.')).toBeVisible();
   });
 
   test('a decision survives a reload', async ({ page, apiClient, request, baseURL }) => {
@@ -312,21 +334,21 @@ test.describe('Resource Reduction', () => {
     await computeAndWait(request, baseURL!, id);
 
     await page.goto(`/reduction?id=${id}`);
-    const checkbox = page.getByTestId('reduction-cluster').first().getByTestId('cluster-checkbox');
-    await expect(checkbox).toBeChecked();
-    await checkbox.uncheck();
+    const approve = page.getByTestId('reduction-cluster').first().getByTestId('cluster-approve');
+    await expect(approve).toHaveAttribute('aria-pressed', 'true');
+    await approve.click();
 
     // The decision is in the row, not in an Alpine object, which is the whole
-    // point of ADR 0003 — group import's review is destroyed by a reload.
-    await expect(page.getByTestId('reduction-cluster').first().getByTestId('cluster-state'))
-      .toHaveText('Reviewed');
+    // point of ADR 0003: group import's review is destroyed by a reload.
+    await expect(approve).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByTestId('reduction-cluster').first().getByTestId('cluster-state')).toHaveText('Reviewed');
 
     await page.reload();
-    await expect(page.getByTestId('reduction-cluster').first().getByTestId('cluster-checkbox'))
-      .not.toBeChecked();
+    await expect(page.getByTestId('reduction-cluster').first().getByTestId('cluster-approve'))
+      .toHaveAttribute('aria-pressed', 'false');
   });
 
-  test('promoting a member makes it the Winner', async ({ page, apiClient, request, baseURL }) => {
+  test('keeping another copy swaps the Keep and Remove labels', async ({ page, apiClient, request, baseURL }) => {
     const label = `RR promote ${Date.now()}`;
     const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);
     const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID]);
@@ -337,14 +359,15 @@ test.describe('Resource Reduction', () => {
 
     const loser = cluster.locator('[data-testid="reduction-member"]:not([data-winner])').first();
     const loserId = await loser.getAttribute('data-resource-id');
-    await loser.getByTestId('member-promote').click();
+    await loser.getByRole('button', { name: 'Keep this instead' }).click();
 
-    await expect(
-      cluster.locator(`[data-testid="reduction-member"][data-resource-id="${loserId}"]`),
-    ).toHaveAttribute('data-winner', 'true');
+    const promoted = cluster.locator(`[data-testid="reduction-member"][data-resource-id="${loserId}"]`);
+    await expect(promoted).toHaveAttribute('data-winner', 'true');
+    await expect(promoted.getByTestId('member-role')).toHaveText('Keep');
+    await expect(cluster.getByTestId('cluster-decided-by')).toContainText('you chose it');
   });
 
-  test('ejecting a member takes it out of what will be deleted', async ({ page, apiClient, request, baseURL }) => {
+  test('leaving a copy out labels it Not included and offers to include it again', async ({ page, apiClient, request, baseURL }) => {
     const label = `RR eject ${Date.now()}`;
     const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);
     const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID]);
@@ -355,44 +378,55 @@ test.describe('Resource Reduction', () => {
     const loser = cluster.locator('[data-testid="reduction-member"]:not([data-winner])').first();
     const loserId = await loser.getAttribute('data-resource-id');
 
-    await loser.getByTestId('member-eject').click();
+    await loser.getByRole('button', { name: "Don't remove" }).click();
 
-    const ejected = cluster.locator(`[data-testid="reduction-member"][data-resource-id="${loserId}"]`);
-    await expect(ejected).toHaveAttribute('data-ejected', 'true');
-    await expect(ejected.getByText('Ejected')).toBeVisible();
-    await expect(ejected.getByTestId('member-restore')).toBeVisible();
+    const left = cluster.locator(`[data-testid="reduction-member"][data-resource-id="${loserId}"]`);
+    await expect(left).toHaveAttribute('data-ejected', 'true');
+    await expect(left.getByTestId('member-role')).toHaveText('Not included');
+    await expect(left.getByRole('button', { name: 'Include again' })).toBeVisible();
   });
 
-  test('applying merges the checked Clusters and reports what it did', async ({ page, apiClient, request, baseURL }) => {
+  test('the apply dialog states the figures, applying removes the copies and the Open tab follows', async ({ page, apiClient, request, baseURL }) => {
     const label = `RR apply ${Date.now()}`;
     const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);
     const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID]);
     await computeAndWait(request, baseURL!, id);
 
     await page.goto(`/reduction?id=${id}`);
-    const cluster = page.getByTestId('reduction-cluster').first();
     const loserId = Number(
-      await cluster.locator('[data-testid="reduction-member"]:not([data-winner])').first()
+      await page.getByTestId('reduction-cluster').first().locator('[data-testid="reduction-member"]:not([data-winner])').first()
         .getAttribute('data-resource-id'),
     );
 
+    await expect(page.getByTestId('reduction-checked-summary')).toContainText('1 approved');
     await page.getByTestId('reduction-apply').click();
 
-    // The confirm has to name the blast radius, not just ask "are you sure".
-    const dialog = page.locator('[role="alertdialog"]');
+    const dialog = page.getByRole('alertdialog');
     await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText('Apply 1 Cluster and delete 1 Resource?');
-    await expect(dialog).toContainText('checked Clusters on all pages');
-    await expect(dialog).toContainText('Resources will be merged into their Winners');
-    await expect(dialog).toContainText('cannot be undone');
-    await dialog.getByRole('button', { name: 'Apply' }).click();
+    await expect(dialog).toContainText('Apply 1 Cluster?');
+    await expect(dialog.getByTestId('reduction-apply-tier')).toContainText('Identical: 1 Cluster, 1 copy removed.');
+    await expect(dialog).toContainText('They have the same content as the kept copy.');
+    await expect(dialog).toContainText('Their files move to the deleted-files backup unless a version still uses them.');
+    await expect(dialog).toContainText('This does not free disk space.');
+    await expect(dialog).toContainText("delete versions you no longer need from the kept copy's Versions panel");
+    await expect(dialog).toContainText('There is no undo.');
+    // Cancel is the default, so a reflexive Enter destroys nothing.
+    await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    await dialog.getByRole('button', { name: 'Apply 1 Cluster' }).click();
 
-    await expect(page.getByTestId('reduction-apply-result')).toContainText('1 Cluster(s) applied');
-    await expect(page.getByTestId('reduction-cluster').first().getByTestId('cluster-state'))
-      .toHaveText('Applied');
+    const result = page.getByTestId('reduction-apply-result');
+    await expect(result).toContainText('Applied 1 Cluster(s), removed 1 cop(ies).');
+    await expect(result).toContainText('This does not free disk space.');
+    // The Applied tab holds it now, and the page is back on Open.
+    await expect(page.getByTestId('reduction-tab-applied')).toContainText('(1)');
+    await expect(page.getByTestId('reduction-tab-open')).toHaveAttribute('aria-current', 'page');
 
     const gone = await request.get(`${baseURL}/v1/resource?id=${loserId}`);
     expect(gone.status()).toBe(404);
+
+    // A lost response is answered by the plan: the same facts after a reload.
+    await page.reload();
+    await expect(page.getByTestId('reduction-last-apply')).toContainText('applied 1 Cluster and removed 1 copy');
   });
 
   test('the Reduction is listed with its creation date', async ({ page, apiClient, request, baseURL }) => {
@@ -408,169 +442,310 @@ test.describe('Resource Reduction', () => {
     await expect(card).toContainText(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
   });
 
-  test('recompute still works after a review action has moved the version', async ({ page, apiClient, request, baseURL }) => {
+  test('Recompute works after a review action has moved the version', async ({ page, apiClient, request, baseURL }) => {
     const label = `RR version ${Date.now()}`;
     const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);
     const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID]);
     await computeAndWait(request, baseURL!, id);
 
     await page.goto(`/reduction?id=${id}`);
-
-    // An in-page action bumps the row's version. The native forms below never
-    // re-render, so a server-rendered hidden value would now be stale and every
-    // one of them would be refused with a conflict the reviewer did not cause.
-    await page.getByTestId('reduction-cluster').first().getByTestId('cluster-checkbox').uncheck();
-    await expect(page.getByTestId('reduction-cluster').first().getByTestId('cluster-state'))
-      .toHaveText('Reviewed');
+    // An in-page action bumps the row's version; the compute request must carry
+    // the store's, not the one the page was rendered with.
+    await page.getByTestId('reduction-cluster').first().getByTestId('cluster-approve').click();
+    await expect(page.getByTestId('reduction-cluster').first().getByTestId('cluster-state')).toHaveText('Reviewed');
 
     await page.getByTestId('reduction-compute').click();
-    await page.waitForURL(/\/reduction\?id=\d+/);
     await expect(page.getByTestId('reduction-error')).toBeHidden();
-    await expect(page.getByTestId('reduction-page')).toBeVisible();
+    await expect(page.getByTestId('reduction-cluster').first()).toBeVisible({ timeout: 30_000 });
   });
 
-  test('the sidebar filters hide and show Clusters by status, server-side', async ({ page, apiClient, request, baseURL }) => {
-    const label = `RR filter ${Date.now()}`;
+  test('tabs are links with counts, and a skipped Cluster moves to the Skipped tab', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR tabs ${Date.now()}`;
     const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);
     const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID]);
     await computeAndWait(request, baseURL!, id);
 
     await page.goto(`/reduction?id=${id}`);
-    await expect(page.getByTestId('reduction-cluster')).toHaveCount(1);
+    const tabs = page.getByRole('navigation', { name: 'Cluster status' });
+    await expect(tabs.getByRole('link', { name: /^Open/ })).toHaveAttribute('aria-current', 'page');
+    await expect(tabs.getByRole('link', { name: /^Open/ })).toContainText('(1)');
+    await expect(tabs.getByRole('link', { name: /^Skipped/ })).toContainText('(0)');
 
-    // Skip the Cluster via the card's own control.
     await page.getByTestId('reduction-cluster').first().getByTestId('cluster-skip').click();
-    await expect(page.getByTestId('reduction-cluster').first().getByTestId('cluster-state'))
-      .toHaveText('Skipped');
-
-    // Checking "Skipped" in the sidebar and submitting is a server round trip,
-    // not a browser-side hide: the URL carries the query and the page re-renders.
-    await page.getByRole('checkbox', { name: 'Skipped' }).check();
-    await page.getByRole('button', { name: 'Apply Filters' }).click();
-    await page.waitForURL(/Status=skipped/);
-    await expect(page.getByTestId('reduction-cluster')).toHaveCount(1);
-    await expect(page.getByTestId('reduction-cluster').first().getByTestId('cluster-reopen'))
-      .toBeVisible();
-
-    // Filtering to Open excludes the skipped one entirely, and the empty state
-    // says the filter matched nothing — not that the Extent has no repeats.
-    await page.goto(`/reduction?id=${id}&Status=open`);
     await expect(page.getByTestId('reduction-cluster')).toHaveCount(0);
-    await expect(page.getByText('No Clusters match these filters')).toBeVisible();
+    await expect(page.getByTestId('reduction-empty')).toContainText('No open Clusters.');
+    await expect(tabs.getByRole('link', { name: /^Skipped/ })).toContainText('(1)');
 
-    // A filter-affecting action while filtered: reopening the Cluster from the
-    // `Status=skipped` view removes its card, and the heading count follows the
-    // server's filtered count — the morph re-syncs it rather than leaving it at
-    // the stale pre-action figure.
-    await page.goto(`/reduction?id=${id}&Status=skipped`);
+    await tabs.getByRole('link', { name: /^Skipped/ }).click();
+    await page.waitForURL(/status=skipped/);
     await expect(page.getByTestId('reduction-cluster')).toHaveCount(1);
+    await expect(page.getByTestId('reduction-tab-skipped')).toHaveAttribute('aria-current', 'page');
+
+    // Reopening from the Skipped tab removes the card and the heading count follows.
     await page.getByTestId('reduction-cluster').first().getByTestId('cluster-reopen').click();
     await expect(page.getByTestId('reduction-cluster')).toHaveCount(0);
-    await expect(page.getByText('No Clusters match these filters')).toBeVisible();
     await expect(page.locator('[data-reduction-count]')).toHaveText('(0)');
   });
 
-  test('checking a Cluster under the open filter leaves the next Cluster\'s checkbox alone', async ({ page, apiClient, request, baseURL }) => {
-    // The morph bug this pins: unchecking (or checking) one Cluster marks it
-    // Reviewed, so under Status=open the refreshed render no longer contains it
-    // and the card disappears. Alpine.morph used to match the articles
-    // positionally, so the DOM node behind it was patched into the next
-    // Cluster's shape — and the checkbox state the reviewer just changed (a
-    // DOM property, which the morph's attribute patch never resets) bled onto
-    // the next Cluster's card. The key="{{ cluster.ID }}" on the article makes
-    // the morph match by Cluster identity instead.
-    const label = `RR morph key ${Date.now()}`;
-    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 2);
-    const id = await createReduction(request, baseURL!, label, ids);
+  test('filter chips toggle a query parameter and Clear filters resets them', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR chips ${Date.now()}`;
+    const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);
+    const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID]);
     await computeAndWait(request, baseURL!, id);
 
-    await page.goto(`/reduction?id=${id}&Status=open`);
-    const clusters = page.getByTestId('reduction-cluster');
-    await expect(clusters).toHaveCount(2);
+    await page.goto(`/reduction?id=${id}`);
+    await page.getByTestId('reduction-chip-tier-near-identical').click();
+    await page.waitForURL(/tier=near/);
+    await expect(page.getByTestId('reduction-chip-tier-near-identical')).toHaveAttribute('aria-current', 'true');
+    await expect(page.getByText('No Clusters match these filters.')).toBeVisible();
 
-    // Identical Clusters arrive checked, so the click is an uncheck — it makes
-    // the Cluster Reviewed and the filter drops it.
-    await clickLeavingCluster(page, clusters.first());
-
-    await expect(clusters).toHaveCount(1);
-    // The survivor's own server-rendered state, not the clicked state of the
-    // card that just left the filter.
-    await expect(clusters.first().getByTestId('cluster-checkbox')).toBeChecked();
-    await expect(clusters.first().getByTestId('cluster-state')).toHaveText('Open');
-  });
-
-  test('a stale clicked checkbox is repaired to server truth by the next refresh', async ({ page, apiClient, request, baseURL }) => {
-    // The checkbox state is server-rendered as an attribute, while a click sets
-    // the DOM property. A click whose action did not stick (swallowed by the
-    // busy window, a failed POST, one cut off by navigating away) leaves the
-    // property diverged from server truth — and Alpine.morph's attribute
-    // patching never resets it, so the card keeps advertising a decision the
-    // server never recorded. Every refresh must force server truth back on.
-    const label = `RR repair ${Date.now()}`;
-    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 2);
-    const id = await createReduction(request, baseURL!, label, ids);
-    await computeAndWait(request, baseURL!, id);
-
-    await page.goto(`/reduction?id=${id}&Status=open`);
-    const clusters = page.getByTestId('reduction-cluster');
-    await expect(clusters).toHaveCount(2);
-
-    // Paint the phantom: the second cluster's box shows unchecked while the
-    // server truth is checked (its uncheck click was swallowed or cut off).
-    await clusters.nth(1).getByTestId('cluster-checkbox').evaluate(el => { el.checked = false; });
-    // History restoration must not repaint saved states onto reloaded pages,
-    // where the card set has changed since the state was saved.
-    await expect(clusters.nth(1).getByTestId('cluster-checkbox')).toHaveAttribute('autocomplete', 'off');
-
-    // An explicit action on the first cluster refreshes the page. The first
-    // cluster leaves the open filter; the second one stays and must have been
-    // repaired to its server-rendered state.
-    await clickLeavingCluster(page, clusters.nth(0));
-
-    await expect(clusters).toHaveCount(1);
-    await expect(clusters.first().getByTestId('cluster-checkbox')).toBeChecked();
-  });
-
-  test('an action that empties the current page lands on the last valid page', async ({ page, apiClient, request, baseURL }) => {
-    const label = `RR page ${Date.now()}`;
-    // 21 Identical Clusters: page 2 of the Status=open filter holds exactly one.
-    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 21);
-    const id = await createReduction(request, baseURL!, label, ids);
-    await computeAndWait(request, baseURL!, id);
-
-    await page.goto(`/reduction?id=${id}&Status=open&page=2`);
+    await page.getByTestId('reduction-clear-filters').click();
     await expect(page.getByTestId('reduction-cluster')).toHaveCount(1);
 
-    // Skipping the only Cluster on page 2 drops the match set to 20, so page 2
-    // no longer exists. The refresh follows the server's redirect to page 1 and
-    // adopts its URL without a full reload.
-    await page.getByTestId('reduction-cluster').first().getByTestId('cluster-skip').click();
-    await expect.poll(() => page.url()).toContain('page=1');
-    await expect(page.getByTestId('reduction-cluster')).toHaveCount(20);
-    await expect(page.locator('[data-reduction-count]')).toHaveText('(20)');
-  });
-
-  test('Apply can create a second page under a filter, and the pagination appears', async ({ page, apiClient, request, baseURL }) => {
-    const label = `RR applypage ${Date.now()}`;
-    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 21);
-    const id = await createReduction(request, baseURL!, label, ids);
-    await computeAndWait(request, baseURL!, id);
-
-    // Filtered to a status nothing is in yet: empty. The footer nav renders
-    // even for an empty match set, but with no page links to click.
-    await page.goto(`/reduction?id=${id}&Status=applied`);
+    await page.getByTestId('reduction-chip-approval-notapproved').click();
+    await page.waitForURL(/approval=unapproved/);
     await expect(page.getByTestId('reduction-cluster')).toHaveCount(0);
-    await expect(page.getByText('No Clusters match these filters')).toBeVisible();
-    await expect(page.locator('nav[aria-label="Pagination"] a')).toHaveCount(0);
+  });
 
-    // Applying moves all 21 checked Clusters into the filtered status. The
-    // refreshed page's nav gains the page links it did not have, so page 2 is
-    // reachable without a reload.
+  test('the sort and page size selects change the list from the URL', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR sort ${Date.now()}`;
+    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 2);
+    const id = await createReduction(request, baseURL!, label, ids);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}`);
+    await page.getByTestId('reduction-sort').selectOption('size');
+    await page.waitForURL(/sort=size/);
+    await expect(page.getByTestId('reduction-sort')).toHaveValue('size');
+
+    await page.getByTestId('reduction-page-size').selectOption('50');
+    await page.waitForURL(/pageSize=50/);
+    await expect(page.getByTestId('reduction-page-size')).toHaveValue('50');
+    // The sort survived the second change.
+    await expect(page).toHaveURL(/sort=size/);
+  });
+
+  test('a page of 100 renders and acts without a stall', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR hundred ${Date.now()}`;
+    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 3);
+    const id = await createReduction(request, baseURL!, label, ids);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}&pageSize=100`);
+    await expect(page.getByTestId('reduction-page-size')).toHaveValue('100');
+    const count = await page.getByTestId('reduction-cluster').count();
+    expect(count).toBeGreaterThan(0);
+
+    const started = Date.now();
+    await page.getByTestId('reduction-clear-page').click();
+    await expect(page.getByTestId('reduction-bulk-notice')).toContainText('Cleared');
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  test('bulk Approve page skips a Cluster that needs attention and says so', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR bulk ${Date.now()}`;
+    const plain = await makeIdenticalPairs(request, baseURL!, apiClient, label, 1);
+    const smaller = await makeSmallerTwinPair(request, baseURL!, apiClient, label);
+    const id = await createReduction(request, baseURL!, label, [...plain, smaller.keeper, smaller.twin]);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}`);
+    await page.getByTestId('reduction-clear-page').click();
+    await expect(page.getByTestId('reduction-bulk-notice')).toContainText('Cleared');
+
+    // Promote the smaller copy: the Cluster now needs a decision of its own.
+    const attention = page.locator('[data-testid="reduction-cluster"]').filter({ has: page.getByText('small twin') });
+    await attention.getByRole('button', { name: 'Keep this instead' }).click();
+    await expect(attention.getByTestId('cluster-keeps-smaller')).toBeVisible();
+
+    await page.getByTestId('reduction-approve-page').click();
+    await expect(page.getByTestId('reduction-bulk-notice')).toContainText('1 need individual review.');
+    await expect(attention.getByTestId('cluster-approve')).toHaveAttribute('aria-pressed', 'false');
+    const others = page.locator('[data-testid="reduction-cluster"]').filter({ hasNot: page.getByTestId('cluster-keeps-smaller') });
+    await expect(others.first().getByTestId('cluster-approve')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('reduction-bulk-notice').getByRole('link', { name: 'Review them' })).toHaveAttribute('href', /attention=true/);
+  });
+
+  test('Approve all Identical approves the whole plan and carries its count', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR allident ${Date.now()}`;
+    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 2);
+    const id = await createReduction(request, baseURL!, label, ids);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}`);
+    await page.getByTestId('reduction-clear-page').click();
+    await expect(page.getByTestId('reduction-checked-summary')).toContainText('0 approved');
+    await expect(page.getByTestId('reduction-apply')).toBeDisabled();
+
+    const button = page.getByTestId('reduction-approve-identical');
+    const expected = Number(/\((\d+)\)/.exec((await button.textContent()) || '')![1]);
+    expect(expected).toBeGreaterThan(0);
+    await button.click();
+    await expect(page.getByTestId('reduction-bulk-notice')).toContainText(`Approved ${expected}.`);
+    await expect(page.getByTestId('reduction-checked-summary')).toContainText(`${expected} approved`);
+  });
+
+  test('keeping a smaller copy warns, offers the larger one and the dialog counts it', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR smaller ${Date.now()}`;
+    const smaller = await makeSmallerTwinPair(request, baseURL!, apiClient, label);
+    const id = await createReduction(request, baseURL!, label, [smaller.keeper, smaller.twin]);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}`);
+    const cluster = page.getByTestId('reduction-cluster').first();
+    await expect(cluster.getByTestId('cluster-keeps-smaller')).toHaveCount(0);
+
+    await cluster.getByRole('button', { name: 'Keep this instead' }).click();
+    const warning = cluster.getByTestId('cluster-keeps-smaller');
+    await expect(warning).toContainText('The kept copy has a lower resolution than a copy being removed (300×400 vs 600×800).');
+    await expect(cluster.getByTestId('cluster-decided-by')).toContainText('you chose it');
+
+    // An Identical Cluster arrives approved and promoting leaves it so; the dialog says what that means.
+    await expect(cluster.getByTestId('cluster-approve')).toHaveAttribute('aria-pressed', 'true');
     await page.getByTestId('reduction-apply').click();
-    await page.locator('[role="alertdialog"]').getByRole('button', { name: 'Apply' }).click();
-    await expect(page.getByTestId('reduction-cluster')).toHaveCount(20);
-    await expect(page.locator('[data-reduction-count]')).toHaveText('(21)');
-    await page.locator('nav[aria-label="Pagination"]').getByRole('link', { name: 'Page 2' }).click();
-    await expect(page.getByTestId('reduction-cluster')).toHaveCount(1);
+    await expect(page.getByTestId('reduction-apply-keeps-smaller')).toContainText('keeps a lower-resolution copy than one they remove');
+    await page.getByRole('button', { name: 'Cancel' }).click();
+
+    await warning.getByRole('button', { name: 'Keep the larger copy instead' }).click();
+    await expect(cluster.getByTestId('cluster-keeps-smaller')).toHaveCount(0);
+    await expect(cluster.locator('[data-testid="reduction-member"][data-winner] [data-testid="member-role"]')).toHaveText('Keep');
+  });
+
+  test('facts that differ from the kept copy are marked with a not-equal sign and named for a screen reader', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR facts ${Date.now()}`;
+    const smaller = await makeSmallerTwinPair(request, baseURL!, apiClient, label);
+    const id = await createReduction(request, baseURL!, label, [smaller.keeper, smaller.twin]);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}`);
+    const removed = page.locator('[data-testid="reduction-member"]:not([data-winner])').first();
+    await expect(removed.locator('.reduction-fact--differs').first()).toContainText('≠');
+    await expect(removed.locator('.reduction-fact--differs').first()).toContainText('300×400');
+    await expect(removed.getByText('(differs from the kept copy)').first()).toBeAttached();
+    const kept = page.locator('[data-testid="reduction-member"][data-winner]').first();
+    await expect(kept.locator('.reduction-fact--differs')).toHaveCount(0);
+  });
+
+  test('j/k/a/s work only inside the Clusters, and the shortcuts dialog turns them off', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR keys ${Date.now()}`;
+    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 2);
+    const id = await createReduction(request, baseURL!, label, ids);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}`);
+    const cards = page.getByTestId('reduction-cluster');
+    const total = await cards.count();
+    test.skip(total < 2, 'needs two Clusters');
+
+    // Outside the region: nothing happens.
+    await page.getByTestId('reduction-compute').focus();
+    await page.keyboard.press('j');
+    await expect(page.locator('article[data-cluster-id]:focus')).toHaveCount(0);
+
+    // Inside: j moves to the next card, k back, a toggles approval.
+    await cards.first().getByTestId('cluster-approve').focus();
+    await expect(cards.first().getByTestId('cluster-approve')).toHaveAttribute('aria-keyshortcuts', 'A');
+    await page.keyboard.press('j');
+    await expect(cards.nth(1)).toBeFocused();
+    await page.keyboard.press('k');
+    await expect(cards.first()).toBeFocused();
+
+    await expect(cards.first().getByTestId('cluster-approve')).toHaveAttribute('aria-pressed', 'true');
+    await page.keyboard.press('a');
+    await expect(cards.first().getByTestId('cluster-approve')).toHaveAttribute('aria-pressed', 'false');
+
+    // s skips it; the card leaves Open and focus lands on the card that took its place.
+    const firstId = await cards.first().getAttribute('data-cluster-id');
+    await page.keyboard.press('s');
+    await expect(page.locator(`[data-cluster-id="${firstId}"]`)).toHaveCount(0);
+    await expect(page.locator('article[data-cluster-id]:focus')).toHaveCount(1);
+
+    // The dialog opens by button and carries the off switch.
+    await page.getByTestId('reduction-shortcuts-button').click();
+    const dialog = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
+    await expect(dialog).toBeVisible();
+    await dialog.getByLabel('Turn off keyboard shortcuts').check();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+
+    await expect(page.getByTestId('cluster-approve').first()).not.toHaveAttribute('aria-keyshortcuts', /.+/);
+    await page.getByTestId('cluster-approve').first().focus();
+    const before = await page.getByTestId('cluster-approve').first().getAttribute('aria-pressed');
+    await page.keyboard.press('a');
+    await expect(page.getByTestId('cluster-approve').first()).toHaveAttribute('aria-pressed', before!);
+  });
+
+  test('the settings form offers presets, shows the notice when the rule changed, and saves without leaving', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR settings ${Date.now()}`;
+    const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);
+    const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID]);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}`);
+    const preset = page.getByTestId('reduction-preset');
+    await expect(preset).toHaveValue('best');
+    await expect(page.getByTestId('winner-rule-slot').first()).toBeHidden();
+    await expect(page.getByTestId('reduction-settings-changed')).toHaveCount(0);
+
+    await preset.selectOption('smallest');
+    await page.getByTestId('reduction-settings-save').click();
+    await expect(page.getByTestId('reduction-settings-saved')).toBeVisible();
+    await expect(page.getByTestId('reduction-settings-changed')).toContainText('Settings changed since the last run.');
+    // The page kept its place: still on the review, Clusters still there.
+    await expect(page.getByTestId('reduction-cluster').first()).toBeVisible();
+
+    await page.reload();
+    await expect(page.getByTestId('reduction-preset')).toHaveValue('smallest');
+
+    await page.getByTestId('reduction-preset').selectOption('custom');
+    await expect(page.getByTestId('winner-rule-slot').first()).toBeVisible();
+    await expect(page.getByText('Add removed copies as versions of the kept copy')).toBeVisible();
+  });
+
+  test('Find duplicates shows progress and lands on the Clusters', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR live ${Date.now()}`;
+    const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);
+    const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID]);
+
+    await page.goto(`/reduction?id=${id}`);
+    // Before the first compute: the sentence and the one action, nothing else.
+    await expect(page.getByTestId('reduction-intro')).toContainText('Nothing changes until you review and apply.');
+    await expect(page.getByTestId('reduction-tabs')).toHaveCount(0);
+    await expect(page.getByTestId('reduction-apply-bar')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Find duplicates' }).click();
+    await expect(page.getByTestId('reduction-cluster').first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('reduction-status')).toHaveText('Ready to review');
+  });
+
+  test('on a phone the apply bar stays in view and the bulk buttons sit in a More menu', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR mobile ${Date.now()}`;
+    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 3);
+    const id = await createReduction(request, baseURL!, label, ids);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.setViewportSize({ width: 390, height: 800 });
+    await page.goto(`/reduction?id=${id}`);
+    const bar = page.getByTestId('reduction-apply-bar');
+    await expect(bar).toBeInViewport();
+    await expect(page.getByTestId('reduction-apply')).toBeInViewport();
+    await expect(page.getByTestId('reduction-approve-page')).toBeHidden();
+
+    await page.getByTestId('reduction-more').click();
+    await expect(page.getByTestId('reduction-more')).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByTestId('reduction-approve-page')).toBeVisible();
+    for (const testid of ['reduction-apply', 'reduction-more', 'reduction-approve-page']) {
+      const box = await page.getByTestId(testid).boundingBox();
+      expect(box!.height).toBeGreaterThanOrEqual(43);
+    }
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('reduction-approve-page')).toBeHidden();
+
+    // The last card is never left under the bar.
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    const last = page.getByTestId('reduction-cluster').last();
+    const lastBox = await last.boundingBox();
+    const barBox = await bar.boundingBox();
+    expect(lastBox!.y + lastBox!.height).toBeLessThanOrEqual(barBox!.y + 1);
   });
 });
