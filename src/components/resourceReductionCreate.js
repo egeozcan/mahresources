@@ -1,5 +1,6 @@
 import { createAndOpen } from './reductionStart.js';
-import { PRESETS as WINNER_PRESETS } from './reductionSettings.js';
+import { PRESETS as WINNER_PRESETS, HINTS } from './reductionSettings.js';
+import { defaultReductionName } from './reductionText.js';
 
 // The Winner Rule presets are the review page's Settings presets, so a Reduction
 // created with one is shown with that same preset rather than as Custom.
@@ -25,6 +26,11 @@ export function reductionCreateForm() {
       });
     },
 
+    // The same sentences as the review page's Settings.
+    get presetHint() {
+      return HINTS[this.preset] || '';
+    },
+
     winnerRule() {
       if (this.preset === 'custom') return this.rule.filter(Boolean);
       return WINNER_PRESETS[this.preset];
@@ -46,7 +52,7 @@ export function reductionCreateForm() {
       this.error = '';
       try {
         await createAndOpen({
-          name: data.get('name').trim(),
+          name: data.get('name').trim() || defaultReductionName({ all, groups: groupIds.length, resources: resourceIds.length }),
           resourceIds,
           groupIds,
           all,

@@ -1,4 +1,5 @@
 import { createAndOpen } from './reductionStart.js';
+import { defaultReductionName } from './reductionText.js';
 
 /**
  * The bulk-bar handoff into a Resource Reduction.
@@ -41,6 +42,18 @@ export function reductionBulkAction({ entity = 'resource', ownerId = 0 } = {}) {
       return `Find duplicates in ${count} selected ${noun}${count === 1 ? '' : 's'}`;
     },
 
+    /** What the Reduction is called when the field is left empty. */
+    defaultName() {
+      if (ownerId) {
+        // The group's own heading: the page this panel sits on is that group.
+        const heading = document.getElementById('page-title');
+        const groupName = (heading?.querySelector('inline-edit')?.textContent || heading?.textContent || '').replace(/\s+/g, ' ').trim();
+        return defaultReductionName({ groupName });
+      }
+      const count = this.selectedIds().length;
+      return defaultReductionName(entity === 'group' ? { groups: count } : { resources: count });
+    },
+
     hasSelection() {
       return ownerId !== 0 || this.selectedIds().length > 0;
     },
@@ -52,9 +65,23 @@ export function reductionBulkAction({ entity = 'resource', ownerId = 0 } = {}) {
     async toggle() {
       this.open = !this.open;
       this.error = '';
+      if (this.open) this.revealPanel();
       if (this.open && !this.loadedExisting) {
         await this.loadExisting();
       }
+    },
+
+    /**
+     * The panel opens beneath its button, which on a group page is often near the
+     * bottom of the screen. Once it has finished expanding, bring it into view.
+     */
+    revealPanel() {
+      setTimeout(() => {
+        const panel = this.$refs?.panel;
+        if (!this.open || !panel) return;
+        const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+        panel.scrollIntoView({ block: 'nearest', behavior: reduce ? 'auto' : 'smooth' });
+      }, 300);
     },
 
     /**
@@ -106,7 +133,7 @@ export function reductionBulkAction({ entity = 'resource', ownerId = 0 } = {}) {
         }
         body.id = Number(this.existingId);
       } else {
-        body.name = this.name.trim();
+        body.name = this.name.trim() || this.defaultName();
         body.excludeExternalResources = this.excludeExternalResources;
       }
       void this.post(body);

@@ -54,7 +54,8 @@ export const shortcutMethods = {
     const key = event.key;
     if (key === '?') {
       event.preventDefault();
-      this.openDialog('shortcuts', event);
+      // Focus goes back to the control the reviewer was on, not to the region this handler is bound to.
+      this.openDialog('shortcuts', null, event.target);
       return;
     }
     if (!['j', 'k', 'a', 's', 'x'].includes(key)) return;

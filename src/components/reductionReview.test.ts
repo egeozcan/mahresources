@@ -61,6 +61,7 @@ describe('reduction apply dialog figures', () => {
     document.body.innerHTML = page();
     const store = reviewStore();
     store.seed();
+    store.confirmed = { figures: store.figures };
 
     const [identical, near] = store.tierSummaries();
     expect(identical.headline).toBe('Identical: 2 Clusters, 3 copies removed.');
@@ -75,6 +76,7 @@ describe('reduction apply dialog figures', () => {
     document.body.innerHTML = page({ figures: { identical: { clusters: 0, losers: 0, keepAsVersion: false }, near: { clusters: 1, losers: 2, keepAsVersion: false }, keepsSmaller: 0 } });
     const store = reviewStore();
     store.seed();
+    store.confirmed = { figures: store.figures };
 
     expect(store.tierSummaries().map((t: { key: string }) => t.key)).toEqual(['near']);
   });
@@ -90,5 +92,19 @@ describe('reduction compute error handoff', () => {
 
     expect(store.startError).toBe('no capacity');
     expect(window.sessionStorage.getItem('reduction-compute-error-1')).toBeNull();
+  });
+});
+
+describe('reduction store figures and versions', () => {
+  it('marks the figures stale from a write until the page is read again', () => {
+    document.body.innerHTML = page();
+    const store = reviewStore();
+    store.seed();
+    expect(store.figuresStale).toBe(false);
+    store.adoptVersion(9);
+    expect(store.version).toBe(9);
+    expect(store.figuresStale).toBe(true);
+    store._readState(document);
+    expect(store.figuresStale).toBe(false);
   });
 });

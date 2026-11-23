@@ -5,6 +5,7 @@ import { focusedElement, restoreFocus } from '../utils/focus.js';
 import { makeModal } from './reductionModal.js';
 import { computeMethods } from './reductionCompute.js';
 import { shortcutMethods, readShortcutPreference } from './reductionShortcuts.js';
+import { plural, CLUSTER_NOUN, COPIES } from './reductionText.js';
 
 // The Clusters container, addressed by its own attribute rather than through
 // findListContainer: that helper takes the first `.items-container` on the page,
@@ -46,6 +47,17 @@ function repairApprovalButtons(from, fresh) {
     if (pressed != null && button.getAttribute('aria-pressed') !== pressed) {
       button.setAttribute('aria-pressed', pressed);
     }
+  }
+}
+
+/**
+ * A disclosure marked data-keep-open is the reviewer's to open and close: the
+ * refreshed page carries the server's default, so carry the live state over to it
+ * before morph patches the attribute away.
+ */
+function keepOpenState(el, toEl) {
+  if (el?.hasAttribute?.('data-keep-open') && toEl?.hasAttribute?.('data-keep-open')) {
+    toEl.toggleAttribute('open', el.open);
   }
 }
 
@@ -104,6 +116,7 @@ export function registerReductionReviewStore(Alpine) {
     version: 0,
     status: '',
     jobId: '',
+    tab: 'open',
     // Counted by the server over the whole plan. The page can only see its own
     // Clusters, and apply acts on every page: a confirm that counts cards in this
     // DOM understates the blast radius by however many pages the reviewer has not
@@ -114,6 +127,22 @@ export function registerReductionReviewStore(Alpine) {
     figures: { identical: { clusters: 0, losers: 0, keepAsVersion: false }, near: { clusters: 0, losers: 0, keepAsVersion: false }, keepsSmaller: 0 },
     bulkFigures: { identicalApprovable: 0, identicalOpen: 0 },
     busy: false,
+    // The totals above are the server's only while no write has landed since the
+    // last page read. A write that lands but whose re-read fails leaves them stale:
+    // Apply must not trust them (see apply()).
+    figuresStale: false,
+    refreshing: 0,
+    // What the apply dialog was opened on: the version and the figures it shows,
+    // read in one go. Apply sends exactly these back, never the live fields.
+    confirmed: null,
+    // The previous apply's start time, so a lost response can tell a new record from an old one.
+    lastApplyStartedAt: '',
+    // The server's settings values as of the last page read, for the Settings form.
+    serverSettings: null,
+    // The counts the apply banner reports, from the response or from the plan.
+    applyCounts: null,
+    // Set while the outcome of an apply is not known (a lost response).
+    applyUnknown: '',
     // An apply running here, and one the plan says is running (another tab's, or a
     // lost response's). Either blocks every write.
     localApplying: false,
@@ -163,6 +192,29 @@ export function registerReductionReviewStore(Alpine) {
         // Without storage the sentence has no reason to give, and nothing says there was one.
       }
       if (this.status === 'computing') this.watchCompute();
+      this._clearBar();
+    },
+
+    /**
+     * Keep whatever takes focus clear of the sticky apply bar (WCAG 2.4.11). The
+     * bar's height is not a constant (it wraps on a phone, and it is absent on the
+     * tabs that have nothing to apply), so the page's scroll padding follows its
+     * measured height. A browser scrolling a focused control into view stops that
+     * much short of the viewport's bottom edge.
+     */
+    _clearBar() {
+      const bar = document.querySelector('.reduction-bar');
+      if (!bar || typeof ResizeObserver === 'undefined') return;
+      const root = document.documentElement;
+      const apply = () => {
+        const height = bar.getBoundingClientRect().height;
+        root.style.scrollPaddingBottom = height > 0 ? `${Math.ceil(height) + 16}px` : '';
+      };
+      this._barObserver?.disconnect();
+      this._barObserver = new ResizeObserver(apply);
+      this._barObserver.observe(bar);
+      apply();
+      window.addEventListener('pagehide', () => { root.style.scrollPaddingBottom = ''; }, { once: true });
     },
 
     /** Take the numbers the server rendered, from the page or from a refreshed copy of it. */
@@ -173,6 +225,7 @@ export function registerReductionReviewStore(Alpine) {
       this.reductionId = state.id;
       this.version = state.version;
       this.status = state.status;
+      this.tab = state.tab || 'open';
       this.jobId = state.jobId;
       this.checkedCount = state.checked;
       this.checkedLoserCount = state.checkedLosers;
@@ -182,6 +235,19 @@ export function registerReductionReviewStore(Alpine) {
       // From the plan: another tab's apply blocks this one's, and a finished one
       // does not.
       this.serverApplying = state.applying;
+      this.lastApplyStartedAt = state.lastApplyStartedAt || '';
+      this.serverSettings = state.settings || null;
+      this.figuresStale = false;
+    },
+
+    /**
+     * Take the version a write returned. The figures still describe the plan as it
+     * was before the write, so they are stale until the page is read again; that
+     * read (_readState) is the only thing that clears it.
+     */
+    adoptVersion(version) {
+      this.version = version;
+      this.figuresStale = true;
     },
 
     isExpanded(clusterId, oversized) {
@@ -233,7 +299,7 @@ export function registerReductionReviewStore(Alpine) {
           throw new Error(message);
         }
         const json = await response.json();
-        this.version = json.version;
+        this.adoptVersion(json.version);
         await this.refresh(focus);
         window.mahAnnounce?.(ANNOUNCEMENTS[action] || 'Cluster updated.');
       } catch (err) {
@@ -244,7 +310,9 @@ export function registerReductionReviewStore(Alpine) {
         try {
           await this.refresh(focus);
         } catch {
-          // The action's own error stays on screen if the repair fetch fails too.
+          // The action's own error stays on screen if the repair fetch fails too,
+          // and the totals can no longer be vouched for.
+          this.figuresStale = true;
         }
       } finally {
         this.busy = false;
@@ -286,10 +354,10 @@ export function registerReductionReviewStore(Alpine) {
         });
         if (!response.ok) throw new Error(await window.errorMessageFromResponse(response));
         const json = await response.json();
-        this.version = json.version;
+        this.adoptVersion(json.version);
         const needs = json.needsReview || 0;
         const text = action === 'check'
-          ? `Approved ${json.changed}.${needs ? ` ${needs} need individual review.` : ''}`
+          ? `Approved ${json.changed}.${needs ? ` ${needs} ${needs === 1 ? 'needs' : 'need'} individual review.` : ''}`
           : `Cleared ${json.changed}.`;
         const focus = cardFocus();
         await this.refresh(focus);
@@ -299,7 +367,7 @@ export function registerReductionReviewStore(Alpine) {
         this.error = err.message;
         window.mahAnnounce?.(`Could not update Clusters: ${err.message}`, { assertive: true });
         // A count that has moved, or a plan that has: show the truth.
-        try { await this.refresh(); } catch { /* the action's own error stays */ }
+        try { await this.refresh(); } catch { this.figuresStale = true; /* the action's own error stays */ }
       } finally {
         this.busy = false;
       }
@@ -327,9 +395,17 @@ export function registerReductionReviewStore(Alpine) {
 
     // --- Dialogs -----------------------------------------------------------
 
-    openDialog(kind, event) {
+    /**
+     * `opener` is the element to give focus back to. Without it the event's own
+     * target is used, and failing that the focused element: a key handler bound to
+     * the Clusters region has the region as its currentTarget, which is not where
+     * the reviewer was.
+     */
+    openDialog(kind, event, opener = null) {
       if (this.dialog) return;
-      this._opener = event?.currentTarget?.nodeType === 1 ? event.currentTarget : focusedElement();
+      this._opener = opener?.nodeType === 1
+        ? opener
+        : (event?.currentTarget?.nodeType === 1 ? event.currentTarget : focusedElement());
       this.dialog = kind;
     },
 
@@ -364,11 +440,13 @@ export function registerReductionReviewStore(Alpine) {
     /** The per-tier lines of the apply dialog, from the server's figures. */
     tierSummaries() {
       const out = [];
+      const figures = this.confirmed?.figures;
+      if (!figures) return out;
       for (const [key, label, same] of [['identical', 'Identical', true], ['near', 'Near-Identical', false]]) {
-        const tier = this.figures[key];
+        const tier = figures[key];
         if (!tier || tier.clusters === 0) continue;
-        const clusters = `${tier.clusters} Cluster${tier.clusters === 1 ? '' : 's'}`;
-        const copies = `${tier.losers} cop${tier.losers === 1 ? 'y' : 'ies'} removed`;
+        const clusters = plural(tier.clusters, ...CLUSTER_NOUN);
+        const copies = `${plural(tier.losers, ...COPIES)} removed`;
         const files = tier.keepAsVersion
           ? 'Their files are added as versions of the kept copy.'
           : 'Their files move to the deleted-files backup unless a version still uses them.';
@@ -387,46 +465,121 @@ export function registerReductionReviewStore(Alpine) {
 
     // --- Apply -------------------------------------------------------------
 
-    apply(event) {
-      if (this.busy || this.applying) return;
-      if (this.checkedCount === 0) {
+    async apply(event) {
+      if (this.busy || this.applying || this.refreshing) return;
+      const opener = event?.currentTarget?.nodeType === 1 ? event.currentTarget : focusedElement();
+      if (this.checkedCount === 0 && !this.figuresStale) {
         this.error = 'Approve at least one Cluster to apply.';
         return;
       }
-      this.openDialog('apply', event);
+      // The totals the dialog shows must be the ones the version it sends belongs
+      // to. After a write whose re-read failed they are not, so read again first
+      // and refuse to open the dialog when that fails too.
+      if (this.figuresStale) {
+        this.error = '';
+        try {
+          await this.refresh();
+        } catch (err) {
+          this.error = `The approved totals could not be confirmed (${err.message}), so nothing was applied. Reload the page and try again.`;
+          window.mahAnnounce?.(this.error, { assertive: true });
+          return;
+        }
+        if (this.checkedCount === 0) {
+          this.error = 'Approve at least one Cluster to apply.';
+          return;
+        }
+      }
+      this.confirmed = {
+        version: this.version,
+        checked: this.checkedCount,
+        losers: this.checkedLoserCount,
+        figures: JSON.parse(JSON.stringify(this.figures)),
+      };
+      this.openDialog('apply', null, opener);
+    },
+
+    /** The text of the apply report: the response's own counts, or the plan's after a lost response. */
+    applySummary() {
+      const counts = this.applyCounts;
+      if (!counts) return '';
+      // A scoped viewer's own apply can include Clusters they can no longer see:
+      // the plan then withholds the numbers.
+      if (counts.hidden) return 'The apply finished.';
+      return `Applied ${plural(counts.applied, ...CLUSTER_NOUN)}, removed ${plural(counts.removed, ...COPIES)}.`;
     },
 
     async confirmApply() {
-      if (this.busy || this.applying) return;
+      if (this.busy || this.applying || !this.confirmed) return;
+      // What the reviewer was shown, not what the store says now.
+      const confirmed = this.confirmed;
       this.busy = true;
       this.localApplying = true;
-      this.applyingCount = this.checkedCount;
+      this.applyingCount = confirmed.checked;
       this.error = '';
+      this.applyUnknown = '';
       this.bulkNotice = null;
       // The dialog's buttons are about to be replaced; keep focus on the dialog.
       setTimeout(() => document.querySelector('[data-testid="reduction-dialog"]')?.focus(), 0);
+      const previousStart = this.lastApplyStartedAt;
       let outcome = null;
+      let lost = false;
       try {
-        const response = await fetch('/v1/reduction/apply', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify({ id: this.reductionId, version: this.version }),
-        });
-        if (!response.ok) throw new Error(await window.errorMessageFromResponse(response));
-        outcome = await response.json();
+        let response;
+        try {
+          response = await fetch('/v1/reduction/apply', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify(applyRequest(this.reductionId, confirmed)),
+          });
+        } catch {
+          // No response at all: the request may or may not have been processed.
+          lost = true;
+        }
+        if (response) {
+          if (response.ok) {
+            try {
+              outcome = await response.json();
+            } catch {
+              lost = true;
+            }
+          } else if (LOST_STATUSES.has(response.status)) {
+            // A gateway gave up on a request the server may still be running.
+            lost = true;
+          } else {
+            throw new Error(await window.errorMessageFromResponse(response));
+          }
+        }
       } catch (err) {
+        // The server answered and refused: nothing was applied.
         this.error = err.message;
         window.mahAnnounce?.(`Nothing was applied: ${err.message}`, { assertive: true });
+      }
+
+      let recovered = null;
+      if (lost) {
+        this.applyUnknown = 'The result of this apply is unknown; checking…';
+        window.mahAnnounce?.(this.applyUnknown, { assertive: true });
+        recovered = await this._recoverApply(previousStart);
+        this.applyUnknown = '';
       }
       this.localApplying = false;
 
       if (outcome) {
         this.applyResult = outcome;
-        const applied = outcome.applied?.length || 0;
-        const stale = outcome.stale?.length || 0;
+        this.applyCounts = { applied: outcome.applied?.length || 0, removed: outcome.destroyed || 0, stale: outcome.stale?.length || 0 };
+      } else if (recovered?.record) {
+        this.applyResult = null;
+        const last = recovered.record;
+        this.applyCounts = { applied: last.applied || 0, removed: last.removed || 0, stale: last.stale || 0, hidden: !!last.countsHidden };
+      } else if (lost) {
+        this.error = recovered?.message || 'The result of this apply could not be determined. Reload the page to see what happened.';
+        window.mahAnnounce?.(this.error, { assertive: true });
+      }
+
+      if (this.applyCounts) {
+        const stale = this.applyCounts.stale;
         window.mahAnnounce?.(
-          `${applied} Cluster${applied === 1 ? '' : 's'} applied, ${outcome.destroyed} cop${outcome.destroyed === 1 ? 'y' : 'ies'} removed.` +
-          (stale ? ` ${stale} could not be applied. See the report.` : ''),
+          `${this.applySummary()}${stale ? ` ${stale} could not be applied. See the report.` : ''}`,
           { assertive: true },
         );
         // Then the Open tab: what is left to do.
@@ -439,7 +592,7 @@ export function registerReductionReviewStore(Alpine) {
       try {
         await this.refresh();
       } catch (refreshErr) {
-        this.error = outcome
+        this.error = this.applyCounts
           ? `Applied, but the page could not be refreshed: ${refreshErr.message}. Reload to see the result.`
           : this.error;
       }
@@ -448,10 +601,51 @@ export function registerReductionReviewStore(Alpine) {
       // decision is.
       const report = document.getElementById('reduction-apply-result');
       this.closeDialog();
-      if (outcome && report) {
+      this.confirmed = null;
+      if (this.applyCounts && report) {
         this._opener = null;
         setTimeout(() => report.focus(), 0);
       }
+    },
+
+    /**
+     * After a response that never arrived, find out what the server did: read the
+     * plan's own apply record until it says finished (or interrupted).
+     *
+     * The server writes the record at the claim, before it touches a Cluster, so a
+     * request that reached it shows up within moments. When the record is still the
+     * one from before after a few reads, the request never arrived, and that is said
+     * without claiming more than was seen.
+     *
+     * Resolves to {record} (a finished or interrupted apply) or {message}.
+     */
+    async _recoverApply(previousStart) {
+      let unchanged = 0;
+      for (let i = 0; i < RECOVER_TRIES; i++) {
+        await new Promise((resolve) => setTimeout(resolve, i === 0 ? RECOVER_FIRST_MS : RECOVER_MS));
+        let last;
+        try {
+          const response = await fetch(`/reduction.json?id=${this.reductionId}`, { headers: { Accept: 'application/json' } });
+          if (!response.ok) continue;
+          last = (await response.json()).lastApply || null;
+        } catch {
+          continue;
+        }
+        const isNew = last && last.startedAt && last.startedAt !== previousStart;
+        if (!isNew && !(last && last.running)) {
+          unchanged++;
+          if (unchanged >= RECOVER_UNCHANGED) {
+            return { message: 'The server has no record of this apply, so it most likely never arrived and nothing was applied. Reload the page to check.' };
+          }
+          continue;
+        }
+        unchanged = 0;
+        if (last.interrupted) {
+          return { message: 'The apply was interrupted on the server. Applied Clusters are on the Applied tab; the rest are still approved.', record: last.finishedAt ? last : null };
+        }
+        if (!last.running && last.finishedAt) return { record: last };
+      }
+      return { message: 'The apply is still running on the server. Reload the page in a minute to see the result.' };
     },
 
     /**
@@ -468,6 +662,15 @@ export function registerReductionReviewStore(Alpine) {
      * from the keyboard.
      */
     async refresh(focus = null) {
+      this.refreshing++;
+      try {
+        await this._refresh(focus);
+      } finally {
+        this.refreshing--;
+      }
+    },
+
+    async _refresh(focus) {
       const response = await fetch(window.location.href, { headers: { Accept: 'text/html' } });
       if (!response.ok) throw new Error(`Could not refresh the Clusters: ${response.status}`);
 
@@ -484,7 +687,7 @@ export function registerReductionReviewStore(Alpine) {
       const before = focus || cardFocus();
       current.forEach((region, i) => {
         hoistCustomCSS(next[i]);
-        Alpine.morph(region, next[i], morphOptionsWithShortcodeElements());
+        Alpine.morph(region, next[i], morphOptionsWithShortcodeElements({ updating: keepOpenState }));
         repairApprovalButtons(region, next[i]);
       });
 
@@ -523,6 +726,22 @@ export function registerReductionReviewStore(Alpine) {
       restoreCardFocus(before);
     },
   });
+}
+
+// Statuses a gateway answers with when it gave up on a request the server may
+// still be running; they say nothing about what the server did.
+const LOST_STATUSES = new Set([408, 502, 503, 504, 524]);
+const RECOVER_FIRST_MS = 1000;
+const RECOVER_MS = 2000;
+const RECOVER_TRIES = 300;
+const RECOVER_UNCHANGED = 4;
+
+/**
+ * The apply request. The version and the figures are the ones the dialog showed,
+ * so the server can refuse when the plan has moved on since the reviewer saw them.
+ */
+function applyRequest(id, confirmed) {
+  return { id, version: confirmed.version, expectedClusters: confirmed.checked, expectedLosers: confirmed.losers };
 }
 
 const ANNOUNCEMENTS = {

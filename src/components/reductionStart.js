@@ -9,6 +9,8 @@
  * reads and clears it.
  */
 
+import { defaultReductionName } from './reductionText.js';
+
 export function computeErrorKey(id) {
   return `reduction-compute-error-${id}`;
 }
@@ -73,7 +75,7 @@ export function reductionLibraryStart() {
       this.busy = true;
       this.error = '';
       try {
-        await createAndOpen({ all: true }, true);
+        await createAndOpen({ all: true, name: defaultReductionName({ all: true }) }, true);
       } catch (err) {
         this.error = err.message;
         this.busy = false;

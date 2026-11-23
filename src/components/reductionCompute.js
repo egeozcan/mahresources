@@ -23,6 +23,10 @@
  */
 
 const POLL_MS = 3000;
+// The row poll that runs beside the event stream. The stream carries only the
+// events the viewer may see: an administrator watching someone else's Reduction
+// gets none, so the stream alone could leave the progress bar up forever.
+const ROW_POLL_MS = 5000;
 const SETTLE_MS = 500;
 const SETTLE_TRIES = 40;
 
@@ -78,6 +82,10 @@ export const computeMethods = {
       clearInterval(this._pollTimer);
       this._pollTimer = null;
     }
+    if (this._rowTimer) {
+      clearInterval(this._rowTimer);
+      this._rowTimer = null;
+    }
   },
 
   _stream(jobId) {
@@ -89,6 +97,7 @@ export const computeMethods = {
       return;
     }
     this._events = events;
+    this._watchRow();
     const onJob = (job) => {
       if (!job || job.id !== jobId) return;
       this._showProgress(job);
@@ -112,6 +121,22 @@ export const computeMethods = {
         this._poll();
       }
     };
+  },
+
+  /**
+   * A lightweight check of the row itself, every few seconds, for as long as the
+   * stream is up. Whichever of the two sees the row leave `computing` first wins:
+   * the event path settles, this path reloads.
+   */
+  _watchRow() {
+    if (this._rowTimer) return;
+    this._rowTimer = setInterval(async () => {
+      const row = await this._fetchRow();
+      if (row && row.status !== 'computing') {
+        this.stopWatching();
+        window.location.reload();
+      }
+    }, ROW_POLL_MS);
   },
 
   _showProgress(job) {
