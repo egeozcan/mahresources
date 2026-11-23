@@ -1264,3 +1264,55 @@ func TestADeletedKeptCopyReadsAsTheWinnerChanged(t *testing.T) {
 	view := reviewOf(t, tc, red.ID, 1, &query_models.ResourceReductionReviewQuery{Status: []string{"stale"}}).Clusters[0]
 	assert.True(t, view.WinnerChanged)
 }
+
+// Round 7 P2. The status tab in the page state is one of the known statuses, never
+// the raw query: a backslash or a newline would break the JSON the page seeds from.
+func TestAnUnknownStatusFallsBackToTheOpenTab(t *testing.T) {
+	tc := SetupTestEnv(t)
+	red := createReduction(t, tc, "Status", clusterOf(t, tc, "r7-status", 2))
+	computeReduction(t, tc, red.ID)
+	for _, raw := range []string{"&status=%5C", "&status=%0A", "&status=bogus", "&status=%22%7D"} {
+		page := reviewPageContext(t, tc.AppCtx, red.ID, raw)
+		assert.Equal(t, "open", page["statusTab"], raw)
+		assert.False(t, page["reviewFilterActive"].(bool), "%s is not a filter the reviewer set", raw)
+	}
+	page := reviewPageContext(t, tc.AppCtx, red.ID, "&status=bogus&status=skipped")
+	assert.Equal(t, "skipped", page["statusTab"], "the known value survives")
+}
+
+// Round 7 P2. A compute is refused while an apply is running.
+func TestRecomputeIsRefusedWhileAnApplyIsRunning(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+	red := createReduction(t, tc, "Compute during apply", clusterOf(t, tc, "r7-compute", 2))
+	plan := computeReduction(t, tc, red.ID)
+
+	running := plan
+	running.LastApply = &models.ReductionLastApply{StartedAt: time.Now()}
+	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, running))
+	current, err = tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+
+	_, err = tc.AppCtx.RequestReductionCompute(red.ID, current.Version, owner, restricted, nil)
+	assert.ErrorIs(t, err, application_context.ErrReductionConflict)
+	assert.Equal(t, models.ReductionStatusReady, application_context.EffectiveReductionStatus(mustReduction(t, tc, red.ID)), "it did not start computing")
+
+	// Interrupted: past the ceiling, a compute may proceed.
+	stale := plan
+	stale.LastApply = &models.ReductionLastApply{StartedAt: time.Now().Add(-2 * application_context.ReductionApplyCeiling)}
+	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, stale))
+	current, err = tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	_, err = tc.AppCtx.RequestReductionCompute(red.ID, current.Version, owner, restricted, nil)
+	assert.NoError(t, err)
+}
+
+func mustReduction(t *testing.T, tc *TestContext, id uint) *models.ResourceReduction {
+	t.Helper()
+	owner, restricted := asAdmin()
+	red, err := tc.AppCtx.GetResourceReduction(id, owner, restricted)
+	require.NoError(t, err)
+	return red
+}

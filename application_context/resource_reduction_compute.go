@@ -61,6 +61,16 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 	if EffectiveReductionStatus(reduction) == models.ReductionStatusComputing {
 		return nil, ErrReductionBusy
 	}
+	// A recompute replaces the plan under a running apply's feet. The same refusal
+	// the batch claim and settle-only make: a record still running and younger than
+	// the ceiling owns the Reduction; past the ceiling it is an interrupted one.
+	plan, err := DecodeReductionPlan(reduction.Plan)
+	if err != nil {
+		return nil, err
+	}
+	if last := plan.LastApply; last != nil && last.FinishedAt == nil && time.Since(last.StartedAt) <= ReductionApplyCeiling {
+		return nil, ErrReductionConflict
+	}
 
 	// The caller's version, not the one just read. Recompute replaces the plan,
 	// so a request made from a page that predates somebody else's decisions would

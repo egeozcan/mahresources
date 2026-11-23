@@ -162,6 +162,10 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 		// Open is the tab the page lands on: with no status given the review shows the
 		// open Clusters, acted on or not. What the reviewer asked for is kept apart,
 		// so "nothing matches your filters" is not claimed of the default view.
+		// Only known statuses survive: the value reaches the page's state JSON and its
+		// links, and an unknown one falls back to the default like any other
+		// unrecognised parameter.
+		reviewQuery.Status = knownReviewStatuses(reviewQuery.Status)
 		requested := reviewQuery
 		if len(reviewQuery.Status) == 0 {
 			reviewQuery.Status = []string{models.ReductionClusterOpen}
@@ -492,4 +496,17 @@ func allWinnerCriteria() []pongo2.Context {
 		models.WinnerCriterionAssociationsAsc,
 	}
 	return describeWinnerRule(order)
+}
+
+// knownReviewStatuses keeps the review statuses the page understands, in order.
+func knownReviewStatuses(asked []string) []string {
+	known := map[string]bool{"open": true, "reviewed": true, "all": true,
+		models.ReductionClusterSkipped: true, models.ReductionClusterStale: true, models.ReductionClusterApplied: true}
+	var out []string
+	for _, status := range asked {
+		if known[status] {
+			out = append(out, status)
+		}
+	}
+	return out
 }
