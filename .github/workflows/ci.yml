@@ -340,7 +340,7 @@ jobs:
           if-no-files-found: ignore
 
   # The JavaScript unit suite. It existed long before this job -- 63 spec files
-  # under src/, a vitest config in vite.config.js, an npm script -- and nothing
+  # under src/, a vitest config in vite.config.mjs, an npm script -- and nothing
   # ran it on a push, including the one that group one's own review demanded
   # (src/utils/pluginNodeCache.test.ts). No Go, no browsers, no server.
   unit-js:

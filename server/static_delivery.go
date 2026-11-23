@@ -230,7 +230,7 @@ func smallerThan(contentLength string, n int64) bool {
 const immutableCacheControl = "max-age=31536000, immutable"
 
 // cacheHashedBuildAssets caches Vite's lazy chunks under /public/dist/assets/
-// for good: vite.config.js names each one after a hash of its content, so a
+// for good: vite.config.mjs names each one after a hash of its content, so a
 // changed chunk has a new URL.
 //
 // The ?v= files (main.js and the stylesheets) are left to the browser's own
