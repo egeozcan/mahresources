@@ -99,9 +99,16 @@ func ResourceReductionListContextProvider(context ResourceReductionPageContext) 
 			return addErrContext(err, baseContext)
 		}
 
+		progress, err := context.GetReductionProgress(reductions)
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
 		rows := make([]reductionRow, 0, len(reductions))
 		for i := range reductions {
-			rows = append(rows, describeReduction(&reductions[i]))
+			row := describeReduction(&reductions[i])
+			row.Progress = progress[reductions[i].ID]
+			row.DonePercent, row.ActionKind, row.ActionLabel = describeProgress(row.Progress, row.StatusEffective)
+			rows = append(rows, row)
 		}
 
 		return pongo2.Context{
@@ -280,6 +287,14 @@ type reductionRow struct {
 	// time.Time — a nil one takes the whole page down with a 500 rather than
 	// rendering an empty cell.
 	ComputedAtLabel string
+
+	// Progress, DonePercent and the action are filled on the list page only, from
+	// the Clusters the viewer may see. DonePercent is the share of those that are
+	// applied or skipped. ActionKind is one of find, continue, view or retry.
+	Progress    contracts.ReductionProgress
+	DonePercent int
+	ActionKind  string
+	ActionLabel string
 }
 
 func describeReduction(r *models.ResourceReduction) reductionRow {
@@ -295,6 +310,24 @@ func describeReduction(r *models.ResourceReduction) reductionRow {
 		MatchingLabel:     matchingModeLabel(r.MatchingMode),
 		ComputedAtLabel:   computed,
 	}
+}
+
+// describeProgress turns the counts into the list card's bar and its one button:
+// Find duplicates before a compute, Continue review while Clusters are open, Try
+// again after a failure, View otherwise.
+func describeProgress(p contracts.ReductionProgress, status string) (percent int, kind, label string) {
+	if p.Clusters > 0 {
+		percent = (p.Applied + p.Skipped) * 100 / p.Clusters
+	}
+	switch {
+	case status == models.ReductionStatusDraft:
+		return percent, "find", "Find duplicates"
+	case status == models.ReductionStatusFailed:
+		return percent, "retry", "Try again"
+	case status == models.ReductionStatusReady && p.Open > 0:
+		return percent, "continue", "Continue review"
+	}
+	return percent, "view", "View"
 }
 
 func reductionStatusLabel(status string) string {

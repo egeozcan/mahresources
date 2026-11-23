@@ -232,3 +232,19 @@ type ReductionBulkResult struct {
 	// individual review (lossy, oversized or keeping a lower-resolution copy).
 	NeedsReview int `json:"needsReview"`
 }
+
+// ReductionProgress is how far along one Reduction is, counted over the Clusters
+// the caller may fully see. Computed on read from the plan, never stored: a
+// scope-restricted owner's access can change after the plan was written, and a
+// stored figure would keep counting Clusters they can no longer see.
+type ReductionProgress struct {
+	// Clusters is every visible Cluster, whatever its state.
+	Clusters int
+	// Open is the Clusters still awaiting a decision or an apply, Approved the part
+	// of them that is approved. Skipped, Stale and Applied are the other states.
+	Open     int
+	Approved int
+	Skipped  int
+	Stale    int
+	Applied  int
+}
