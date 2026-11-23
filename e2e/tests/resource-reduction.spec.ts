@@ -1197,4 +1197,25 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     expect(popover!.x).toBeGreaterThanOrEqual(0);
     expect(popover!.x + popover!.width).toBeLessThanOrEqual(320);
   });
+
+  test('a Cluster whose kept copy was deleted reads as stale, says so, and offers no member actions', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR winner gone ${Date.now()}`;
+    const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);
+    const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID]);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}`);
+    const winnerId = await page.getByTestId('reduction-cluster').first()
+      .locator('[data-testid="reduction-member"][data-winner="true"]').getAttribute('data-resource-id');
+    const gone = await request.post(`${baseURL}/v1/resource/delete?Id=${winnerId}`);
+    expect(gone.ok()).toBeTruthy();
+
+    await page.goto(`/reduction?id=${id}&status=stale`);
+    const card = page.locator('[data-cluster-state="stale"]').first();
+    await expect(card).toBeVisible();
+    await expect(card.getByTestId('cluster-stale-reason')).toContainText('The kept copy changed or was deleted');
+    await expect(card.getByTestId('cluster-approve')).toHaveCount(0);
+    await expect(card.getByTestId('member-eject')).toHaveCount(0);
+    await expect(card.getByTestId('member-promote')).toHaveCount(0);
+  });
 });
