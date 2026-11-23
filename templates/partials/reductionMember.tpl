@@ -118,7 +118,8 @@
         {# Story 24 wants the two-up look from every Cluster, and the compare page takes exactly two Resources, #}
         {# so the pair worth looking at is this copy against the kept one that would absorb it.               #}
         <a class="reduction-btn reduction-btn--small" data-testid="member-compare"
-           href="/resource/compare?r1={{ cluster.Winner.ID }}&r2={{ member.ResourceID }}&from=reduction:{{ raw.ID }}">Compare<span class="sr-only"> {{ member.Resource.Name }} with the kept copy</span></a>
+           href="/resource/compare?r1={{ cluster.Winner.ID }}&r2={{ member.ResourceID }}&from=reduction:{{ raw.ID }}"
+           @click="$store.reductionReview.compareHref($event, '{{ cluster.ID }}')">Compare<span class="sr-only"> {{ member.Resource.Name }} with the kept copy</span></a>
         {% endif %}
         {# "Include again" undoes a "Don't remove" by re-proposing the deletion, which an out-of-selection member may never be part of. #}
         {% if member.Ejected and member.InExtent %}

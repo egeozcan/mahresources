@@ -30,7 +30,7 @@
                     {% endif %}
                 </div>
 
-                <div class="flex items-center gap-3 shrink-0">
+                <div class="reduction-card-actions flex flex-wrap items-center gap-3 shrink-0">
                     <span class="inline-flex items-center rounded-full border border-stone-300 bg-stone-50 px-2 py-0.5 text-xs font-mono text-stone-700" data-testid="reduction-status">{{ entity.StatusLabel }}</span>
                     {% if entity.ActionKind == "find" || entity.ActionKind == "retry" %}
                     <div x-data="reductionCardAction({ id: {{ entity.ID }}, version: {{ entity.Version }} })">

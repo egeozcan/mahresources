@@ -105,6 +105,37 @@ export function reductionCardAction({ id, version }) {
   };
 }
 
+const BACK_VALUES = {
+  status: /^(open|reviewed|skipped|stale|applied|all)$/,
+  tier: /^(identical|near)$/,
+  approval: /^(approved|unapproved)$/,
+  attention: /^true$/,
+  sort: /^(copies|size|computed)$/,
+  pageSize: /^(20|50|100)$/,
+  page: /^[1-9]\d{0,5}$/,
+};
+
+/**
+ * The review URL to return to: only known parameters with known-shaped values, and
+ * the Cluster's own heading as the anchor.
+ */
+export function backHref(id, params) {
+  const out = new URLSearchParams({ id: String(id) });
+  let carried;
+  try {
+    carried = new URLSearchParams(params.get('fq') || '');
+  } catch {
+    carried = new URLSearchParams();
+  }
+  for (const [key, pattern] of Object.entries(BACK_VALUES)) {
+    for (const value of carried.getAll(key)) {
+      if (pattern.test(value)) out.append(key, value);
+    }
+  }
+  const anchor = /^(identical|near)-[0-9a-f]{8,64}$/.test(params.get('fa') || '') ? `#cluster-${params.get('fa')}-heading` : '';
+  return `/reduction?${out.toString()}${anchor}`;
+}
+
 /**
  * The compare page's way back to the Reduction it was opened from
  * (`?from=reduction:<id>`). The id is read as an integer and the link shows only
@@ -116,7 +147,8 @@ export function reductionBackLink() {
     href: '',
     label: '',
     async init() {
-      const match = /^reduction:(\d+)$/.exec(new URLSearchParams(window.location.search).get('from') || '');
+      const params = new URLSearchParams(window.location.search);
+      const match = /^reduction:(\d+)$/.exec(params.get('from') || '');
       if (!match) return;
       const id = Number(match[1]);
       if (!Number.isSafeInteger(id) || id <= 0) return;
@@ -126,7 +158,7 @@ export function reductionBackLink() {
         const page = await response.json();
         if (!page?.raw?.name) return;
         this.label = `Back to ${page.raw.name}`;
-        this.href = `/reduction?id=${id}`;
+        this.href = backHref(id, params);
       } catch {
         // No link is better than a wrong one.
       }

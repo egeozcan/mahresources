@@ -21,7 +21,7 @@
         Find duplicates
     </button>
 
-    <div id="{{ panelId }}" x-ref="panel" x-show="open" x-cloak x-collapse class="absolute {% if reductionOwnerId %}right-0 z-20{% else %}left-0 top-full z-40{% endif %} mt-2 p-3 bg-white border border-stone-200 rounded-md shadow-sm w-80 max-w-[calc(100vw-2rem)]">
+    <div id="{{ panelId }}" x-ref="panel" x-show="open" x-cloak x-collapse class="reduction-popover absolute {% if reductionOwnerId %}right-0 z-20{% else %}left-0 top-full z-40{% endif %} mt-2 p-3 bg-white border border-stone-200 rounded-md shadow-sm w-80 max-w-[calc(100vw-2rem)]">
         <p class="mb-1 text-sm font-medium text-stone-800" x-text="heading()" data-testid="bulk-reduction-heading"></p>
         <p class="mb-2 text-xs text-stone-600">Nothing is removed until you review and apply.</p>
         {% if reductionOwnerId %}

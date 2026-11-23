@@ -428,6 +428,25 @@ export function registerReductionReviewStore(Alpine) {
       document.querySelector('[data-testid="reduction-more"]')?.focus();
     },
 
+    /**
+     * Before the Compare link is followed, carry the review's filters and the Cluster
+     * it came from, so the way back lands where the reviewer was. Known parameters
+     * only; the compare page validates them again.
+     */
+    compareHref(event, clusterId) {
+      const link = event.currentTarget;
+      const kept = new URLSearchParams();
+      const current = new URLSearchParams(window.location.search);
+      for (const key of ['status', 'tier', 'approval', 'attention', 'sort', 'pageSize', 'page']) {
+        for (const value of current.getAll(key)) kept.append(key, value);
+      }
+      const url = new URL(link.getAttribute('href'), window.location.href);
+      const q = kept.toString();
+      if (q) url.searchParams.set('fq', q);
+      if (clusterId) url.searchParams.set('fa', clusterId);
+      link.setAttribute('href', `${url.pathname}${url.search}`);
+    },
+
     /** The error as a sentence. */
     get errorText() {
       return this.error ? this.error.charAt(0).toUpperCase() + this.error.slice(1) : '';

@@ -952,13 +952,17 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID]);
     await computeAndWait(request, baseURL!, id);
 
-    await page.goto(`/reduction?id=${id}`);
+    await page.goto(`/reduction?id=${id}&sort=size&pageSize=50`);
     await page.getByTestId('member-compare').first().click();
     await page.waitForURL(/\/resource\/compare/);
     const back = page.getByTestId('compare-back-to-reduction');
     await expect(back).toHaveText(`Back to ${label}`);
+    // The way back keeps the review's filters and the Cluster's place.
+    await expect(back).toHaveAttribute('href', /sort=size/);
+    await expect(back).toHaveAttribute('href', /pageSize=50/);
+    await expect(back).toHaveAttribute('href', /#cluster-identical-[0-9a-f]+-heading$/);
     await back.click();
-    await expect(page).toHaveURL(new RegExp(`/reduction\\?id=${id}`));
+    await expect(page).toHaveURL(new RegExp(`/reduction\\?id=${id}&.*sort=size`));
 
     // An id that is not a Reduction the viewer can open shows nothing.
     await page.goto(`/resource/compare?r1=${keeper.ID}&r2=${twin.ID}&from=reduction:99999999`);
@@ -1160,5 +1164,37 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     await page.getByTestId('reduction-approve-page').focus();
     await page.keyboard.press('Enter');
     await expect(more).toBeFocused();
+  });
+
+  test('at 320px nothing on the list, the popover or the review is wider than the screen', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR narrow ${Date.now()}`;
+    const category = await apiClient.createCategory(label);
+    const group = await apiClient.createGroup({ name: label, categoryId: category.ID });
+    await apiClient.createResource({ filePath: path.join(__dirname, '../test-assets/sample-image-10.png'), name: `${label} r`, ownerId: group.ID });
+    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 1);
+    const id = await createReduction(request, baseURL!, label, ids);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.setViewportSize({ width: 320, height: 700 });
+    const overflowing = () => page.evaluate(() => {
+      const wide = [...document.querySelectorAll('body *')].filter((el) => {
+        const box = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        return box.width > 0 && style.visibility !== 'hidden' && box.right > window.innerWidth + 1
+          && !el.closest('.reduction-tabs, .reduction-chips, [data-reduction-clusters]');
+      }).map((el) => `${el.tagName}.${(el as HTMLElement).className}`.slice(0, 80));
+      return wide;
+    });
+
+    await page.goto('/reductions');
+    await expect(page.getByTestId('reduction-card').first()).toBeVisible();
+    expect(await overflowing()).toEqual([]);
+
+    await page.goto(`/group?id=${group.ID}`);
+    const panel = page.locator('.detail-panel').filter({ has: page.getByRole('heading', { name: 'Resources', exact: true }) });
+    await openReductionPanel(page, panel.getByRole('button', { name: 'Find duplicates', exact: true }));
+    const popover = await page.locator('.reduction-popover:visible').first().boundingBox();
+    expect(popover!.x).toBeGreaterThanOrEqual(0);
+    expect(popover!.x + popover!.width).toBeLessThanOrEqual(320);
   });
 });

@@ -5347,3 +5347,35 @@ progress.export-progress-bar::-moz-progress-bar {
 .reduction-approve[aria-pressed="true"] .reduction-approve-check {
     display: inline;
 }
+
+/* "Find duplicates" popovers: on a phone they are as wide as the screen allows,
+   never wider, whatever the button's own position. */
+@media (max-width: 399px) {
+    .reduction-popover.reduction-popover {
+        position: fixed;
+        left: 1rem;
+        right: 1rem;
+        width: auto;
+        max-width: none;
+        margin-top: 0.5rem;
+    }
+}
+
+/* The list card's actions wrap, and the button takes the card's width on the narrowest screens. */
+.reduction-card-actions {
+    max-width: 100%;
+}
+
+@media (max-width: 359px) {
+    .reduction-card-actions {
+        flex: 1 1 100%;
+        width: 100%;
+    }
+
+    .reduction-card-actions > div,
+    .reduction-card-actions > a,
+    .reduction-card-actions [data-testid="reduction-action"] {
+        flex: 1 1 100%;
+        width: 100%;
+    }
+}
