@@ -265,3 +265,50 @@ func TestTheCeilingSettlesTheInFlightClusterAndLeavesTheRestApproved(t *testing.
 	require.NotNil(t, after.LastApply.FinishedAt, "and the record says the batch finished")
 	assert.True(t, resourceExists(t, tc, a[0]) && resourceExists(t, tc, a[1]) && resourceExists(t, tc, b[0]) && resourceExists(t, tc, b[1]))
 }
+
+// P0-5. lastApply holds counts of what an apply did. A viewer whose subtree has
+// narrowed since must not read counts of Clusters now outside their access; a viewer
+// who can still see every Cluster counted keeps them (they are how a lost response
+// is answered on reload).
+func TestLastApplyCountsAreHiddenFromAViewerWhoLostAccess(t *testing.T) {
+	tc := SetupTestEnv(t)
+	f := newReductionScopeFixture(t, tc)
+	owner, restricted := asAdmin()
+
+	kept := clusterOf(t, tc, "p05-kept", 2)
+	left := clusterOf(t, tc, "p05-left", 2)
+	setDimensions(t, tc, kept[0], 900, 900)
+	setDimensions(t, tc, left[0], 900, 900)
+	f.place(t, f.narrow, kept...)
+	f.place(t, f.narrow, left...)
+	f.compute(t, append(append([]uint{}, kept...), left...))
+
+	current, err := f.narrowCtx.GetResourceReduction(f.red.ID, owner, restricted)
+	require.NoError(t, err)
+	_, err = f.narrowCtx.ApplyResourceReduction(&query_models.ReductionApply{ID: f.red.ID, Version: current.Version}, owner, restricted)
+	require.NoError(t, err)
+
+	review, err := f.narrowCtx.GetReductionReview(f.red.ID, owner, restricted, 1, nil)
+	require.NoError(t, err)
+	require.NotNil(t, review.LastApply)
+	assert.Equal(t, 2, review.LastApply.Applied, "everything counted is still visible, so the numbers show")
+	assert.Equal(t, 2, review.LastApply.Removed)
+	assert.False(t, review.LastApply.CountsHidden)
+
+	// Their access narrows: one applied Cluster's Winner is now outside it.
+	f.place(t, f.wide, left[0])
+	review, err = f.narrowCtx.GetReductionReview(f.red.ID, owner, restricted, 1, nil)
+	require.NoError(t, err)
+	require.NotNil(t, review.LastApply, "the record itself still shows")
+	assert.False(t, review.LastApply.StartedAt.IsZero())
+	assert.Zero(t, review.LastApply.Applied)
+	assert.Zero(t, review.LastApply.Removed)
+	assert.Zero(t, review.LastApply.Stale)
+	assert.True(t, review.LastApply.CountsHidden)
+
+	// An unrestricted viewer is always shown the numbers.
+	full, err := tc.AppCtx.GetReductionReview(f.red.ID, owner, restricted, 1, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, full.LastApply.Applied)
+	assert.False(t, full.LastApply.CountsHidden)
+}

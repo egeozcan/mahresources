@@ -234,6 +234,13 @@ func (ctx *MahresourcesContext) finishReductionApplyBatch(reductionID uint, star
 		plan.LastApply.Applied = len(result.Applied)
 		plan.LastApply.Removed = result.DestroyedCount()
 		plan.LastApply.Stale = len(result.Stale)
+		plan.LastApply.ClusterIDs = nil
+		for _, outcome := range result.Applied {
+			plan.LastApply.ClusterIDs = append(plan.LastApply.ClusterIDs, outcome.ClusterID)
+		}
+		for _, outcome := range result.Stale {
+			plan.LastApply.ClusterIDs = append(plan.LastApply.ClusterIDs, outcome.ClusterID)
+		}
 		return true
 	})
 }

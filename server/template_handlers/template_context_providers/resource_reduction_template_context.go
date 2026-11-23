@@ -297,6 +297,9 @@ func describeLastApplyContext(last *contracts.ReductionLastApplyView) any {
 		"stale":       last.Stale,
 		"running":     last.Running,
 		"interrupted": last.Interrupted,
+		// True when applied, removed and stale were zeroed because they count
+		// Clusters the viewer may no longer see.
+		"countsHidden": last.CountsHidden,
 	}
 }
 

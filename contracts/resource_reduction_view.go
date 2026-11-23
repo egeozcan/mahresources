@@ -120,6 +120,9 @@ type ReductionLastApplyView struct {
 	// approved.
 	Running     bool
 	Interrupted bool
+	// CountsHidden is true when Applied, Removed and Stale were withheld (zeroed)
+	// because they count Clusters the viewer may no longer see.
+	CountsHidden bool
 }
 
 // ReductionReview is a page of a Reduction's plan, hydrated and paginated.

@@ -195,6 +195,9 @@ type ReductionLastApply struct {
 	Applied    int        `json:"applied"`
 	Removed    int        `json:"removed"`
 	Stale      int        `json:"stale"`
+	// ClusterIDs are the Clusters the counts above are about (applied and stale).
+	// The page shows the counts only to a viewer who may still see all of them.
+	ClusterIDs []string `json:"clusterIds,omitempty"`
 }
 
 // ReductionCoverage reports how much of the Extent the clustering could actually

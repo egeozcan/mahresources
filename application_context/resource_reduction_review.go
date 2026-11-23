@@ -218,7 +218,7 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 		ApplyFigures:        figures.apply,
 		Bulk:                figures.bulk,
 		SettingsChanged:     reductionSettingsChanged(reduction, plan.Settings),
-		LastApply:           describeLastApply(plan.LastApply),
+		LastApply:           ctx.scopeLastApply(describeLastApply(plan.LastApply), plan.LastApply, plan.Clusters, visible),
 	}, nil
 }
 
@@ -331,6 +331,42 @@ func describeLastApply(last *models.ReductionLastApply) *contracts.ReductionLast
 		Running:     running,
 		Interrupted: running && time.Since(last.StartedAt) > ReductionApplyCeiling,
 	}
+}
+
+// scopeLastApply removes the counts from a record the viewer may not read them
+// from. They are history about Clusters that may since have left the viewer's
+// access (their subtree narrowed after they applied): a scoped viewer is shown
+// them only while every Cluster they are about is still fully visible, and the
+// record without numbers otherwise.
+func (ctx *MahresourcesContext) scopeLastApply(view *contracts.ReductionLastApplyView, last *models.ReductionLastApply, clusters []*models.ReductionCluster, visible map[uint]bool) *contracts.ReductionLastApplyView {
+	if view != nil && ctx.isScopedPrincipal() && !lastApplyCountsVisible(last, clusters, visible) {
+		view.Applied, view.Removed, view.Stale = 0, 0, 0
+		view.CountsHidden = true
+	}
+	return view
+}
+
+// lastApplyCountsVisible reports whether every Cluster a record counted is still
+// in the plan and fully visible. A record that counted Clusters but names none (it
+// predates the ids) cannot be checked, so it is not.
+func lastApplyCountsVisible(last *models.ReductionLastApply, clusters []*models.ReductionCluster, visible map[uint]bool) bool {
+	if last.Applied+last.Stale == 0 {
+		return true
+	}
+	if len(last.ClusterIDs) == 0 {
+		return false
+	}
+	byID := make(map[string]*models.ReductionCluster, len(clusters))
+	for _, cluster := range clusters {
+		byID[cluster.ID] = cluster
+	}
+	for _, id := range last.ClusterIDs {
+		cluster := byID[id]
+		if cluster == nil || clusterWithheld(cluster, visible) {
+			return false
+		}
+	}
+	return true
 }
 
 // ReductionPageSizes are the page sizes the review offers.
