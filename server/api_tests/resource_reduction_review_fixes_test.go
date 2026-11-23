@@ -312,3 +312,83 @@ func TestLastApplyCountsAreHiddenFromAViewerWhoLostAccess(t *testing.T) {
 	assert.Equal(t, 2, full.LastApply.Applied)
 	assert.False(t, full.LastApply.CountsHidden)
 }
+
+// P1-11a. The keeps-smaller suppression follows the rule the Cluster's proposal was
+// computed under, not whatever rule the row holds now: changing the rule and then
+// ejecting an unrelated member must not turn a warning on for a proposal that was
+// asked for.
+func TestKeepsSmallerSuppressionFollowsTheRuleThePlanWasComputedUnder(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+
+	small := addWithHash(t, tc, "small.txt", "small body", "p111-hash")
+	big := addWithHash(t, tc, "big.txt", "big body", "p111-hash")
+	mid := addWithHash(t, tc, "mid.txt", "mid body", "p111-hash")
+	setDimensions(t, tc, small.ID, 400, 400)
+	setDimensions(t, tc, big.ID, 1200, 1200)
+	setDimensions(t, tc, mid.ID, 800, 800)
+
+	red := createReductionWithRule(t, tc, "Asked for the smallest", []uint{small.ID, big.ID, mid.ID},
+		[]string{models.WinnerCriterionPixelsAsc})
+	plan := computeReduction(t, tc, red.ID)
+	require.Equal(t, small.ID, plan.Clusters[0].WinnerID)
+	require.False(t, plan.Clusters[0].KeepsSmaller, "the rule asked for the lowest resolution")
+
+	// The rule is changed afterwards; the plan is not recomputed.
+	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	_, err = tc.AppCtx.UpdateResourceReductionSettings(&query_models.ResourceReductionEditor{
+		ID: red.ID, Version: current.Version, WinnerRule: []string{models.WinnerCriterionPixelsDesc},
+	}, owner, restricted)
+	require.NoError(t, err)
+
+	plan = override(t, tc, red.ID, plan.Clusters[0].ID, application_context.ReductionActionEject, mid.ID)
+	assert.False(t, plan.Clusters[0].KeepsSmaller,
+		"the proposal is still the one the old rule computed, so its warning stays suppressed")
+}
+
+// P1-11b. A plan stored before the flag existed has no KeepsSmaller on a Cluster
+// whose frozen manual promotion keeps a smaller copy. The review derives it at read
+// time, so the card, the figures, the filter and bulk approval all see it.
+func TestKeepsSmallerIsDerivedForAPlanStoredBeforeTheFlag(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+
+	big := addWithHash(t, tc, "big.txt", "big body", "p112-hash")
+	small := addWithHash(t, tc, "small.txt", "small body", "p112-hash")
+	setDimensions(t, tc, big.ID, 1600, 1066)
+	setDimensions(t, tc, small.ID, 400, 266)
+
+	red := createReduction(t, tc, "Legacy", []uint{big.ID, small.ID})
+	plan := computeReduction(t, tc, red.ID)
+	plan = override(t, tc, red.ID, plan.Clusters[0].ID, application_context.ReductionActionPromote, small.ID)
+	require.True(t, plan.Clusters[0].KeepsSmaller)
+
+	// Rewrite the stored plan as an older release left it: no flag, no settings.
+	legacy := plan
+	legacy.Settings = nil
+	legacy.Clusters[0].KeepsSmaller = false
+	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	require.NoError(t, err)
+	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, legacy))
+
+	review := reviewOf(t, tc, red.ID, 1, nil)
+	require.Len(t, review.Clusters, 1)
+	assert.True(t, review.Clusters[0].KeepsSmaller, "derived at read time")
+	assert.True(t, review.Clusters[0].NeedsAttention)
+	assert.Equal(t, 1, review.ApplyFigures.KeepsSmaller)
+	assert.Equal(t, 0, review.Bulk.IdenticalApprovable, "it needs attention, so the bulk button skips it")
+	filtered := reviewOf(t, tc, red.ID, 1, &query_models.ResourceReductionReviewQuery{NeedsAttention: true})
+	assert.Len(t, filtered.Clusters, 1)
+
+	// Bulk approval skips it too.
+	require.NoError(t, bulk(t, tc, red.ID, versionOf(t, tc, red.ID), query_models.ReductionBulkOverride{
+		Action: "uncheck", ClusterIDs: []string{legacy.Clusters[0].ID},
+	}))
+	result, err := tc.AppCtx.BulkOverrideReductionClusters(&query_models.ReductionBulkOverride{
+		ID: red.ID, Version: versionOf(t, tc, red.ID), Action: "check", ClusterIDs: []string{legacy.Clusters[0].ID},
+	}, owner, restricted)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.NeedsReview)
+	assert.False(t, findClusterByID(planOf(t, tc, red.ID), legacy.Clusters[0].ID).Checked)
+}

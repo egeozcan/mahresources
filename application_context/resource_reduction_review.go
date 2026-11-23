@@ -46,6 +46,9 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 	if err != nil {
 		return nil, err
 	}
+	if err := ctx.deriveKeepsSmallerForOldPlan(&plan, reduction); err != nil {
+		return nil, err
+	}
 
 	if page < 1 {
 		page = 1
@@ -770,4 +773,67 @@ func redactWithheldCluster(view contracts.ReductionClusterView) contracts.Reduct
 		Withheld:         1,
 		Position:         view.Position,
 	}
+}
+
+// planWinnerRule is the Winner Rule a plan's proposals were computed under: the one
+// recorded with the plan, and the row's current rule only for a plan that recorded
+// none. Anything derived about a proposal (the keeps-smaller suppression) has to
+// follow the rule that made it, or editing the rule changes the warning on a
+// proposal nobody recomputed.
+func planWinnerRule(reduction *models.ResourceReduction, plan *models.ResourceReductionPlan) []string {
+	if plan.Settings != nil && len(plan.Settings.WinnerRule) > 0 {
+		return plan.Settings.WinnerRule
+	}
+	return DecodeWinnerRule(reduction.WinnerRule)
+}
+
+// deriveKeepsSmallerForOldPlan fills in KeepsSmaller on a plan stored before the
+// flag existed (it also lacks the recorded settings, which compute has always
+// written since). Such a plan can still hold a frozen manual promotion that keeps
+// the smaller copy, and nothing else would ever compute the flag for it. Done on
+// the decoded copy at read, so the card, the figures, the attention filter and
+// bulk approval agree; one id-and-dimensions read through the scoped handle, and
+// only for these plans. A recompute writes the settings and ends it.
+func (ctx *MahresourcesContext) deriveKeepsSmallerForOldPlan(plan *models.ResourceReductionPlan, reduction *models.ResourceReduction) error {
+	if plan.Settings != nil {
+		return nil
+	}
+	var open []*models.ReductionCluster
+	for _, cluster := range plan.Clusters {
+		if cluster.State == models.ReductionClusterOpen {
+			open = append(open, cluster)
+		}
+	}
+	var rows []struct {
+		ID            uint
+		Width, Height uint
+	}
+	for _, chunk := range chunkUints(dedupeUints(reductionMemberIDs(open)), idChunk) {
+		var batch []struct {
+			ID            uint
+			Width, Height uint
+		}
+		if err := ctx.db.Model(&models.Resource{}).
+			Select("resources.id, resources.width, resources.height").
+			Where("resources.id IN ?", chunk).
+			Find(&batch).Error; err != nil {
+			return err
+		}
+		rows = append(rows, batch...)
+	}
+	dims := make(map[uint]*models.Resource, len(rows))
+	for _, row := range rows {
+		dims[row.ID] = &models.Resource{ID: row.ID, Width: row.Width, Height: row.Height}
+	}
+	rule := planWinnerRule(reduction, plan)
+	for _, cluster := range open {
+		var candidates []clusterCandidate
+		for _, member := range cluster.Members {
+			if resource := dims[member.ResourceID]; resource != nil && !member.Ejected {
+				candidates = append(candidates, clusterCandidate{WinnerCandidate: models.WinnerCandidate{Resource: resource}})
+			}
+		}
+		cluster.KeepsSmaller = keepsSmaller(candidates, cluster.WinnerID, rule, cluster.DecidedBy)
+	}
+	return nil
 }

@@ -112,7 +112,7 @@ func (ctx *MahresourcesContext) overrideReductionClusterOnce(override *query_mod
 		return nil, ErrReductionClusterSettled
 	}
 
-	if err := ctx.applyOverride(cluster, override, DecodeWinnerRule(reduction.WinnerRule)); err != nil {
+	if err := ctx.applyOverride(cluster, override, planWinnerRule(reduction, &plan)); err != nil {
 		return nil, err
 	}
 

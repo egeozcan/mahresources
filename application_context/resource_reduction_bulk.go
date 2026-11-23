@@ -81,6 +81,9 @@ func (ctx *MahresourcesContext) bulkOverrideReductionClustersOnce(request *query
 		return nil, nil, err
 	}
 
+	if err := ctx.deriveKeepsSmallerForOldPlan(&plan, reduction); err != nil {
+		return nil, nil, err
+	}
 	targets, err := ctx.bulkTargets(&plan, request)
 	if err != nil {
 		return nil, nil, err
