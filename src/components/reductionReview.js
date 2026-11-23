@@ -455,10 +455,11 @@ export function registerReductionReviewStore(Alpine) {
     escapeDialog() {
       // A running apply cannot be cancelled, but the dialog can be left: the
       // server finishes the batch either way.
-      if (this.applying) {
+      if (this.localApplying) {
         this.continueInBackground();
         return;
       }
+      if (this.applying) return;
       this.closeDialog();
     },
 
@@ -709,7 +710,8 @@ export function registerReductionReviewStore(Alpine) {
 
     /** Close the running dialog without cancelling anything: the server keeps going. */
     continueInBackground() {
-      if (!this.applying) return;
+      // Only an apply this page started can be sent to the background.
+      if (!this.localApplying) return;
       this.backgrounded = true;
       this._onBackground?.();
       window.mahAnnounce?.('The apply continues in the background. This page updates when it finishes.');

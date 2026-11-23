@@ -1026,4 +1026,32 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     await expect(page.getByTestId('reduction-apply-result')).toContainText('Applied 1 Cluster, removed 1 copy.', { timeout: 30_000 });
     release();
   });
+
+  test('a real settings conflict is explained after the reload', async ({ page, context, apiClient, request, baseURL }) => {
+    const label = `RR conflict ${Date.now()}`;
+    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 1);
+    const id = await createReduction(request, baseURL!, label, ids);
+    await computeAndWait(request, baseURL!, id);
+
+    const other = await context.newPage();
+    await other.goto(`/reduction?id=${id}`);
+    await page.goto(`/reduction?id=${id}`);
+    await expect(page.getByTestId('reduction-settings-notice')).toBeHidden();
+
+    // One tab saves a different preset...
+    await other.getByTestId('reduction-preset').selectOption('smallest');
+    await other.getByTestId('reduction-settings-save').click();
+    await expect(other.getByTestId('reduction-settings-saved')).toBeVisible();
+
+    // ...the stale one saves another: refused, reloaded, and told why.
+    await page.getByTestId('reduction-preset').selectOption('oldest');
+    await page.getByTestId('reduction-settings-save').click();
+    await expect(page.getByTestId('reduction-settings-notice')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('reduction-preset')).toHaveValue('smallest');
+
+    // Once: a further reload shows nothing.
+    await page.reload();
+    await expect(page.getByTestId('reduction-settings-notice')).toBeHidden();
+    await other.close();
+  });
 });

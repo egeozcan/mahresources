@@ -37,6 +37,12 @@ function padded(tokens, length) {
   return out;
 }
 
+const CHANGED_ELSEWHERE = 'These settings were changed elsewhere. The form now shows the current values; check them and save again if you still want a change.';
+
+function conflictKey(id) {
+  return `reduction-settings-conflict-${id}`;
+}
+
 function sameSettings(a, b) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -62,6 +68,15 @@ export function reductionSettingsForm(rule) {
       this.slots = padded(tokens, count || 5);
       const review = globalThis.Alpine.store('reductionReview');
       this.synced = review.serverSettings;
+      try {
+        const key = conflictKey(review.reductionId || Number(document.querySelector('[data-reduction-id]')?.dataset.reductionId));
+        if (window.sessionStorage.getItem(key) !== null) {
+          window.sessionStorage.removeItem(key);
+          this.notice = CHANGED_ELSEWHERE;
+        }
+      } catch {
+        // No storage, no notice: the form still holds the current values.
+      }
       // Settings changed elsewhere reach this store with every page read.
       this.$watch(() => review.serverSettings, () => this.reconcile());
     },
@@ -103,7 +118,7 @@ export function reductionSettingsForm(rule) {
       // duplicate criterion dropped): not a change by somebody else.
       if (!own) {
         this.saved = false;
-        this.notice = 'These settings were changed elsewhere. The form now shows the current values; check them and save again if you still want a change.';
+        this.notice = CHANGED_ELSEWHERE;
         window.mahAnnounce?.(this.notice, { assertive: true });
       }
       return true;
@@ -156,6 +171,13 @@ export function reductionSettingsForm(rule) {
           body: JSON.stringify(body),
         });
         if (response.status === 409) {
+          // The reload below ends this page: leave a word for the next one, so the
+          // reviewer is told why the form no longer shows what they typed.
+          try {
+            window.sessionStorage.setItem(conflictKey(review.reductionId), '1');
+          } catch {
+            // Without storage the reload still shows the current values.
+          }
           window.mahAnnounce?.('This Reduction changed since you loaded it. Reloading.', { assertive: true });
           window.location.reload();
           return;

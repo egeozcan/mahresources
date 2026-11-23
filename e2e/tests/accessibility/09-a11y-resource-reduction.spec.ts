@@ -204,4 +204,22 @@ test.describe('Resource Reduction accessibility', () => {
     await page.keyboard.press('Enter');
     await expect(page.getByTestId('reduction-apply')).toBeFocused();
   });
+
+  test('unloaded lazy previews still have a usable target (pageSize 50, no scrolling)', async ({ page, checkA11y, apiClient, request, baseURL }) => {
+    const id = await computedReduction(apiClient, request, baseURL!, `RR a11y target ${Date.now()}`, 'sample-image-7.png');
+    await page.setViewportSize({ width: 1280, height: 500 });
+    await page.goto(`/reduction?id=${id}&pageSize=50`);
+    await expect(page.getByTestId('reduction-cluster').first()).toBeVisible();
+    const box = await page.locator('[data-testid="reduction-member"] a[data-lightbox-item]').first().boundingBox();
+    expect(box!.height).toBeGreaterThanOrEqual(24);
+    await checkA11y();
+  });
+
+  test('the apply bar stays slim at 320px', async ({ page, apiClient, request, baseURL }) => {
+    const id = await computedReduction(apiClient, request, baseURL!, `RR a11y narrow ${Date.now()}`, 'sample-image-6.png');
+    await page.setViewportSize({ width: 320, height: 640 });
+    await page.goto(`/reduction?id=${id}`);
+    const bar = await page.getByTestId('reduction-apply-bar').boundingBox();
+    expect(bar!.height).toBeLessThan(130);
+  });
 });
