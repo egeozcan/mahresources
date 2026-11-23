@@ -64,12 +64,12 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 	// A recompute replaces the plan under a running apply's feet. The same refusal
 	// the batch claim and settle-only make: a record still running and younger than
 	// the ceiling owns the Reduction; past the ceiling it is an interrupted one.
-	plan, err := DecodeReductionPlan(reduction.Plan)
-	if err != nil {
-		return nil, err
-	}
-	if last := plan.LastApply; last != nil && last.FinishedAt == nil && time.Since(last.StartedAt) <= ReductionApplyCeiling {
-		return nil, ErrReductionConflict
+	// A plan that cannot be read has no record to consult; the compute itself reports
+	// that, as it always has.
+	if plan, decodeErr := DecodeReductionPlan(reduction.Plan); decodeErr == nil {
+		if last := plan.LastApply; last != nil && last.FinishedAt == nil && time.Since(last.StartedAt) <= ReductionApplyCeiling {
+			return nil, ErrReductionConflict
+		}
 	}
 
 	// The caller's version, not the one just read. Recompute replaces the plan,
