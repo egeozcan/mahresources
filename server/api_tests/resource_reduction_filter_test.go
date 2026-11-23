@@ -124,11 +124,10 @@ func TestReductionReviewPageFilterControlsReflectTheQuery(t *testing.T) {
 	computeReduction(t, tc, red.ID)
 
 	body := tc.MakeRequest(http.MethodGet, reductionPath(red.ID)+"&Status=skipped&Status=stale&Tier=near&Attention=1", nil).Body.String()
-	assert.Contains(t, body, `name="Status" value="skipped" checked`, "an active status renders checked")
-	assert.Contains(t, body, `name="Status" value="stale" checked`)
-	assert.Contains(t, body, `name="Tier" value="near" checked`)
-	assert.Contains(t, body, `name="Attention" value="1" checked`, "the attention toggle reflects the query")
-	assert.NotContains(t, body, `name="Tier" value="identical" checked`)
+	assert.Regexp(t, `data-testid="reduction-tab-skipped"[^>]*aria-current="page"`, body, "the first requested status is the current tab")
+	assert.Regexp(t, `data-testid="reduction-chip-tier-near-identical" aria-current="true"`, body, "an active tier renders as on")
+	assert.Regexp(t, `data-testid="reduction-chip-attention" aria-current="true"`, body, "the attention chip reflects the query")
+	assert.NotRegexp(t, `data-testid="reduction-chip-tier-identical" aria-current="true"`, body)
 }
 
 // The filter applies before pagination, exactly as a list query's WHERE runs
