@@ -55,7 +55,7 @@
     <p class="text-sm text-stone-700">
         <span class="reduction-state" data-testid="cluster-state">{{ cluster.StateLabel }}</span>.
         {% if cluster.Winner %}Kept <a class="reduction-link" href="/resource?id={{ cluster.Winner.ID }}">{{ cluster.Winner.Name }}</a>.{% endif %}
-        The other copies were merged into it and removed.
+        {% if cluster.Merged %}The other copies were merged into it and removed.{% else %}The apply claimed this Cluster and has not confirmed the merge yet; the other copies still exist.{% endif %}
     </p>
 </article>
 {% else %}
