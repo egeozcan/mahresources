@@ -239,9 +239,10 @@ test.describe('Resource Reduction accessibility', () => {
     await page.goto(`/reduction?id=${id}`);
     const toggle = page.getByTestId('reduction-cluster').first().getByRole('button', { name: 'Approve', exact: true });
     await expect(toggle).toHaveAttribute('aria-pressed', 'true');
-    await expect(toggle).toContainText('Approve');
+    await expect(toggle.locator('.reduction-approve-check')).toBeVisible();
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-pressed', 'false');
-    await expect(toggle).toHaveText('Approve');
+    await expect(toggle.locator('.reduction-approve-check')).toBeHidden();
+    await expect(toggle).toContainText('Approve');
   });
 });
