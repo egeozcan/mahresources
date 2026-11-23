@@ -146,9 +146,11 @@ test.describe('Resource Reduction', () => {
       });
 
       await page.goto('/reductions');
-      await page.getByRole('link', { name: 'New', exact: true }).click();
+      await page.getByRole('link', { name: 'New', exact: true }).first().click();
       await expect(page.getByRole('heading', { name: 'New Resource Reduction' })).toBeVisible();
       await page.getByRole('textbox', { name: 'Name', exact: true }).fill(label);
+      // These cases are about the selection; computing on create is covered in resource-reduction-entry.spec.ts.
+      await page.getByRole('checkbox', { name: 'Find duplicates now' }).uncheck();
       await page.getByRole('button', { name: 'Create', exact: true }).click();
       await expect(page.getByRole('alert')).toHaveText('Choose at least one group or resource.');
 
@@ -160,9 +162,9 @@ test.describe('Resource Reduction', () => {
         await page.getByRole('combobox', { name: 'Resources', exact: true }).fill(resource.Name);
         await page.getByRole('option').filter({ hasText: resource.Name }).click();
       }
-      await expect(page.getByRole('checkbox', { name: 'Exclude external resources' })).not.toBeChecked();
+      await expect(page.getByRole('checkbox', { name: 'Only keep copies from this selection' })).not.toBeChecked();
       if (selection === 'both') {
-        await page.getByRole('checkbox', { name: 'Exclude external resources' }).check();
+        await page.getByRole('checkbox', { name: 'Only keep copies from this selection' }).check();
         // A failed request must retain the name and both selectors for a retry.
         await page.route('**/v1/reduction', route => route.fulfill({
           status: 400, contentType: 'text/plain', body: 'Could not create reduction',
@@ -205,10 +207,10 @@ test.describe('Resource Reduction', () => {
 
     await page.goto(`/group?id=${root.ID}`);
     const panel = page.locator('.detail-panel').filter({ has: page.getByRole('heading', { name: 'Resources', exact: true }) });
-    await openReductionPanel(page, panel.getByRole('button', { name: 'Reduce', exact: true }));
+    await openReductionPanel(page, panel.getByRole('button', { name: 'Find duplicates', exact: true }));
     await expect(panel.getByRole('checkbox', { name: 'Include resources from all subgroups' })).not.toBeChecked();
     await panel.getByTestId('bulk-reduction-name').fill(label);
-    await panel.getByRole('checkbox', { name: 'Exclude external resources' }).check();
+    await panel.getByRole('checkbox', { name: 'Only keep copies from this selection' }).check();
     await panel.getByTestId('bulk-reduction-submit').click();
     await page.waitForURL(/\/reduction\?id=\d+/);
     const reductionURL = page.url();
@@ -217,10 +219,10 @@ test.describe('Resource Reduction', () => {
     await expect(page.getByTestId('reduction-external-resources')).toContainText('excluded from matching');
 
     await page.goto(`/group?id=${root.ID}`);
-    await openReductionPanel(page, panel.getByRole('button', { name: 'Reduce', exact: true }));
+    await openReductionPanel(page, panel.getByRole('button', { name: 'Find duplicates', exact: true }));
     await panel.getByRole('checkbox', { name: 'Include resources from all subgroups' }).check();
     await panel.getByRole('radio', { name: 'Add to existing reduction' }).check();
-    await expect(panel.getByRole('checkbox', { name: 'Exclude external resources' })).not.toBeVisible();
+    await expect(panel.getByRole('checkbox', { name: 'Only keep copies from this selection' })).not.toBeVisible();
     await panel.getByTestId('bulk-reduction-existing').selectOption(reductionId);
     await panel.getByTestId('bulk-reduction-submit').click();
     await page.waitForURL(reductionURL);
@@ -238,7 +240,7 @@ test.describe('Resource Reduction', () => {
     });
 
     await page.goto(`/group?id=${root.ID}`);
-    await openReductionPanel(page, page.getByRole('button', { name: 'Reduce', exact: true }));
+    await openReductionPanel(page, page.getByRole('button', { name: 'Find duplicates', exact: true }));
     await page.getByTestId('bulk-reduction-submit').click();
     await expect(page.getByTestId('bulk-reduction-error')).toContainText('no owned Resources');
     await page.getByRole('checkbox', { name: 'Include resources from all subgroups' }).check();
@@ -258,8 +260,8 @@ test.describe('Resource Reduction', () => {
 
     await openReductionPanel(page, page.getByTestId('bulk-reduction-action'));
     await page.getByTestId('bulk-reduction-name').fill(label);
-    await expect(page.getByRole('checkbox', { name: 'Exclude external resources' })).not.toBeChecked();
-    await page.getByRole('checkbox', { name: 'Exclude external resources' }).check();
+    await expect(page.getByRole('checkbox', { name: 'Only keep copies from this selection' })).not.toBeChecked();
+    await page.getByRole('checkbox', { name: 'Only keep copies from this selection' }).check();
     await page.getByTestId('bulk-reduction-submit').click();
 
     // The bulk bar intercepts form submits and refreshes the list in place, so
@@ -278,7 +280,7 @@ test.describe('Resource Reduction', () => {
     await page.goto(`/groups?Name=${encodeURIComponent(label)}`);
     await page.getByRole('checkbox', { name: `Select ${group.Name}`, exact: true }).check();
     await openReductionPanel(page, page.getByTestId('bulk-reduction-action'));
-    await page.getByRole('checkbox', { name: 'Exclude external resources' }).check();
+    await page.getByRole('checkbox', { name: 'Only keep copies from this selection' }).check();
     await page.getByTestId('bulk-reduction-submit').click();
     await page.waitForURL(/\/reduction\?id=\d+/);
     await expect(page.getByTestId('reduction-external-resources')).toContainText('excluded from matching');

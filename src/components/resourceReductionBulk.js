@@ -1,3 +1,5 @@
+import { createAndOpen } from './reductionStart.js';
+
 /**
  * The bulk-bar handoff into a Resource Reduction.
  *
@@ -29,6 +31,15 @@ export function reductionBulkAction({ entity = 'resource', ownerId = 0 } = {}) {
     error: '',
     includeDescendants: false,
     excludeExternalResources: false,
+    computeNow: true,
+
+    /** The panel heading: names what is about to be searched. */
+    heading() {
+      if (ownerId) return "Find duplicates in this group's Resources";
+      const count = this.selectedIds().length;
+      const noun = entity === 'group' ? 'Group' : 'Resource';
+      return `Find duplicates in ${count} selected ${noun}${count === 1 ? '' : 's'}`;
+    },
 
     hasSelection() {
       return ownerId !== 0 || this.selectedIds().length > 0;
@@ -105,18 +116,8 @@ export function reductionBulkAction({ entity = 'resource', ownerId = 0 } = {}) {
       this.busy = true;
       this.error = '';
       try {
-        const response = await fetch('/v1/reduction', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify(body),
-        });
-        if (!response.ok) {
-          const message = await window.errorMessageFromResponse(response);
-          throw new Error(message);
-        }
-        const json = await response.json();
         // The explicit navigation the bulk bar's own submit path would not do.
-        window.location.href = json.url;
+        await createAndOpen(body, this.computeNow);
       } catch (err) {
         this.error = err.message;
         this.busy = false;

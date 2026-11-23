@@ -15,7 +15,24 @@
         {% for entity in reductions %}
             {% include "/partials/resourceReduction.tpl" %}
         {% empty %}
-            {% include "/partials/listEmpty.tpl" with label="Resource Reductions" createUrl="/reduction/new" %}
+            {% if hasActiveFilter %}
+                {% include "/partials/listEmpty.tpl" with label="Resource Reductions" createUrl="/reduction/new" %}
+            {% else %}
+                <div class="detail-empty space-y-3" data-testid="reductions-empty" x-data="reductionLibraryStart">
+                    <p class="text-stone-700 max-w-2xl">
+                        A Resource Reduction finds copies of the same file and near-identical images, lets you choose which copy to keep, and merges the rest into it. Nothing is removed until you review and apply.
+                    </p>
+                    <div class="flex flex-wrap items-center gap-3">
+                        <button type="button" @click="start()" :disabled="busy" data-testid="reductions-find-everything"
+                                class="inline-flex items-center justify-center min-h-[2.75rem] py-1.5 px-3 border border-transparent shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                            Find duplicates in everything
+                        </button>
+                        <a href="/reduction/new"
+                           class="inline-flex items-center justify-center min-h-[2.75rem] py-1.5 px-3 border border-stone-300 shadow-sm text-sm font-mono font-medium rounded-md text-stone-700 bg-white hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">New</a>
+                    </div>
+                    <p x-show="error" x-cloak x-text="error" role="alert" class="text-sm text-red-700"></p>
+                </div>
+            {% endif %}
         {% endfor %}
     </section>
 
