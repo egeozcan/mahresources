@@ -47,9 +47,12 @@ test.describe('Description inline edit works on detail pages', () => {
     // Double-click to enter edit mode
     await descriptionArea.dblclick();
 
-    // A textarea should appear for editing
-    const textarea = page.locator('textarea[name="description"]');
-    await expect(textarea).toBeVisible({ timeout: 3000 });
+    // The editor opens. Assert its settled state, the mounted markdown editor:
+    // the source textarea is visible only until CodeMirror mounts over it and
+    // hides it, so waiting for the textarea raced the lazy editor chunk and
+    // failed whenever the chunk was already cached.
+    const editor = page.locator('[data-description-editor] .cm-content');
+    await expect(editor).toBeVisible({ timeout: 5000 });
   });
 
   test.afterAll(async ({ apiClient }) => {
