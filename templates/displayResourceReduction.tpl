@@ -6,6 +6,10 @@
 <nav aria-label="Skip links">
 <a href="#reduction-clusters" data-testid="reduction-skip-link"
    class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:p-3 focus:bg-white focus:text-amber-800 focus:underline">Skip to Clusters</a>
+{% if statusTab == "open" %}
+<a href="#reduction-apply-button" data-testid="reduction-skip-apply" x-data @click.prevent="$store.reductionReview.focusApply()"
+   class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:p-3 focus:bg-white focus:text-amber-800 focus:underline">Skip to Apply</a>
+{% endif %}
 </nav>
 {% endif %}
 {% endblock %}
@@ -94,7 +98,7 @@
 
         {# The last apply, from the plan, so a closed tab or a dropped connection is answered on reload. #}
         {% if lastApply %}
-        <div class="reduction-notice{% if statusTab != "open" %} reduction-notice--oneline{% endif %}{% if lastApply.interrupted %} reduction-notice--warn{% elif lastApply.running %} reduction-notice--info{% endif %}"
+        <div class="reduction-notice{% if lastApply.interrupted %} reduction-notice--warn{% elif lastApply.running %} reduction-notice--info{% endif %}"
              role="status" data-testid="reduction-last-apply"
              x-show="!$store.reductionReview.applyCounts">
             {% if lastApply.interrupted %}
@@ -166,7 +170,7 @@
     <div data-reduction-live="body">
         {% if showReview %}
             {% if extent.enteredSince %}
-            <div class="reduction-notice reduction-notice--warn{% if statusTab != "open" %} reduction-notice--oneline{% endif %}" key="reduction-drift" data-testid="reduction-drift">
+            <div class="reduction-notice reduction-notice--warn" key="reduction-drift" data-testid="reduction-drift">
                 <p>{{ extent.enteredSince }} Resource{% if extent.enteredSince != 1 %}s{% endif %} added since the last run. Recompute to include {% if extent.enteredSince != 1 %}them{% else %}it{% endif %}.</p>
             </div>
             {% endif %}
@@ -211,18 +215,19 @@
                     <form method="get" action="/reduction" class="reduction-sort" aria-label="Sort and page size">
                         {% for field in reviewNav.hidden %}<input type="hidden" name="{{ field.name }}" value="{{ field.value }}">{% endfor %}
                         <label class="text-sm text-stone-700">Sort
-                            <select name="sort" data-testid="reduction-sort" class="reduction-select" @change="$el.form.requestSubmit()">
+                            <select name="sort" data-testid="reduction-sort" class="reduction-select">
                                 <option value="copies"{% if reviewSort == "copies" %} selected{% endif %}>Most copies first</option>
                                 <option value="size"{% if reviewSort == "size" %} selected{% endif %}>Largest files first</option>
                                 <option value="computed"{% if reviewSort == "computed" %} selected{% endif %}>Computed order</option>
                             </select>
                         </label>
                         <label class="text-sm text-stone-700">Per page
-                            <select name="pageSize" data-testid="reduction-page-size" class="reduction-select" @change="$el.form.requestSubmit()">
+                            <select name="pageSize" data-testid="reduction-page-size" class="reduction-select">
                                 {% for size in pageSizes %}<option value="{{ size }}"{% if size == pageSize %} selected{% endif %}>{{ size }}</option>{% endfor %}
                             </select>
                         </label>
-                        <noscript><button type="submit" class="reduction-btn">Sort</button></noscript>
+                        {# Changing a select does not navigate on its own (WCAG 3.2.2); this does. #}
+                        <button type="submit" class="reduction-btn reduction-btn--small" data-testid="reduction-sort-apply">Show</button>
                     </form>
                 </details>
             </div>
@@ -241,6 +246,8 @@
                         <div class="detail-empty reduction-empty" data-testid="reduction-empty">
                             {% if reviewFilterActive %}
                                 No Clusters match these filters.
+                            {% elif statusTab == "open" and tabCounts.merging %}
+                                {{ tabCounts.merging }} Cluster{% if tabCounts.merging != 1 %}s are{% else %} is{% endif %} being merged. Reload in a moment to see the result.
                             {% elif tabCounts.open|add:tabCounts.skipped|add:tabCounts.stale|add:tabCounts.applied == 0 %}
                                 No copies found in this selection. See About this Reduction for how much of it could be checked.
                             {% else %}
@@ -287,7 +294,7 @@
                         @click="$store.reductionReview.bulk('check', 'identical')">Approve all Identical (<span x-text="$store.reductionReview.bulkFigures.identicalApprovable">{{ bulk.identicalApprovable }}</span>)</button>
             </div>
             <div class="reduction-apply-wrap">
-                <button type="button" class="reduction-btn reduction-btn--danger" data-testid="reduction-apply"
+                <button type="button" id="reduction-apply-button" class="reduction-btn reduction-btn--danger" data-testid="reduction-apply"
                         :disabled="$store.reductionReview.busy || $store.reductionReview.applying || $store.reductionReview.refreshing > 0 || ($store.reductionReview.checkedCount === 0 && !$store.reductionReview.figuresStale)"
                         aria-describedby="reduction-apply-warning"
                         @click="$store.reductionReview.apply($event)" x-text="'Apply ' + $store.reductionReview.checkedCount + ' Cluster' + ($store.reductionReview.checkedCount === 1 ? '' : 's') + '\u2026'">Apply {{ review.CheckedCount }} Cluster{% if review.CheckedCount != 1 %}s{% endif %}…</button>

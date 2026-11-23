@@ -5205,20 +5205,9 @@ progress.export-progress-bar::-moz-progress-bar {
     /* The rows scroll sideways: fade their trailing edge as the hint. */
     .reduction-tabs,
     .reduction-chips {
-        -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.75rem), transparent);
-        mask-image: linear-gradient(to right, #000 calc(100% - 1.75rem), transparent);
-    }
-
-    /* A notice that only repeats history on a tab with nothing to apply: one line. */
-    .reduction-notice--oneline {
-        flex-wrap: nowrap;
-    }
-
-    .reduction-notice--oneline > p {
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        scroll-padding-inline: 1rem;
+        -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 3rem), transparent);
+        mask-image: linear-gradient(to right, #000 calc(100% - 3rem), transparent);
     }
 }
 

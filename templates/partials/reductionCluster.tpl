@@ -98,8 +98,9 @@
             <button type="button" data-testid="cluster-reopen" class="reduction-btn"
                     :disabled="$store.reductionReview.busy"
                     @click="$store.reductionReview.act('{{ cluster.ID }}', 'reopen')">Reopen</button>
-            {% elif cluster.LoserCount == 0 %}
-            {# Every other copy was left out: there is nothing to approve, so no toggle to press (the server refuses it too). #}
+            {% else %}
+            {% if cluster.LoserCount == 0 %}
+            {# Every other copy was left out: there is nothing to approve, so no toggle to press (the server refuses it too). Skip stays. #}
             <p class="reduction-nothing" data-testid="cluster-nothing-to-remove">Nothing to remove: every other copy is kept.</p>
             {% else %}
             {# aria-pressed with a constant accessible name: the visible text changes, the name does not. #}
@@ -113,6 +114,7 @@
                 <span class="sr-only">Approve</span>
                 <span aria-hidden="true">{% if cluster.Checked %}Approved &#10003;{% else %}Approve{% endif %}</span>
             </button>
+            {% endif %}
             <button type="button" data-testid="cluster-skip" class="reduction-btn"
                     :aria-keyshortcuts="$store.reductionReview.shortcutsOn ? 'S' : null"
                     :disabled="$store.reductionReview.busy || !$store.reductionReview.isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})"

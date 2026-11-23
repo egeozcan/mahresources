@@ -196,7 +196,6 @@ export function registerReductionReviewStore(Alpine) {
         // Without storage the sentence has no reason to give, and nothing says there was one.
       }
       if (this.status === 'computing') this.watchCompute();
-      if (this.serverApplying) this.watchApply();
       this._clearBar();
       this._centerActive();
     },
@@ -207,7 +206,8 @@ export function registerReductionReviewStore(Alpine) {
         const row = document.querySelector(selector);
         const active = row?.querySelector('[aria-current]');
         if (!row || !active || row.scrollWidth <= row.clientWidth) continue;
-        row.scrollLeft = Math.max(0, active.offsetLeft - (row.clientWidth - active.offsetWidth) / 2);
+        const offset = active.getBoundingClientRect().left - row.getBoundingClientRect().left + row.scrollLeft;
+        row.scrollLeft = Math.max(0, offset - (row.clientWidth - active.offsetWidth) / 2);
       }
     },
 
@@ -255,6 +255,9 @@ export function registerReductionReviewStore(Alpine) {
       this.lastApplyStartedAt = state.lastApplyStartedAt || '';
       this.serverSettings = state.settings || null;
       this.figuresStale = false;
+      // Any read that finds an apply running (another tab's) starts the watcher that
+      // lifts the block when it finishes.
+      if (this.serverApplying) this.watchApply();
     },
 
     /**
@@ -398,6 +401,14 @@ export function registerReductionReviewStore(Alpine) {
       if (!this.moreOpen) return;
       this.moreOpen = false;
       document.querySelector('[data-testid="reduction-more"]')?.focus();
+    },
+
+    /** The skip link's target: the Apply button, or the bar's menu while Apply is disabled. */
+    focusApply() {
+      const apply = document.getElementById('reduction-apply-button');
+      const target = apply && !apply.disabled ? apply : document.querySelector('[data-testid="reduction-more"]') || document.querySelector('.reduction-bar button:not(:disabled)');
+      target?.scrollIntoView({ block: 'nearest' });
+      target?.focus();
     },
 
     focusSettings() {
@@ -548,44 +559,59 @@ export function registerReductionReviewStore(Alpine) {
       const requestId = newRequestId();
       // The dialog's buttons are about to be replaced; keep focus on the dialog.
       setTimeout(() => (document.querySelector('[data-testid="reduction-apply-background"]') || document.querySelector('[data-testid="reduction-dialog"]'))?.focus(), 0);
-      let outcome = null;
-      let lost = false;
-      try {
-        let response;
+      const send = async () => {
+        const result = { outcome: null, lost: false, error: null };
         try {
-          response = await fetch('/v1/reduction/apply', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify(applyRequest(this.reductionId, confirmed, requestId)),
-          });
-        } catch {
-          // No response at all: the request may or may not have been processed.
-          lost = true;
-        }
-        if (response) {
-          if (response.ok) {
-            try {
-              outcome = await response.json();
-            } catch {
-              lost = true;
-            }
-          } else if (LOST_STATUSES.has(response.status)) {
-            // A gateway gave up on a request the server may still be running.
-            lost = true;
-          } else {
-            throw new Error(await window.errorMessageFromResponse(response));
+          let response;
+          try {
+            response = await fetch('/v1/reduction/apply', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+              body: JSON.stringify(applyRequest(this.reductionId, confirmed, requestId)),
+            });
+          } catch {
+            // No response at all: the request may or may not have been processed.
+            result.lost = true;
           }
+          if (response) {
+            if (response.ok) {
+              try {
+                result.outcome = await response.json();
+              } catch {
+                result.lost = true;
+              }
+            } else if (LOST_STATUSES.has(response.status)) {
+              // A gateway gave up on a request the server may still be running.
+              result.lost = true;
+            } else {
+              throw new Error(await window.errorMessageFromResponse(response));
+            }
+          }
+        } catch (err) {
+          // The server answered and refused: nothing was applied.
+          result.error = err;
         }
-      } catch (err) {
-        // The server answered and refused: nothing was applied.
-        this.error = err.message;
-        window.mahAnnounce?.(`Nothing was applied: ${err.message}`, { assertive: true });
+        return result;
+      };
+      // A reviewer who sends the dialog to the background no longer waits on this
+      // response: the plan's own record is followed instead, so a response held up
+      // by a slow proxy cannot hold the page.
+      const background = new Promise((resolve) => { this._onBackground = () => resolve('background'); });
+      const first = await Promise.race([send(), background]);
+      this._onBackground = null;
+      let { outcome = null, lost = false, error = null } = first === 'background' ? { lost: true } : first;
+      const quiet = first === 'background';
+      if (error) {
+        this.error = error.message;
+        window.mahAnnounce?.(`Nothing was applied: ${error.message}`, { assertive: true });
       }
 
       let recovered = null;
       if (lost) {
-        this.applyUnknown = 'The result of this apply is unknown; checking…';
-        window.mahAnnounce?.(this.applyUnknown, { assertive: true });
+        if (!quiet) {
+          this.applyUnknown = 'The result of this apply is unknown; checking…';
+          window.mahAnnounce?.(this.applyUnknown, { assertive: true });
+        }
         recovered = await this._recoverApply(requestId);
         this.applyUnknown = '';
       }
@@ -685,6 +711,7 @@ export function registerReductionReviewStore(Alpine) {
     continueInBackground() {
       if (!this.applying) return;
       this.backgrounded = true;
+      this._onBackground?.();
       window.mahAnnounce?.('The apply continues in the background. This page updates when it finishes.');
       this.closeDialog();
     },

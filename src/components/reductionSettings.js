@@ -75,7 +75,14 @@ export function reductionSettingsForm(rule) {
     reconcile(own = false) {
       const review = globalThis.Alpine.store('reductionReview');
       const server = review.serverSettings;
-      if (!server || this.saving || sameSettings(server, this.synced)) return false;
+      if (!server || this.saving) return false;
+      // This root can initialise before the page's store is seeded: its first sight of the
+      // server's values is the baseline, not a change made elsewhere.
+      if (!this.synced) {
+        this.synced = server;
+        return false;
+      }
+      if (sameSettings(server, this.synced)) return false;
       const form = this.$el.querySelector('form');
       if (!form) return false;
       const name = form.elements.namedItem('name');

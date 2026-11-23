@@ -392,6 +392,8 @@ test.describe('Resource Reduction', () => {
     // With every other copy kept there is nothing to approve: text, not a toggle.
     await expect(cluster.getByTestId('cluster-nothing-to-remove')).toHaveText('Nothing to remove: every other copy is kept.');
     await expect(cluster.getByTestId('cluster-approve')).toHaveCount(0);
+    // Skip is still a decision the reviewer can make.
+    await expect(cluster.getByTestId('cluster-skip')).toHaveCount(1);
 
     // Including the copy again brings the toggle back.
     await left.getByRole('button', { name: 'Include again' }).click();
@@ -532,10 +534,15 @@ test.describe('Resource Reduction', () => {
 
     await page.goto(`/reduction?id=${id}`);
     await page.getByTestId('reduction-sort').selectOption('size');
+    // Changing a select does not navigate by itself (WCAG 3.2.2).
+    await page.waitForTimeout(300);
+    await expect(page).not.toHaveURL(/sort=size/);
+    await page.getByTestId('reduction-sort-apply').click();
     await page.waitForURL(/sort=size/);
     await expect(page.getByTestId('reduction-sort')).toHaveValue('size');
 
     await page.getByTestId('reduction-page-size').selectOption('50');
+    await page.getByTestId('reduction-sort-apply').click();
     await page.waitForURL(/pageSize=50/);
     await expect(page.getByTestId('reduction-page-size')).toHaveValue('50');
     // The sort survived the second change.
@@ -843,6 +850,8 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     await page.goto(`/reduction?id=${id}`);
     const near = page.locator('#keepAsVersionNear');
     await expect(near).toBeChecked();
+    // A fresh load is not a conflict.
+    await expect(page.getByTestId('reduction-settings-notice')).toBeHidden();
 
     // Another tab turns the flag off.
     const list = await (await request.get(`${baseURL}/v1/reductions`)).json();
@@ -980,5 +989,34 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     expect(announced.some((text) => /applied/i.test(text) && !/Nothing was applied/.test(text))).toBe(false);
     expect(page.url()).toBe(urlBefore);
     await expect(page.locator('#reduction-apply-result')).not.toBeFocused();
+  });
+
+  test('an apply sent to the background finishes on its own, from the plan, before the response arrives', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR held ${Date.now()}`;
+    const { keeper, twin } = await makeIdenticalPair(request, baseURL!, apiClient, label);
+    const id = await createReduction(request, baseURL!, label, [keeper.ID, twin.ID]);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.goto(`/reduction?id=${id}`);
+    // The server processes the apply; the browser is held back from the answer.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let processed!: () => void;
+    const serverDone = new Promise<void>((resolve) => { processed = resolve; });
+    await page.route('**/v1/reduction/apply', async (route) => {
+      const response = await route.fetch();
+      processed();
+      await held;
+      await route.fulfill({ response });
+    });
+    await page.getByTestId('reduction-apply').click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Apply 1 Cluster' }).click();
+    await serverDone;
+    await page.getByTestId('reduction-apply-background').click();
+    await expect(page.getByTestId('reduction-dialog')).toBeHidden();
+
+    // Not through the held response: the plan's own record is what the page follows.
+    await expect(page.getByTestId('reduction-apply-result')).toContainText('Applied 1 Cluster, removed 1 copy.', { timeout: 30_000 });
+    release();
   });
 });

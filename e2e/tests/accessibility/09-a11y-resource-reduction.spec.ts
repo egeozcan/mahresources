@@ -196,4 +196,12 @@ test.describe('Resource Reduction accessibility', () => {
     await page.keyboard.press('Escape');
     await expect(card).toBeFocused();
   });
+
+  test('Skip to Apply lands on the Apply button', async ({ page, apiClient, request, baseURL }) => {
+    const id = await computedReduction(apiClient, request, baseURL!, `RR a11y skip apply ${Date.now()}`, 'sample-image-8.png');
+    await page.goto(`/reduction?id=${id}`);
+    await page.getByTestId('reduction-skip-apply').focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('reduction-apply')).toBeFocused();
+  });
 });
