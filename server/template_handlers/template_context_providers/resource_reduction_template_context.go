@@ -3,6 +3,7 @@ package template_context_providers
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/flosch/pongo2/v4"
 
@@ -156,6 +157,13 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 		if err := decoder.Decode(&reviewQuery, request.URL.Query()); err != nil {
 			return addErrContext(err, baseContext)
 		}
+		// Open is the tab the page lands on: with no status given the review shows the
+		// open Clusters, acted on or not. What the reviewer asked for is kept apart,
+		// so "nothing matches your filters" is not claimed of the default view.
+		requested := reviewQuery
+		if len(reviewQuery.Status) == 0 {
+			reviewQuery.Status = []string{models.ReductionClusterOpen}
+		}
 		review, err := context.GetReductionReview(uint(id), owner, restricted, int(page), &reviewQuery)
 		if err != nil {
 			return addErrContext(err, baseContext)
@@ -199,8 +207,79 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 			// True when any filter is active, so the empty state can say "nothing
 			// matches" rather than "nothing repeats" — the second is a claim about
 			// the whole Extent, and a filter may simply have excluded everything.
-			"reviewFilterActive": reviewQuery.NeedsAttention || len(reviewQuery.Status) > 0 || len(reviewQuery.Tier) > 0,
+			"reviewFilterActive": requested.NeedsAttention || len(requested.Status) > 0 || len(requested.Tier) > 0 ||
+				requested.Approval == "approved" || requested.Approval == "unapproved",
+
+			// The status tab the page is on: the first requested status, or open.
+			"statusTab": reviewQuery.Status[0],
+			// The review's own settings, normalised, so the controls show what the
+			// server used rather than what the URL said.
+			"reviewApproval": normalizedApproval(reviewQuery.Approval),
+			"reviewSort":     normalizedSort(reviewQuery.Sort),
+			"pageSize":       review.PageSize,
+			"pageSizes":      application_context.ReductionPageSizes,
+			// Counts over the Clusters this principal may fully see; a withheld
+			// Cluster is in none of them.
+			"tabCounts": pongo2.Context{
+				"open":    review.TabCounts.Open,
+				"skipped": review.TabCounts.Skipped,
+				"stale":   review.TabCounts.Stale,
+				"applied": review.TabCounts.Applied,
+			},
+			// What the apply dialog states, per tier, over approved visible Clusters.
+			"applyFigures": pongo2.Context{
+				"identical":    tierFigures(review.ApplyFigures.Identical),
+				"near":         tierFigures(review.ApplyFigures.Near),
+				"keepsSmaller": review.ApplyFigures.KeepsSmaller,
+			},
+			// The numbers on the bulk buttons.
+			"bulk": pongo2.Context{
+				"identicalApprovable": review.Bulk.IdenticalApprovable,
+				"identicalOpen":       review.Bulk.IdenticalOpen,
+			},
+			"settingsChanged": review.SettingsChanged,
+			"lastApply":       describeLastApplyContext(review.LastApply),
+			"extentAll":       review.ExtentAll,
 		}.Update(baseContext)
+	}
+}
+
+func normalizedApproval(v string) string {
+	if v == "approved" || v == "unapproved" {
+		return v
+	}
+	return ""
+}
+
+func normalizedSort(v string) string {
+	if v == "size" || v == "computed" {
+		return v
+	}
+	return "copies"
+}
+
+func tierFigures(f contracts.ReductionTierFigures) pongo2.Context {
+	return pongo2.Context{"clusters": f.Clusters, "losers": f.Losers, "keepAsVersion": f.KeepAsVersion}
+}
+
+// describeLastApplyContext is the last apply record as the page and its .json twin
+// carry it: counts and times only, nil before the first apply.
+func describeLastApplyContext(last *contracts.ReductionLastApplyView) any {
+	if last == nil {
+		return nil
+	}
+	var finished any
+	if last.FinishedAt != nil {
+		finished = last.FinishedAt.Format(time.RFC3339)
+	}
+	return pongo2.Context{
+		"startedAt":   last.StartedAt.Format(time.RFC3339),
+		"finishedAt":  finished,
+		"applied":     last.Applied,
+		"removed":     last.Removed,
+		"stale":       last.Stale,
+		"running":     last.Running,
+		"interrupted": last.Interrupted,
 	}
 }
 
