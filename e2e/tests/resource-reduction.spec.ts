@@ -910,6 +910,13 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     await expect(card.getByTestId('cluster-approve')).toHaveCount(0);
     await expect(card.getByTestId('cluster-skip')).toHaveCount(0);
     await expect(card.getByTestId('member-promote')).toHaveCount(0);
+    await expect(card.getByTestId('cluster-stale-reason')).not.toContainText('Recompute');
+
+    // The way forward is leaving out the copy that changed or went: that reopens the Cluster.
+    const eject = card.getByTestId('member-eject').first();
+    await expect(eject).toBeVisible();
+    await eject.click();
+    await expect(page.locator('[data-cluster-state="stale"]')).toHaveCount(0);
   });
 
   test('the running apply dialog can be left without cancelling it', async ({ page, apiClient, request, baseURL }) => {

@@ -10,6 +10,12 @@
     <p class="text-xs text-stone-600 max-w-[10rem]">
         {% if cluster.Merged %}Merged and removed.{% elif cluster.State == "stale" %}Removed elsewhere.{% else %}Resource unavailable.{% endif %}
     </p>
+    {# A copy that is gone is left out of a stale Cluster the same way as one that is not: this reopens the rest for review. #}
+    {% if cluster.State == "stale" and not member.IsWinner and not member.Ejected %}
+    <button type="button" data-testid="member-eject" class="reduction-btn reduction-btn--small"
+            :disabled="$store.reductionReview.busy"
+            @click="$store.reductionReview.act('{{ cluster.ID }}', 'eject', {{ member.ResourceID }})">Don't remove<span class="sr-only"> (the copy that was removed elsewhere)</span></button>
+    {% endif %}
 </div>
 {% else %}
 <div class="reduction-member {% if member.IsWinner %}reduction-member--keep{% elif member.Ejected %}reduction-member--ejected{% else %}reduction-member--remove{% endif %}"
@@ -93,7 +99,13 @@
     </ul>
 
     <div class="reduction-member-actions">
-    {% if cluster.State != "applied" and cluster.State != "stale" %}
+    {% if cluster.State == "stale" %}
+        {% if not member.IsWinner and not member.Ejected %}
+        <button type="button" data-testid="member-eject" class="reduction-btn reduction-btn--small"
+                :disabled="$store.reductionReview.busy"
+                @click="$store.reductionReview.act('{{ cluster.ID }}', 'eject', {{ member.ResourceID }})">Don't remove<span class="sr-only"> ({{ member.Resource.Name }})</span></button>
+        {% endif %}
+    {% elif cluster.State != "applied" %}
         {% if not member.IsWinner and not member.Ejected %}
         <button type="button" data-testid="member-promote" class="reduction-btn reduction-btn--small"
                 :disabled="$store.reductionReview.busy"

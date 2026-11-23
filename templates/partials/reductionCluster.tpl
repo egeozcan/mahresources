@@ -129,7 +129,8 @@
     <div class="reduction-warning" role="note" key="stale" data-testid="cluster-stale-reason">
         <p><strong>This Cluster cannot be applied:</strong>
         {% if cluster.StaleReason %}{{ cluster.StaleReason }}.{% else %}it no longer matches what was reviewed.{% endif %}
-        Recompute to find it again if the copies still exist.</p>
+        A copy in this Cluster changed or was removed. Use Don't remove on that copy to review the rest again.
+        If the kept copy itself changed or is gone, start a new Reduction over the same selection.</p>
     </div>
     {% endif %}
 
