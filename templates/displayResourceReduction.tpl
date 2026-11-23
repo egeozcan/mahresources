@@ -152,7 +152,7 @@
                                 <template x-if="outcome.withheld"><span x-text="outcome.reason"></span></template>
                                 <template x-if="!outcome.withheld">
                                     <span>
-                                        <a :href="'/reduction?id={{ raw.ID }}&status=stale'" class="underline" x-text="outcome.clusterId"></a>
+                                        <a :href="'/reduction?id={{ raw.ID }}&status=stale'" class="underline" x-text="outcome.label ? 'Cluster keeping ' + outcome.label : 'A Cluster'"></a>
                                         &mdash; <span x-text="outcome.reason"></span>
                                     </span>
                                 </template>
@@ -163,8 +163,10 @@
             </template>
         </div>
 
-        <div class="reduction-notice reduction-notice--error" role="alert" x-show="$store.reductionReview.error" x-cloak
-             x-text="$store.reductionReview.error" data-testid="reduction-error"></div>
+        {# The apply bar carries its own copy of the error while it is on screen; this one is for tabs without a bar. #}
+        <div class="reduction-notice reduction-notice--error" :role="$store.reductionReview.barShown ? null : 'alert'" tabindex="-1" data-reduction-error
+             x-show="$store.reductionReview.error && !$store.reductionReview.barShown" x-cloak
+             x-text="$store.reductionReview.errorText" data-testid="reduction-error"></div>
     </div>
 
     <div data-reduction-live="body">
@@ -269,6 +271,11 @@
     <div class="reduction-bar" data-testid="reduction-apply-bar" tabindex="-1" role="region" aria-label="Apply approved Clusters"
          x-show="$store.reductionReview.tab === 'open' && ($store.reductionReview.openCount > 0 || $store.reductionReview.checkedCount > 0)" x-cloak
          @keydown.escape="$store.reductionReview.closeMore()">
+        <div class="reduction-bar-error" role="alert" tabindex="-1" data-reduction-error data-testid="reduction-bar-error"
+             x-show="$store.reductionReview.error" x-cloak>
+            <span x-text="$store.reductionReview.errorText"></span>
+            <button type="button" class="reduction-btn reduction-btn--small" @click="window.location.reload()">Reload</button>
+        </div>
         <p class="reduction-bar-counts" data-testid="reduction-checked-summary">
             <span x-text="$store.reductionReview.checkedCount">{{ review.CheckedCount }}</span> approved
             &middot;

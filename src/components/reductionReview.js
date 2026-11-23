@@ -168,6 +168,11 @@ export function registerReductionReviewStore(Alpine) {
     // deliberately: the gesture is meant to be made each time.
     expanded: {},
 
+    /** The apply bar is on screen (the Open tab, with something to apply or review). */
+    get barShown() {
+      return this.tab === 'open' && (this.openCount > 0 || this.checkedCount > 0);
+    },
+
     get applying() {
       return this.localApplying || this.serverApplying;
     },
@@ -198,6 +203,8 @@ export function registerReductionReviewStore(Alpine) {
       if (this.status === 'computing') this.watchCompute();
       this._clearBar();
       this._centerActive();
+      // A refusal is shown where the reviewer is looking, not at the top of a page they have scrolled down.
+      Alpine.watch(() => this.error, (message) => { if (message) this.surfaceError(); });
     },
 
     /** On a phone the tab and chip rows scroll sideways: start with the active ones in view. */
@@ -224,11 +231,14 @@ export function registerReductionReviewStore(Alpine) {
       const root = document.documentElement;
       const apply = () => {
         const height = bar.getBoundingClientRect().height;
-        root.style.scrollPaddingBottom = height > 0 ? `${Math.ceil(height) + 16}px` : '';
+        // Only a bar stuck to the viewport covers anything: below 700px tall it sits in the flow.
+        const sticky = window.getComputedStyle(bar).position === 'sticky';
+        root.style.scrollPaddingBottom = sticky && height > 0 ? `${Math.ceil(height) + 16}px` : '';
       };
       this._barObserver?.disconnect();
       this._barObserver = new ResizeObserver(apply);
       this._barObserver.observe(bar);
+      window.addEventListener('resize', apply);
       apply();
       window.addEventListener('pagehide', () => { root.style.scrollPaddingBottom = ''; }, { once: true });
     },
@@ -401,6 +411,25 @@ export function registerReductionReviewStore(Alpine) {
       if (!this.moreOpen) return;
       this.moreOpen = false;
       document.querySelector('[data-testid="reduction-more"]')?.focus();
+    },
+
+    /** The error as a sentence. */
+    get errorText() {
+      return this.error ? this.error.charAt(0).toUpperCase() + this.error.slice(1) : '';
+    },
+
+    /**
+     * Bring the error into view and focus it: the one in the apply bar while the
+     * bar is on screen, the one at the top otherwise.
+     */
+    surfaceError() {
+      setTimeout(() => {
+        const candidates = [...document.querySelectorAll('[data-reduction-error]')].filter((el) => el.getClientRects().length > 0);
+        const target = candidates[0];
+        if (!target) return;
+        target.scrollIntoView({ block: 'nearest' });
+        target.focus({ preventScroll: true });
+      }, 0);
     },
 
     /** The skip link's target: the Apply button, or the bar's menu while Apply is disabled. */
@@ -642,6 +671,7 @@ export function registerReductionReviewStore(Alpine) {
       if (outcome) {
         this.applyResult = outcome;
         this.applyCounts = { applied: outcome.applied?.length || 0, removed: outcome.destroyed || 0, stale: outcome.stale?.length || 0, changed: outcome.changed || 0 };
+        this._nameOutcomes(this.applyResult.stale);
       } else if (recovered?.record) {
         this.applyResult = null;
         const last = recovered.record;
@@ -677,6 +707,8 @@ export function registerReductionReviewStore(Alpine) {
       const report = document.getElementById('reduction-apply-result');
       this.closeDialog();
       this.confirmed = null;
+      // After closeDialog's own focus hand-back, so the refusal is where focus ends up.
+      if (this.error) setTimeout(() => this.surfaceError(), 20);
       // Focus moves to the report only for a reviewer who stayed with the dialog;
       // one who sent it to the background keeps their place.
       if (this.applyCounts && report && !this.backgrounded) {
@@ -753,6 +785,22 @@ export function registerReductionReviewStore(Alpine) {
       } finally {
         this.busy = false;
       }
+    },
+
+    /** Name each refused Cluster by the copy it was keeping; "a Cluster" when that cannot be read. */
+    async _nameOutcomes(list) {
+      await Promise.all((list || []).slice(0, 20).map(async (item) => {
+        if (!item.winnerId) return;
+        try {
+          const response = await fetch(`/v1/resource?id=${item.winnerId}`, { headers: { Accept: 'application/json' } });
+          if (!response.ok) return;
+          const json = await response.json();
+          const name = json.Name || json.name;
+          if (name) item.label = name;
+        } catch {
+          // The generic label stays.
+        }
+      }));
     },
 
     /** Close the running dialog without cancelling anything: the server keeps going. */

@@ -5218,7 +5218,6 @@ progress.export-progress-bar::-moz-progress-bar {
 /* A short viewport (a landscape phone, 200% zoom): the apply bar becomes one slim row. */
 @media (max-height: 500px) {
     .reduction-bar {
-        flex-wrap: nowrap;
         gap: 0.5rem;
         padding: 0.25rem 0.5rem;
         margin-top: -3.5rem;
@@ -5306,4 +5305,35 @@ progress.export-progress-bar::-moz-progress-bar {
     background: #fffbeb;
     color: #78350f;
     border-color: #f59e0b;
+}
+
+.reduction-bar-error {
+    flex: 1 1 100%;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.375rem 0.5rem;
+    font-size: 0.875rem;
+    color: #7f1d1d;
+    background: #fef2f2;
+    border-left: 4px solid #b91c1c;
+}
+
+.reduction-bar-error:focus-visible {
+    outline: 2px solid #b91c1c;
+    outline-offset: 2px;
+}
+
+/* A short viewport: a bar stuck to the bottom would cover the tab row at rest,
+   so it sits in the flow after the Clusters (Skip to Apply still reaches it). */
+@media (max-height: 699px) {
+    .reduction-bar {
+        position: static;
+        margin-top: 0.75rem;
+    }
+
+    .reduction-clusters-region--bar {
+        padding-bottom: 0;
+    }
 }

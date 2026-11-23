@@ -470,7 +470,7 @@ test.describe('Resource Reduction', () => {
     await expect(page.getByTestId('reduction-cluster').first().getByTestId('cluster-state')).toHaveText('Not approved');
 
     await page.getByTestId('reduction-compute').click();
-    await expect(page.getByTestId('reduction-error')).toBeHidden();
+    await expect(page.getByTestId('reduction-bar-error')).toBeHidden();
     await expect(page.getByTestId('reduction-cluster').first()).toBeVisible({ timeout: 30_000 });
   });
 
@@ -838,7 +838,7 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     await page.getByRole('alertdialog').getByRole('button', { name: 'Apply 1 Cluster' }).click();
 
     await expect(page.getByTestId('reduction-apply-result')).toContainText('Applied 1 Cluster, removed 1 copy.', { timeout: 20_000 });
-    await expect(page.getByTestId('reduction-error')).toBeHidden();
+    await expect(page.getByTestId('reduction-bar-error')).toBeHidden();
   });
 
   test('the Settings form follows a change made elsewhere instead of undoing it', async ({ page, apiClient, request, baseURL }) => {
@@ -863,7 +863,7 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
 
     // This tab's next action is refused (stale version) and re-reads the page.
     await page.getByTestId('reduction-cluster').first().getByTestId('cluster-skip').click();
-    await expect(page.getByTestId('reduction-error')).toBeVisible();
+    await expect(page.getByTestId('reduction-bar-error')).toBeVisible();
     await expect(near).not.toBeChecked();
     await expect(page.getByTestId('reduction-settings-notice')).toContainText('These settings were changed elsewhere');
   });
@@ -990,7 +990,7 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     await page.getByTestId('reduction-apply').click();
     await page.getByRole('alertdialog').getByRole('button', { name: /^Apply \d+ Clusters?$/ }).click();
 
-    await expect(page.getByTestId('reduction-error')).toBeVisible();
+    await expect(page.getByTestId('reduction-bar-error')).toBeVisible();
     await expect(page.getByTestId('reduction-apply-result')).toBeHidden();
     const announced = await page.evaluate(() => (window as unknown as { __announced: string[] }).__announced);
     expect(announced.some((text) => /applied/i.test(text) && !/Nothing was applied/.test(text))).toBe(false);
@@ -1073,7 +1073,7 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     await page.getByTestId('reduction-apply-background').click();
     await expect(page.getByTestId('reduction-dialog')).toBeHidden();
     release();
-    await expect(page.getByTestId('reduction-error')).toContainText('this Reduction changed since you confirmed it');
+    await expect(page.getByTestId('reduction-bar-error')).toContainText('This Reduction changed since you confirmed it');
     await expect(page.getByTestId('reduction-apply-unknown')).toBeHidden();
     await expect(page.getByTestId('reduction-apply-result')).toBeHidden();
   });
@@ -1101,5 +1101,42 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     await expect(card).toBeVisible();
     await expect(card.getByTestId('member-changed').first()).toBeVisible();
     await expect(card.getByTestId('cluster-stale-reason')).toContainText('cannot be applied');
+  });
+
+  test('a refused apply shows its error in the apply bar, in view and focused, with a Reload button', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR bar error ${Date.now()}`;
+    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 6);
+    const id = await createReduction(request, baseURL!, label, ids);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(`/reduction?id=${id}`);
+    await page.route('**/v1/reduction/apply', (route) => route.fulfill({
+      status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'this Reduction changed since you confirmed it' }),
+    }));
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.getByTestId('reduction-apply').click();
+    await page.getByRole('alertdialog').getByRole('button', { name: /^Apply \d+ Clusters?$/ }).click();
+
+    const error = page.getByTestId('reduction-bar-error');
+    await expect(error).toBeVisible();
+    await expect(error).toContainText('This Reduction changed since you confirmed it');
+    await expect(error).toBeInViewport();
+    await expect(error).toBeFocused();
+    await expect(error.getByRole('button', { name: 'Reload' })).toBeVisible();
+  });
+
+  test('the apply bar sits in the flow on a short screen, so it never covers the tabs', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR short ${Date.now()}`;
+    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 2);
+    const id = await createReduction(request, baseURL!, label, ids);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.setViewportSize({ width: 320, height: 640 });
+    await page.goto(`/reduction?id=${id}`);
+    await expect(page.getByTestId('reduction-apply-bar')).toHaveCSS('position', 'static');
+    const tabs = await page.getByTestId('reduction-tabs').boundingBox();
+    const bar = await page.getByTestId('reduction-apply-bar').boundingBox();
+    expect(bar!.y).toBeGreaterThan(tabs!.y + tabs!.height);
   });
 });
