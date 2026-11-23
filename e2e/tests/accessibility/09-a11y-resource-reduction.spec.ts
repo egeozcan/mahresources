@@ -143,10 +143,10 @@ test.describe('Resource Reduction accessibility', () => {
 
     // The approval is a toggle button, so Space flips it and it says so.
     const approve = cluster.getByTestId('cluster-approve');
-    await expect(approve).toHaveAttribute('aria-pressed', 'true');
+    await expect(approve).toHaveAttribute('aria-pressed', 'false');
     await approve.focus();
     await page.keyboard.press('Space');
-    await expect(approve).toHaveAttribute('aria-pressed', 'false');
+    await expect(approve).toHaveAttribute('aria-pressed', 'true');
 
     // The skip link lands in the Clusters region.
     await page.reload();

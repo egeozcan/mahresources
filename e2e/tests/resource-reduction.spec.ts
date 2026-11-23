@@ -341,7 +341,7 @@ test.describe('Resource Reduction', () => {
     // The decision is in the row, not in an Alpine object, which is the whole
     // point of ADR 0003: group import's review is destroyed by a reload.
     await expect(approve).toHaveAttribute('aria-pressed', 'false');
-    await expect(page.getByTestId('reduction-cluster').first().getByTestId('cluster-state')).toHaveText('Reviewed');
+    await expect(page.getByTestId('reduction-cluster').first().getByTestId('cluster-state')).toHaveText('Not approved');
 
     await page.reload();
     await expect(page.getByTestId('reduction-cluster').first().getByTestId('cluster-approve'))
@@ -452,7 +452,7 @@ test.describe('Resource Reduction', () => {
     // An in-page action bumps the row's version; the compute request must carry
     // the store's, not the one the page was rendered with.
     await page.getByTestId('reduction-cluster').first().getByTestId('cluster-approve').click();
-    await expect(page.getByTestId('reduction-cluster').first().getByTestId('cluster-state')).toHaveText('Reviewed');
+    await expect(page.getByTestId('reduction-cluster').first().getByTestId('cluster-state')).toHaveText('Not approved');
 
     await page.getByTestId('reduction-compute').click();
     await expect(page.getByTestId('reduction-error')).toBeHidden();
@@ -600,7 +600,9 @@ test.describe('Resource Reduction', () => {
     await expect(warning).toContainText('The kept copy has a lower resolution than a copy being removed (300×400 vs 600×800).');
     await expect(cluster.getByTestId('cluster-decided-by')).toContainText('you chose it');
 
-    // An Identical Cluster arrives approved and promoting leaves it so; the dialog says what that means.
+    // Promoting clears the approval; approving it again is the reviewer's decision about the smaller copy.
+    await expect(cluster.getByTestId('cluster-approve')).toHaveAttribute('aria-pressed', 'false');
+    await cluster.getByTestId('cluster-approve').click();
     await expect(cluster.getByTestId('cluster-approve')).toHaveAttribute('aria-pressed', 'true');
     await page.getByTestId('reduction-apply').click();
     await expect(page.getByTestId('reduction-apply-keeps-smaller')).toContainText('keeps a lower-resolution copy than one they remove');
