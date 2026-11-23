@@ -29,6 +29,8 @@ func TestEveryPlanWriteGoesThroughAKnownSite(t *testing.T) {
 		"overrideReductionClusterOnce":      "a review decision: decodes and re-encodes the whole plan",
 		"bulkOverrideReductionClustersOnce": "a bulk decision: decodes and re-encodes the whole plan",
 		"claimReductionApplyBatch":          "the batch claim: decodes the plan, sets LastApply running, re-encodes",
+		"reductionMergeHooks":               "the merge's in-transaction confirmation: decodes the locked row's plan and re-encodes it whole",
+		"settleReductionClaims":             "settle-only: decodes the plan, reconciles claims, re-encodes it whole",
 		"OverwritePlanForTest":              "test seam",
 	}
 
