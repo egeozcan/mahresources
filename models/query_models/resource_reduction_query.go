@@ -23,6 +23,10 @@ type ResourceReductionCreator struct {
 	OwnerId            uint `json:"ownerId" schema:"ownerId"`
 	IncludeDescendants bool `json:"includeDescendants" schema:"includeDescendants"`
 
+	// All selects the whole library as the creating principal can see it, instead
+	// of named Resources and Groups. Stored as a flag, never expanded at rest.
+	All bool `json:"all" schema:"all"`
+
 	// MatchingMode is "identical" or "both". Empty means both, which is the
 	// default a new Reduction is created with.
 	MatchingMode string `json:"matchingMode" schema:"matchingMode"`

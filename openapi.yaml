@@ -2594,6 +2594,8 @@ components:
             type: object
         ResourceReductionCreator:
             properties:
+                all:
+                    type: boolean
                 excludeExternalResources:
                     type: boolean
                 groupIds:

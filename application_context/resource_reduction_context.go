@@ -76,7 +76,7 @@ func (ctx *MahresourcesContext) createOrExtendResourceReductionOnce(creator *que
 		}
 		resourceIDs = dedupeUints(append(resourceIDs, owned...))
 	}
-	if creator.ID == 0 && len(resourceIDs) == 0 && len(groupIDs) == 0 {
+	if creator.ID == 0 && len(resourceIDs) == 0 && len(groupIDs) == 0 && !creator.All {
 		return nil, errors.New("a Resource Reduction needs at least one Resource or Group")
 	}
 	if creator.ID != 0 {
@@ -90,6 +90,7 @@ func (ctx *MahresourcesContext) createOrExtendResourceReductionOnce(creator *que
 		}
 		extent.ResourceIDs = dedupeUints(append(extent.ResourceIDs, resourceIDs...))
 		extent.GroupIDs = dedupeUints(append(extent.GroupIDs, groupIDs...))
+		extent.All = extent.All || creator.All
 		encoded, err := encodeJSON(extent)
 		if err != nil {
 			return nil, err
@@ -105,7 +106,7 @@ func (ctx *MahresourcesContext) createOrExtendResourceReductionOnce(creator *que
 	if name == "" {
 		name = "Resource Reduction"
 	}
-	extentJSON, err := encodeJSON(models.ResourceReductionExtent{ResourceIDs: resourceIDs, GroupIDs: groupIDs})
+	extentJSON, err := encodeJSON(models.ResourceReductionExtent{ResourceIDs: resourceIDs, GroupIDs: groupIDs, All: creator.All})
 	if err != nil {
 		return nil, err
 	}
