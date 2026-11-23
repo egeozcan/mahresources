@@ -48,6 +48,12 @@ export async function computeThenOpen({ id, version, url }) {
     if (!response.ok) throw new Error(await window.errorMessageFromResponse(response));
   } catch (err) {
     rememberComputeError(id, (err && err.message) || String(err));
+    // A one-shot marker the page strips again: the failure itself must not depend on
+    // storage that may be blocked. The reason travels in storage when it can.
+    const target = new URL(url, window.location.href);
+    target.searchParams.set('startFailed', '1');
+    window.location.href = `${target.pathname}${target.search}${target.hash}`;
+    return;
   }
   window.location.href = url;
 }

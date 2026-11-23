@@ -1144,4 +1144,21 @@ test.describe('Resource Reduction review fixes (round 1)', () => {
     const bar = await page.getByTestId('reduction-apply-bar').boundingBox();
     expect(bar!.y).toBeGreaterThan(tabs!.y + tabs!.height);
   });
+
+  test('at 320px, More then Approve page returns focus to More', async ({ page, apiClient, request, baseURL }) => {
+    const label = `RR more focus ${Date.now()}`;
+    const ids = await makeIdenticalPairs(request, baseURL!, apiClient, label, 2);
+    const id = await createReduction(request, baseURL!, label, ids);
+    await computeAndWait(request, baseURL!, id);
+
+    await page.setViewportSize({ width: 320, height: 800 });
+    await page.goto(`/reduction?id=${id}`);
+    const more = page.getByTestId('reduction-more');
+    await more.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('reduction-approve-page')).toBeVisible();
+    await page.getByTestId('reduction-approve-page').focus();
+    await page.keyboard.press('Enter');
+    await expect(more).toBeFocused();
+  });
 });

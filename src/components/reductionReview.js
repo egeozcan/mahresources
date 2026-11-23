@@ -190,15 +190,21 @@ export function registerReductionReviewStore(Alpine) {
     seed() {
       this.shortcutsOn = readShortcutPreference();
       this._readState(document);
-      try {
-        const key = `reduction-compute-error-${this.reductionId}`;
-        const message = window.sessionStorage.getItem(key);
-        if (message !== null) {
+      // The failure is the URL marker; storage only adds the reason when it is available.
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('startFailed') === '1') {
+        this.startError = true;
+        try {
+          const key = `reduction-compute-error-${this.reductionId}`;
+          const message = window.sessionStorage.getItem(key);
+          if (message) this.startError = message;
           window.sessionStorage.removeItem(key);
-          this.startError = message || true;
+        } catch {
+          // Blocked storage: the generic notice still shows, without a reason.
         }
-      } catch {
-        // Without storage the sentence has no reason to give, and nothing says there was one.
+        params.delete('startFailed');
+        const search = params.toString();
+        window.history.replaceState(window.history.state, '', `${window.location.pathname}${search ? `?${search}` : ''}${window.location.hash}`);
       }
       if (this.status === 'computing') this.watchCompute();
       this._clearBar();
@@ -375,7 +381,11 @@ export function registerReductionReviewStore(Alpine) {
       this.busy = true;
       this.error = '';
       this.bulkNotice = null;
+      // Keyboard focus on a button of the bulk menu is about to lose its home when the
+      // menu closes (a phone): it goes back to the button that opened it.
+      const fromMenu = !!document.activeElement?.closest?.('#reduction-bulk-menu');
       this.moreOpen = false;
+      this._returnToMore = fromMenu;
       try {
         const response = await fetch('/v1/reduction/clusters', {
           method: 'POST',
@@ -400,6 +410,11 @@ export function registerReductionReviewStore(Alpine) {
         try { await this.refresh(); } catch { this.figuresStale = true; /* the action's own error stays */ }
       } finally {
         this.busy = false;
+        if (this._returnToMore) {
+          this._returnToMore = false;
+          const more = document.querySelector('[data-testid="reduction-more"]');
+          if (more && more.getClientRects().length > 0) more.focus();
+        }
       }
     },
 
@@ -644,7 +659,9 @@ export function registerReductionReviewStore(Alpine) {
         // record carrying this attempt's id ends the wait early, and "unknown" is
         // never concluded before the request has itself failed without an answer.
         const cancel = { stop: false };
-        const recoveryRun = this._recoverApply(requestId, cancel);
+        let postPending = true;
+        const recoveryRun = this._recoverApply(requestId, cancel, () => postPending);
+        sending.then(() => { postPending = false; });
         const byRecord = recoveryRun.then((result) => (result.record ? { recovered: result } : new Promise(() => {})));
         const byRequest = sending.then(async (result) => (result.lost ? { recovered: await recoveryRun } : result));
         const second = await Promise.race([byRequest, byRecord]);
@@ -734,10 +751,14 @@ export function registerReductionReviewStore(Alpine) {
      *
      * Resolves to {record} (this attempt's finished or interrupted apply) or {message}.
      */
-    async _recoverApply(requestId, cancel = { stop: false }) {
+    async _recoverApply(requestId, cancel = { stop: false }, pending = () => false) {
       let foreign = 0;
-      for (let i = 0; i < RECOVER_TRIES && !cancel.stop; i++) {
-        await new Promise((resolve) => setTimeout(resolve, i === 0 ? RECOVER_FIRST_MS : RECOVER_MS));
+      const started = Date.now();
+      for (let i = 0; !cancel.stop && Date.now() - started < RECOVER_DEADLINE_MS; i++) {
+        // Every 2s for the first minute, every 10s after.
+        const wait = i === 0 ? RECOVER_FIRST_MS : (Date.now() - started < 60_000 ? RECOVER_MS : RECOVER_SLOW_MS);
+        await new Promise((resolve) => setTimeout(resolve, wait));
+        if (cancel.stop) break;
         let last;
         try {
           const response = await fetch(`/reduction.json?id=${this.reductionId}`, { headers: { Accept: 'application/json' } });
@@ -755,7 +776,12 @@ export function registerReductionReviewStore(Alpine) {
           continue;
         }
         // Not ours (or not yet recorded). Give the server a few reads to record ours.
-        if (!(last && last.running)) {
+        // While the request itself is still in flight no answer from the plan is final:
+        // the claim may simply not be written yet. Only a request that has failed gets
+        // a fresh round of reads, and each read must be one made after it failed.
+        if (pending()) {
+          foreign = 0;
+        } else if (!(last && last.running)) {
           foreign++;
           if (foreign >= RECOVER_UNCHANGED) {
             return { message: UNKNOWN_OUTCOME };
@@ -924,7 +950,9 @@ export function registerReductionReviewStore(Alpine) {
 const LOST_STATUSES = new Set([408, 502, 503, 504, 524]);
 const RECOVER_FIRST_MS = 1000;
 const RECOVER_MS = 2000;
-const RECOVER_TRIES = 300;
+// The apply's own ceiling on the server.
+const RECOVER_DEADLINE_MS = 30 * 60 * 1000;
+const RECOVER_SLOW_MS = 10000;
 const RECOVER_UNCHANGED = 4;
 const APPLY_WATCH_MS = 3000;
 const UNKNOWN_OUTCOME = 'The result of this apply is unknown: the server has no record of this attempt, and another apply may have run. Check the Applied tab before applying again.';

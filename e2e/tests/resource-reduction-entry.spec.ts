@@ -282,6 +282,23 @@ test.describe('Resource Reduction entry points', () => {
     });
   });
 
+  test('a failed compute start is shown even when storage is blocked, and the marker is stripped', async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'sessionStorage', { configurable: true, get() { throw new Error('blocked'); } });
+    });
+    await page.route('**/v1/reduction/compute', route => route.fulfill({
+      status: 500, contentType: 'text/plain', body: 'compute queue is full',
+    }));
+    await page.goto('/reduction/new');
+    await page.getByRole('radio', { name: 'Everything you can access' }).check();
+    await page.getByRole('button', { name: 'Create', exact: true }).click();
+    await page.waitForURL(REVIEW_URL);
+    const notice = page.getByTestId('reduction-start-error');
+    await expect(notice).toBeVisible();
+    await expect(notice.getByRole('button', { name: 'Try again' })).toBeVisible();
+    expect(page.url()).not.toContain('startFailed');
+  });
+
   test.describe('bulk bar', () => {
     test('Find duplicates from /resources creates the Reduction and starts it', async ({ page, apiClient, request, baseURL, checkA11y }) => {
       const label = `RRE bulk ${Date.now()}`;

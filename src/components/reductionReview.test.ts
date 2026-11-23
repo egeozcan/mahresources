@@ -86,12 +86,29 @@ describe('reduction compute error handoff', () => {
   it('shows the message the create flow stored, once', () => {
     document.body.innerHTML = page();
     window.sessionStorage.setItem('reduction-compute-error-1', 'no capacity');
+    window.history.replaceState(null, '', '/reduction?id=1&startFailed=1');
 
     const store = reviewStore();
     store.seed();
 
     expect(store.startError).toBe('no capacity');
     expect(window.sessionStorage.getItem('reduction-compute-error-1')).toBeNull();
+    expect(window.location.search).toBe('?id=1');
+  });
+
+  it('shows the generic failure from the URL marker alone when storage is blocked', () => {
+    document.body.innerHTML = page();
+    window.history.replaceState(null, '', '/reduction?id=1&startFailed=1');
+    const original = Object.getOwnPropertyDescriptor(window, 'sessionStorage');
+    Object.defineProperty(window, 'sessionStorage', { configurable: true, get() { throw new Error('blocked'); } });
+    try {
+      const store = reviewStore();
+      store.seed();
+      expect(store.startError).toBe(true);
+      expect(window.location.search).toBe('?id=1');
+    } finally {
+      if (original) Object.defineProperty(window, 'sessionStorage', original);
+    }
   });
 });
 
