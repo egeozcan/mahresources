@@ -48,6 +48,12 @@ func progressOf(t *testing.T, c *application_context.MahresourcesContext, owner 
 
 func TestListProgressCountsEachStatus(t *testing.T) {
 	tc := SetupTestEnv(t)
+	// The members have to exist: for an unrestricted caller a Cluster naming a
+	// deleted Resource is counted as stale.
+	for i := 1; i <= 16; i++ {
+		r := addResourceWithBody(t, tc, fmt.Sprintf("m%d.txt", i), fmt.Sprintf("body %d", i))
+		require.EqualValues(t, i, r.ID)
+	}
 	red := planReduction(t, tc, "Counted", []*models.ReductionCluster{
 		pairCluster("a", models.ReductionClusterOpen, true, 1, 2),
 		pairCluster("b", models.ReductionClusterOpen, true, 3, 4),
