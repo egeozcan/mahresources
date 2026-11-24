@@ -55,8 +55,15 @@
        data-resource-hash="{{ member.Resource.Hash }}"
        data-resource-width="{{ member.Resource.Width }}"
        data-resource-height="{{ member.Resource.Height }}">
+        {# A preview that fails to load (no thumbnail, a failed fetch) is swapped for a type placeholder; the link's own label already names the Resource. #}
         <img height="160" src="/v1/resource/preview?id={{ member.Resource.ID }}&height=160&v={{ member.Resource.Hash }}"
-             alt="" loading="lazy" decoding="async">
+             alt="" loading="lazy" decoding="async"
+             x-init="if ($el.complete && $el.src && !$el.naturalWidth) { $el.hidden = true; $el.nextElementSibling.hidden = false }"
+             @error="$el.hidden = true; $el.nextElementSibling.hidden = false">
+        <span class="reduction-thumb-placeholder" data-testid="member-thumb-placeholder" hidden>
+            <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <span class="reduction-thumb-type">{{ member.Resource.ContentType }}</span>
+        </span>
     </a>
     <p class="reduction-member-name">
         <a class="reduction-member-link" href="/resource?id={{ member.Resource.ID }}" title="{{ member.Resource.Name }}">{{ member.Resource.Name }}</a>

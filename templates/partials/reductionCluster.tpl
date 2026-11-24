@@ -80,12 +80,14 @@
         </div>
 
         {# The reason is one sentence. A Cluster the reviewer re-chose says so, and a tie says what broke it. #}
-        <p class="reduction-reason" data-testid="cluster-decided-by">
+        <p class="reduction-reason" data-testid="cluster-decided-by"{% if cluster.Winner and not cluster.Undecided %} title="{{ cluster.Winner.Name }}"{% endif %}>
             {% if cluster.Winner %}
                 {% if cluster.Undecided %}
                     All copies tie on every criterion; keeping the one added first.
                 {% else %}
-                    Keeping &ldquo;{{ cluster.Winner.Name }}&rdquo;: {{ cluster.DecidedByLabel }}{% if cluster.Margin %}, {{ cluster.Margin }}{% endif %}.
+                    {# The visible name is cut so a URL-length name cannot swell the header; the full sentence stays for screen readers and in the title. #}
+                    <span aria-hidden="true">Keeping &ldquo;{{ cluster.Winner.Name|truncatechars:60 }}&rdquo;: {{ cluster.DecidedByLabel }}{% if cluster.Margin %}, {{ cluster.Margin }}{% endif %}.</span>
+                    <span class="sr-only">Keeping &ldquo;{{ cluster.Winner.Name }}&rdquo;: {{ cluster.DecidedByLabel }}{% if cluster.Margin %}, {{ cluster.Margin }}{% endif %}.</span>
                 {% endif %}
             {% else %}
                 {% if cluster.State == "stale" and cluster.WinnerChanged %}The kept copy was changed or deleted.{% else %}The kept copy is withheld.{% endif %}
