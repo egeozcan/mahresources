@@ -3,7 +3,11 @@ package application_context
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"log"
+	"strconv"
+	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -70,7 +74,8 @@ func opLiteral(op string) string {
 // gallery `resourceIds` array and calendar `calendars[].source.resourceId` in
 // note_blocks, in SQL, once per transaction.
 //
-// Blocks are visited by keyset (id > ?, 500 per page) in ascending id order, and a
+// Blocks are visited by keyset (id > ?) in ascending id order, one window of scrubWindow
+// blocks per statement (the window is cut first, then each block of it is tested), and a
 // block that references a removed id is rewritten by ONE statement that updates its
 // gallery and calendar references together. Every transaction therefore takes its
 // block row locks in id order, which two concurrent deletes cannot turn into a cycle
@@ -95,59 +100,191 @@ func scrubDeletedResourcesFromBlocks(db *gorm.DB, op string) error {
 	default:
 		s = sqliteBlockScrub(opLiteral(op))
 	}
-	var staged map[uint]bool
 	var last uint
 	for {
 		var blocks []struct {
 			ID  uint
 			Dup int
 		}
-		if err := db.Raw(s.candidates, last, deleteStageChunk).Scan(&blocks).Error; err != nil {
+		if err := db.Raw(s.candidates, last, scrubWindow).Scan(&blocks).Error; err != nil {
 			return err
 		}
 		if len(blocks) == 0 {
 			return nil
 		}
 		for _, b := range blocks {
-			if b.Dup == 0 {
+			switch b.Dup {
+			case scrubSkip:
+				continue
+			case scrubSQL:
 				if err := db.Exec(s.update, b.ID).Error; err != nil {
 					return err
 				}
-				continue
-			}
-			if staged == nil {
-				var ids []uint
-				if err := db.Raw("SELECT resource_id FROM reduction_deleted_ids WHERE op = ?", op).Scan(&ids).Error; err != nil {
+			default:
+				if err := scrubBlockInGo(db, b.ID, op); err != nil {
 					return err
 				}
-				staged = make(map[uint]bool, len(ids))
-				for _, id := range ids {
-					staged[id] = true
-				}
-			}
-			if err := scrubBlockInGo(db, b.ID, staged); err != nil {
-				return err
 			}
 		}
 		last = blocks[len(blocks)-1].ID
+		if len(blocks) < scrubWindow {
+			return nil
+		}
 	}
 }
 
+// scrubWindow is how many blocks one candidate statement examines. It bounds the work
+// of a statement, not only the rows it returns: a library with a million galleries that
+// name nothing deleted is walked a window at a time. A var so a test can force several
+// windows from a small fixture.
+var scrubWindow = deleteStageChunk
+
+// What a candidate row says about its block.
+const (
+	scrubSkip = -1 // names no staged id (or is not a JSON object): nothing to do
+	scrubSQL  = 0  // names a staged id: the SQL update reads it the way Go does
+	scrubGo   = 1  // repeats a key the scrub reads: only the Go scrub reads it right
+)
+
 // scrubBlockInGo is the Go scrub of one block, for a document SQL cannot read the way
-// Go does.
-func scrubBlockInGo(db *gorm.DB, id uint, staged map[uint]bool) error {
+// Go does. Numbers are decoded as json.Number, so a value elsewhere in the block that
+// float64 cannot hold (1e999) neither fails the decode nor changes text on the way out;
+// the staged ids the block references are probed one chunk at a time by primary key,
+// never loaded whole. A block that cannot be decoded at all is not this transaction's
+// business: it is logged and left as it is, never allowed to roll the delete back.
+func scrubBlockInGo(db *gorm.DB, id uint, op string) error {
 	var row struct{ Content string }
 	if err := db.Raw("SELECT CAST(content AS TEXT) AS content FROM note_blocks WHERE id = ?", id).Scan(&row).Error; err != nil {
 		return err
 	}
-	updated, changed, err := scrubResourcesFromBlockContent(row.Content, staged)
-	if err != nil {
-		return fmt.Errorf("block %d: %w", id, err)
-	}
-	if !changed {
+	var raw map[string]any
+	dec := json.NewDecoder(strings.NewReader(row.Content))
+	dec.UseNumber()
+	if err := dec.Decode(&raw); err != nil || raw == nil {
+		log.Printf("[scrub] block %d left as it is: not decodable as an object: %v", id, err)
 		return nil
 	}
-	return db.Exec("UPDATE note_blocks SET content = ? WHERE id = ?", updated, id).Error
+	refs := blockReferencedIDs(raw)
+	if len(refs) == 0 {
+		return nil
+	}
+	staged := make(map[uint]bool)
+	for start := 0; start < len(refs); start += deleteStageChunk {
+		end := start + deleteStageChunk
+		if end > len(refs) {
+			end = len(refs)
+		}
+		var hit []uint
+		if err := db.Raw("SELECT resource_id FROM reduction_deleted_ids WHERE op = ? AND resource_id IN ?", op, refs[start:end]).Scan(&hit).Error; err != nil {
+			return err
+		}
+		for _, h := range hit {
+			staged[h] = true
+		}
+	}
+	if len(staged) == 0 {
+		return nil
+	}
+	if !removeStagedRefs(raw, staged) {
+		return nil
+	}
+	updated, err := json.Marshal(raw)
+	if err != nil {
+		log.Printf("[scrub] block %d left as it is: %v", id, err)
+		return nil
+	}
+	return db.Exec("UPDATE note_blocks SET content = ? WHERE id = ?", string(updated), id).Error
+}
+
+// blockRefID is the id a decoded JSON value names, as toUint reads one: an integer
+// literal exactly, any other number as a float64 truncated (a literal float64 cannot
+// hold names nothing), a string as Sscanf("%d") reads it.
+func blockRefID(v any) uint {
+	switch x := v.(type) {
+	case json.Number:
+		if n, err := strconv.ParseInt(string(x), 10, 64); err == nil {
+			if n < 1 {
+				return 0
+			}
+			return uint(n)
+		}
+		f, err := strconv.ParseFloat(string(x), 64)
+		if err != nil || f < 1 || f >= 9e18 {
+			return 0
+		}
+		return uint(f)
+	case string:
+		return toUint(x)
+	}
+	return 0
+}
+
+// blockReferencedIDs lists the ids a decoded block references in the fields the scrub
+// reads, each once.
+func blockReferencedIDs(raw map[string]any) []uint {
+	seen := map[uint]bool{}
+	var out []uint
+	add := func(v any) {
+		if id := blockRefID(v); id != 0 && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	if ids, ok := raw["resourceIds"].([]any); ok {
+		for _, v := range ids {
+			add(v)
+		}
+	}
+	if cals, ok := raw["calendars"].([]any); ok {
+		for _, c := range cals {
+			if cmap, ok := c.(map[string]any); ok {
+				if source, ok := cmap["source"].(map[string]any); ok {
+					if rid, ok := source["resourceId"]; ok {
+						add(rid)
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// removeStagedRefs removes the staged ids from the decoded block, reporting whether
+// anything changed.
+func removeStagedRefs(raw map[string]any, staged map[uint]bool) bool {
+	changed := false
+	if ids, ok := raw["resourceIds"].([]any); ok {
+		filtered := make([]any, 0, len(ids))
+		hit := false
+		for _, v := range ids {
+			if staged[blockRefID(v)] {
+				hit = true
+			} else {
+				filtered = append(filtered, v)
+			}
+		}
+		if hit {
+			raw["resourceIds"] = filtered
+			changed = true
+		}
+	}
+	if cals, ok := raw["calendars"].([]any); ok {
+		for _, c := range cals {
+			cmap, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			source, ok := cmap["source"].(map[string]any)
+			if !ok {
+				continue
+			}
+			if rid, ok := source["resourceId"]; ok && staged[blockRefID(rid)] {
+				delete(source, "resourceId")
+				changed = true
+			}
+		}
+	}
+	return changed
 }
 
 // blockScrubSQL is one dialect's two statements. candidates takes (id > ?, LIMIT ?)
@@ -167,14 +304,17 @@ func sqliteBlockScrub(op string) blockScrubSQL {
 	// primary key (op, resource_id), so a block costs one probe per reference, not a
 	// scan of every staged id. A real is cast the way uint(float64) truncates it; a
 	// text value is read as Sscanf("%d") does: whitespace, zeros, then the digit run,
-	// which CAST ... AS INTEGER reads as its leading integer prefix. A run too long for
-	// 18 digits saturates and names no id.
+	// which CAST ... AS INTEGER reads as its leading integer prefix. A run that
+	// overflows int64 names no id (the cast would saturate it onto the largest one).
 	match := func(t, v string) string {
 		trimmed := "ltrim(ltrim(" + v + ", '" + blockScrubWhitespace + "'), '0')"
+		// CAST ... AS INTEGER saturates at 9223372036854775807, so a digit run that
+		// large is read as that id only when it is exactly it (the run ends there).
+		saturated := "CAST(" + trimmed + " AS INTEGER) = 9223372036854775807 AND NOT (substr(" + trimmed + ", 1, 19) = '9223372036854775807' AND substr(" + trimmed + ", 20, 1) NOT BETWEEN '0' AND '9')"
 		rid := "CASE " + t +
 			" WHEN 'integer' THEN " + v +
 			" WHEN 'real' THEN CASE WHEN " + v + " >= 1 AND " + v + " < 9e18 THEN CAST(" + v + " AS INTEGER) END" +
-			" WHEN 'text' THEN CASE WHEN substr(" + trimmed + ", 1, 1) BETWEEN '0' AND '9' THEN CAST(" + trimmed + " AS INTEGER) END END"
+			" WHEN 'text' THEN CASE WHEN substr(" + trimmed + ", 1, 1) BETWEEN '0' AND '9' AND NOT (" + saturated + ") THEN CAST(" + trimmed + " AS INTEGER) END END"
 		return "EXISTS (SELECT 1 FROM reduction_deleted_ids d WHERE d.op = " + op + " AND d.resource_id = " + rid + ")"
 	}
 	elem := func(j string) string {
@@ -209,9 +349,12 @@ func sqliteBlockScrub(op string) blockScrubSQL {
 	update := "UPDATE note_blocks SET content = CASE WHEN " + calendarHas +
 		" THEN json_set(" + after + ", '$.calendars', " + calendarArr + ") ELSE " + after + " END" +
 		" WHERE id = ? AND type IN ('gallery','calendar') AND CASE WHEN " + object + " THEN (" + galleryHas + ") OR (" + calendarHas + ") ELSE 0 END"
-	candidates := "SELECT id, CASE WHEN " + dupHas + " THEN 1 ELSE 0 END AS dup FROM note_blocks" +
-		" WHERE id > ? AND type IN ('gallery','calendar') AND CASE WHEN " + object + " THEN (" + dupHas + ") OR (" + galleryHas + ") OR (" + calendarHas + ") ELSE 0 END" +
-		" ORDER BY id LIMIT ?"
+	// The window of blocks is cut first (a keyset on id, LIMIT), and only those blocks
+	// are tested, so a statement examines at most scrubWindow documents however many
+	// galleries name nothing. Every block of the window is returned, flagged, so the
+	// walk advances past a window with no match.
+	candidates := "SELECT w.id AS id, CASE WHEN " + object + " THEN (CASE WHEN " + dupHas + " THEN 1 WHEN (" + galleryHas + ") OR (" + calendarHas + ") THEN 0 ELSE -1 END) ELSE -1 END AS dup" +
+		" FROM (SELECT id, content FROM note_blocks WHERE id > ? AND type IN ('gallery','calendar') ORDER BY id LIMIT ?) w ORDER BY w.id"
 	return blockScrubSQL{candidates: candidates, update: update}
 }
 
@@ -225,7 +368,7 @@ func postgresBlockScrub(op string) blockScrubSQL {
 		digits := "ltrim(substring(" + v + " #>> '{}' from " + ws + "), '0')"
 		f := "(" + v + ")::numeric::float8"
 		return "CASE jsonb_typeof(" + v + ")" +
-			" WHEN 'number' THEN (CASE WHEN (" + v + ")::numeric > 0 AND (" + v + ")::numeric < 1e18 THEN (CASE WHEN " + f + " >= 1 THEN trunc(" + f + ")::bigint END) END)" +
+			" WHEN 'number' THEN (CASE WHEN (" + v + ")::numeric >= 1 AND (" + v + ")::numeric < 1e18 THEN trunc(" + f + ")::bigint END)" +
 			" WHEN 'string' THEN (CASE WHEN length(" + digits + ") BETWEEN 1 AND 18 THEN (" + digits + ")::bigint END)" +
 			" END"
 	}
@@ -245,9 +388,8 @@ func postgresBlockScrub(op string) blockScrubSQL {
 	update := "UPDATE note_blocks SET content = CASE WHEN " + calendarHas +
 		" THEN jsonb_set(" + after + ", '{calendars}', " + calendarArr + ") ELSE " + after + " END" +
 		" WHERE id = ? AND type IN ('gallery','calendar') AND CASE WHEN " + object + " THEN (" + galleryHas + ") OR (" + calendarHas + ") ELSE false END"
-	candidates := "SELECT id, 0 AS dup FROM note_blocks" +
-		" WHERE id > ? AND type IN ('gallery','calendar') AND CASE WHEN " + object + " THEN (" + galleryHas + ") OR (" + calendarHas + ") ELSE false END" +
-		" ORDER BY id LIMIT ?"
+	candidates := "SELECT w.id AS id, CASE WHEN " + object + " THEN (CASE WHEN (" + galleryHas + ") OR (" + calendarHas + ") THEN 0 ELSE -1 END) ELSE -1 END AS dup" +
+		" FROM (SELECT id, content FROM note_blocks WHERE id > ? AND type IN ('gallery','calendar') ORDER BY id LIMIT ?) w ORDER BY w.id"
 	return blockScrubSQL{candidates: candidates, update: update}
 }
 
