@@ -45,7 +45,18 @@ func (p plannedIndex) definitionMatches(def string) bool {
 // indexKeyList captures what sits between the parentheses that open after
 // "ON <table> [USING <method>]" and the last closing one. A trailing WHERE or
 // INCLUDE is then part of the capture, and so never equals the planned columns.
-var indexKeyList = regexp.MustCompile(`(?is)\bon\s+[^\s(]+\s*(?:using\s+(\w+)\s*)?\((.*)\)\s*$`)
+//
+// Both identifiers (the index's and the table's, possibly schema-qualified) are
+// matched as runs of quoted names and plain characters, so a schema that needs
+// quoting ("my library".resource_similarities) or a name containing "on" parses.
+// The pattern is anchored at CREATE INDEX for the same reason: an unanchored
+// "on" could be found inside a quoted index name.
+var indexKeyList = regexp.MustCompile(`(?is)^\s*create\s+(?:unique\s+)?index\s+(?:concurrently\s+)?(?:if\s+not\s+exists\s+)?` + sqlIdentifier +
+	`\s+on\s+(?:only\s+)?` + sqlIdentifier + `\s*(?:using\s+(\w+)\s*)?\((.*)\)\s*$`)
+
+// sqlIdentifier is one possibly qualified, possibly quoted name: quoted parts may
+// hold spaces, parentheses and doubled quotes.
+const sqlIdentifier = `(?:"(?:[^"]|"")*"|[^\s("])+`
 
 // Only a cast on a literal ('x'::text, 0::bigint) is Postgres respelling the
 // same expression. A cast on a column or an expression changes its type, so it
