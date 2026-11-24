@@ -597,6 +597,13 @@ func main() {
 		log.Printf("Warning: ensuring image_hashes.resource_id unique index failed: %v", err)
 	}
 
+	// Postgres has no collation tag for AutoMigrate: the Reduction Cluster keys get
+	// COLLATE "C" here so SQL orders them the way Go sorts them. A no-op once set.
+	if err := models.EnsureReductionKeyCollation(db); err != nil {
+		fail("failed to collate the Reduction Cluster keys: %v", err)
+		return
+	}
+
 	// The durable Job core. Separated from the migration list above because the
 	// step is not only a schema: it also seeds the writer epoch that every
 	// subsequent start preflights against, and keeping the two together is what
@@ -803,6 +810,18 @@ func main() {
 		})
 	} else if err := models.EnsureResourceListIndexes(db); err != nil {
 		fail("Error when creating resource list indexes: %v", err)
+		return
+	}
+
+	// The Near tier's neighbour query reads each similarity pair direction by its
+	// effective distance. CONCURRENTLY and beside the server on Postgres; on SQLite
+	// one table scan under the writer lock, before any request is served.
+	if db.Dialector.Name() == "postgres" {
+		go ensureIndexesUntilBuilt("similarity distance indexes", func() error {
+			return models.EnsureSimilarityDistanceIndexesOnOwnConnection(context.Config.DbDsn)
+		}, jobFilterIndexRetryInterval)
+	} else if err := models.EnsureSimilarityDistanceIndexes(db); err != nil {
+		fail("Error when creating similarity distance indexes: %v", err)
 		return
 	}
 
@@ -1105,6 +1124,18 @@ func migrateModels(db *gorm.DB) error {
 		// since been deleted is a staleness the apply revalidation must detect and
 		// report, not a row the database quietly rewrites.
 		&models.ResourceReduction{},
+		// The plan as rows (D1 of the plan-tables design): associationless like the
+		// Reduction they hang off, so any order is FK-safe; they follow it for the reader.
+		&models.ReductionClusterRow{},
+		&models.ReductionMemberRow{},
+		&models.ReductionExtentResource{},
+		&models.ReductionExtentGroup{},
+		&models.ReductionExtentRow{},
+		&models.ReductionSeed{},
+		&models.ReductionDeletedID{},
+		&models.ResourceCleanupManifest{},
+		&models.ReductionMigrationRow{},
+		&models.ReductionMigration{},
 		// Tables with FK to independent tables
 		&models.Group{},             // FK to Category (self-referencing Owner is handled by GORM)
 		&models.GroupRelationType{}, // FK to Category

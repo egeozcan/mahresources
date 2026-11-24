@@ -94,6 +94,31 @@ type ResourceReduction struct {
 	// ClaimDownloadHistoryRetry already uses. A stale write is refused, never
 	// merged.
 	Version uint `gorm:"not null;default:0" json:"version"`
+
+	// The columns below belong to the plan-as-tables design (docs/plans/
+	// 2026-11-24-reduction-plan-tables-design.md). Until the cutover that stops
+	// reading Plan and Extent, PlanSchema stays 0 (a legacy JSON row) and nothing
+	// reads them. None is part of the API.
+
+	// PlanSchema is 0 for a legacy JSON plan and 1 for one in tables. AutoMigrate's
+	// backfill of the default marks every existing row legacy; the migration is the
+	// only writer of 0 to 1.
+	PlanSchema int `gorm:"not null;default:0" json:"-"`
+	// ExtentAll is the whole-library flag, moved out of the Extent JSON.
+	ExtentAll bool `gorm:"not null;default:false" json:"-"`
+	// PlanGeneration names the generation of Cluster rows the plan is; nil until one has landed.
+	PlanGeneration *string `gorm:"size:64" json:"-"`
+	// ComputeGeneration names the running compute's staging generation.
+	ComputeGeneration *string `gorm:"size:64" json:"-"`
+	// SettleOp and SettleLeaseUntil are settle-only's own fence.
+	SettleOp         *string `gorm:"size:64" json:"-"`
+	SettleLeaseUntil int64   `gorm:"not null;default:0" json:"-"`
+	// The leases are Unix nanoseconds, so a check never compares text timestamps on SQLite.
+	ComputeLeaseUntil int64      `gorm:"not null;default:0" json:"-"`
+	ApplyLeaseUntil   int64      `gorm:"not null;default:0" json:"-"`
+	Coverage          types.JSON `gorm:"type:json" json:"-"`
+	PlanSettings      types.JSON `gorm:"type:json" json:"-"`
+	LastApply         types.JSON `gorm:"type:json" json:"-"`
 }
 
 func (r ResourceReduction) GetId() uint {

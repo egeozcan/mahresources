@@ -20,6 +20,12 @@ type plannedIndex struct {
 	columns string
 }
 
+// isExpression reports an index over an expression (its column list holds a
+// parenthesis). The database spells such a definition back in its own way, so
+// an existing one is accepted by name, table, validity and plainness rather
+// than by comparing its columns.
+func (i plannedIndex) isExpression() bool { return strings.Contains(i.columns, "(") }
+
 // jobFilterIndexes serve the list filters added after the jobs tables were
 // created:
 //
@@ -104,6 +110,18 @@ func ensurePlannedIndexes(db *gorm.DB, what string, lockKey int64, indexes []pla
 			var table []string
 			if err := db.Raw("SELECT tbl_name FROM sqlite_master WHERE type = 'index' AND name = ?", index.name).Scan(&table).Error; err != nil {
 				return fmt.Errorf("inspect %s: %w", index.name, err)
+			}
+			if index.isExpression() {
+				if len(table) == 1 && table[0] == index.table {
+					continue
+				}
+				if err := db.Exec("DROP INDEX IF EXISTS " + index.name).Error; err != nil {
+					return fmt.Errorf("drop %s: %w", index.name, err)
+				}
+				if err := db.Exec(fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (%s)", index.name, index.table, index.columns)).Error; err != nil {
+					return fmt.Errorf("create %s: %w", index.name, err)
+				}
+				continue
 			}
 			var columns []string
 			if err := db.Raw("SELECT name FROM pragma_index_info(?) ORDER BY seqno", index.name).Scan(&columns).Error; err != nil {
@@ -239,7 +257,7 @@ func ensurePostgresPlannedIndex(conn *gorm.DB, index plannedIndex) error {
 	// (<columns>)".
 	shape := fmt.Sprintf(" USING btree (%s)", index.columns)
 	if len(found) == 1 && found[0].Valid && !strings.HasPrefix(found[0].Def, "CREATE UNIQUE") &&
-		strings.HasSuffix(found[0].Def, shape) && strings.Contains(found[0].Def, "."+index.table+" USING") {
+		(index.isExpression() || strings.HasSuffix(found[0].Def, shape)) && strings.Contains(found[0].Def, "."+index.table+" USING") {
 		return nil
 	}
 	if len(found) == 1 {

@@ -61,6 +61,18 @@ var savedSQLTables = map[string]bool{
 	"user_settings":       false,
 	"saved_searches":      false,
 	"resource_reductions": false, // visible to the owner and admins only
+	// A Reduction's plan as rows: owner-only like the Reduction itself, and
+	// the staging, spool and cleanup tables behind it.
+	"reduction_clusters":         false,
+	"reduction_members":          false,
+	"reduction_extent_resources": false,
+	"reduction_extent_groups":    false,
+	"reduction_extent":           false,
+	"reduction_seeds":            false,
+	"reduction_deleted_ids":      false,
+	"resource_cleanup_manifest":  false,
+	"reduction_migration_rows":   false,
+	"reduction_migrations":       false,
 	// Template history: snapshots the API does not expose.
 	"template_revisions": false,
 	// Plugin state: settings hold secrets in plaintext.
