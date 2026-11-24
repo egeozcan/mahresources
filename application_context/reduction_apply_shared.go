@@ -36,7 +36,7 @@ var ReductionApplyCeiling = 30 * time.Minute
 // reductionApplySettleTimeout bounds the write that settles a Cluster whose claim
 // is in flight when the ceiling passes. Separate from the batch's own deadline,
 // because that one is by then already spent.
-const reductionApplySettleTimeout = time.Minute
+var reductionApplySettleTimeout = time.Minute
 
 // reductionRequestIDMax bounds the client's apply correlation id.
 const reductionRequestIDMax = 64

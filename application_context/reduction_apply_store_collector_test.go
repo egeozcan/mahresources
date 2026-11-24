@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"mahresources/auth"
 	"mahresources/contracts"
 	"mahresources/models"
 )
@@ -40,7 +39,7 @@ func TestStoreApplyOutcomeNameFollowsCurrentScopeSQLite(t *testing.T) {
 	require.NoError(t, ctx.db.Create(elsewhere).Error)
 	winner := makeResource(t, ctx.db, "the-winner", opsRes{Hash: "h", Owner: &mine.ID})
 
-	viewer := ctx.WithPrincipal(&auth.Principal{Role: models.RoleUser, UserID: 5, ScopeGroupID: &mine.ID})
+	viewer := ctx.WithPrincipal(accountPrincipal(t, ctx, "viewer", models.RoleUser, &mine.ID))
 	collector := &applyCollector{ctx: viewer, result: &contracts.ReductionApplyResult{}}
 	collector.addApplied(contracts.ReductionApplyOutcome{ClusterID: "a", WinnerID: winner})
 	assert.Equal(t, "the-winner", collector.result.Applied[0].WinnerName, "visible Winner is named")

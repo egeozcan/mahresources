@@ -94,21 +94,25 @@ func (ctx *MahresourcesContext) storeApplyReduction(r *models.ResourceReduction,
 	}
 	result.StaleCount += settledTotal - len(settled)
 
-	// On its own bounded context: the ceiling may be what ended the loop, and the
-	// record must still say the batch finished.
-	settle, settleCancel := ctx.settlementContext()
-	defer settleCancel()
+	// Settlement runs on its own bounded context, created when settlement begins:
+	// one started before the merge loop would spend its timeout on the loop, and a
+	// batch that ran longer than that could not record its finish or give the lease
+	// back. It is detached from the request, as the ceiling may be what ended the loop.
 	if reconcileErr != nil {
 		// The batch did not do what it set out to do: it is interrupted, not
 		// finished (a lost lease included: it must not record a completed run that
 		// applied nothing). The lease is given back so the next apply is not held
 		// off for the rest of its window, and the record keeps no finish time and no
 		// counts.
+		settle, settleCancel := ctx.settlementContext()
+		defer settleCancel()
 		settle.storeAbandonApply(r.ID, run)
 		return nil, reconcileErr
 	}
 	ctx.storeApplyLoop(r, run, collector, detached)
 	collector.seal()
+	settle, settleCancel := ctx.settlementContext()
+	defer settleCancel()
 	settle.storeFinishApply(r.ID, run, result)
 	return result, nil
 }
@@ -131,7 +135,9 @@ func clipReductionReason(reason string) string {
 	for cut > 0 && !utf8.RuneStart(reason[cut]) {
 		cut--
 	}
-	return reason[:cut]
+	// A copy: a view would keep the megabyte it was cut from alive for as long as
+	// the outcome is held.
+	return strings.Clone(reason[:cut])
 }
 
 // reductionReasonBytes bounds the reason an outcome entry carries, as the stored one is.
@@ -182,6 +188,11 @@ func (ctx *MahresourcesContext) storeWinnerName(id uint) string {
 	// a merge since may have moved the Winner out of the caller's scope.
 	store := ctx.reductionStore()
 	if store.scope.mode == scopeDeny {
+		return ""
+	}
+	// The account is re-read: the principal was built when the request began, and a
+	// disabled or re-scoped account is told no names.
+	if err := ctx.accountStillBound(store.db); err != nil {
 		return ""
 	}
 	visible := ""
@@ -751,12 +762,25 @@ func (ctx *MahresourcesContext) storeRevalidate(c *storedCluster, lock bool) (st
 // scoped handle: the hash is all a revalidation compares, so nothing else crosses.
 func (ctx *MahresourcesContext) narrowResources(ids []uint) (map[uint]string, error) {
 	out := make(map[uint]string, len(ids))
+	// Through the store's visibility, which binds the subtree once as a CTE: the
+	// scoped GORM read expands it into one bind per descendant, which a subtree of
+	// tens of thousands of Groups overflows.
+	store := ctx.reductionStore()
+	if store.scope.mode == scopeDeny {
+		return out, nil
+	}
+	visible := ""
+	if store.scope.mode == scopeSubtree {
+		visible = " AND owner_id IN " + subtreeIDs
+	}
+	prefix, args := store.with()
 	for _, chunk := range chunkUints(dedupeUints(ids), idChunk) {
 		var rows []struct {
 			ID   uint
 			Hash string
 		}
-		if err := ctx.db.Model(&models.Resource{}).Select("resources.id AS id, resources.hash AS hash").Where("resources.id IN ?", chunk).Find(&rows).Error; err != nil {
+		callArgs := append(append([]any(nil), args...), chunk)
+		if err := store.db.Raw(prefix+"SELECT id, hash FROM resources WHERE id IN ?"+visible, callArgs...).Scan(&rows).Error; err != nil {
 			return nil, err
 		}
 		for _, row := range rows {
