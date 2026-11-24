@@ -2124,6 +2124,8 @@ components:
                     type: string
                 id:
                     type: integer
+                membersSeen:
+                    type: integer
                 resourceId:
                     type: integer
                 version:

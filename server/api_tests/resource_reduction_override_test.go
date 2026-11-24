@@ -594,3 +594,39 @@ func TestRestoringAMemberWithNoPairToTheWinnerIsRefused(t *testing.T) {
 	err := overrideErr(t, tc, red.ID, clusterID, application_context.ReductionActionRestore, orphan.ID)
 	assert.ErrorIs(t, err, application_context.ErrReductionRestoreUnpaired)
 }
+
+// An acknowledgement that says how many copies the reviewer had on screen is refused
+// unless that is every copy: a page that cut the Cluster at its member budget must
+// not let one request check the copies it never showed.
+func TestAcknowledgingAnOversizedClusterNeedsEveryMemberSeen(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+
+	hub := addImage(t, tc, "hub.jpg", 4000, 4000)
+	ids := []uint{hub.ID}
+	for i := 0; i < 14; i++ {
+		neighbour := addImage(t, tc, fmt.Sprintf("near-%d.jpg", i), 100, 100)
+		pairThem(t, tc, hub, neighbour, 5)
+		ids = append(ids, neighbour.ID)
+	}
+	red := createReduction(t, tc, "Members seen", ids)
+	plan := computeReduction(t, tc, red.ID)
+	require.Len(t, plan.Clusters, 1)
+	cluster := plan.Clusters[0]
+	require.True(t, cluster.Oversized)
+
+	check := func(seen uint) error {
+		current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+		require.NoError(t, err)
+		_, err = tc.AppCtx.OverrideReductionCluster(&query_models.ReductionOverride{
+			ID: red.ID, Version: current.Version, ClusterID: cluster.ID,
+			Action: application_context.ReductionActionCheck, AcknowledgeOversized: true, MembersSeen: seen,
+		}, owner, restricted)
+		return err
+	}
+	assert.ErrorIs(t, check(1), application_context.ErrReductionOversizedUnexpanded, "only the Winner was on screen")
+	assert.ErrorIs(t, check(uint(len(cluster.Members))-1), application_context.ErrReductionOversizedUnexpanded)
+	assert.False(t, findClusterByID(planOf(t, tc, red.ID), cluster.ID).Checked)
+	require.NoError(t, check(uint(len(cluster.Members))), "every copy seen is accepted")
+	assert.True(t, findClusterByID(planOf(t, tc, red.ID), cluster.ID).Checked)
+}

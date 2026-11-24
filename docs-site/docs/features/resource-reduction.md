@@ -502,7 +502,7 @@ Every write carries a `version` field: the optimistic-concurrency counter the ca
 
 ### Single decisions
 
-`POST /v1/reduction/cluster` accepts these `action` values: `promote`, `eject`, `restore`, `skip`, `reopen`, `check` and `uncheck`. Approving an unusually large Near-Identical Cluster additionally requires `acknowledgeOversized`.
+`POST /v1/reduction/cluster` accepts these `action` values: `promote`, `eject`, `restore`, `skip`, `reopen`, `check` and `uncheck`. Approving an unusually large Near-Identical Cluster additionally requires `acknowledgeOversized`. The review page also sends `membersSeen`, the number of copies it had rendered: when it is present and not equal to the Cluster's copy count, the approval is refused with `400`. Omitting it leaves the acknowledgement alone to stand.
 
 ### Bulk approval
 
