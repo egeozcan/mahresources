@@ -11,3 +11,11 @@ func TestSQLScrubMatchesGoScrubPG(t *testing.T) {
 func TestSQLScrubEdgesPG(t *testing.T) {
 	testSQLScrubEdges(t, newReductionPGContext(t))
 }
+
+func TestDeletionHookMarksMembersGonePG(t *testing.T) {
+	testDeletionHookMarksMembersGone(t, newReductionPGContext(t))
+}
+
+func TestDeletionHookWalksClustersAscendingPG(t *testing.T) {
+	testDeletionHookWalksClustersAscending(t, newReductionPGContext(t))
+}

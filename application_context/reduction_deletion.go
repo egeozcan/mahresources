@@ -180,3 +180,71 @@ func postgresBlockScrub(op string) blockScrubSQL {
 		" WHERE id BETWEEN ? AND ? AND type IN ('gallery','calendar') AND CASE WHEN " + object + " THEN (" + calendarHas + ") ELSE false END"
 	return blockScrubSQL{gallery: gallery, calendar: calendar}
 }
+
+// reductionHookStep is how many Clusters one step of the deletion hook's walk
+// locks and updates. A var so a test can force several steps from a small fixture.
+var reductionHookStep = 500
+
+// reductionDeletionHook is the one hook every Resource delete path calls in its
+// deleting transaction (design D9), after the rows it deletes are locked and
+// deleted and its ids staged under op. It marks the staged Resources gone in
+// every Reduction Cluster that holds them, in the live generation (the plan), the
+// computing one, or a migration's, and re-derives each affected Cluster's
+// gone_members.
+//
+// One keyset walk over the affected Cluster ids, ascending, reductionHookStep per
+// step: a bulk delete never restarts the order, so it cannot lock Cluster 20 before
+// Cluster 10. Within a step, the Clusters are locked first (Postgres), then their
+// matching member rows are updated by primary-key page, then gone_members is
+// recomputed. It never deletes the staged ids and is idempotent. No Reduction row
+// is touched and no version bumps.
+func reductionDeletionHook(db *gorm.DB, op string) error {
+	live := `(EXISTS (SELECT 1 FROM resource_reductions r WHERE r.id = m.reduction_id AND (r.plan_generation = m.generation OR r.compute_generation = m.generation))` +
+		` OR EXISTS (SELECT 1 FROM reduction_migrations g WHERE g.reduction_id = m.reduction_id AND g.generation = m.generation))`
+	var last uint
+	for {
+		var clusterIDs []uint
+		if err := db.Raw(
+			`SELECT DISTINCT m.cluster_id FROM reduction_members m JOIN reduction_deleted_ids d ON d.op = ? AND d.resource_id = m.resource_id`+
+				` WHERE m.cluster_id > ? AND `+live+` ORDER BY m.cluster_id LIMIT ?`,
+			op, last, reductionHookStep,
+		).Scan(&clusterIDs).Error; err != nil {
+			return err
+		}
+		if len(clusterIDs) == 0 {
+			return nil
+		}
+		last = clusterIDs[len(clusterIDs)-1]
+
+		if db.Dialector.Name() == "postgres" {
+			var locked []uint
+			if err := db.Raw("SELECT id FROM reduction_clusters WHERE id IN ? ORDER BY id FOR UPDATE", clusterIDs).Scan(&locked).Error; err != nil {
+				return err
+			}
+		}
+		var after uint
+		for {
+			var memberIDs []uint
+			if err := db.Raw(
+				`SELECT m.id FROM reduction_members m JOIN reduction_deleted_ids d ON d.op = ? AND d.resource_id = m.resource_id`+
+					` WHERE m.cluster_id IN ? AND m.gone = ? AND m.id > ? ORDER BY m.id LIMIT ?`,
+				op, clusterIDs, false, after, reductionRowChunk,
+			).Scan(&memberIDs).Error; err != nil {
+				return err
+			}
+			if len(memberIDs) == 0 {
+				break
+			}
+			if err := db.Exec("UPDATE reduction_members SET gone = ? WHERE id IN ?", true, memberIDs).Error; err != nil {
+				return err
+			}
+			after = memberIDs[len(memberIDs)-1]
+		}
+		if err := db.Exec(
+			`UPDATE reduction_clusters SET gone_members = (SELECT COUNT(*) FROM reduction_members m WHERE m.cluster_id = reduction_clusters.id AND m.gone = ? AND m.ejected = ?) WHERE id IN ?`,
+			true, false, clusterIDs,
+		).Error; err != nil {
+			return err
+		}
+	}
+}
