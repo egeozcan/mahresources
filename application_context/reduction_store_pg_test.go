@@ -68,3 +68,19 @@ func TestSeedKeysOrderAsBytesDoPG(t *testing.T) {
 func TestReductionStoreMatchesOraclePG(t *testing.T) {
 	testReductionStoreMatchesOracle(t, newReductionPGContext, []int64{1, 2, 3, 4})
 }
+
+func TestReductionMigrationSpoolsAndPublishesPG(t *testing.T) {
+	testReductionMigrationSpoolsAndPublishes(t, newReductionPGContext(t))
+}
+
+func TestReductionMigrationNullClustersKeepsApplyRecordPG(t *testing.T) {
+	testReductionMigrationNullClustersKeepsApplyRecord(t, newReductionPGContext(t))
+}
+
+func TestReductionMigrationFailsComputingAndMigratesDraftsPG(t *testing.T) {
+	testReductionMigrationFailsComputingAndMigratesDrafts(t, newReductionPGContext(t))
+}
+
+func TestReductionMigrationResumesAfterTakeoverPG(t *testing.T) {
+	testReductionMigrationResumesAfterTakeover(t, newReductionPGContext(t))
+}
