@@ -608,6 +608,12 @@ func (a *reductionComputeAdapter) Commands(_ context.Context, commandContext job
 		Confirmation: "Stop clustering? The Reduction keeps the plan it had.",
 	}}
 	state := commandContext.Snapshot.State
+	if state == jobs.StateBlocked {
+		// A run held for the migration (or a busy Reduction) goes back to the queue
+		// by Resume: the dispatch that blocked it asks its questions again.
+		commands = append(commands, jobs.Command{Key: jobs.CommandResume, Label: "Resume"})
+		return commands, nil
+	}
 	if state != jobs.StateFailed && state != jobs.StateCancelled && state != jobs.StateInterrupted {
 		return commands, nil
 	}
@@ -649,6 +655,11 @@ func isReductionGone(err error) bool {
 func (a *reductionComputeAdapter) ExecuteCommand(_ context.Context, execution jobs.CommandExecution) (jobs.CommandOutcome, error) {
 	if a.ctx == nil || a.ctx.downloadManager == nil {
 		return jobs.CommandOutcome{}, errors.New("the download queue is not available")
+	}
+	if execution.Key == jobs.CommandResume {
+		// A held run has no worker: the host returns the Job to the queue, and the
+		// dispatch that follows starts it inside a fresh claim.
+		return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: "queued to start again"}, nil
 	}
 	if execution.Key != jobs.CommandCancel {
 		return jobs.CommandOutcome{}, fmt.Errorf("%w: %s", jobs.ErrCommandNotAdvertised, execution.Key)

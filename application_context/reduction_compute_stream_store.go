@@ -149,7 +149,7 @@ func (ctx *MahresourcesContext) streamReductionPlanOwned(jobCtx context.Context,
 	if checkOwner {
 		landing.CreatedByUserId = claimOwner
 	}
-	return ctx.finishLandingOwned(&landing, jobID, generation, reduction.Version, coverage, settings, true)
+	return ctx.finishLandingOwned(jobCtx, &landing, jobID, generation, reduction.Version, coverage, settings, true)
 }
 
 func (run *reductionStream) report(done, total int64) {
@@ -535,6 +535,20 @@ func (run *reductionStream) recheck(st *reductionStore, pc *pendingCluster, c *s
 	}
 	for _, m := range c.Members {
 		if live[m.ResourceID] != m.InExtent {
+			return errClusterReclassified
+		}
+	}
+	// An outsider (a member outside the Extent) is accepted by the comparison above
+	// whether it is still visible or not, so every member must also be visible to
+	// the principal now: one moved out of its subtree since the build is refused and
+	// the Cluster rebuilt without it.
+	if run.s.scope.mode == scopeSubtree {
+		prefix, pargs := st.with()
+		var visible []uint
+		if err := st.db.Raw(prefix+`SELECT r.id FROM resources r WHERE r.id IN ?`+run.visibleOwner("r"), append(pargs, ids)...).Scan(&visible).Error; err != nil {
+			return err
+		}
+		if len(visible) != len(dedupeUints(ids)) {
 			return errClusterReclassified
 		}
 	}

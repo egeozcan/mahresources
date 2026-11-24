@@ -413,6 +413,9 @@ func (ctx *MahresourcesContext) migrateReductionPlansUntil(stop context.Context,
 				if firstErr == nil {
 					firstErr = err
 				}
+			} else if err == nil {
+				// Published: a clustering run held for this migration may go on.
+				ctx.resumeBlockedReductionComputes(id)
 			}
 		}
 		if len(ids) < migrationScanChunk {

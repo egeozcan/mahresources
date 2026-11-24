@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -171,19 +172,19 @@ func (ctx *MahresourcesContext) landComputedPlan(r *models.ResourceReduction, jo
 	if err := s.insertFreshClusters(r, generation, fresh); err != nil {
 		return err
 	}
-	return ctx.finishLandingOwned(r, jobID, generation, version, coverage, settings, false)
+	return ctx.finishLandingOwned(nil, r, jobID, generation, version, coverage, settings, false)
 }
 
 // finishLanding is the landing transaction and the cleanup after it: the
 // generation's staging rows are deleted and stale generations swept.
 func (ctx *MahresourcesContext) finishLanding(r *models.ResourceReduction, jobID, generation string, version uint, coverage models.ReductionCoverage, settings *models.ReductionSettings) error {
-	return ctx.finishLandingOwned(r, jobID, generation, version, coverage, settings, true)
+	return ctx.finishLandingOwned(nil, r, jobID, generation, version, coverage, settings, true)
 }
 
 // finishLandingOwned is finishLanding with the owner predicate optional: a caller
 // that holds only the Reduction's id (the test seams) cannot state an owner.
-func (ctx *MahresourcesContext) finishLandingOwned(r *models.ResourceReduction, jobID, generation string, version uint, coverage models.ReductionCoverage, settings *models.ReductionSettings, checkOwner bool) error {
-	if err := ctx.landGenerationOwned(r.ID, r.CreatedByUserId, checkOwner, jobID, generation, version, coverage, settings); err != nil {
+func (ctx *MahresourcesContext) finishLandingOwned(done context.Context, r *models.ResourceReduction, jobID, generation string, version uint, coverage models.ReductionCoverage, settings *models.ReductionSettings, checkOwner bool) error {
+	if err := ctx.landGenerationOwned(done, r.ID, r.CreatedByUserId, checkOwner, jobID, generation, version, coverage, settings); err != nil {
 		return err
 	}
 	if err := ctx.reductionStore().clearStaging(r.ID, generation); err != nil {
@@ -195,16 +196,20 @@ func (ctx *MahresourcesContext) finishLandingOwned(r *models.ResourceReduction, 
 	return nil
 }
 
+// landAfterLockHook runs in the landing transaction once it holds the Reduction row.
+// A test seam: nil outside tests.
+var landAfterLockHook func()
+
 // landGeneration is the landing transaction.
 func (ctx *MahresourcesContext) landGeneration(reductionID uint, jobID, generation string, version uint, coverage models.ReductionCoverage, settings *models.ReductionSettings) error {
-	return ctx.landGenerationOwned(reductionID, nil, false, jobID, generation, version, coverage, settings)
+	return ctx.landGenerationOwned(nil, reductionID, nil, false, jobID, generation, version, coverage, settings)
 }
 
 // landGenerationOwned also compares the owner the compute loaded with the row's under
 // the row lock, so an owner deleted mid-compute (nulled, no version bump) no longer
 // authorizes the landing (design D2).
-func (ctx *MahresourcesContext) landGenerationOwned(reductionID uint, owner *uint, checkOwner bool, jobID, generation string, version uint, coverage models.ReductionCoverage, settings *models.ReductionSettings) error {
-	s := ctx.reductionStore()
+func (ctx *MahresourcesContext) landGenerationOwned(done context.Context, reductionID uint, owner *uint, checkOwner bool, jobID, generation string, version uint, coverage models.ReductionCoverage, settings *models.ReductionSettings) error {
+	s := ctx.reductionStore().boundTo(done)
 	coverageJSON, err := json.Marshal(coverage)
 	if err != nil {
 		return err
@@ -221,7 +226,17 @@ func (ctx *MahresourcesContext) landGenerationOwned(reductionID uint, owner *uin
 	return retryOnLockContention(reductionCASRetries, func() error {
 		return s.db.Transaction(func(tx *gorm.DB) error {
 			if err := lockReductionRowTx(tx, reductionID); err != nil {
+				if done != nil && done.Err() != nil {
+					return done.Err()
+				}
 				return ErrReductionComputeSuperseded
+			}
+			if landAfterLockHook != nil {
+				landAfterLockHook()
+			}
+			// A cancel that arrived while this waited for the row publishes nothing.
+			if done != nil && done.Err() != nil {
+				return done.Err()
 			}
 			var row struct {
 				Status            string
@@ -332,6 +347,38 @@ func prefixed(alias string, cols []string) []string {
 	return out
 }
 
+// carryOverChunkHook runs inside each carry-over chunk's transaction, before its
+// insert, with the phase ("clusters" or "members"). A test seam: nil outside tests.
+var carryOverChunkHook func(tx *gorm.DB, phase string) error
+
+// errCarryIncomplete says the new generation does not hold every carried Cluster
+// and member of the plan generation: landing it would drop reviewed decisions.
+var errCarryIncomplete = errors.New("the carried Clusters were not all copied into the new generation")
+
+// verifyCarried compares what the carry-over copied with what the plan generation
+// carries. It runs before anything else is written into the generation, so every
+// row the generation holds is a carried one; landing is refused on a mismatch.
+func (s *reductionStore) verifyCarried(reductionID uint, source, generation string) error {
+	var want, got struct{ Clusters, Members int64 }
+	if err := s.db.Raw(`SELECT
+		(SELECT COUNT(*) FROM reduction_clusters c WHERE c.reduction_id = ? AND c.generation = ? AND `+carryPredicate+`) AS clusters,
+		(SELECT COUNT(*) FROM reduction_members m WHERE m.cluster_id IN (SELECT c.id FROM reduction_clusters c WHERE c.reduction_id = ? AND c.generation = ? AND `+carryPredicate+`)) AS members`,
+		reductionID, source, reductionID, source).Scan(&want).Error; err != nil {
+		return err
+	}
+	if err := s.db.Raw(`SELECT
+		(SELECT COUNT(*) FROM reduction_clusters WHERE reduction_id = ? AND generation = ?) AS clusters,
+		(SELECT COUNT(*) FROM reduction_members WHERE reduction_id = ? AND generation = ?) AS members`,
+		reductionID, generation, reductionID, generation).Scan(&got).Error; err != nil {
+		return err
+	}
+	if got != want {
+		return fmt.Errorf("%w: copied %d Clusters and %d members, the plan carries %d and %d",
+			errCarryIncomplete, got.Clusters, got.Members, want.Clusters, want.Members)
+	}
+	return nil
+}
+
 // carryOver copies the carried Clusters of the plan generation into the new one.
 func (s *reductionStore) carryOver(reductionID uint, generation string) error {
 	var plan struct{ PlanGeneration *string }
@@ -354,8 +401,13 @@ func (s *reductionStore) carryOver(reductionID uint, generation string) error {
 	// Cluster rows, 500 per statement, every column.
 	after := uint(0)
 	for {
+		// Each cursor moves only once the chunk's transaction has committed: a
+		// retried transaction (lost to lock contention) must read the same chunk
+		// again, not the one after it.
 		var n int
+		var next uint
 		err := s.fenced(reductionID, generation, func(tx *gorm.DB) error {
+			n, next = 0, after
 			var ids []uint
 			if err := tx.Raw(`SELECT c.id FROM reduction_clusters c WHERE c.reduction_id = ? AND c.generation = ? AND `+carryPredicate+` AND c.id > ? ORDER BY c.id LIMIT ?`,
 				reductionID, source, after, reductionRowChunk).Scan(&ids).Error; err != nil {
@@ -365,13 +417,19 @@ func (s *reductionStore) carryOver(reductionID uint, generation string) error {
 			if n == 0 {
 				return nil
 			}
-			after = ids[n-1]
+			next = ids[n-1]
+			if carryOverChunkHook != nil {
+				if err := carryOverChunkHook(tx, "clusters"); err != nil {
+					return err
+				}
+			}
 			return tx.Exec(`INSERT INTO reduction_clusters (generation, `+strings.Join(clusterCols, ", ")+`) SELECT ?, `+strings.Join(prefixed("c", clusterCols), ", ")+
 				` FROM reduction_clusters c WHERE c.id IN ? ORDER BY c.id`, generation, ids).Error
 		})
 		if err != nil {
 			return err
 		}
+		after = next
 		if n < reductionRowChunk {
 			break
 		}
@@ -384,7 +442,10 @@ func (s *reductionStore) carryOver(reductionID uint, generation string) error {
 	afterCluster, afterPosition := uint(0), -1
 	for {
 		var n int
+		var nextCluster uint
+		var nextPosition int
 		err := s.fenced(reductionID, generation, func(tx *gorm.DB) error {
+			n, nextCluster, nextPosition = 0, afterCluster, afterPosition
 			var chunk []struct {
 				ID         uint
 				ClusterID  uint
@@ -406,9 +467,14 @@ func (s *reductionStore) carryOver(reductionID uint, generation string) error {
 			for i, m := range chunk {
 				ids[i], resourceIDs[i] = m.ID, m.ResourceID
 			}
-			afterCluster, afterPosition = chunk[n-1].ClusterID, chunk[n-1].Position
+			nextCluster, nextPosition = chunk[n-1].ClusterID, chunk[n-1].Position
 			if err := s.in(tx).shareLockResources(resourceIDs); err != nil {
 				return err
+			}
+			if carryOverChunkHook != nil {
+				if err := carryOverChunkHook(tx, "members"); err != nil {
+					return err
+				}
 			}
 			return tx.Exec(`INSERT INTO reduction_members (cluster_id, generation, gone, `+strings.Join(memberCols, ", ")+`)
 				SELECT tc.id, ?, NOT EXISTS (SELECT 1 FROM resources r WHERE r.id = m.resource_id), `+strings.Join(prefixed("m", memberCols), ", ")+`
@@ -420,6 +486,7 @@ func (s *reductionStore) carryOver(reductionID uint, generation string) error {
 		if err != nil {
 			return err
 		}
+		afterCluster, afterPosition = nextCluster, nextPosition
 		if n < reductionRowChunk {
 			break
 		}
@@ -430,7 +497,9 @@ func (s *reductionStore) carryOver(reductionID uint, generation string) error {
 	after = 0
 	for {
 		var n int
+		var next uint
 		err := s.fenced(reductionID, generation, func(tx *gorm.DB) error {
+			n, next = 0, after
 			var ids []uint
 			if err := tx.Raw(`SELECT id FROM reduction_clusters WHERE reduction_id = ? AND generation = ? AND id > ? ORDER BY id LIMIT ?`,
 				reductionID, generation, after, reductionRowChunk).Scan(&ids).Error; err != nil {
@@ -440,7 +509,7 @@ func (s *reductionStore) carryOver(reductionID uint, generation string) error {
 			if n == 0 {
 				return nil
 			}
-			after = ids[n-1]
+			next = ids[n-1]
 			if err := s.in(tx).lockClusterRows(ids); err != nil {
 				return err
 			}
@@ -449,8 +518,9 @@ func (s *reductionStore) carryOver(reductionID uint, generation string) error {
 		if err != nil {
 			return err
 		}
+		after = next
 		if n < reductionRowChunk {
-			return nil
+			return s.verifyCarried(reductionID, source, generation)
 		}
 	}
 }
