@@ -1,6 +1,10 @@
 package models
 
-import "gorm.io/gorm"
+import (
+	"strings"
+
+	"gorm.io/gorm"
+)
 
 // AnalyzePerceptualHashTables refreshes Postgres planner statistics for the
 // tables carrying the image-similarity-v2 indexed columns (image_hashes
@@ -15,8 +19,28 @@ func AnalyzePerceptualHashTables(db *gorm.DB) error {
 	if db.Dialector.Name() != "postgres" {
 		return nil
 	}
-	// resource_similarities is analyzed by the background index builder, after its
-	// CONCURRENTLY build: an ANALYZE here would wait on the SHARE UPDATE EXCLUSIVE
-	// lock another instance's build holds, and boot would wait with it.
-	return db.Exec("ANALYZE image_hashes").Error
+	if err := db.Exec("ANALYZE image_hashes").Error; err != nil {
+		return err
+	}
+	// resource_similarities may be locked by another instance's CONCURRENTLY index
+	// build (SHARE UPDATE EXCLUSIVE, which ANALYZE also takes). Waiting would hold
+	// boot hostage to that build, so the ANALYZE gives up after a short
+	// lock_timeout; the background index builder analyzes the table after its
+	// build in that case.
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SET LOCAL lock_timeout = '2s'").Error; err != nil {
+			return err
+		}
+		return tx.Exec("ANALYZE resource_similarities").Error
+	})
+	if err != nil && isLockTimeout(err) {
+		return nil
+	}
+	return err
+}
+
+// isLockTimeout reports an expired lock_timeout (SQLSTATE 55P03).
+func isLockTimeout(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "55P03") || strings.Contains(msg, "lock timeout")
 }
