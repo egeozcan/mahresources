@@ -210,6 +210,9 @@ const (
 	// demoteHidden: the caller's account changed since the request began. The claim
 	// was released and nothing about the Cluster may be reported.
 	demoteHidden
+	// demoteWithheld: the Cluster is no longer wholly visible to the caller (a Loser
+	// moved outside their subtree). The claim was released and no outcome recorded.
+	demoteWithheld
 )
 
 // storeDemoteToStale takes back a claim whose merge was refused: the only writer
@@ -259,15 +262,30 @@ func (ctx *MahresourcesContext) storeDemote(reductionID uint, batch, key, claimI
 				}
 				hidden = true
 			}
+			// A refused merge may mean a Loser left the caller's subtree since the
+			// claim (a before-delete veto runs before the merge judges visibility).
+			// Judged here, behind the locks on the members' Resources: what the
+			// caller may not fully see is neither marked stale nor reported.
+			withheld := false
+			if !hidden && live && ctx.isScopedPrincipal() {
+				if _, err := st.loadCluster(&models.ResourceReduction{ID: reductionID}, generation, key); errors.Is(err, gorm.ErrRecordNotFound) {
+					withheld = true
+				} else if err != nil {
+					return err
+				}
+			}
 			before := copyMembers(c.Members)
 			switch {
-			case hidden || !live:
+			case hidden || withheld || !live:
 				if err := st.reopenClaim(c); err != nil {
 					return err
 				}
 				outcome = demoteReleased
-				if hidden {
+				switch {
+				case hidden:
 					outcome = demoteHidden
+				case withheld:
+					outcome = demoteWithheld
 				}
 			default:
 				c.Row.State = models.ReductionClusterStale

@@ -678,6 +678,10 @@ func (ctx *MahresourcesContext) storeApplyOneCluster(r *models.ResourceReduction
 		// The lease ran out: the claim went back to approved, there is no outcome
 		// to record, and the loop stops as it does for any lost lease.
 		return clusterApplyOutcome{Omit: true}, true
+	case demoteWithheld:
+		// A Loser left the caller's subtree after the claim: the claim was given back
+		// and nothing about the Cluster is reported. Later Clusters are judged alone.
+		return clusterApplyOutcome{Omit: true}, false
 	case demoteHidden:
 		// The account changed: as at the claim, every later Cluster would say the same.
 		return clusterApplyOutcome{Omit: true}, true
