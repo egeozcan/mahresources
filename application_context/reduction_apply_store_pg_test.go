@@ -23,7 +23,9 @@ func TestStoreApplyLeftTheSelectionPG(t *testing.T) {
 func TestStoreApplyStrandedClaimIsNotInTheBatchPG(t *testing.T) {
 	testStoreApplyStrandedClaimIsNotInTheBatch(t, newOpsPGContext(t))
 }
-func TestStoreApplyCappedResponsePG(t *testing.T) { testStoreApplyCappedResponse(t, newOpsPGContext(t)) }
+func TestStoreApplyCappedResponsePG(t *testing.T) {
+	testStoreApplyCappedResponse(t, newOpsPGContext(t))
+}
 func TestStoreApplyEvidenceHiddenForScopedViewerPG(t *testing.T) {
 	testStoreApplyEvidenceHiddenForScopedViewer(t, newOpsPGContext(t))
 }
