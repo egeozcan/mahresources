@@ -46,8 +46,14 @@ func testReductionComputeOwnerDeletedBetweenRequestAndLanding(t *testing.T, ctx 
 		require.ErrorIs(t, err, ErrReductionConflict)
 	}
 	require.Eventually(t, func() bool {
-		return loadReductionRow(t, ctx.db, r.ID).Status != models.ReductionStatusComputing
-	}, 10*time.Second, 20*time.Millisecond)
+		// A read racing the job's own write can see a shared-cache table lock; it is
+		// retried, not a failure of the assertion.
+		var status string
+		if err := ctx.db.Raw(`SELECT status FROM resource_reductions WHERE id = ?`, r.ID).Scan(&status).Error; err != nil {
+			return false
+		}
+		return status != models.ReductionStatusComputing
+	}, 20*time.Second, 20*time.Millisecond)
 	reductionComputeAfterClaimHook = nil
 	after := loadReductionRow(t, ctx.db, r.ID)
 	require.Nil(t, after.PlanGeneration, "the plan was not replaced by a run its owner no longer authorizes")
