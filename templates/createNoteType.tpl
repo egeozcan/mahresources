@@ -265,6 +265,15 @@
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[details summary="Nutrition"][meta path="calories"] kcal[/details]</code></pre>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[inspect]</code>
+                        &mdash; authoring aid for the live preview: a collapsed panel listing the Meta paths, entity fields and, at the top level of an [each] body, the element's [item] paths available at that point, each with a copyable shortcode. Renders nothing outside the preview.
+                        <br><span class="text-stone-400 ml-4">
+                            <b class="text-stone-500">path</b>="meta.path" limits the Meta section to one subtree
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[inspect]
+[inspect path="project"]</code></pre>
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[reload]</code>
                         &mdash; a button that re-renders content in place, without navigating. It refreshes the innermost [lazy], [details] or [autorefresh] block around it, or the whole custom-content slot when it sits outside both. Self-closing renders a circular-arrow icon; wrap a body to use that as the button face instead.
                         <br><span class="text-stone-400 ml-4">

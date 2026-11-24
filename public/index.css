@@ -4080,6 +4080,84 @@ details.details-shortcode > .details-content {
   margin-top: 0.375rem;
 }
 
+/* [inspect]: the author-only context panel the live preview renders. Plain
+   class names, no utilities, so nothing here depends on the source scan. */
+details.inspect-shortcode {
+  margin: 0.5rem 0;
+  border: 1px solid #d6d3d1;
+  border-radius: 0.375rem;
+  background: #fff;
+  color: #44403c;
+  font-size: 0.8125rem;
+}
+details.inspect-shortcode > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #292524;
+  padding: 0.375rem 0.625rem;
+}
+details.inspect-shortcode > summary:focus-visible {
+  outline: 2px solid #b45309;
+  outline-offset: 2px;
+}
+.inspect-shortcode__body {
+  padding: 0 0.625rem 0.625rem;
+}
+.inspect-shortcode__note,
+.inspect-shortcode__empty {
+  margin: 0.375rem 0;
+  color: #44403c;
+}
+.inspect-shortcode__scroll {
+  overflow-x: auto;
+  margin-top: 0.5rem;
+}
+.inspect-shortcode__scroll:focus-visible {
+  outline: 2px solid #b45309;
+  outline-offset: 2px;
+}
+.inspect-shortcode table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.inspect-shortcode caption {
+  text-align: left;
+  font-weight: 600;
+  color: #292524;
+  padding-bottom: 0.25rem;
+}
+.inspect-shortcode th,
+.inspect-shortcode td {
+  border-top: 1px solid #e7e5e4;
+  padding: 0.25rem 0.5rem 0.25rem 0;
+  text-align: left;
+  vertical-align: top;
+  color: #44403c;
+}
+.inspect-shortcode thead th {
+  font-weight: 600;
+  color: #292524;
+}
+.inspect-shortcode code,
+.inspect-shortcode__snippet {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.inspect-shortcode__snippet {
+  width: 100%;
+  min-width: 14rem;
+  box-sizing: border-box;
+  border: 1px solid #a8a29e;
+  border-radius: 0.25rem;
+  padding: 0.125rem 0.25rem;
+  background: #fafaf9;
+  color: #292524;
+  font-size: 0.75rem;
+}
+.inspect-shortcode__snippet:focus-visible {
+  outline: 2px solid #b45309;
+  outline-offset: 1px;
+}
+
 /* [reload] button. The host and the region wrapper are display:contents so
    neither adds a box: the button lands wherever the author wrote it, and a slot
    that gained a region keeps the layout it had before. */

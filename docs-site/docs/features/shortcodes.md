@@ -54,6 +54,7 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 | `[reload]` | Inline or block | Re-render the nearest deferred block or custom-content slot on demand |
 | `[autorefresh]` | Block | Re-render the body after an inline editor saves |
 | `[using]` | Block | Render the body with another group, resource or note as the entity |
+| `[inspect]` | Inline | Live preview only: list the Meta paths, fields and `[each]` element paths available at that point |
 | `[comment]` | Block | Remove a section on the server so it never runs or renders |
 
 ### Block Syntax
@@ -1146,6 +1147,55 @@ A lookup by `id`, `id-path`, `id-prop` or `rel` searches globally: the `[mrql]` 
   No index note yet.
 [/using]
 ```
+
+## `[inspect]` -- Context Explorer (preview only)
+
+`[inspect]` is an aid for writing templates. Put it anywhere in a slot and the editor's live preview shows a collapsed panel listing what that point of the template can read, each row with a shortcode ready to copy. Remove it when you are done; if you forget, it does no harm, because **it renders nothing outside the live preview**.
+
+```
+[inspect]
+[inspect path="project"]
+
+[each path="steps"]
+  [inspect]
+  [item path="title"]
+[/each]
+```
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `path` | No | (all of Meta) | A Meta dot-path, written as for `[meta path=]`. Limits the Meta section to the subtree at that path. The other sections are unaffected. |
+
+`[inspect]` is inline only. A closing `[/inspect]` is a lint error.
+
+### What the panel shows
+
+The summary names the entity in context, for example `Inspect: group #42`. It adds `inside [using]` when a `[using]` block switched the entity. Opening the panel shows up to three tables:
+
+- **Current [each] element**, only at the top level of an `[each]` body: the element's position (`[item index="true"]`) and every path in the element (`[item path="..."]`), or `[item]` when the element is a plain value. Only the first element gets a panel.
+- **Meta**: every key, depth-first in sorted order down to 6 levels, with its JSON type (`string`, `number`, `boolean`, `null`, `object (n keys)`, `array (n items)`), a sample value and a snippet: `[meta path="..."]`, or `[each path="..."][item][/each]` for an array. A key containing `.`, a quote or a bracket cannot be written as a path, so it is listed as "not addressable by path=".
+- **Properties**: the entity's own fields for `[property]`, with a sample and a snippet. Time fields get `format="date"`, and `FileSize` gets `format="filesize"`. Association fields such as `Owner`, `Tags` or `Category` are listed by name and kind (`relation`, `list`) only. The panel never reads values through them, so it shows nothing about entities outside what the preview loaded. Credential fields such as a note's share token are always left out. `Meta` itself is covered by the Meta section.
+
+Inside an `[mrql]` block body, a `CustomMRQLResult` template or a `[using]` block, the panel describes the result item or target entity, because that is what the context has switched to.
+
+An `[inspect]` nested in another block inside a loop (for example in a `[conditional]` within an `[each]`) is not at the loop's top level. It shows the entity only, just as an `[item]` there renders empty.
+
+### Copying a snippet
+
+Each snippet is a read-only text field. Press Tab to reach it, then Ctrl+A (Cmd+A) and Ctrl+C (Cmd+C) to copy it. The preview frame is sandboxed, so there is no copy button. The panel is a native disclosure: Enter or Space on its summary opens it, and screen readers announce whether it is open.
+
+### Where it renders
+
+Only in the template editor's live preview (`POST /v1/{category,resourceCategory,noteType}/previewTemplate`), which requires the same rights as saving the template. Everywhere else (entity pages, list cards, hover cards, the lightbox, share pages, deferred `[lazy]`/`[details]` bodies, MRQL API renders and the AI template tools) `[inspect]` renders as the empty string, not a comment. The page reads exactly as if it were absent. It never runs a query.
+
+### Limits
+
+- 200 rows per panel across its sections. Past that, a note says how many paths were not shown; narrow the panel with `path=`.
+- 10 panels per preview. An `[inspect]` inside an `[mrql]` body runs once per result, so later panels are replaced by one note.
+- Samples are cut at 80 characters.
+- `[inspect]` cannot be used inside a `[reload]` button face.
 
 ## `[comment]` -- Comment out a section
 

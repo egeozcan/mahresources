@@ -841,6 +841,15 @@ On the edit form, each slot's preview has a **History** button, and the Custom C
 
 Preview executes MRQL and plugin shortcodes, so it is gated at the same permission level as saving the template: **admin** for Category and Resource Category, **editor** for Note Type. To keep it responsive on large deployments, `[mrql]` result limits are capped during preview.
 
+To see what a template can read at a given point, add `[inspect]` there. The preview shows a collapsed panel listing the Meta paths with their types and sample values, the entity's fields, and, at the top level of an `[each]` body, the element's `[item]` paths. Each row has a snippet to copy. `[inspect]` renders only in the preview and renders nothing on pages, so leaving one in a saved template does no harm. See [`[inspect]`](./shortcodes.md#inspect----context-explorer-preview-only).
+
+```
+[each path="steps"]
+  [inspect]
+  <li>[item path="title"]</li>
+[/each]
+```
+
 ### Linting
 
 The template editors underline problems as you type -- unclosed `[conditional]` blocks, closing tags on inline shortcodes, unknown attributes, missing required attributes, `[mrql]` without a `query`/`saved`, MRQL that rendering would reject, likely shortcode typos, and bracketed words that are not shortcodes at all, such as `[draft]`, which render as literal text (an info note; slot dividers like `[header]` and `[else]`, and index-like text such as `items[0]`, are not noted). MRQL is checked in every query a template runs: `[mrql query]`, `[conditional mrql]` with its numbered `mrql2`, `mrql3`, … sources, and `[elseif]` guards. Each query is checked with its shortcode's `param-*`, `limit` and `buckets` attributes applied as rendering applies them, so an unbound `$name`, an unused `param-`, a field the entity does not have, a regex match on SQLite or a `limit` above 10,000 is underlined. The check never touches the database: whether a `SCOPE` group or a saved query exists is only known when the template renders. Diagnostics are colored by severity (error, warning, info). Lint reads at most 1 MiB of a slot or schema; a larger one gets a single error saying it is too large to check, and is still saved and rendered as usual. A `matches` pattern past the [regular expression allowance](./shortcodes.md) is underlined as an error, since it never matches. Linting never blocks saving: if a slot still has errors when you submit, a confirmation asks whether to save anyway. This preserves the trust model, which allows arbitrary HTML and must tolerate false positives.

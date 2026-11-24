@@ -39,7 +39,7 @@ type DocExample struct {
 
 // BuiltinDoc documents one built-in shortcode (meta, datetime, pills,
 // property, mrql, conditional, link, each, item, partial, lazy, details,
-// reload, using, comment).
+// reload, using, inspect, comment).
 type BuiltinDoc struct {
 	Name        string          `json:"name"`
 	Syntax      string          `json:"syntax"`
@@ -321,6 +321,20 @@ func BuiltinDocs() []BuiltinDoc {
 				{Title: "The owning group", Code: "[using rel=\"owner\"]\n  <h3>[link][property path=\"Name\"][/link]</h3>\n  Status: [meta path=\"status\" inline=\"true\"]\n[else]\n  <p>No owner.</p>\n[/using]"},
 				{Title: "An ID stored in Meta", Code: "[using type=\"group\" id-path=\"client\"]\n  Client: [property path=\"Name\"]\n[/using]"},
 				{Title: "First result of a query", Code: "[using query='type = note AND name = $name ORDER BY created DESC' param-name=\"Index\"]\n  [property path=\"Description\"]\n[/using]"},
+			},
+		},
+		{
+			Name:        "inspect",
+			Syntax:      `[inspect path="..."]`,
+			Description: "An author aid for the template editor's live preview: a collapsed, keyboard-operable panel listing what this point of the template can read. It shows every Meta path with its JSON type, a sample value and a ready-to-copy shortcode; the entity's own fields for [property] (associations such as Owner or Tags are named but never read, and credential fields are left out); and, at the top level of an [each] body, the first element's [item] paths. Inside [mrql], [using] or a CustomMRQLResult it shows the switched entity. It renders only in the live preview: on display pages, share pages, deferred bodies, query results and every other surface it renders nothing at all, so a template saved with it left in is harmless. It runs no query. Limits: 200 rows per panel, 10 panels per preview, samples cut at 80 characters, Meta walked 6 levels deep.",
+			IsBlock:     BlockNo,
+			Attrs: []DocAttr{
+				{Name: "path", Type: "string", Description: "A Meta dot-path, written as for [meta path=]. Limits the Meta section to the subtree at that path; the other sections are unaffected. Empty lists all of Meta."},
+			},
+			Examples: []DocExample{
+				{Title: "Everything in context", Code: `[inspect]`},
+				{Title: "One Meta subtree", Code: `[inspect path="project"]`},
+				{Title: "Inside a loop", Code: "[each path=\"steps\"]\n  [inspect]\n  [item path=\"title\"]\n[/each]", Notes: "Only the first element gets a panel. An [inspect] nested in another block inside the loop shows the entity, as [item] renders empty there."},
 			},
 		},
 		{

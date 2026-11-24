@@ -335,3 +335,52 @@ test.describe('A preview after every slot cluster', () => {
     }
   });
 });
+
+test.describe('[inspect] in the live preview', () => {
+  test('the panel opens from the keyboard, lists Meta paths and renders nothing on the page', async ({ page, apiClient }) => {
+    const stamp = Date.now();
+    const name = `Inspect Cat ${stamp}`;
+    const category = await apiClient.createCategory(name);
+    const group = await apiClient.createGroup({
+      name: `Inspect Target ${stamp}`,
+      categoryId: category.ID,
+      meta: JSON.stringify({ project: { name: 'Apollo' } }),
+    });
+
+    await page.goto(`/category/edit?id=${category.ID}`);
+    await expect(previewEntityChip(page)).toHaveAttribute('aria-label', `Remove ${group.Name}`, { timeout: 10000 });
+    await page.locator('.cm-content[aria-label="Custom Header"]').fill('[inspect]');
+
+    const frame = await showPreview(page, 'CustomHeader');
+    const panel = frame.locator('details.inspect-shortcode');
+    await expect(panel).toHaveCount(1, { timeout: 10000 });
+    await expect(panel).not.toHaveAttribute('open', '');
+
+    const summary = panel.locator('summary');
+    await summary.focus();
+    await summary.press('Enter');
+    await expect(panel).toHaveAttribute('open', '');
+
+    const row = panel.getByRole('row', { name: /project\.name/ });
+    await expect(row).toContainText('"Apollo"');
+
+    // Tab from the summary walks the focusable scroll region, then the snippets.
+    const snippet = panel.getByRole('textbox', { name: 'Shortcode for project.name' });
+    let reached = false;
+    for (let i = 0; i < 12 && !reached; i++) {
+      await page.keyboard.press('Tab');
+      reached = await snippet.evaluate((el) => el === document.activeElement);
+    }
+    expect(reached).toBe(true);
+    await expect(snippet).toHaveValue('[meta path="project.name"]');
+    await expect(snippet).toHaveAttribute('readonly', '');
+
+    // Saved into the template, it renders nothing on the group page.
+    const resp = await page.request.post('/v1/category', { form: { ID: String(category.ID), name, CustomHeader: '<i id="inspect-probe">[inspect]</i>' } });
+    expect(resp.ok()).toBeTruthy();
+    await page.goto(`/group?id=${group.ID}`);
+    await expect(page.locator('#inspect-probe')).toHaveCount(1);
+    await expect(page.locator('#inspect-probe')).toBeEmpty();
+    await expect(page.locator('.inspect-shortcode')).toHaveCount(0);
+  });
+});

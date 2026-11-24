@@ -205,6 +205,17 @@ Reach for it when a template needs fields from a related entity, typically the o
 [/using]
 ```
 
+### `[inspect]`
+
+An **authoring aid, not page content**. In the template editor's live preview it renders a collapsed panel listing what that point of the template can read: Meta paths with type, sample and a copyable `[meta]`/`[each]` snippet; the entity's own fields for `[property]` (associations named, never read; credential fields omitted); and, at the top level of an `[each]` body, the first element's `[item]` paths. Inside `[mrql]`/`[using]` it describes the switched entity. `path="project"` limits the Meta section to one subtree.
+
+On every other surface (pages, cards, share pages, deferred bodies, MRQL API, AI template tools) it renders the empty string. Use it while exploring an entity's data, then **remove it before delivering a template**: it never belongs in a finished design. Inline only; not allowed inside a `[reload]` face.
+
+```
+[inspect]
+[each path="steps"][inspect][item path="title"][/each]
+```
+
 ## Built-in Plugin Shortcodes
 
 Only three built-in plugins currently ship shortcodes:

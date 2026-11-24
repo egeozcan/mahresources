@@ -283,6 +283,9 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 			replacement = RenderMetaShortcode(sc, ctx)
 		case sc.Name == "property":
 			replacement = RenderPropertyShortcode(sc, ctx)
+		case sc.Name == "inspect":
+			// Renders "" unless this is a template preview (WithInspect).
+			replacement = RenderInspectShortcode(reqCtx, sc, ctx)
 		case sc.Name == "mrql":
 			if executor != nil && depth < maxRecursionDepth {
 				replacement = RenderMRQLShortcode(reqCtx, sc, ctx, renderer, executor, depth)
