@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gorm.io/gorm"
 
@@ -581,11 +582,53 @@ func (ctx *MahresourcesContext) cleanupManifestFile(e *models.ResourceCleanupMan
 }
 
 // lockResourceColumns is what the merge and bulk-delete participant locks read: the
-// delete columns plus what a merge needs of a Loser's file for a version.
+// delete columns plus what a merge needs of a Loser's file for a version. Not the
+// name: a name may be a megabyte, and the lock reads up to 199 Losers; the name comes
+// from fillLockedNames, cut, once the rows are held.
 var lockResourceColumns = []string{
-	"id", "name", "hash", "hash_type", "location", "storage_location", "file_size",
+	"id", "hash", "hash_type", "location", "storage_location", "file_size",
 	"content_type", "width", "height", "owner_id", "series_id", "current_version_id",
 	"resource_category_id",
+}
+
+// lockedNameBytes is how much of a Resource's name a merge or bulk delete keeps for
+// a version comment, an audit line or a staged hook payload.
+const lockedNameBytes = 1024
+
+// cutName is s cut to at most lockedNameBytes bytes, on a rune boundary.
+func cutName(s string) string {
+	if len(s) <= lockedNameBytes {
+		return s
+	}
+	end := lockedNameBytes
+	for end > 0 && !utf8.RuneStart(s[end]) {
+		end--
+	}
+	return s[:end]
+}
+
+// fillLockedNames reads the (cut) names of the locked rows and sets them. The read
+// takes at most lockedNameBytes characters of each name in SQL, so a megabyte name
+// never crosses the wire, and cutName brings those characters under the byte limit.
+func fillLockedNames(db *gorm.DB, locked []models.Resource) error {
+	byID := make(map[uint]*models.Resource, len(locked))
+	ids := make([]uint, 0, len(locked))
+	for i := range locked {
+		byID[locked[i].ID] = &locked[i]
+		ids = append(ids, locked[i].ID)
+	}
+	for _, chunk := range chunkUints(ids, resourceSeriesLockChunkSize) {
+		var rows []models.Resource
+		if err := db.Model(&models.Resource{}).Select(fmt.Sprintf("id, SUBSTR(name, 1, %d) AS name", lockedNameBytes)).Where("id IN ?", chunk).Find(&rows).Error; err != nil {
+			return err
+		}
+		for i := range rows {
+			if r := byID[rows[i].ID]; r != nil {
+				r.Name = cutName(rows[i].Name)
+			}
+		}
+	}
+	return nil
 }
 
 // resourceRowsFromLocked is the locked rows as a slice.

@@ -690,6 +690,10 @@ func lockResourcesAfterSeriesWith(tx *gorm.DB, ids, optional []uint) (map[uint]*
 		return nil, err
 	}
 
+	if err := fillLockedNames(tx, locked); err != nil {
+		return nil, err
+	}
+
 	observedByID := make(map[uint]*uint, len(observed))
 	for i := range observed {
 		observedByID[observed[i].ID] = observed[i].SeriesID
