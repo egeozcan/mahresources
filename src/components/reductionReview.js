@@ -86,7 +86,7 @@ function humanSize(bytes) {
  * the same test ids, roles and names as reductionMember.tpl; the server-rendered
  * card stays the reference, and a refresh replaces these with it.
  */
-function buildMemberNode(store, clusterId, member, { fixedKeep = false, readOnly = false, stale = false, winnerChanged = false, winnerId = '', kept = null } = {}) {
+function buildMemberNode(store, clusterId, member, { fixedKeep = false, readOnly = false, stale = false, merged = false, winnerChanged = false, winnerId = '', kept = null } = {}) {
   const view = { kept };
   const resource = member.Resource;
   if (!resource) {
@@ -94,7 +94,7 @@ function buildMemberNode(store, clusterId, member, { fixedKeep = false, readOnly
     // A deleted copy's id marks its placeholder so a later page does not add it twice. A
     // Cluster that is not stale shows an unseen copy, whose id stays unprinted.
     const gone = el('div', { class: 'reduction-member reduction-member--gone', tabindex: '-1', 'data-testid': 'reduction-member-withheld', ...(stale ? { 'data-gone-resource-id': member.resourceId } : {}) }, [
-      el('p', { class: 'text-xs text-stone-600 max-w-[10rem]', text: stale ? 'Removed elsewhere.' : 'Resource unavailable.' }),
+      el('p', { class: 'text-xs text-stone-600 max-w-[10rem]', text: merged ? 'Merged and removed.' : stale ? 'Removed elsewhere.' : 'Resource unavailable.' }),
     ]);
     // A copy that is gone from a stale Cluster is left out like any other: this reopens
     // the rest for review (the server-rendered card offers the same).
@@ -1153,7 +1153,9 @@ export function registerReductionReviewStore(Alpine) {
         ]);
         const view = {
           fixedKeep: card.dataset.clusterFixedKeep === 'true',
-          readOnly: !!card.querySelector('[data-cluster-read-only="true"]'),
+          // An applied Cluster takes no decisions: the server-rendered card gives its copies no controls.
+          readOnly: !!card.querySelector('[data-cluster-read-only="true"]') || card.dataset.clusterState === 'applied',
+          merged: card.dataset.clusterMerged === 'true',
           stale: card.dataset.clusterState === 'stale',
           winnerChanged: card.dataset.clusterWinnerChanged === 'true',
           winnerId: card.querySelector('[data-testid="reduction-member"][data-winner="true"]')?.dataset.resourceId || '',

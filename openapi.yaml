@@ -11983,7 +11983,7 @@ paths:
                 - reductions
     /v1/reduction/clusters:
         post:
-            description: Approves (check) or clears (uncheck) either the listed Cluster ids, any tier, or every open Identical Cluster (allIdentical, which needs the expectedCount the caller saw and never reaches the Near-Identical tier). A check leaves alone every Cluster that needs individual review (lossy, oversized, or keeping a lower-resolution copy) and counts them in needsReview. An unknown Cluster, or one the caller may not see, refuses the whole request like a single unknown Cluster; so does one that is not open. Carries the version the caller last saw; a stale one is refused with 409. Returns the new version, how many Clusters changed and how many need review.
+            description: Approves (check) or clears (uncheck) either the listed Cluster ids, any tier, or every open Identical Cluster (allIdentical, which needs the expectedCount the caller saw and never reaches the Near-Identical tier). A check leaves alone every Cluster that needs individual review (lossy, oversized, or keeping a lower-resolution copy) and counts them in needsReview. An unknown Cluster, or one the caller may not see, refuses the whole request like a single unknown Cluster; so does one that is not open. Carries the version the caller last saw; a stale one is refused with 409. Naming more than 500 Cluster ids is refused with 400. A Reduction whose plan the background migration has not yet moved to tables is refused with 503 until it has. Returns the new version, how many Clusters changed and how many need review.
             operationId: bulkCheckResourceReductionClusters
             requestBody:
                 content:
@@ -12067,7 +12067,7 @@ paths:
                 - reductions
     /v1/reduction/members:
         get:
-            description: Returns up to 200 members of one Cluster after a cursor, for a review card the page cut short (the page's member budget, or a Cluster over 200 members). `after` is the `membersAfter` cursor the review gave; empty starts from the first member. A Cluster the caller may not fully see answers as an unknown one.
+            description: Returns up to 200 members of one Cluster after a cursor, for a review card the page cut short (the page's member budget, or a Cluster over 200 members). `after` is the `membersAfter` cursor the review gave; empty starts from the first member. A Cluster the caller may not fully see answers as an unknown one. A Reduction whose plan the background migration has not yet moved to tables answers 503 until it has.
             operationId: listResourceReductionClusterMembers
             parameters:
                 - description: The Reduction's id.

@@ -48,6 +48,7 @@
          data-cluster-id="{{ cluster.ID }}"
          data-cluster-tier="{{ cluster.Tier }}"
          data-cluster-state="applied"
+         data-cluster-merged="{% if cluster.Merged %}true{% else %}false{% endif %}"
          data-member-count="{% if cluster.MemberCount %}{{ cluster.MemberCount }}{% else %}{{ cluster.Members|length }}{% endif %}"
          aria-labelledby="cluster-{{ cluster.ID }}-heading">
     <h3 class="reduction-cluster-title" id="cluster-{{ cluster.ID }}-heading">

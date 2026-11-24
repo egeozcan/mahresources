@@ -106,7 +106,7 @@ Once the upgrade publishes a Reduction's plan to the new storage, it clears the 
 
 The set of Resources a Reduction considers is its **Extent**: the Resources you named, plus every Resource owned by or related to the Groups you named and all of their descendants. A whole-library Reduction has every Resource you can access.
 
-Group IDs are stored rather than their expansion, so a Group's contents are resolved fresh every time the Reduction is computed. Files added afterwards enter the Extent on the next **Recompute**. The review page tells you how many Resources were added since the last run.
+Group IDs are stored rather than their expansion, so a Group's contents are resolved fresh every time the Reduction is computed. Files added afterwards enter the Extent on the next **Recompute**. The review page tells you how many Resources were added since the last run. For a selection of Groups it checks at most the first 10,000 uploads after the last run, in the order they arrived; past that it shows "N+" (a floor), or a notice without a number when none of the checked ones belong to the selection.
 
 **About this Reduction**, a collapsed section at the bottom of the review page, lists the selected Groups and Resources by name, the first 20 of each followed by "and N more". Items you cannot see are left out and not counted. A whole-library Reduction reads "Everything you can access."
 
@@ -320,7 +320,7 @@ These appear above the tabs when they apply:
 
 | Notice | When |
 |--------|------|
-| "N Resources added since the last run. Recompute to include them." | Resources entered the selection after the last compute |
+| "N Resources added since the last run. Recompute to include them." | Resources entered the selection after the last compute. "N+" means the page stopped checking at 10,000 uploads since the last run, so N is a minimum. When none of those checked belong to the selection, the notice says that more Resources were added than the page checks and some may belong to it |
 | "Settings changed since the last run. Recompute to apply them to Clusters you have not acted on." with **Recompute** | The matching mode, the Winner Rule or **Only keep copies from this selection** differs from what the last compute used. Keep-as-version flags are not compared, because they act at apply. A plan computed before this notice existed shows nothing |
 | "N resources are missing a perceptual hash, so Near-Identical results may be incomplete." with a **Recompute similarity** link | Coverage is poor and the matching mode includes the Near-Identical tier |
 

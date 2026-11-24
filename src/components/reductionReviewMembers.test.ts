@@ -372,3 +372,38 @@ describe('a paged copy carries the same cues as a rendered one', () => {
     expect(node.textContent).toContain('Outside the selection');
   });
 });
+
+describe('appended copies of an applied Cluster', () => {
+  function appliedCard(merged: boolean): string {
+    return cardHtml().replace('data-cluster-state="open"', `data-cluster-state="applied" data-cluster-merged="${merged}"`);
+  }
+
+  async function page(members: unknown[]) {
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members });
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+  }
+
+  test('a paged copy gets no controls, as the server-rendered card gives none', async () => {
+    document.body.innerHTML = appliedCard(true);
+    await page([{ ...member(2), ejected: true, inExtent: true }, { ...member(3), IsLoser: true }]);
+    expect(document.querySelector('[data-testid="member-restore"]')).toBeNull();
+    expect(document.querySelector('[data-testid="member-eject"]')).toBeNull();
+    expect(document.querySelector('[data-testid="member-promote"]')).toBeNull();
+  });
+
+  test('a merged-away copy says it was merged and removed', async () => {
+    document.body.innerHTML = appliedCard(true);
+    await page([member(2, null)]);
+    expect(document.querySelector('[data-testid="reduction-member-withheld"]')!.textContent).toContain('Merged and removed.');
+  });
+
+  test('an unconfirmed apply keeps the unavailable wording', async () => {
+    document.body.innerHTML = appliedCard(false);
+    await page([member(2, null)]);
+    expect(document.querySelector('[data-testid="reduction-member-withheld"]')!.textContent).toContain('Resource unavailable.');
+  });
+});
