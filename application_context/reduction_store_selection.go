@@ -19,9 +19,6 @@ import (
 // the most Resources "from a Group's Resources" may take.
 const reductionSelectionCap = 10000
 
-// reductionSelectionPreview is how many names the review's selection preview lists.
-const reductionSelectionPreview = 20
-
 // ErrReductionSelectionTooLarge refuses a selection above the per-request cap.
 var ErrReductionSelectionTooLarge = fmt.Errorf("a selection may name at most %d Resources or Groups at a time", reductionSelectionCap)
 
@@ -197,32 +194,4 @@ func (s *reductionStore) addExtentFromOwners(r *models.ResourceReduction, rootID
 		return 0, err
 	}
 	return total, nil
-}
-
-// extentPreview is the review's selection preview: how many Resources are
-// selected explicitly, and the first names among those the principal may see.
-func (s *reductionStore) extentPreview(r *models.ResourceReduction) (int64, []string, error) {
-	prefix, args := s.with()
-	visible := ""
-	var n int64
-	switch s.scope.mode {
-	case scopeDeny:
-		return 0, nil, nil
-	case scopeSubtree:
-		// A Resource moved out of the subtree is neither named nor counted.
-		visible = " AND r.owner_id IN " + subtreeIDs
-		if err := s.db.Raw(prefix+`SELECT COUNT(*) FROM reduction_extent_resources e JOIN resources r ON r.id = e.resource_id
-			WHERE e.reduction_id = ?`+visible, append(append([]any{}, args...), r.ID)...).Scan(&n).Error; err != nil {
-			return 0, nil, err
-		}
-	default:
-		if err := s.db.Model(&models.ReductionExtentResource{}).Where("reduction_id = ?", r.ID).Count(&n).Error; err != nil {
-			return 0, nil, err
-		}
-	}
-	var names []string
-	err := s.db.Raw(prefix+`SELECT r.name FROM reduction_extent_resources e JOIN resources r ON r.id = e.resource_id
-		WHERE e.reduction_id = ?`+visible+` ORDER BY e.resource_id LIMIT ?`,
-		append(append([]any{}, args...), r.ID, reductionSelectionPreview)...).Scan(&names).Error
-	return n, names, err
 }

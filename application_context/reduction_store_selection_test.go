@@ -17,10 +17,10 @@ func testReductionSelections(t *testing.T, ctx *MahresourcesContext) {
 
 	require.NoError(t, s.addExtentResources(r, []uint{3, 1, 2, 2}))
 	require.NoError(t, s.addExtentResources(r, []uint{2, 4}), "widening twice with an overlap is idempotent")
-	n, names, err := s.extentPreview(r)
+	sum, err := s.selectionSummary(r)
 	require.NoError(t, err)
-	require.EqualValues(t, 4, n)
-	require.Empty(t, names, "ids with no Resource row have no names")
+	require.Equal(t, 4, sum.storedResources)
+	require.Empty(t, sum.resourceRefs, "ids with no Resource row have no names")
 
 	tooMany := make([]uint, reductionSelectionCap+1)
 	for i := range tooMany {
@@ -28,9 +28,9 @@ func testReductionSelections(t *testing.T, ctx *MahresourcesContext) {
 	}
 	require.ErrorIs(t, s.addExtentResources(r, tooMany), ErrReductionSelectionTooLarge)
 	require.ErrorIs(t, s.addExtentGroups(r, tooMany), ErrReductionSelectionTooLarge)
-	n, _, err = s.extentPreview(r)
+	sum, err = s.selectionSummary(r)
 	require.NoError(t, err)
-	require.EqualValues(t, 4, n, "a refused request writes nothing")
+	require.Equal(t, 4, sum.storedResources, "a refused request writes nothing")
 
 	require.NoError(t, s.addExtentGroups(r, []uint{9, 9, 8}))
 	var groups int64
@@ -58,10 +58,10 @@ func testReductionSelectFromGroup(t *testing.T, ctx *MahresourcesContext) {
 	added, err := ctx.reductionStore().addExtentFromGroupResources(r, mine.ID)
 	require.NoError(t, err)
 	require.Equal(t, 1203, added)
-	n, names, err := ctx.reductionStore().extentPreview(r)
+	n, names, err := selectionPreviewForTest(ctx.reductionStore(), r)
 	require.NoError(t, err)
 	require.EqualValues(t, 1203, n)
-	require.Len(t, names, reductionSelectionPreview)
+	require.Len(t, names, reductionSelectionNamesShown)
 	require.Equal(t, "r0000", names[0])
 	var hasTwin int64
 	require.NoError(t, ctx.db.Model(&models.ReductionExtentResource{}).Where("reduction_id = ? AND resource_id = ?", r.ID, twin.ID).Count(&hasTwin).Error)
