@@ -1,8 +1,8 @@
 # Resource Reduction plan as tables: bounded memory at any library size
 
-Status: design v10. Review history: v1 pi 9 P0 / 4 P1, architect 3 / 18; v2 pi 9 / 7, architect 1 /
+Status: design v11. Review history: v1 pi 9 P0 / 4 P1, architect 3 / 18; v2 pi 9 / 7, architect 1 /
 12; v3 pi 9 / 2, architect 1 / 7; v4 pi 0 / 11, architect 0 / 5; v5 pi 0 / 9, architect 0 / 2; v6 pi 0 / 11, architect 0 / 1; v7 pi 0 / 10, architect 0 / 1; v8 pi 0 / 6, architect 0 / 3;
-v9 architect 0 / 1. The tables at the end map the v3 to v9 findings to their fixes. Supersedes
+v9 pi 0 / 7, architect 0 / 1. The tables at the end map the v3 to v9 findings to their fixes. Supersedes
 ADR 0003's "one row carries the plan" for the Cluster list.
 
 ## Problem
@@ -334,7 +334,11 @@ Bookkeeping after a merge stays best-effort and logged, as today.
   star. Rows examined per neighbour statement depend on how many claimed rows the index range
   passes; rule 2's read bound is relaxed for this one query and measured on the dense-star fixture.
 - **Cluster build** in Go over at most 200 narrow rows, exactly as today, including
-  `rejustifyAgainstWinner` (named-pair probes).
+  `rejustifyAgainstWinner` (named-pair probes). A full star's seed is passed to the builder explicitly
+  and its lossy and keeps-smaller warnings are derived against it. Before a fresh Cluster is
+  inserted, its members' `in_extent` is re-checked against the live Extent (today's
+  `containsResources`, ≤ 200 ids), so a Resource moved out of the Extent after staging can never
+  arrive as a Loser.
 
 ADR 0002 amendment: a seed claims every unclaimed Resource within threshold of itself **up to the
 member cap**, nearest first; the rest stay unclaimed and are proposed by a later compute after this
@@ -426,6 +430,9 @@ databases order a set of keys by `(key_prefix, sort_key)` exactly as `bytes.Comp
   the last chunk, in the same transaction (two-chunk test whose ids span Cluster 20 then Cluster 10).
   A guard test fails on a Resource delete outside them. Idempotent; no Reduction row, no version bump. An applied Cluster's own
   Losers get `gone = true` but its effective state is `applied`, never stale.
+- **Narrow loads on every delete path.** Ordinary deletes, bulk deletes and the merge's participant
+  locks read Resources with the narrow projection and Series by id only; all three delete paths share
+  the SQL block scrub (D13), so no path decodes a block document or loads a full Resource row.
 - **Delete paths bounded.** Each Resource's own child cleanup on delete (similarity pairs,
   association rows, versions, block references) runs in keyset chunks of 500 **before** the Resource
   row is deleted, so the foreign-key cascades (`OnDelete:CASCADE` on similarity pairs, associations,
@@ -507,8 +514,9 @@ landing; a parked apply worker past its lease cannot merge.
   per Reduction, across instances); the sweep protects it (D4).
 - **Spool, then process.** One `INSERT … SELECT` per Reduction parses the plan once, server-side,
   into a spool table `reduction_migration_rows(run, cluster_ord, member_ord, …)`: the nesting is
-  inside the statement (`json_array_elements(plan->'clusters') WITH ORDINALITY` laterally joined to
-  `json_array_elements(c->'members') WITH ORDINALITY` on Postgres, the `json` type needs no cast;
+  inside the statement (`jsonb_array_elements(plan->'clusters') WITH ORDINALITY` laterally joined to
+  `jsonb_array_elements(c->'members') WITH ORDINALITY` on Postgres (`types.JSON` is `jsonb` there),
+  `jsonb_each` for the `loserOwners` object joined by Resource id;
   nested `json_each` on SQLite), one row per member carrying its Cluster's scalar fields;
   `changed_members` (into member `changed`) and `loser_owners` are expanded the same way. A JSON
   `null` where an array is expected (an empty apply writes `clusters: null`) is normalized to an empty
@@ -564,9 +572,11 @@ landing; a parked apply worker past its lease cannot merge.
 - Loser versions move with one set-based `UPDATE` per chunk; the note-block scrub reads blocks by
   keyset. Every per-Loser child operation the merge performs (association transfers, similarity-pair
   deletes, cascades) runs in keyset chunks of 500, so a Loser with millions of associations or pairs
-  is merged by bounded statements. The backup snapshot of a Loser is built entirely in SQL from an **explicit column-to-Go-name list**
-  matching today's `json.Marshal(models.Resource)` output: Go field names, `null` for relation fields,
-  RFC3339Nano times, `true`/`false` booleans, `meta` minus `backups` and `own_meta` embedded as JSON
+  is merged by bounded statements. The backup snapshot of a Loser is built entirely in SQL from an **explicit column-to-JSON-key list
+  derived from `models.Resource`'s `json` tags** (including `ownMeta`, `seriesId`), matching today's
+  `json.Marshal(models.Resource)` output: `omitempty` fields omitted when empty, `null` only for
+  relation fields marshalled as null today,
+  RFC3339Nano times, `true`/`false` booleans, `meta` minus `backups` (stripped only when `meta` is an object) and `own_meta` embedded as JSON
   (`json(…)` on SQLite so they are not double-quoted; `jsonb_build_object` on Postgres, never
   `to_jsonb(r)`). No Loser column, description included, enters Go. A guard test reflects over
   `models.Resource` so a new field fails until it is mapped, and the decoded-snapshot comparison with
@@ -585,7 +595,7 @@ landing; a parked apply worker past its lease cannot merge.
   shape. `content` is cast to TEXT on both engines before `json_each` (SQLite 3.45+ would read a BLOB
   as JSONB) and written back as TEXT.
   Blocks are scanned by keyset `id > ?`, 500 per statement, of the gallery and calendar types; the
-  UPDATE's `WHERE` is an exact, type-guarded JSON membership test (`json_each` / `json_array_elements`
+  UPDATE's `WHERE` is an exact, type-guarded JSON membership test (`json_each` on SQLite, `jsonb_array_elements` on Postgres, where block `content` is `jsonb`,
   with the value compared as an integer after the same coercion today's `toUint` applies, a JSON `null`
   or non-array skipped), so only blocks that reference a removed id are written. Arrays are rebuilt in
   their original order (`ORDER BY` the element ordinal) and an emptied array stays `[]`
@@ -624,6 +634,12 @@ landing; a parked apply worker past its lease cannot merge.
 - **Seams** rewritten as store writers: `OverwritePlanForTest`, `StoreReductionPlanForTest`,
   `ClaimClusterForApplyForTest`, `ReleaseClaimForTest`, the hook seams.
 
+## D14b. Request size
+
+Every Reduction route and the bulk Resource delete route get a route-specific body byte limit
+(`http.MaxBytesReader`) applied **before** decoding (the global JSON limit is off, `main.go:214`);
+element caps (500, 10,000) are checked after a bounded decode.
+
 ## D15. Visible changes (docs-site, openapi)
 
 Member cap and its card text; compute and apply leases (a large compute no longer fails at one
@@ -638,7 +654,8 @@ the token is opaque and changes definition.
 
 ADR 0011 "Reduction Clusters live in tables": supersedes ADR 0003's plan-as-document; amends ADR
 0002 with the member cap rule, the outsider rule and the byte-key seed order. `docs/todo.md`: the
-app-wide scoped allow-list and the Winner's growing backup history (both out of scope above).
+app-wide scoped allow-list, the Winner's growing backup history (both out of scope above), and the
+pre-existing race between a Group reparent and a scoped merge (below).
 
 ## Slices
 
@@ -802,3 +819,13 @@ Also in this change: the review card layout fix for long Resource names and fail
 | D9 per-chunk sentence contradicts the single walk (arch 3) | D9 |
 | foreign-key cascades (arch 4) | D9 children first |
 | block scrub coercion shapes, BLOB as JSONB, document equality (arch 5) | D13 |
+
+| v9 pi finding | Section |
+|---|---|
+| Postgres `jsonb` for legacy plans and block content | D12, D13 |
+| staged Extent membership turns an outsider into a Loser | D5 live `in_extent` re-check |
+| full-star builder may rerank away from the seed | D5 (seed passed explicitly; v10 forces Winner = seed) |
+| Group reparent vs scoped merge | declined: pre-existing and unchanged (today's merge takes its scope snapshot before participant locks, `resource_bulk_context.go:1042`); recorded in `docs/todo.md` |
+| snapshot shape by JSON tags and `omitempty` | D13 |
+| unbounded Go loads on delete paths and merge locks | D9 narrow loads, shared SQL scrub |
+| body size before decoding | D14b |
