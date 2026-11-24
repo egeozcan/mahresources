@@ -89,7 +89,7 @@ func TestIdenticalComputeCollectsOnlyRepeatedHashes(t *testing.T) {
 
 	got, err := ctx.repeatedHashesIn(ids)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"hash-0000"}, got, "a hash only one Resource holds cannot form a Cluster and is not kept")
+	assert.ElementsMatch(t, []string{"hash-0000"}, got, "a hash only one Resource holds cannot form a Cluster and is not kept")
 
 	extent := &ReductionExtent{All: true, ResourceIDs: map[uint]bool{}, GroupIDs: map[uint]bool{}}
 	clusters, err := ctx.clusterIdentical(extent, models.DefaultWinnerRule(), map[uint]bool{}, nil)

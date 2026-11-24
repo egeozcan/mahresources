@@ -209,9 +209,11 @@ func (ctx *MahresourcesContext) perceptuallyHashed(ids []uint) (map[uint]bool, e
 
 // perceptualExtentIDs is the seed pool: the Extent's Resources that carry a
 // perceptual hash and appear in at least one stored pair, minus anything a frozen
-// Cluster or the Identical tier already claimed. An image with no stored pair has
-// no neighbour to find, and leaving it out keeps a whole-library pool to the
-// paired images rather than every hashed one.
+// Cluster or the Identical tier already claimed. An image with no stored pair row
+// has no neighbour to find, and leaving it out keeps a whole-library pool to the
+// paired images rather than every hashed one. This is a coarse cut, not the read
+// threshold: a pair the threshold or the aHash guard rejects still admits its
+// images, and similarWithin then finds nothing for them, as before.
 func (ctx *MahresourcesContext) perceptualExtentIDs(extent *ReductionExtent, excluded map[uint]bool) ([]uint, error) {
 	var ids []uint
 	err := ctx.extentResourceIDs(extent, func(chunk []uint) error {

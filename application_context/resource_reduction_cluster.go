@@ -540,7 +540,6 @@ func (ctx *MahresourcesContext) repeatedHashesIn(ids []uint) ([]string, error) {
 		Where("resources.hash <> ''").
 		Where("EXISTS (SELECT 1 FROM resources twin WHERE twin.hash = resources.hash AND twin.id <> resources.id)").
 		Distinct().
-		Order("resources.hash").
 		Pluck("resources.hash", &found).Error
 	return found, err
 }
