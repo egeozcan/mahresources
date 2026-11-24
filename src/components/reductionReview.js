@@ -86,13 +86,24 @@ function humanSize(bytes) {
  * the same test ids, roles and names as reductionMember.tpl; the server-rendered
  * card stays the reference, and a refresh replaces these with it.
  */
-function buildMemberNode(store, clusterId, member, { fixedKeep = false, readOnly = false, stale = false } = {}) {
+function buildMemberNode(store, clusterId, member, { fixedKeep = false, readOnly = false, stale = false, winnerChanged = false, winnerId = '' } = {}) {
   const resource = member.Resource;
   if (!resource) {
     // Focusable (tabindex -1) so paging in a page that starts with one can still land on it.
-    return el('div', { class: 'reduction-member reduction-member--gone', tabindex: '-1', 'data-testid': 'reduction-member-withheld' }, [
-      el('p', { class: 'text-xs text-stone-600 max-w-[10rem]', text: 'Resource unavailable.' }),
+    const gone = el('div', { class: 'reduction-member reduction-member--gone', tabindex: '-1', 'data-testid': 'reduction-member-withheld' }, [
+      el('p', { class: 'text-xs text-stone-600 max-w-[10rem]', text: stale ? 'Removed elsewhere.' : 'Resource unavailable.' }),
     ]);
+    // A copy that is gone from a stale Cluster is left out like any other: this reopens
+    // the rest for review (the server-rendered card offers the same).
+    if (stale && !readOnly && !winnerChanged && !member.IsWinner && !member.ejected) {
+      const eject = el('button', { type: 'button', 'data-testid': 'member-eject', class: 'reduction-btn reduction-btn--small' }, [
+        "Don't remove",
+        el('span', { class: 'sr-only', text: ' (the copy that was removed elsewhere)' }),
+      ]);
+      eject.addEventListener('click', () => store.act(clusterId, 'eject', member.resourceId));
+      gone.append(eject);
+    }
+    return gone;
   }
   const rid = member.resourceId;
   const isWinner = !!member.IsWinner;
@@ -111,6 +122,13 @@ function buildMemberNode(store, clusterId, member, { fixedKeep = false, readOnly
   ]);
   if (member.Changed) roles.append(' ', el('span', { class: 'reduction-badge reduction-badge--changed', 'data-testid': 'member-changed', text: 'This copy changed' }));
   if (member.inExtent === false) roles.append(' ', el('span', { class: 'reduction-badge reduction-badge--outside', text: 'Outside the selection' }));
+  if (typeof member.distance === 'number') {
+    const closeness = member.distance <= 2 ? 'Very close' : member.distance <= 6 ? 'Close' : 'Similar';
+    roles.append(' ', el('span', { class: 'reduction-badge reduction-badge--distance', title: `perceptual distance ${member.distance}`, 'data-testid': 'member-distance' }, [
+      closeness,
+      el('span', { class: 'sr-only', text: ` (perceptual distance ${member.distance})` }),
+    ]));
+  }
   node.append(roles);
 
   const hash = resource.Hash || '';
@@ -173,14 +191,25 @@ function buildMemberNode(store, clusterId, member, { fixedKeep = false, readOnly
     return b;
   };
   if (stale) {
-    if (!isWinner && !ejected) actions.append(button('member-eject', "Don't remove", () => store.act(clusterId, 'eject', rid)));
+    if (!isWinner && !ejected && !winnerChanged) actions.append(button('member-eject', "Don't remove", () => store.act(clusterId, 'eject', rid)));
   } else if (!isWinner && !ejected) {
     const keep = button('member-promote', 'Keep this instead', () => store.act(clusterId, 'promote', rid));
     if (fixedKeep) {
       keep.disabled = true;
       keep.setAttribute('aria-describedby', `cluster-${clusterId}-fixed-note`);
     }
-    actions.append(keep, ' ', button('member-eject', "Don't remove", () => store.act(clusterId, 'eject', rid)));
+    actions.append(keep, ' ');
+    // The compare page takes two Resources: this copy against the kept one that would absorb it.
+    if (member.IsLoser && winnerId) {
+      const compare = el('a', {
+        class: 'reduction-btn reduction-btn--small',
+        'data-testid': 'member-compare',
+        href: `/resource/compare?r1=${winnerId}&r2=${rid}&from=reduction:${store.reductionId}`,
+      }, ['Compare', el('span', { class: 'sr-only', text: ` ${resource.Name} with the kept copy` })]);
+      compare.addEventListener('click', (event) => store.compareHref(event, clusterId));
+      actions.append(compare, ' ');
+    }
+    actions.append(button('member-eject', "Don't remove", () => store.act(clusterId, 'eject', rid)));
   } else if (ejected && member.inExtent !== false) {
     actions.append(button('member-restore', 'Include again', () => store.act(clusterId, 'restore', rid)));
   }
@@ -1061,6 +1090,8 @@ export function registerReductionReviewStore(Alpine) {
           fixedKeep: card.dataset.clusterFixedKeep === 'true',
           readOnly: !!card.querySelector('[data-cluster-read-only="true"]'),
           stale: card.dataset.clusterState === 'stale',
+          winnerChanged: card.dataset.clusterWinnerChanged === 'true',
+          winnerId: card.querySelector('[data-testid="reduction-member"][data-winner="true"]')?.dataset.resourceId || '',
         };
         const added = [];
         for (const member of page.members || []) {

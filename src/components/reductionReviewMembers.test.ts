@@ -137,6 +137,98 @@ describe('appended copies of a Cluster that takes no decisions', () => {
   });
 });
 
+describe('appended copies of a stale Cluster', () => {
+  function staleCard(winnerChanged: boolean): string {
+    return cardHtml({ stale: true }).replace('data-cluster-state="stale"', `data-cluster-state="stale" data-cluster-winner-changed="${winnerChanged}"`);
+  }
+
+  test('a copy that was deleted can be left out, as on the server-rendered card', async () => {
+    document.body.innerHTML = staleCard(false);
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members: [member(2, null)] });
+
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+
+    const gone = document.querySelector('[data-testid="reduction-member-withheld"]')!;
+    expect(gone.textContent).toContain('Removed elsewhere.');
+    const eject = gone.querySelector<HTMLButtonElement>('[data-testid="member-eject"]')!;
+    expect(eject).not.toBeNull();
+    const act = vi.fn();
+    store.act = act;
+    eject.click();
+    expect(act).toHaveBeenCalledWith('c1', 'eject', 2);
+  });
+
+  test('offers nothing when the kept copy is the one that changed', async () => {
+    document.body.innerHTML = staleCard(true);
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members: [member(2, null), member(3)] });
+
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+
+    expect(document.querySelector('[data-testid="member-eject"]')).toBeNull();
+  });
+
+  test('a deleted winner or an already left out copy gets no button', async () => {
+    document.body.innerHTML = staleCard(false);
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members: [{ ...member(2, null), ejected: true }, { ...member(3, null), IsWinner: true }] });
+
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+
+    expect(document.querySelector('[data-testid="member-eject"]')).toBeNull();
+  });
+});
+
+describe('appended copies of a Near-Identical Cluster', () => {
+  test('a loser carries its distance badge and a Compare link to the kept copy', async () => {
+    document.body.innerHTML = cardHtml().replace('<div class="reduction-cluster-members">',
+      '<div class="reduction-cluster-members"><div data-testid="reduction-member" data-winner="true" data-resource-id="1" tabindex="-1"></div>')
+      .replace('<div class="reduction-member" tabindex="-1" data-testid="reduction-member" data-resource-id="1"></div>', '');
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members: [{ ...member(2), IsLoser: true, distance: 5 }, { ...member(3), IsLoser: true, distance: 1 }] });
+
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+
+    const badges = [...document.querySelectorAll('[data-testid="member-distance"]')];
+    expect(badges.map((b) => b.textContent)).toEqual(['Close (perceptual distance 5)', 'Very close (perceptual distance 1)']);
+    expect(badges[0].getAttribute('title')).toBe('perceptual distance 5');
+    const compare = document.querySelector<HTMLAnchorElement>('[data-testid="member-compare"]')!;
+    expect(compare).not.toBeNull();
+    expect(compare.getAttribute('href')).toBe('/resource/compare?r1=1&r2=2&from=reduction:7');
+    // The click records which Cluster the reviewer came from, as the server-rendered link does.
+    compare.addEventListener('click', (event) => event.preventDefault());
+    compare.click();
+    expect(compare.getAttribute('href')).toContain('fa=c1');
+  });
+
+  test('an Identical copy has neither a distance nor a Compare link without a loser flag', async () => {
+    document.body.innerHTML = cardHtml();
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members: [member(2)] });
+
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+
+    expect(document.querySelector('[data-testid="member-distance"]')).toBeNull();
+    expect(document.querySelector('[data-testid="member-compare"]')).toBeNull();
+  });
+});
+
 describe('approving a large Cluster whose copies are not all on the page', () => {
   test('stays unavailable until Show more has rendered every copy, and then names how many it showed', async () => {
     document.body.innerHTML = cardHtml({ rendered: 1, memberCount: 3 });

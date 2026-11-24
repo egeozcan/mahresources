@@ -69,6 +69,7 @@
          data-cluster-oversized="{% if cluster.Oversized %}true{% else %}false{% endif %}"
          data-member-count="{% if cluster.MemberCount %}{{ cluster.MemberCount }}{% else %}{{ cluster.Members|length }}{% endif %}"
          data-cluster-fixed-keep="{% if cluster.DecidedBy == "seed" %}true{% else %}false{% endif %}"
+         data-cluster-winner-changed="{% if cluster.WinnerChanged %}true{% else %}false{% endif %}"
          data-lightbox-scope
          aria-labelledby="cluster-{{ cluster.ID }}-heading">
 
