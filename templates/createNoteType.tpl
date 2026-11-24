@@ -192,6 +192,19 @@
 &lt;span class="text-stone-400"&gt;[property path="StartDate"] &ndash; [property path="EndDate"]&lt;/span&gt;</code></pre>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[calc expr="…"]</code>
+                        &mdash; compute a number from <span class="font-mono">meta.path</span>, numeric fields (<span class="font-mono">property.Field</span>) and, inside [each], <span class="font-mono">item</span> / <span class="font-mono">item.path</span>. Operators <span class="font-mono">+ - * / %</span> and parentheses; functions <span class="font-mono">min max abs round coalesce</span>. Renders the bare number, so it also works in attributes. Never runs a query.
+                        <br><span class="text-stone-400 ml-4">
+                            <b class="text-stone-500">decimals</b>="0&ndash;10"
+                            &middot; <b class="text-stone-500">format</b>="number|grouped|percent"
+                            &middot; <b class="text-stone-500">default</b>="text" when a value is missing or not a number, or on division by zero
+                            &middot; keys with - or spaces cannot be referenced
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[calc expr="meta.qty * meta.unit_price" decimals="2"]
+[calc expr="meta.qty * meta.unit_price * (1 - coalesce(meta.discount, 0))" decimals="2" default="not set"]
+&lt;meter min="0" max="1" value="[calc expr='meta.spent / meta.budget' default='0']" aria-label="Budget used"&gt;[calc expr='meta.spent / meta.budget' format='percent' decimals='0' default='unknown']&lt;/meter&gt;</code></pre>
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[mrql query='...']</code>
                         &mdash; inline MRQL query results.
                         <br><span class="text-stone-400 ml-4">

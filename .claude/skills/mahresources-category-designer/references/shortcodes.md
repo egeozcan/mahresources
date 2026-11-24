@@ -102,6 +102,32 @@ Notes:
 
 Use `[property]` when the data is not in `Meta`.
 
+### `[calc]`
+
+Use for a number derived from other fields: a line total, a discounted price, a remaining budget, megapixels. Never store a redundant field for these; it goes stale on the next edit.
+
+Attrs:
+
+- `expr` -- required. Operands `meta.<path>`, `property.<Field>` (numeric struct fields only) and, at the top level of an `[each]` body, `item` / `item.<path>`; numeric literals (plain decimals, no exponent); `+ - * / %`, parentheses; functions `min`, `max` (1-8 args), `abs`, `round(x[, digits])` (half away from zero, digits 0-10), `coalesce(a, b, …)` (first argument that has a value).
+- `decimals=0..10` -- fixed fraction digits, trailing zeros kept. Unset: up to 10 digits, trailing zeros dropped.
+- `format=number|grouped|percent` -- `grouped` gives `1,234.50` (not locale-aware); `percent` multiplies by 100 and appends `%`.
+- `default="…"` -- escaped text when there is no numeric result.
+
+Rules:
+
+- A Meta string counts only when it is wholly a decimal number (`"12.50"` yes, `"12,5"` no). Missing, null, boolean, object, array, division by zero and overflow give no value, which renders `default` unless `coalesce` catches it: `coalesce(meta.discount, 0)`, `coalesce(meta.a / meta.b, 0)`.
+- Syntax errors, unknown names (`qty` without `meta.`), unknown functions, wrong arity, a bad `decimals`/`format`, or an expression past 512 bytes / 128 tokens / 32 levels / 32 references render the `⚠ calc` marker; the linter flags them.
+- Meta keys containing `-` or spaces cannot be referenced (`meta.unit-price` is `meta.unit - price`). Design the schema with `snake_case` keys for anything `[calc]` reads.
+- Output is a bare number, so it works inside attributes (`<meter value="[calc …]">`). Inside `[each]`, `item` is visible only at the top level of the body, as for `[item]`.
+- It never queries, so it is safe on every card of a long list, on share pages and in `CustomMRQLResult`.
+- Accessibility: label derived numbers (a `<th scope="col">` header, or "Total due: …"), give a `<meter>` an `aria-label` and fallback text, and prefer `default="not set"` over a lone dash outside tables.
+
+```html
+[calc expr="meta.qty * meta.unit_price * (1 - coalesce(meta.discount, 0))" decimals="2" default="not set"]
+[each path="lines"]<tr><td>[item path="name"]</td><td>[calc expr="item.qty * item.price" decimals="2"]</td></tr>[/each]
+<meter min="0" max="1" value="[calc expr='meta.spent / meta.budget' default='0']" aria-label="Budget used">[calc expr='meta.spent / meta.budget' format='percent' decimals='0' default='unknown']</meter>
+```
+
 ### `[mrql]`
 
 Use to embed related collections, KPIs, and search-backed summaries.
@@ -390,6 +416,7 @@ Use this order of preference:
 
 1. `[meta]` for schema-aware field rendering.
 2. `[property]` for built-in entity fields.
+   - `[calc]` for numbers derived from either, instead of storing them.
 3. `data-views` for presentation widgets.
 4. `meta-editors` for frequent inline edits.
 5. `[using]` for fields of one related entity (owner, Meta-referenced ID); `[mrql]` for related collections and rollups.

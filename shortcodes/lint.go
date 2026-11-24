@@ -140,7 +140,7 @@ func KnownFromBuiltins() KnownShortcodes {
 var conditionalOperators = []string{"eq", "neq", "gt", "lt", "gte", "lte", "in", "contains", "matches", "empty", "not-empty"}
 
 // builtinBaseNames is used for near-miss detection of misspelled shortcodes.
-var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "similar", "calendar", "inspect", "adjacent", "comment"}
+var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "calc", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "similar", "calendar", "inspect", "adjacent", "comment"}
 
 // looseBracketPattern finds bracket expressions that lead with an identifier,
 // used to detect shortcode-looking brackets that did not parse as real
@@ -442,6 +442,8 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			}
 		case "calendar":
 			lintCalendar(tk, reloadSpans, add)
+		case "calc":
+			lintCalc(tk, opts, otherContext, eachSpans, usingSpans, add)
 		case "reload":
 			// A <button> may not contain another button. The renderer refuses the
 			// whole thing rather than emit invalid interactive nesting, so say so
@@ -1079,5 +1081,49 @@ func lintStrayCloseTags(w *schemaWork, lm *renderMeter, input string, tokens []t
 				}
 			}
 		}
+	}
+}
+
+// lintCalc checks a [calc] opener with the parser the renderer uses: every
+// error here is one RenderCalcShortcode renders as its error marker, and every
+// warning a reference that renders the default.
+func lintCalc(tk token, opts LintOptions, otherContext, eachSpans, usingSpans [][2]int, add func(start, end int, severity, msg string)) {
+	if _, _, err := calcOptions(tk.attrs); err != nil {
+		add(tk.start, tk.end, SeverityError, "[calc] "+err.Error())
+	}
+	expr := tk.attrs["expr"]
+	if strings.TrimSpace(expr) == "" {
+		return // the missing required attribute is already reported
+	}
+	prog, err := parseCalcExpr(expr)
+	if err != nil {
+		add(tk.start, tk.end, SeverityError, "[calc] expr: "+err.Error())
+		return
+	}
+	usesItem := false
+	seen := map[string]bool{}
+	for _, ref := range prog.refs {
+		switch ref.root {
+		case "item":
+			usesItem = true
+		case "meta":
+			if seen[ref.path] || withinSpans(tk.start, otherContext) {
+				continue
+			}
+			seen[ref.path] = true
+			if msg := metaPathIssueFor("[calc]", ref.path, opts.metaProps); msg != "" {
+				add(tk.start, tk.end, SeverityWarning, msg)
+			}
+		}
+	}
+	if !usesItem {
+		return
+	}
+	if !insideSpans(tk.start, eachSpans) {
+		add(tk.start, tk.end, SeverityWarning,
+			"[calc] uses item outside an [each] block; it renders the default")
+	} else if innermostSpanStart(tk.start, usingSpans) > innermostSpanStart(tk.start, eachSpans) {
+		add(tk.start, tk.end, SeverityWarning,
+			"[calc] inside a [using] block cannot read item: [using] switches to another entity, so the [each] element is not available there and it renders the default")
 	}
 }

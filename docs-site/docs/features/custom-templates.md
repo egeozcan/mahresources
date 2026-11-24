@@ -204,6 +204,21 @@ Use `x-for` to render lists, tables, or grids from array metadata. This pattern 
 </template>
 ```
 
+### Derived totals
+
+A number computed from other fields stays correct when someone edits one of them, which a stored copy does not. [`[calc]`](./shortcodes.md#calc----arithmetic-over-fields) does the arithmetic on the server from the entity's Meta, its numeric fields and `[each]` elements, without a query:
+
+```html
+<table class="w-full text-sm">
+  <caption class="text-left font-semibold">Invoice lines</caption>
+  <tr><th scope="col" class="text-left">Item</th><th scope="col" class="text-right">Total</th></tr>
+  [each path="lines"]
+  <tr><td>[item path="name"]</td><td class="text-right">[calc expr="item.qty * item.price" decimals="2"]</td></tr>
+  [/each]
+</table>
+<p>Total due: [calc expr="meta.qty * meta.unit_price * (1 - coalesce(meta.discount, 0))" decimals="2" default="not set"]</p>
+```
+
 ### Dynamic Styling from Metadata
 
 Combine `:class` bindings with metadata values for status badges, progress bars, or conditional formatting.

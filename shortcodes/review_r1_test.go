@@ -479,7 +479,15 @@ func TestMarkItemsPreflightsTheMarkedSource(t *testing.T) {
 	assert.Less(t, grown, parseOnly+int64(512<<10), "the marked source (~1.6 MB) was built after the parse")
 	// Within the allowance it marks as before.
 	m = newRenderMeter(WithRenderBudget(context.Background(), RenderBudget{OutputBytes: 1 << 20, ParsedSourceBytes: 512 << 10}))
-	marked, items := markItems(m, "a[item]b[item path=\"x\"]c")
-	assert.Len(t, items, 2)
+	marked, items := markItems(m, "a[item]b[item path=\"x\"]c[calc expr=\"item * 2\"]d")
+	assert.Len(t, items, 3)
 	assert.Contains(t, marked, itemSentinelPrefix)
+	assert.NotContains(t, marked, "[calc")
+	assert.Equal(t, "calc", items[2].Name)
+	// A [calc] token is accounted for like an [item]: a source of them alone
+	// past the allowance is refused before the marked copy is built.
+	m = newRenderMeter(WithRenderBudget(context.Background(), RenderBudget{OutputBytes: 1 << 20, ParsedSourceBytes: 512 << 10}))
+	out, _ = markItems(m, strings.Repeat("[calc expr=1]", 30000))
+	assert.Empty(t, out)
+	assert.ErrorIs(t, m.Err(), ErrRenderBudgetExceeded)
 }

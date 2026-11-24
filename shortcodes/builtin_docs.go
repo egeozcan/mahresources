@@ -38,7 +38,7 @@ type DocExample struct {
 }
 
 // BuiltinDoc documents one built-in shortcode (meta, datetime, pills,
-// property, mrql, conditional, link, each, item, partial, lazy, details,
+// property, calc, mrql, conditional, link, each, item, partial, lazy, details,
 // reload, using, inspect, adjacent, similar, calendar, comment).
 type BuiltinDoc struct {
 	Name        string          `json:"name"`
@@ -130,6 +130,24 @@ func BuiltinDocs() []BuiltinDoc {
 				{Title: "Entity name", Code: `[property path="Name"]`},
 				{Title: "Related field", Code: `[property path="Owner.Name" default="Unassigned"]`},
 				{Title: "Formatted date", Code: `[property path="CreatedAt" format="date"]`},
+			},
+		},
+		{
+			Name:        "calc",
+			Syntax:      `[calc expr="..."]`,
+			Description: "Computes a number from this entity's Meta (meta.<path>), its numeric fields (property.<Path>) and, at the top level of an [each] block, the current element (item or item.<path>), with + - * / % and parentheses and the functions min, max, abs, round(x[, digits]) and coalesce(a, b, …). It renders the bare number, so it works in text, table cells and attributes such as <meter value=\"…\">. A Meta string counts only when it is wholly a decimal number; a missing or non-numeric operand, division by zero or overflow gives no value, which renders the default unless coalesce catches it. A syntax error, an unknown name or a bad decimals/format renders an error marker. It never runs a query. Meta keys containing - or spaces cannot be referenced. Limits: 512 bytes, 128 tokens, 32 levels of nesting, 32 references.",
+			IsBlock:     BlockNo,
+			Attrs: []DocAttr{
+				{Name: "expr", Type: "string", Required: true, Description: "The expression, e.g. meta.qty * meta.unit_price. Names are case-sensitive; numbers are plain decimals with no exponent. An item operand has no value outside [each] or inside another block within it."},
+				{Name: "decimals", Type: "number", Description: "A whole number from 0 to 10: round half away from zero to exactly that many fraction digits, keeping trailing zeros (10 gives 10.00). Unset, the result is rounded to 10 digits and trailing zeros are dropped."},
+				{Name: "format", Type: "enum", Default: "number", Description: "number is a plain decimal (1234567.89); grouped puts a comma between every three integer digits (1,234,567.89, not locale-aware); percent multiplies by 100 and appends % (0.256 gives 25.6%).", Enum: []string{"number", "grouped", "percent"}},
+				{Name: "default", Type: "string", Description: "Text rendered, HTML-escaped, when the expression has no numeric result. Empty by default. Prefer words such as \"not set\" over a lone dash where the reader needs to know why the value is missing."},
+			},
+			Examples: []DocExample{
+				{Title: "Line total", Code: `[calc expr="meta.qty * meta.unit_price" decimals="2"]`},
+				{Title: "Optional discount", Code: `[calc expr="meta.qty * meta.unit_price * (1 - coalesce(meta.discount, 0))" decimals="2" default="not set"]`},
+				{Title: "Inside [each]", Code: "<table>\n  <caption>Invoice lines</caption>\n  <tr><th scope=\"col\">Item</th><th scope=\"col\">Total</th></tr>\n  [each path=\"lines\"]\n  <tr><td>[item path=\"name\"]</td><td>[calc expr=\"item.qty * item.price\" decimals=\"2\"]</td></tr>\n  [/each]\n</table>"},
+				{Title: "Percent in a meter", Code: `<meter min="0" max="1" value="[calc expr='meta.spent / meta.budget' default='0']" aria-label="Budget used">[calc expr='meta.spent / meta.budget' format='percent' decimals='0' default='unknown']</meter>`, Notes: "The aria-label names the meter and the fallback text carries the value, so the number is not conveyed by the bar alone."},
 			},
 		},
 		{

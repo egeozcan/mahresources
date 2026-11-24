@@ -43,6 +43,7 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 | `[pills]` | Inline | Pill selector with schema enum or manual options |
 | `[datetime]` | Inline | Display/edit a date/time Meta field, preserving its format |
 | `[property]` | Inline | Render a scalar field or dot-path from the current entity |
+| `[calc]` | Inline | Compute a number from Meta, entity fields or [each] elements |
 | `[mrql]` | Inline or block | Run an MRQL query and render results, a scalar value, or a custom item template |
 | `[conditional]` | Block | Render the first matching branch from a meta, field, or MRQL condition |
 | `[link]` | Inline or block | Resolve a detail-page URL or wrap content in a link |
@@ -345,6 +346,123 @@ The exception is a credential field: a note's `ShareToken` (and `TokenHash`, `Cs
 **Resource:** `ID`, `Name`, `Description`, `CreatedAt`, `UpdatedAt`, `ContentType`, `OriginalName`, `OriginalLocation`, `FileSize`, `Width`, `Height`, `Hash`, `ResourceCategoryId`, `OwnerId`, `Meta`
 
 **Note:** `ID`, `Name`, `Description`, `CreatedAt`, `UpdatedAt`, `NoteTypeId`, `OwnerId`, `StartDate`, `EndDate`, `Meta`
+
+## `[calc]` -- Arithmetic over Fields
+
+Computes a number from values the page already holds: the entity's Meta, its numeric fields and, inside `[each]`, the current element. Use it for derived values that would go stale if stored, such as a line total, a discounted price, a remaining budget or a resource's megapixels.
+
+```
+[calc expr="meta.qty * meta.unit_price * (1 - coalesce(meta.discount, 0))" decimals="2" default="-"]
+```
+
+`[calc]` is inline only. It never runs a query and never calls a plugin, so it works everywhere `[meta inline="true"]` works (share pages, Custom MRQL Result cards, the live preview) and shows nothing the reader could not already see on the page. For totals across many entities, use an aggregate `[mrql value=…]` over a `GROUP BY` instead.
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `expr` | Yes | -- | The expression. It never contains quotes, so either attribute quoting works. A blank `expr` renders nothing. |
+| `decimals` | No | unset | A whole number from 0 to 10. The result is rounded half away from zero to exactly that many fraction digits, keeping trailing zeros (`10` with `decimals="2"` renders `10.00`). Unset, the result is rounded to 10 fraction digits and trailing zeros are dropped, so `0.1 + 0.2` renders `0.3` and `1 / 3` renders `0.3333333333`. |
+| `format` | No | `number` | `number` is a plain decimal (`1234567.89`). `grouped` puts a `,` between every three integer digits and uses `.` as the decimal point (`1,234,567.89`); it is not locale-aware. `percent` multiplies by 100, applies `decimals` and appends `%` (`0.256` renders `25.6%`). |
+| `default` | No | empty | Text rendered, HTML-escaped, when the expression has no numeric result. |
+
+There is no `raw`, `hide-empty`, `editable` or `layout`: the output is always a number or the escaped default.
+
+### Operands
+
+| Operand | Reads | Counts as a number when |
+|---------|-------|-------------------------|
+| `meta.<path>` | The entity's Meta at a dot path, e.g. `meta.price.net` | It is a JSON number, or a string that is wholly a decimal number after trimming spaces (`"12.50"`, `" 3 "`, `"1e3"`). `"12,5"`, `"0x10"`, `"NaN"`, `"1_000"` and `""` are not numbers. |
+| `property.<Path>` | An entity field, the same traversal as `[property]` (e.g. `property.Width`, `property.Tags.0.ID`) | It is an integer or floating-point field. Strings, booleans, times and structs are never numbers. A nil pointer (an ownerless entity's `OwnerId`) has no value. Credential fields are withheld exactly as in `[property]`. |
+| `item`, `item.<path>` | The current `[each]` element, or a dot path into it | As for `meta.`. See [Inside `[each]`](#inside-each). |
+| `12`, `0.5` | A literal | Always. Literals are plain decimals: no exponent, no leading `.`, at most 32 characters. |
+
+Names are case-sensitive. A bare name (`qty`), any other root (`entity.x`) or any other function (`sqrt`) is a syntax error.
+
+**Meta keys containing `-`, spaces or dots cannot be referenced.** `meta.unit-price` reads as `meta.unit - price`, and `price` is an unknown name, so it is a syntax error. Rename the key (`unit_price`) to use it in `[calc]`.
+
+### Operators and functions
+
+- `+ - * /` as usual; `%` is the remainder and takes the sign of the dividend (`-7 % 3` is `-1`).
+- Unary `-` and `+`, then `* / %`, then `+ -`; all left-associative. Parentheses group.
+- `min(a, …)` and `max(a, …)` take 1 to 8 arguments.
+- `abs(x)`.
+- `round(x)` and `round(x, digits)` round half away from zero (`round(2.5)` is `3`, `round(-2.5)` is `-3`, `round(2.675, 2)` is `2.68`). `digits` must be a whole number from 0 to 10, otherwise the call has no value.
+- `coalesce(a, b, …)` (1 to 8 arguments) returns the first argument that has a value. Arguments are evaluated left to right and evaluation stops at the first hit.
+
+### Missing values and `coalesce`
+
+A missing key, `null`, a boolean, an object, an array or a non-numeric string has no value. So has division or remainder by zero and any overflow. No value spreads through every operator and function except `coalesce`, and when the whole expression has no value `[calc]` renders `default`.
+
+```
+[calc expr="meta.qty * meta.unit_price" default="not set"]
+[calc expr="coalesce(meta.spent / meta.budget, 0)" format="percent"]
+```
+
+The second line renders `0%` when the budget is zero or missing, instead of the default.
+
+A mistake in the template itself renders the `⚠ calc` [failure marker](#failure-markers), with the reason in its tooltip: a syntax error, an unknown name or function, a wrong argument count, an expression past the limits below, or a `decimals` or `format` value outside the lists above. The editor's linter reports the same mistakes, and warns about a `meta.` key the category's Meta Schema does not declare.
+
+### Formatting and rounding
+
+The output is bare text with no wrapper element: digits, an optional leading `-`, `.`, the `,` of `grouped` and the `%` of `percent`. It never uses exponent notation, and a result that rounds to zero renders `0` (or `0.00`), never `-0`. Rounding works on the shortest decimal form of the number, so `1.005` with `decimals="2"` renders `1.01`, as written, rather than the `1.00` that binary floating point would give.
+
+Because the output is plain text, `[calc]` can sit inside an HTML attribute: `style="width: [calc expr='meta.done / meta.total * 100' decimals='0' default='0']%"`.
+
+### Inside `[each]`
+
+At the top level of an `[each]` body, `item` is the current element:
+
+```
+[each path="lines"]
+  [item path="name"]: [calc expr="item.qty * item.price" decimals="2"]
+[/each]
+```
+
+The same rules as for `[item]` apply. A `[calc]` inside another block within the body (`[conditional]`, `[lazy]`, `[details]`, `[autorefresh]`, `[using]`) cannot see the element, so its `item` operands have no value; `meta.` and `property.` still read the entity. A nested `[each]` binds its own element. Outside any `[each]`, `item` has no value and the linter warns.
+
+### Limits
+
+An expression may be at most 512 bytes, 128 tokens, 32 levels deep (parentheses, calls and unary signs together) and 32 references, with at most 8 arguments per call. Past any of them it renders the failure marker. Each `[calc]` is a few microseconds of work, and the entity's Meta is decoded once per render however many references there are.
+
+### Accessibility
+
+- Put a derived number where its meaning is clear: a table cell under a header cell (`<th scope="col">`), or a sentence such as "Total due: …". A number on its own tells a screen-reader user nothing.
+- When a value drives a bar, use `<meter>` or `<progress>` with an accessible name, and put the value in the fallback text so it does not rely on the bar or on colour alone:
+
+  ```
+  <meter min="0" max="1" value="[calc expr='meta.spent / meta.budget' default='0']" aria-label="Budget used">[calc expr='meta.spent / meta.budget' format='percent' decimals='0' default='unknown']</meter>
+  ```
+
+- Give `default` words (`not set`, `unknown`) where the reader needs to know why the value is absent. A `-` is fine in a table cell.
+
+### Examples
+
+An invoice table:
+
+```
+<table>
+  <caption>Invoice lines</caption>
+  <tr><th scope="col">Item</th><th scope="col">Qty</th><th scope="col">Price</th><th scope="col">Total</th></tr>
+  [each path="lines"]
+  <tr><td>[item path="name"]</td><td>[item path="qty"]</td><td>[item path="price"]</td><td>[calc expr="item.qty * item.price" decimals="2" format="grouped"]</td></tr>
+  [/each]
+</table>
+<p>Total due: [calc expr="meta.qty * meta.unit_price * (1 - coalesce(meta.discount, 0))" decimals="2" format="grouped" default="not set"]</p>
+```
+
+A budget:
+
+```
+<p>Remaining: [calc expr="meta.budget - meta.spent" decimals="2" default="not set"]</p>
+<meter min="0" max="1" value="[calc expr='meta.spent / meta.budget' default='0']" aria-label="Budget used">[calc expr='meta.spent / meta.budget' format='percent' decimals='0' default='unknown']</meter>
+```
+
+A resource's size in megapixels (in a Resource Category template):
+
+```
+[calc expr="property.Width * property.Height / 1000000" decimals="1" default="unknown"] MP
+```
 
 ## `[mrql]` -- Inline Query Results
 
