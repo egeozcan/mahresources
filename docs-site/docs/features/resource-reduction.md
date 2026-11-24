@@ -402,7 +402,9 @@ The Reduction stores a record of its last apply: when it started and finished, h
 |-------|---------|
 | Finished | "Last apply, 2026-11-23 16:40: applied 18 Clusters and removed 34 copies." plus "N could not be applied; they are on the Stale tab." when there are any |
 | Running | "An apply started at 16:40 is running. Reload to see the result." **Apply** is disabled |
-| Interrupted | "The last apply was interrupted. Applied Clusters are on the Applied tab; the rest are still approved." Shown when a running record is older than the 30 minute ceiling |
+| Interrupted | "The last apply was interrupted. Applied Clusters are on the Applied tab; the rest are still approved." Shown when the record has no finish time and the apply lease has run out |
+
+An apply holds a lease on the Reduction, renewed every 30 seconds and pushed 10 minutes ahead each time, including while it settles claims an earlier apply left unfinished. A batch whose server stopped therefore reads as running for up to 10 minutes after its last renewal, and as interrupted once the lease has run out. A batch that loses its lease before it starts merging records no finish time and is shown as interrupted, instead of as a finished apply that applied nothing.
 
 A Cluster withheld from you is left untouched by your apply and does not appear in its result, so you cannot learn how many existed. The record keeps the ids of the Clusters its counts are about. An account whose access has since narrowed is shown the counts only while it can still see every one of those Clusters; otherwise the record shows its times and state without numbers (`countsHidden`). An unrestricted account always sees them.
 
@@ -502,7 +504,7 @@ Every write carries a `version` field: the optimistic-concurrency counter the ca
 
 ### Single decisions
 
-`POST /v1/reduction/cluster` accepts these `action` values: `promote`, `eject`, `restore`, `skip`, `reopen`, `check` and `uncheck`. Approving an unusually large Near-Identical Cluster additionally requires `acknowledgeOversized`. The review page also sends `membersSeen`, the number of copies it had rendered: when it is present and not equal to the Cluster's copy count, the approval is refused with `400`. Omitting it leaves the acknowledgement alone to stand.
+`POST /v1/reduction/cluster` accepts these `action` values: `promote`, `eject`, `restore`, `skip`, `reopen`, `check` and `uncheck`. Approving an unusually large Near-Identical Cluster additionally requires `acknowledgeOversized`. The review page also sends `membersSeen`, the number of copies it had rendered: when the field is sent, `0` included, and its value is not equal to the copy count of an unusually large Cluster, the approval is refused with `400`. Leaving the field out lets the acknowledgement alone stand.
 
 ### Bulk approval
 
