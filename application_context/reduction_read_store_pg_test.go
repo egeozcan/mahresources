@@ -67,3 +67,19 @@ func TestStoreTierFilterIsDeduplicatedPG(t *testing.T) {
 func TestStoreApplyTokenFollowsTheEligibleSetPG(t *testing.T) {
 	testStoreApplyTokenFollowsTheEligibleSet(t, newReductionPGContext(t))
 }
+
+func TestStoreKeepsSmallerOnHugeDimensionsPG(t *testing.T) {
+	testStoreKeepsSmallerOnHugeDimensions(t, newReductionPGContext(t))
+}
+
+func TestStoreSmallClusterHydrationIsChunkedPG(t *testing.T) {
+	testStoreSmallClusterHydrationIsChunked(t, newReductionPGContext(t))
+}
+
+func TestStoreReadOnlyKeepsSmallerDoesNotScanPG(t *testing.T) {
+	testStoreReadOnlyKeepsSmallerDoesNotScan(t, newReductionPGContext(t))
+}
+
+func TestStoreListSortsOnTheFullNamePG(t *testing.T) {
+	testStoreListSortsOnTheFullName(t, newReductionPGContext(t))
+}

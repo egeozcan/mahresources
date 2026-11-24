@@ -159,7 +159,7 @@ func (ctx *MahresourcesContext) storeListReductionsAt(now time.Time, offset, lim
 	rest.Status = nil
 	err := ctx.withReadSnapshot(func(snap *MahresourcesContext) error {
 		if err := snap.db.Select(snap.reductionStore().boundedReductionColumns()).
-			Scopes(database_scopes.ResourceReductionQuery(&rest, false), reductionStatusScope(query.Status, now)).
+			Scopes(database_scopes.ResourceReductionQuery(&rest, true), reductionStatusScope(query.Status, now), reductionListOrder(query.SortBy)).
 			Offset(offset).Limit(limit).Find(&rows).Error; err != nil {
 			return err
 		}
@@ -176,4 +176,13 @@ func (ctx *MahresourcesContext) storeListReductionsAt(now time.Time, offset, lim
 		return err
 	})
 	return rows, count, progress, err
+}
+
+// reductionListOrder is the list's ORDER BY, table-qualified: the page selects
+// the name cut to a bound under the alias "name", and an unqualified ORDER BY name
+// would sort on that alias, so two long names that differ past the bound would tie.
+func reductionListOrder(sortBy []string) func(*gorm.DB) *gorm.DB {
+	return func(db *gorm.DB) *gorm.DB {
+		return database_scopes.ApplySortColumns(db, sortBy, "resource_reductions.", "resource_reductions.updated_at desc")
+	}
 }

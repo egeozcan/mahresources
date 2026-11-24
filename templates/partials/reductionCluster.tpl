@@ -160,7 +160,7 @@
 
     {% if cluster.KeepsSmaller %}
     <div class="reduction-warning" role="note" key="keeps-smaller" data-testid="cluster-keeps-smaller">
-        <p>The kept copy has a lower resolution than a copy being removed ({{ cluster.KeptDimensions }} vs {{ cluster.LargerDimensions }}).</p>
+        <p>The kept copy has a lower resolution than a copy being removed{% if cluster.LargerDimensions %} ({{ cluster.KeptDimensions }} vs {{ cluster.LargerDimensions }}){% endif %}.</p>
         {% if cluster.State != "skipped" and cluster.LargestMemberID %}
         <button type="button" data-testid="cluster-keep-larger" class="reduction-btn"
                 {% if cluster.DecidedBy == "seed" %}aria-describedby="cluster-{{ cluster.ID }}-fixed-note"{% endif %}

@@ -53,10 +53,27 @@ func (s *reductionStore) memberPage(clusterID uint, after reductionMemberCursor,
 	return rows, err
 }
 
-// smallClusterMembers reads every member of several small Clusters at once.
-func (s *reductionStore) smallClusterMembers(clusterIDs []uint) (map[uint][]models.ReductionMemberRow, error) {
+// smallClusterMembers reads every member of several small Clusters, grouped so no
+// statement fetches more than idChunk member rows (ADR 0011's statement cap).
+// sizes holds each Cluster's member count.
+func (s *reductionStore) smallClusterMembers(clusterIDs []uint, sizes map[uint]int) (map[uint][]models.ReductionMemberRow, error) {
 	out := make(map[uint][]models.ReductionMemberRow, len(clusterIDs))
-	for _, chunk := range chunkUints(clusterIDs, 100) {
+	var chunks [][]uint
+	var current []uint
+	rowsInChunk := 0
+	for _, id := range clusterIDs {
+		n := max(sizes[id], 1)
+		if len(current) > 0 && rowsInChunk+n > idChunk {
+			chunks = append(chunks, current)
+			current, rowsInChunk = nil, 0
+		}
+		current = append(current, id)
+		rowsInChunk += n
+	}
+	if len(current) > 0 {
+		chunks = append(chunks, current)
+	}
+	for _, chunk := range chunks {
 		var rows []models.ReductionMemberRow
 		if err := s.db.Where("cluster_id IN ?", chunk).Order(`cluster_id, "position", id`).Find(&rows).Error; err != nil {
 			return nil, err
@@ -218,7 +235,7 @@ func (s *reductionStore) largestLoser(clusterID, winnerID uint) (*models.Resourc
 		Width, Height uint
 	}
 	if err := s.db.Raw(prefix+`SELECT r.id AS id, r.width AS width, r.height AS height FROM reduction_members m JOIN resources r ON r.id = m.resource_id
-		WHERE m.cluster_id = ? AND NOT m.ejected AND m.resource_id <> ?`+visible+` ORDER BY r.width * r.height DESC, m."position", m.id LIMIT 1`,
+		WHERE m.cluster_id = ? AND NOT m.ejected AND m.resource_id <> ?`+visible+` ORDER BY CAST(r.width AS NUMERIC) * CAST(r.height AS NUMERIC) DESC, m."position", m.id LIMIT 1`,
 		append(append([]any{}, args...), clusterID, winnerID)...).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -304,18 +321,20 @@ func (ctx *MahresourcesContext) hydrateReviewPage(store *reductionStore, r *mode
 	// Which Clusters get their members, and how.
 	full := make([]bool, len(rows))
 	var smallIDs []uint
+	sizes := make(map[uint]int, len(rows))
 	budget := reductionPageMemberBudget
 	for i := range rows {
 		switch {
 		case rows[i].MemberCount <= reductionSmallCluster:
 			full[i] = true
 			smallIDs = append(smallIDs, rows[i].ID)
+			sizes[rows[i].ID] = rows[i].MemberCount
 		case min(rows[i].MemberCount, reductionMemberCap) <= budget:
 			full[i] = true
 			budget -= min(rows[i].MemberCount, reductionMemberCap)
 		}
 	}
-	small, err := store.smallClusterMembers(smallIDs)
+	small, err := store.smallClusterMembers(smallIDs, sizes)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -432,7 +451,9 @@ func (ctx *MahresourcesContext) hydrateReviewPage(store *reductionStore, r *mode
 		}
 		view.WinnerChanged = containsUint(cluster.ChangedMembers, row.WinnerID) ||
 			(!scoped && cluster.State == models.ReductionClusterStale && resources[row.WinnerID] == nil)
-		if row.KeepsSmaller {
+		// A read-only Cluster (a migrated or over-cap one) offers no promotion, so it
+		// does not scan its losers for the larger copy: the warning names no sizes.
+		if row.KeepsSmaller && !row.ReadOnly {
 			kept := resources[row.WinnerID]
 			if kept != nil {
 				largest, err := store.largestLoser(row.ID, row.WinnerID)
