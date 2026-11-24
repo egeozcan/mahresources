@@ -24,3 +24,8 @@ var ThumbFileSuffix = ".thumbnail.jpg"
 // build used alone before). Two such builds on one table from different servers
 // deadlock rather than wait for each other, so they share this lock.
 const ResourceTableIndexBuildLockKey = int64(0x4D52465453534D50)
+
+// SiblingNavIndexBuildLockKey is the PostgreSQL advisory lock a server holds
+// while it builds the notes and groups [adjacent] indexes CONCURRENTLY
+// ("MRADJNAV"). The resources one is built under ResourceTableIndexBuildLockKey.
+const SiblingNavIndexBuildLockKey = int64(0x4D5241444A4E4156)

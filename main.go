@@ -805,6 +805,17 @@ func main() {
 		fail("Error when creating resource list indexes: %v", err)
 		return
 	}
+	// [adjacent]'s notes and groups indexes, as the Job filter indexes are
+	// built: CONCURRENTLY beside the server on PostgreSQL, under a lock of their
+	// own (they are not on the resources table), and before serving on SQLite.
+	if db.Dialector.Name() == "postgres" {
+		go ensureIndexesUntilBuilt("sibling navigation indexes", func() error {
+			return models.EnsureSiblingNavIndexesOnOwnConnection(context.Config.DbDsn)
+		}, jobFilterIndexRetryInterval)
+	} else if err := models.EnsureSiblingNavIndexes(db); err != nil {
+		fail("Error when creating sibling navigation indexes: %v", err)
+		return
+	}
 
 	// Migrate existing resources to versioning system in background (skip with -skip-version-migration flag)
 	if !*skipVersionMigration {
@@ -1182,8 +1193,8 @@ func migrateJobCore(db *gorm.DB, postgresDSN string) error {
 }
 
 // jobFilterIndexRetryInterval is how long a failed concurrent index build (the
-// Job filter indexes, the resource list indexes, the FTS prefix indexes) waits
-// before it is tried again.
+// Job filter indexes, the resource list indexes, the sibling navigation
+// indexes, the FTS prefix indexes) waits before it is tried again.
 const jobFilterIndexRetryInterval = 5 * time.Minute
 
 // resourceIndexBuild serializes this server's concurrent index builds on the

@@ -278,6 +278,16 @@
 [inspect path="project"]</code></pre>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[adjacent]</code>
+                        &mdash; Previous and Next links to this entity's siblings in creation order: the same owner (or none) and the same category, or with series="true" the other members of a resource's Series. Only siblings the viewer may see are linked; with none it renders nothing. One page-query budget unit each, so prefer CustomHeader or CustomSidebar.
+                        <br><span class="text-stone-400 ml-4">
+                            <b class="text-stone-500">series</b>="true|false" (resources only)
+                            &middot; <b class="text-stone-500">label</b>="accessible name of the navigation landmark"
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[adjacent]
+[adjacent series="true" label="Pages"]</code></pre>
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[reload]</code>
                         &mdash; a button that re-renders content in place, without navigating. It refreshes the innermost [lazy], [details] or [autorefresh] block around it, or the whole custom-content slot when it sits outside both. Self-closing renders a circular-arrow icon; wrap a body to use that as the button face instead.
                         <br><span class="text-stone-400 ml-4">

@@ -281,6 +281,12 @@ It occupies roughly the same place as the `group_detail_after` / `resource_detai
 </footer>
 ```
 
+For items read one after another (a book's pages, a run of meeting notes), put [`[adjacent]`](./shortcodes.md#adjacent----previous-and-next) in `CustomHeader`. It links the previous and next sibling (same owner and category, or with `series="true"` the same Series) in creation order:
+
+```html
+[adjacent label="Meetings"]
+```
+
 ## CustomHoverCard
 
 Hovering a link to a group, resource or note shows a small preview card. By default that card shows the entity's `CustomAvatar` and `CustomSummary` -- the same markup as its list card. `CustomHoverCard` replaces the summary half of it.

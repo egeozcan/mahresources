@@ -99,6 +99,7 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 		// and overall deadline.
 		reqCtx, cancel := buildMRQLAPIRenderContext(request.Context(), ctx, false)
 		defer cancel()
+		reqCtx = template_filters.WithAdjacentResolverFor(reqCtx, ctx)
 
 		renderer := previewPluginRenderer(reqCtx, ctx)
 		executor := cappedQueryExecutor(template_filters.BuildQueryExecutor(ctx), previewMRQLLimitCap)

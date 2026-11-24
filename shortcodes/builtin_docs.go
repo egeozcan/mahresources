@@ -39,7 +39,7 @@ type DocExample struct {
 
 // BuiltinDoc documents one built-in shortcode (meta, datetime, pills,
 // property, mrql, conditional, link, each, item, partial, lazy, details,
-// reload, using, inspect, comment).
+// reload, using, inspect, adjacent, comment).
 type BuiltinDoc struct {
 	Name        string          `json:"name"`
 	Syntax      string          `json:"syntax"`
@@ -335,6 +335,20 @@ func BuiltinDocs() []BuiltinDoc {
 				{Title: "Everything in context", Code: `[inspect]`},
 				{Title: "One Meta subtree", Code: `[inspect path="project"]`},
 				{Title: "Inside a loop", Code: "[each path=\"steps\"]\n  [inspect]\n  [item path=\"title\"]\n[/each]", Notes: "Only the first element gets a panel. An [inspect] nested in another block inside the loop shows the entity, as [item] renders empty there."},
+			},
+		},
+		{
+			Name:        "adjacent",
+			Syntax:      `[adjacent]`,
+			Description: "Previous and next links to this entity's siblings, in creation order (created_at, then id, so the order is total and editing a row never moves it). With series=\"true\" a resource steps through the members of its Series, whatever their owner or category. Otherwise siblings are the entities of the same type with the same owner (or, for an ownerless entity, the other ownerless ones) and the same category, resource category or note type (a note or group with none pairs with the others that have none). It renders a <nav> landmark with a rel=\"prev\" and a rel=\"next\" link; a side with no sibling is left out, and with neither it renders nothing. Siblings are read as the viewer, so a group-confined user only ever sees siblings inside their subtree, and an entity the viewer cannot see renders nothing. Each [adjacent] costs one unit of the page query budget and is bounded by the MRQL query timeout. It renders on display pages, deferred bodies and the template and description previews; elsewhere (MRQL render API, share pages, the lightbox, the entity picker, generation-run tools) it renders an \"unavailable\" comment. Put it in CustomHeader or CustomSidebar rather than a per-card slot.",
+			IsBlock:     BlockNo,
+			Attrs: []DocAttr{
+				{Name: "series", Type: "boolean", Default: "false", Description: "Resources only. true takes the siblings from the resource's Series; a resource with no Series renders nothing. On a group or note, true renders an error marker.", Enum: []string{"true", "false"}},
+				{Name: "label", Type: "string", Default: "Previous and next", Description: "The accessible name (aria-label) of the <nav> landmark. Give each [adjacent] on a page its own label."},
+			},
+			Examples: []DocExample{
+				{Title: "Owner and category siblings", Code: `[adjacent]`},
+				{Title: "Pages of a Series", Code: `[adjacent series="true" label="Pages"]`},
 			},
 		},
 		{

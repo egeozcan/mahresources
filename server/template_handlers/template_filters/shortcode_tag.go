@@ -195,6 +195,9 @@ func buildPageRenderContext(reqCtx context.Context, appCtx PageRenderContext) co
 		}
 		reqCtx = shortcodes.WithDeferredSigner(reqCtx, seal)
 		reqCtx = shortcodes.WithRefreshSigner(reqCtx, seal)
+		// Page contexts are bound with WithPrincipal, so [adjacent]'s reads
+		// carry the viewer's subtree scope.
+		reqCtx = WithAdjacentResolverFor(reqCtx, appCtx)
 	}
 	return reqCtx
 }

@@ -39,4 +39,9 @@ func TestResourceListIndexesOnPostgres(t *testing.T) {
 	valid, def = indexDef()
 	require.True(t, valid)
 	require.Contains(t, def, "resources USING btree (owner_id, created_at)")
+
+	// [adjacent]'s resources index is in the same set, under the same lock.
+	var adjacent string
+	require.NoError(t, tc.DB.Raw("SELECT pg_get_indexdef('idx_resources_adjacent_created'::regclass)").Scan(&adjacent).Error)
+	require.Contains(t, adjacent, "resources USING btree (owner_id, resource_category_id, created_at, id)")
 }

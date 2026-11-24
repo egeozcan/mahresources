@@ -283,6 +283,10 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 			replacement = RenderMetaShortcode(sc, ctx)
 		case sc.Name == "property":
 			replacement = RenderPropertyShortcode(sc, ctx)
+		case sc.Name == "adjacent":
+			// Renders the "unavailable" comment unless the surface installed a
+			// scoped resolver (WithAdjacentResolver).
+			replacement = RenderAdjacentShortcode(reqCtx, sc, ctx)
 		case sc.Name == "inspect":
 			// Renders "" unless this is a template preview (WithInspect).
 			replacement = RenderInspectShortcode(reqCtx, sc, ctx)

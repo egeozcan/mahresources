@@ -23,7 +23,7 @@ import (
 func TestIndexChecksFollowTheTableNotCurrentSchema(t *testing.T) {
 	base, dsn := pgContainer.CreateTestDBWithDSN(t)
 	require.NoError(t, base.Exec("CREATE SCHEMA ahead").Error)
-	require.NoError(t, base.Exec("CREATE TABLE resources (id bigserial PRIMARY KEY, name text, description text, original_name text, owner_id bigint, created_at timestamptz)").Error)
+	require.NoError(t, base.Exec("CREATE TABLE resources (id bigserial PRIMARY KEY, name text, description text, original_name text, owner_id bigint, resource_category_id bigint, created_at timestamptz)").Error)
 	require.NoError(t, base.Exec("CREATE INDEX idx_resources_owner_created ON resources (name)").Error)
 	// A same-named index in the schema ahead on the search_path, which the
 	// repair must not touch: an unqualified DROP resolved to it.

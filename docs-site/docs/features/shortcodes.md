@@ -54,6 +54,7 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 | `[reload]` | Inline or block | Re-render the nearest deferred block or custom-content slot on demand |
 | `[autorefresh]` | Block | Re-render the body after an inline editor saves |
 | `[using]` | Block | Render the body with another group, resource or note as the entity |
+| `[adjacent]` | Inline | Previous/next links to the entity's siblings or Series |
 | `[inspect]` | Inline | Live preview only: list the Meta paths, fields and `[each]` element paths available at that point |
 | `[comment]` | Block | Remove a section on the server so it never runs or renders |
 
@@ -1196,6 +1197,77 @@ Only in the template editor's live preview (`POST /v1/{category,resourceCategory
 - 10 panels per preview. An `[inspect]` inside an `[mrql]` body runs once per result, so later panels are replaced by one note.
 - Samples are cut at 80 characters.
 - `[inspect]` cannot be used inside a `[reload]` button face.
+
+## `[adjacent]` -- Previous and next
+
+`[adjacent]` adds a Previous and a Next link to the entity's neighbours, so a reader can step through a scanned book's pages, a photo set, a run of meeting notes or a client's invoices without going back to the list.
+
+```
+[adjacent series="true" label="Pages"]
+[adjacent label="Meetings"]
+```
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `series` | No | `false` | `true` or `false`. Resources only: `true` steps through the other members of the resource's [Series](../user-guide/managing-resources.md), whatever their owner or category. |
+| `label` | No | `Previous and next` | The accessible name of the navigation landmark. Give each `[adjacent]` on a page its own label. |
+
+`[adjacent]` is inline only. A closing `[/adjacent]` is a lint error, and so is a `series` value other than `true` or `false`.
+
+### Which entities are siblings
+
+- **Series mode** (`series="true"`, resources only). The resources in the same Series. A resource with no Series renders nothing. On a group or a note, `series="true"` renders an error marker.
+- **Default mode.** Entities of the same type with the same owner and the same category column: the resource category for resources, the note type for notes and the category for groups. A group's owner is its parent group.
+  - An entity with no owner pairs with the other ownerless entities of the same category, which covers top-level groups and an unowned inbox.
+  - A note or group with no type or category pairs with the others that have none.
+
+### Order
+
+Siblings are always in creation order: `created_at`, then `id` to break ties. The order is total and stable, and editing an entity never moves it.
+
+There is no name order: names sort as text, so "Chapter 10" would come before "Chapter 2". For a curated order, put the items in a Series and create them in reading order, or create them in the order you want to read them.
+
+### Output
+
+```html
+<nav class="shortcode-adjacent ..." aria-label="Pages">
+  <a href="/resource?id=12" rel="prev" ...><span aria-hidden="true">←</span> Previous: Page 1</a>
+  <a href="/resource?id=14" rel="next" ...>Next: Page 3 <span aria-hidden="true">→</span></a>
+</nav>
+```
+
+- Each link's accessible name is its visible text; the arrows are hidden from assistive technology. Previous comes first in both reading and Tab order.
+- With only one neighbour only that link renders, and Next stays right-aligned. With neither, `[adjacent]` renders nothing at all, not an empty landmark.
+- A sibling with a blank name is shown as its type and ID, for example "Resource 14". Names are always HTML-escaped.
+- Inside `[using]` or an `[mrql]` item template, it navigates the entity the context switched to.
+
+### Scoping
+
+Siblings are read as the viewer. A group-confined user or guest only ever sees siblings inside their subtree:
+
+- The group at the root of their subtree, and every top-level group, has no visible siblings and renders nothing.
+- A Series member outside the subtree is skipped, and the next visible member is linked.
+- Unowned resources and notes are outside every subtree.
+- An entity the viewer cannot see and one that does not exist both render nothing, so `[adjacent]` cannot be used to probe for IDs.
+
+Only the ID and name of a visible sibling reach the page.
+
+### Cost
+
+- Each `[adjacent]` runs at most three small queries: the current row by primary key and one indexed seek in each direction. Its cost does not grow with the number of siblings.
+- It counts one unit of the [per-page query budget](#per-page-query-budget); an identical `[adjacent]` repeated on the same page is free. Past the budget it renders an error marker.
+- Each lookup is bounded by the MRQL query timeout (`-mrql-query-timeout`), and a lookup that runs out of time renders "lookup timed out".
+- Put it in CustomHeader or CustomSidebar. In a per-card slot (CustomSummary, CustomMRQLResult) it costs one budget unit per card.
+- Default mode reads three composite indexes (`idx_resources_adjacent_created`, `idx_notes_adjacent_created`, `idx_groups_adjacent_created`), which add a small write cost on inserts and on changes of owner, category or creation time. On SQLite a large library builds them once at startup, before serving. On PostgreSQL they are built concurrently in the background, and `[adjacent]` is correct but slower until they exist.
+- Series mode uses the Series index and sorts that Series' members, so its cost grows with the size of the Series (typically tens of rows).
+
+### Where it renders
+
+On entity display pages, in deferred `[lazy]`/`[details]`/`[autorefresh]` bodies, and in the template editor's and the description editor's live previews. Everywhere else it renders the HTML comment `<!-- mr:adjacent unavailable in this context -->`: the MRQL render API, share pages, the lightbox, the entity picker, the AI template generation tools and the CLI.
+
+`[adjacent]` cannot be used inside a `[reload]` button face.
 
 ## `[comment]` -- Comment out a section
 

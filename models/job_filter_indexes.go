@@ -190,8 +190,13 @@ func onOwnConnection(dsn, what string, ensure func(*gorm.DB) error) error {
 //     planner walks created_at and discards every other owner's rows; on a
 //     library of 2.2M resources that was 639k rows, 401 ms, before the first
 //     page of its largest owner.
+//   - idx_resources_adjacent_created serves [adjacent]: one seek for the
+//     previous or next resource with the same owner (or none) and the same
+//     resource category, in created_at, id order. It sits in this set because a
+//     concurrent build on resources must take the resources table lock.
 var resourceListIndexes = []plannedIndex{
 	{"idx_resources_owner_created", "resources", "owner_id, created_at"},
+	{"idx_resources_adjacent_created", "resources", "owner_id, resource_category_id, created_at, id"},
 }
 
 // resourceListIndexLockKey is the PostgreSQL advisory lock one server holds
@@ -213,6 +218,34 @@ func EnsureResourceListIndexes(db *gorm.DB) error {
 // EnsureJobFilterIndexesOnOwnConnection gives.
 func EnsureResourceListIndexesOnOwnConnection(dsn string) error {
 	return onOwnConnection(dsn, "resource list index", EnsureResourceListIndexes)
+}
+
+// siblingNavIndexes serve [adjacent] on notes and groups, as
+// idx_resources_adjacent_created does on resources: the previous or next row
+// with the same owner (or none) and the same note type or category, read as
+// one seek in created_at, id order whatever the owner's child count.
+var siblingNavIndexes = []plannedIndex{
+	{"idx_notes_adjacent_created", "notes", "owner_id, note_type_id, created_at, id"},
+	{"idx_groups_adjacent_created", "groups", "owner_id, category_id, created_at, id"},
+}
+
+// siblingNavIndexLockKey is the PostgreSQL advisory lock one server holds while
+// it builds siblingNavIndexes. It is not the resources table lock: these builds
+// are on other tables and do not conflict with the resources ones.
+const siblingNavIndexLockKey = constants.SiblingNavIndexBuildLockKey
+
+// EnsureSiblingNavIndexes creates the notes and groups sibling navigation
+// indexes that are missing, the way EnsureJobFilterIndexes does: CONCURRENTLY
+// on PostgreSQL, and before serving on SQLite.
+func EnsureSiblingNavIndexes(db *gorm.DB) error {
+	return ensurePlannedIndexes(db, "sibling navigation indexes", siblingNavIndexLockKey, siblingNavIndexes)
+}
+
+// EnsureSiblingNavIndexesOnOwnConnection is EnsureSiblingNavIndexes on
+// PostgreSQL through a one-connection handle of its own, for the reason
+// EnsureJobFilterIndexesOnOwnConnection gives.
+func EnsureSiblingNavIndexesOnOwnConnection(dsn string) error {
+	return onOwnConnection(dsn, "sibling navigation index", EnsureSiblingNavIndexes)
 }
 
 func ensurePostgresPlannedIndex(conn *gorm.DB, index plannedIndex) error {

@@ -84,6 +84,7 @@ func GetPreviewDescriptionHandler(ctx TemplatePreviewContext, entityType string,
 			if metaCtx := template_filters.BuildMetaContextForEntity(entity, ctx); metaCtx != nil {
 				reqCtx, cancel := buildMRQLAPIRenderContext(request.Context(), ctx, false)
 				defer cancel()
+				reqCtx = template_filters.WithAdjacentResolverFor(reqCtx, ctx)
 				if principal := auth.PrincipalFromContext(reqCtx); principal != nil {
 					metaCtx.ForceReadOnly = metaCtx.ForceReadOnly || !principal.CanWrite()
 				}
