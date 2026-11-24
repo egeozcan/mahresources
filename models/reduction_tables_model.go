@@ -171,6 +171,22 @@ type ResourceCleanupManifest struct {
 	Name               string `gorm:"not null;default:''"`
 	OwnerID            *uint
 	ResourceCategoryID uint `gorm:"not null;default:0"`
+	// ActorUserID is the account whose request made the delete, 0 for none (auth off, a
+	// system caller). The startup replay runs the after-delete hook as that account, so a
+	// plugin's mah.db reads stay inside the deleter's scope; it is never the Resource's
+	// owner, which says nothing about who deleted it.
+	ActorUserID uint `gorm:"not null;default:0"`
+	// ClaimedBy and ClaimedUntil (unix seconds) are one drain's claim on the row: a drain
+	// acts on a row only after it set these, so two instances replaying the same manifest
+	// never both run its file step or its hook. An expired claim can be taken over.
+	ClaimedBy    string `gorm:"not null;default:''"`
+	ClaimedUntil int64  `gorm:"not null;default:0"`
+	// FilesDone is set once the file step succeeded, so a retry never repeats it and the
+	// hook (which must see a finished delete) is released. Attempts counts failed file
+	// steps; NextAttemptAt (unix seconds) is the backoff before the next one.
+	FilesDone     bool  `gorm:"not null;default:false"`
+	Attempts      int   `gorm:"not null;default:0"`
+	NextAttemptAt int64 `gorm:"not null;default:0"`
 }
 
 func (ResourceCleanupManifest) TableName() string { return "resource_cleanup_manifest" }

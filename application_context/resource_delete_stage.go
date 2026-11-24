@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path"
 	"sort"
 	"strings"
@@ -11,6 +13,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"mahresources/auth"
 	"mahresources/models"
 )
 
@@ -159,12 +162,14 @@ func (ctx *MahresourcesContext) deleteResourceChunk(rows []models.Resource, op s
 	if !manifest {
 		return nil
 	}
+	// The account that deletes, for the replay to run the hooks as (0: no actor).
+	actor := ctx.hookInvocation().ActorUserID
 	entries := make([]models.ResourceCleanupManifest, 0, len(rows))
 	for i := range rows {
 		r := &rows[i]
 		entries = append(entries, models.ResourceCleanupManifest{
 			Op: op, ResourceID: r.ID, Hash: r.Hash, Location: r.GetCleanLocation(), StorageLocation: r.StorageLocation,
-			Name: r.Name, OwnerID: r.OwnerId, ResourceCategoryID: r.ResourceCategoryId,
+			Name: r.Name, OwnerID: r.OwnerId, ResourceCategoryID: r.ResourceCategoryId, ActorUserID: actor,
 		})
 	}
 	return db.Create(&entries).Error
@@ -202,26 +207,35 @@ func (ctx *MahresourcesContext) detachedForDrain() *MahresourcesContext {
 }
 
 // drainResourceDeleteManifest runs the after-commit work of a committed delete
-// from its manifest, 500 rows at a time: the file removal for every row of the
-// chunk (backed up first, and only when no surviving row still holds the hash),
-// then the after-delete hook for each, then the chunk's manifest rows are dropped.
-// The search cache is invalidated once. It runs detached from the request.
+// from its manifest: every file of the operation first (backed up, and removed only
+// when no surviving row still holds the hash), then every after-delete hook, 500 rows
+// at a time in each pass, dropping a row once its hook has run. The search cache is
+// invalidated once. It runs detached from the request, as the request's principal.
 func (ctx *MahresourcesContext) drainResourceDeleteManifest(op string) {
 	d := ctx.detachedForDrain()
-	d.drainManifestOp(op)
+	d.drainManifestOp(op, false)
 	d.InvalidateSearchCacheByType(EntityTypeResource)
 }
 
 // ReplayResourceCleanupManifest drains every manifest row a committed delete left
 // behind, for a process that died or failed between that commit and its drain. It
-// runs at startup, before the server takes requests, so no live drain races it.
+// runs at startup, before the server takes requests, but a second instance may replay
+// the same manifest, so every row is claimed before anything is done to it. A hook
+// runs as the account that made the delete; when that account cannot be bound the
+// hook is skipped (and the reason logged), never run unscoped.
 func (ctx *MahresourcesContext) ReplayResourceCleanupManifest() {
 	d := ctx.detachedForDrain()
 	var last string
 	replayed := false
 	for {
+		now := time.Now().Unix()
 		var ops []string
-		if err := d.unscopedDB().Model(&models.ResourceCleanupManifest{}).Where("op > ?", last).Group("op").Order("op ASC").Limit(100).Pluck("op", &ops).Error; err != nil {
+		db, cancel := d.drainDB()
+		err := db.Model(&models.ResourceCleanupManifest{}).
+			Where("op > ? AND (claimed_by = '' OR claimed_until < ?) AND next_attempt_at <= ?", last, now, now).
+			Group("op").Order("op ASC").Limit(100).Pluck("op", &ops).Error
+		cancel()
+		if err != nil {
 			d.Logger().Warning(models.LogActionDelete, "resource", nil, "Failed to list undrained delete manifests", err.Error(), nil)
 			break
 		}
@@ -229,7 +243,7 @@ func (ctx *MahresourcesContext) ReplayResourceCleanupManifest() {
 			break
 		}
 		for _, op := range ops {
-			d.drainManifestOp(op)
+			d.drainManifestOp(op, true)
 			replayed = true
 		}
 		last = ops[len(ops)-1]
@@ -239,62 +253,250 @@ func (ctx *MahresourcesContext) ReplayResourceCleanupManifest() {
 	}
 }
 
-// drainDB is the unscoped handle with a deadline, for one manifest read or delete.
+// drainDB is the unscoped handle with a deadline, for one manifest read or write.
 func (ctx *MahresourcesContext) drainDB() (*gorm.DB, context.CancelFunc) {
 	db := ctx.unscopedDB()
 	c, cancel := context.WithTimeout(db.Statement.Context, manifestChunkTimeout)
 	return db.WithContext(c), cancel
 }
 
-func (ctx *MahresourcesContext) drainManifestOp(op string) {
+// manifestClaimTTL is how long a claim holds. It is renewed before every chunk, so it
+// only has to outlast one chunk; a process that dies holding claims blocks its rows for
+// at most this long.
+const manifestClaimTTL = 5 * time.Minute
+
+// manifestBackoff is the wait before a failed file step is tried again.
+func manifestBackoff(attempts int) time.Duration {
+	if attempts > 7 {
+		attempts = 7
+	}
+	d := 30 * time.Second << attempts
+	if d > time.Hour {
+		d = time.Hour
+	}
+	return d
+}
+
+// claimManifestChunk claims up to one chunk of op's rows past last that are unclaimed
+// (or whose claim expired) and due, in ascending id order, and reads back the rows this
+// drain now holds in that range. Postgres skips rows another transaction is claiming.
+func (ctx *MahresourcesContext) claimManifestChunk(op, me string, last uint) ([]models.ResourceCleanupManifest, error) {
+	now := time.Now()
+	lock := ""
+	if ctx.unscopedDB().Dialector.Name() == "postgres" {
+		lock = " FOR UPDATE SKIP LOCKED"
+	}
+	db, cancel := ctx.drainDB()
+	defer cancel()
+	res := db.Exec(
+		"UPDATE resource_cleanup_manifest SET claimed_by = ?, claimed_until = ? WHERE id IN ("+
+			"SELECT id FROM resource_cleanup_manifest WHERE op = ? AND id > ? AND (claimed_by = '' OR claimed_until < ?) AND next_attempt_at <= ? ORDER BY id LIMIT ?"+lock+")",
+		me, now.Add(manifestClaimTTL).Unix(), op, last, now.Unix(), now.Unix(), deleteStageChunk)
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil, nil
+	}
+	var entries []models.ResourceCleanupManifest
+	err := db.Where("op = ? AND claimed_by = ? AND id > ?", op, me, last).Order("id ASC").Limit(deleteStageChunk).Find(&entries).Error
+	return entries, err
+}
+
+// drainManifestOp does op's after-commit work in two passes over its manifest: all
+// files, then all hooks. A row is claimed before anything is done to it and dropped
+// once its hook has run; a file step that fails releases the row with a backoff and an
+// attempt count (kept for a later replay, its hook not yet run), and nothing already
+// done is done again.
+func (ctx *MahresourcesContext) drainManifestOp(op string, replay bool) {
+	me := newDeleteOp()
+	warn := func(msg string, err error) {
+		ctx.Logger().Warning(models.LogActionDelete, "resource", nil, msg, err.Error(), nil)
+	}
+	renew := func() {
+		db, cancel := ctx.drainDB()
+		defer cancel()
+		if rerr := db.Exec("UPDATE resource_cleanup_manifest SET claimed_until = ? WHERE op = ? AND claimed_by = ?",
+			time.Now().Add(manifestClaimTTL).Unix(), op, me).Error; rerr != nil {
+			warn("Failed to renew the delete manifest claim", rerr)
+		}
+	}
+	// Whatever this drain still holds when it stops is let go at once, so a failed read
+	// or a failed drop does not park rows behind a claim nobody is working under.
+	defer func() {
+		db, cancel := ctx.drainDB()
+		defer cancel()
+		if rerr := db.Exec("UPDATE resource_cleanup_manifest SET claimed_by = '', claimed_until = 0 WHERE op = ? AND claimed_by = ?", op, me).Error; rerr != nil {
+			warn("Failed to release the delete manifest claim", rerr)
+		}
+	}()
+
 	var last uint
 	for {
+		renew()
+		entries, err := ctx.claimManifestChunk(op, me, last)
+		if err != nil {
+			warn("Failed to claim the delete cleanup manifest", err)
+			return
+		}
+		if len(entries) == 0 {
+			break
+		}
+		last = entries[len(entries)-1].ID
+		var done []uint
+		for i := range entries {
+			e := &entries[i]
+			if e.FilesDone {
+				continue
+			}
+			if ferr := ctx.cleanupManifestFile(e); ferr != nil {
+				ctx.Logger().Warning(models.LogActionDelete, "resource", &e.ResourceID, "File cleanup failed; keeping the manifest row to retry", ferr.Error(), nil)
+				db, cancel := ctx.drainDB()
+				uerr := db.Exec("UPDATE resource_cleanup_manifest SET claimed_by = '', claimed_until = 0, attempts = attempts + 1, next_attempt_at = ? WHERE id = ?",
+					time.Now().Add(manifestBackoff(e.Attempts)).Unix(), e.ID).Error
+				cancel()
+				if uerr != nil {
+					warn("Failed to record a failed file cleanup", uerr)
+				}
+				continue
+			}
+			done = append(done, e.ID)
+		}
+		if len(done) > 0 {
+			db, cancel := ctx.drainDB()
+			uerr := db.Exec("UPDATE resource_cleanup_manifest SET files_done = ? WHERE id IN ?", true, done).Error
+			cancel()
+			if uerr != nil {
+				warn("Failed to record finished file cleanup", uerr)
+			}
+		}
+	}
+
+	hookCtxs := map[uint]*MahresourcesContext{}
+	last = 0
+	for {
+		renew()
 		readDB, cancelRead := ctx.drainDB()
 		var entries []models.ResourceCleanupManifest
-		err := readDB.Where("op = ? AND id > ?", op, last).Order("id ASC").Limit(deleteStageChunk).Find(&entries).Error
+		err := readDB.Where("op = ? AND claimed_by = ? AND files_done = ? AND id > ?", op, me, true, last).Order("id ASC").Limit(deleteStageChunk).Find(&entries).Error
 		cancelRead()
 		if err != nil {
-			ctx.Logger().Warning(models.LogActionDelete, "resource", nil, "Failed to read the delete cleanup manifest", err.Error(), nil)
+			warn("Failed to read the delete cleanup manifest", err)
 			return
 		}
 		if len(entries) == 0 {
 			return
 		}
+		ids := make([]uint, 0, len(entries))
 		for i := range entries {
 			e := &entries[i]
-			fs, err := ctx.GetFsForStorageLocation(e.StorageLocation)
-			if err != nil {
-				ctx.Logger().Warning(models.LogActionDelete, "resource", &e.ResourceID, "Failed to resolve storage for cleanup", err.Error(), nil)
+			ids = append(ids, e.ID)
+			hc := ctx.manifestHookContext(e, replay, hookCtxs)
+			if hc == nil {
 				continue
 			}
-			subFolder := "deleted"
-			if e.StorageLocation != nil && *e.StorageLocation != "" {
-				subFolder = *e.StorageLocation
-			}
-			ownerIdStr := "nil"
-			if e.OwnerID != nil {
-				ownerIdStr = fmt.Sprintf("%v", *e.OwnerID)
-			}
-			ctx.runFileCleanupActions([]*FileCleanupAction{{
-				SourceFS:   fs,
-				SourcePath: e.Location,
-				BackupPath: path.Join(fmt.Sprintf("/deleted/%v/", subFolder), fmt.Sprintf("%v__%v__%v___%v", e.Hash, e.ResourceID, ownerIdStr, strings.ReplaceAll(path.Clean(path.Base(e.Location)), "\\", "_"))),
-				Hash:       e.Hash, StorageLocation: e.StorageLocation,
-			}})
+			hc.RunAfterPluginHooks("after_resource_delete", map[string]any{"id": float64(e.ResourceID), "name": e.Name, "resource_category_id": float64(e.ResourceCategoryID), "owner_id": hookID(e.OwnerID)})
 		}
-		// Every file of the chunk first, then the hooks: a hook observes a delete
-		// that is finished, files included.
-		for i := range entries {
-			e := &entries[i]
-			ctx.RunAfterPluginHooks("after_resource_delete", map[string]any{"id": float64(e.ResourceID), "name": e.Name, "resource_category_id": float64(e.ResourceCategoryID), "owner_id": hookID(e.OwnerID)})
-		}
-		last = entries[len(entries)-1].ID
+		last = ids[len(ids)-1]
 		dropDB, cancelDrop := ctx.drainDB()
-		if err := dropDB.Where("op = ? AND id <= ?", op, last).Delete(&models.ResourceCleanupManifest{}).Error; err != nil {
-			ctx.Logger().Warning(models.LogActionDelete, "resource", nil, "Failed to drop drained cleanup manifest rows", err.Error(), nil)
+		if err := dropDB.Where("id IN ?", ids).Delete(&models.ResourceCleanupManifest{}).Error; err != nil {
+			warn("Failed to drop drained cleanup manifest rows", err)
 		}
 		cancelDrop()
 	}
+}
+
+// manifestHookContext is the context a row's after-delete hook runs on, or nil when it
+// must not run. A live drain runs on the deleter's own context. A replay has none, so
+// it binds the account the row names; an account that is gone, disabled or unreadable
+// skips the hook, because the alternative is running a plugin's mah.db unscoped.
+func (ctx *MahresourcesContext) manifestHookContext(e *models.ResourceCleanupManifest, replay bool, cache map[uint]*MahresourcesContext) *MahresourcesContext {
+	if !replay || e.ActorUserID == 0 {
+		return ctx
+	}
+	if hc, ok := cache[e.ActorUserID]; ok {
+		return hc
+	}
+	var hc *MahresourcesContext
+	user, err := ctx.GetUser(e.ActorUserID)
+	switch {
+	case err != nil:
+		ctx.Logger().Warning(models.LogActionDelete, "resource", &e.ResourceID, "Skipping the after-delete hook of a replayed delete",
+			fmt.Sprintf("the deleting user %d could not be loaded: %v", e.ActorUserID, err), nil)
+	case user == nil || user.Disabled:
+		ctx.Logger().Warning(models.LogActionDelete, "resource", &e.ResourceID, "Skipping the after-delete hook of a replayed delete",
+			fmt.Sprintf("the deleting user %d is gone or disabled", e.ActorUserID), nil)
+	default:
+		hc = ctx.WithPrincipal(auth.FromUser(user))
+	}
+	cache[e.ActorUserID] = hc
+	return hc
+}
+
+// cleanupManifestFile is the file step of one manifest row: the Resource's file is
+// backed up to the deleted area and removed, unless a surviving row still holds its
+// hash or it lives in private storage. It reports an error only when a retry could
+// change the outcome (storage unavailable, a count that failed, a backup that did not
+// complete); a file that is already gone is done.
+func (ctx *MahresourcesContext) cleanupManifestFile(e *models.ResourceCleanupManifest) error {
+	fs, err := ctx.GetFsForStorageLocation(e.StorageLocation)
+	if err != nil {
+		return err
+	}
+	if ctx.StoredLocationIsPrivate(e.StorageLocation, e.Location) {
+		ctx.Logger().Warning(models.LogActionDelete, "resource", &e.ResourceID, "Refusing to remove a file in private storage", e.Location, nil)
+		return nil
+	}
+	if resourceFileRemovalGap != nil {
+		resourceFileRemovalGap()
+	}
+	ctx.locks.ResourceHashLock.Acquire(e.Hash)
+	defer ctx.locks.ResourceHashLock.Release(e.Hash)
+	db := ctx.unscopedDB()
+	countCtx, cancel := context.WithTimeout(context.WithoutCancel(db.Statement.Context), fileRemovalCountTimeout)
+	defer cancel()
+	refs, err := countHashReferences(db.WithContext(countCtx), e.Hash, e.StorageLocation)
+	if err != nil {
+		return fmt.Errorf("count hash references: %w", err)
+	}
+	if refs != 0 {
+		return nil
+	}
+
+	subFolder := "deleted"
+	if e.StorageLocation != nil && *e.StorageLocation != "" {
+		subFolder = *e.StorageLocation
+	}
+	ownerIdStr := "nil"
+	if e.OwnerID != nil {
+		ownerIdStr = fmt.Sprintf("%v", *e.OwnerID)
+	}
+	backupPath := path.Join(fmt.Sprintf("/deleted/%v/", subFolder), fmt.Sprintf("%v__%v__%v___%v", e.Hash, e.ResourceID, ownerIdStr, strings.ReplaceAll(path.Clean(path.Base(e.Location)), "\\", "_")))
+
+	src, openErr := fs.Open(e.Location)
+	if openErr != nil {
+		if errors.Is(openErr, os.ErrNotExist) {
+			return nil // already gone: nothing to back up or remove
+		}
+		return fmt.Errorf("open %s: %w", e.Location, openErr)
+	}
+	defer src.Close()
+	if err := ctx.fs.MkdirAll(path.Dir(backupPath), 0777); err != nil {
+		return fmt.Errorf("create backup dir: %w", err)
+	}
+	backup, err := ctx.fs.Create(backupPath)
+	if err != nil {
+		return fmt.Errorf("create backup: %w", err)
+	}
+	_, copyErr := io.Copy(backup, src)
+	closeErr := backup.Close()
+	if copyErr != nil || closeErr != nil {
+		return fmt.Errorf("back up %s: %w", e.Location, errors.Join(copyErr, closeErr))
+	}
+	if err := fs.Remove(e.Location); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove %s: %w", e.Location, err)
+	}
+	return nil
 }
 
 // lockResourceColumns is what the merge and bulk-delete participant locks read: the
