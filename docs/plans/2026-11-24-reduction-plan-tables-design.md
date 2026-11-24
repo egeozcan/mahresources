@@ -1,8 +1,9 @@
 # Resource Reduction plan as tables: bounded memory at any library size
 
-Status: design v11. Review history: v1 pi 9 P0 / 4 P1, architect 3 / 18; v2 pi 9 / 7, architect 1 /
+Status: design v12. Review history: v1 pi 9 P0 / 4 P1, architect 3 / 18; v2 pi 9 / 7, architect 1 /
 12; v3 pi 9 / 2, architect 1 / 7; v4 pi 0 / 11, architect 0 / 5; v5 pi 0 / 9, architect 0 / 2; v6 pi 0 / 11, architect 0 / 1; v7 pi 0 / 10, architect 0 / 1; v8 pi 0 / 6, architect 0 / 3;
-v9 pi 0 / 7, architect 0 / 1. The tables at the end map the v3 to v9 findings to their fixes. Supersedes
+v9 pi 0 / 7, architect 0 / 1; v10 pi 0 / 3, architect 0 / 0. The tables at the end map the v3 to v10
+findings to their fixes. Supersedes
 ADR 0003's "one row carries the plan" for the Cluster list.
 
 ## Problem
@@ -33,7 +34,8 @@ That tier was trimmed in 4f310c83; the rest still grows with the library:
    merges or legacy plan size.
 2. **Per-statement writes and locks** are bounded: no statement inserts, updates or locks more than
    a chunk of rows, so neither SQLite's single writer lock nor a lease is held hostage by one
-   statement. Atomic multi-chunk operations (the apply stamp, bulk allIdentical) run as several
+   statement. Atomic multi-chunk operations (the apply stamp, bulk allIdentical, a bulk Resource delete, a merge)
+   run as several
    chunk statements inside one transaction, in id order; their total writer-lock hold is measured
    (D14), on SQLite and, for the bulk allIdentical share locks, on Postgres. Compute-side **reads** are bounded by `LIMIT` on rows examined, not only rows returned
    (keysets on indexed columns, never `HAVING … LIMIT` over a scan). Review-side aggregates read
@@ -122,7 +124,9 @@ uses, `(resource_id1, COALESCE(p_distance, hamming_distance), resource_id2)` and
 request pool on Postgres, followed by `ANALYZE`. No pair writer changes and nothing is backfilled.
 On SQLite the build holds the writer lock for one table scan: it is the second named exemption from
 rule 2, runs at startup before the HTTP server accepts requests with progress logged (like the D12
-spool), and is idempotent (`IF NOT EXISTS`), re-run every boot after AutoMigrate so a migrator table
+spool), and is idempotent (`IF NOT EXISTS`), re-run every boot after AutoMigrate; on Postgres the boot also
+reads `pg_index.indisvalid` and drops and rebuilds (`CONCURRENTLY`) an index a failed build left
+invalid, logging the result, so a migrator table
 rebuild cannot silently drop it. D14 measures the pair writer's added index cost.
 
 No table has a foreign key to `resources`. All eight new tables (with the migration spool, D12, and the deletion staging table, D9) are classified in
@@ -316,7 +320,9 @@ Bookkeeping after a merge stays best-effort and logged, as today.
   is full depends only on its own visible insider count, which every viewer already sees, so it
   discloses nothing about copies a scoped viewer cannot see; the `truncated` flag itself is shown
   only to unscoped viewers (D8). The Cluster build forces Winner = seed whenever the insider query hit
-  199 (whatever the reloaded rows' Winner Rule says), and sets `fixed_seed` only then. Any rebuild
+  199 (whatever the reloaded rows' Winner Rule says), and sets `fixed_seed` only then; its
+  justification is then `decided_by = 'seed'`, no margin, not undecided, shown as "kept: the copy the
+  others were matched to", never a rule criterion it was not chosen on. Any rebuild
   or carry that changes a Cluster's membership (an open unreviewed Cluster rebuilt from its
   survivors, D4) sets `fixed_seed = false, seed_resource_id = 0`; the Cluster is unreviewed and
   re-proposed, so nothing it protected was relied on. Tests: 198 + seed + outsider Winner is
@@ -335,10 +341,13 @@ Bookkeeping after a merge stays best-effort and logged, as today.
   passes; rule 2's read bound is relaxed for this one query and measured on the dense-star fixture.
 - **Cluster build** in Go over at most 200 narrow rows, exactly as today, including
   `rejustifyAgainstWinner` (named-pair probes). A full star's seed is passed to the builder explicitly
-  and its lossy and keeps-smaller warnings are derived against it. Before a fresh Cluster is
-  inserted, its members' `in_extent` is re-checked against the live Extent (today's
-  `containsResources`, ≤ 200 ids), so a Resource moved out of the Extent after staging can never
-  arrive as a Loser.
+  and its lossy and keeps-smaller warnings are derived against it. In the fenced insertion
+  transaction, after the members' Resources are locked, their Extent membership is re-checked with a
+  live SQL predicate (the Extent definition: explicit ids, `extent_all`, owned and related through the
+  visible selected Group subtrees; not the Group-map `containsResources`). If any member's
+  classification differs from the one the Cluster was built with, the Cluster is discarded and
+  rebuilt from its seed (or hash) in the next step, so a Resource moved out of the Extent after
+  staging can never arrive as a Loser.
 
 ADR 0002 amendment: a seed claims every unclaimed Resource within threshold of itself **up to the
 member cap**, nearest first; the rest stay unclaimed and are proposed by a later compute after this
@@ -406,8 +415,13 @@ databases order a set of keys by `(key_prefix, sort_key)` exactly as `bytes.Comp
   `ORDER BY member_count DESC | total_size DESC | position`, then `key`; `LIMIT/OFFSET`; the page's
   members and Resources hydrated with the narrow projection).
 - **Bounded display text.** Every text field that crosses into Go on the review, list, `.json` and
-  apply-outcome paths (names, original names, content types) is cut to 1,024 bytes in SQL, with the
-  full value kept in a `title` only when it is under that bound; descriptions are never loaded there.
+  apply-outcome paths (names, original names, content types) is cut to 1,024 bytes in SQL, returned as bytes
+  (`bytea` / BLOB) and trimmed to a rune boundary in Go, so a multibyte character is never split
+  (test: a 1,100-byte multibyte name); the full value is kept in a `title` only when it is under that
+  bound; descriptions are never loaded there.
+- **Page budget.** A page renders at most 2,000 members in total across its Clusters; a Cluster
+  beyond that shows its Winner and a "show members" cursor. D14 measures `pageSize=100` with full
+  Clusters.
 - **Winner and member paging.** The Cluster's Winner is loaded on its own (it may not be among the
   first 200 members after a promotion); members are hydrated by keyset `(position, id)`, 200 at a time,
   with a "next members" cursor for over-cap history.
@@ -435,11 +449,14 @@ databases order a set of keys by `(key_prefix, sort_key)` exactly as `bytes.Comp
   the SQL block scrub (D13), so no path decodes a block document or loads a full Resource row.
 - **Delete paths bounded.** Each Resource's own child cleanup on delete (similarity pairs,
   association rows, versions, block references) runs in keyset chunks of 500 **before** the Resource
-  row is deleted, so the foreign-key cascades (`OnDelete:CASCADE` on similarity pairs, associations,
-  versions) find nothing left to cascade; a GORM callback test asserts each Resource delete statement
-  cascades at most a chunk; `BulkDeleteResources` requests are capped at 10,000 ids (D15), and its
-  post-commit effects (plugin hooks, audit log entries) are emitted per chunk rather than collected
-  for the whole request; hook and log payloads carry ids and bounded names only.
+  row is deleted, covering the actual cascade set (similarity pairs, associations, versions,
+  previews, Job receipts; the list is derived from the models' `OnDelete:CASCADE` constraints by a
+  test so a new one fails), and the final parent delete no longer uses `Select(clause.Associations)`.
+  A test asserts no cascading child remains before each parent delete (GORM row counts do not
+  include native cascades); `BulkDeleteResources` requests are capped at 10,000 ids (D15), audit log
+  rows stay **inside** the deleting transaction, as today (`resource_bulk_context.go:146, 827`),
+  inserted per chunk; only file cleanup and after-hooks run after commit, emitted per chunk rather than
+  collected for the whole request; hook and log payloads carry ids and bounded names only.
 - Eject, restore, release and reconcile re-derive `gone_members`; restore and release re-read
   existence for the members they bring back.
 - Safety net: apply's revalidation refuses a Cluster with a gone member, as today.
@@ -565,7 +582,9 @@ landing; a parked apply worker past its lease cannot merge.
 - The merge's participant locks (`lockResourcesAfterSeriesWith`) and `deleteResourceDBOnly` select
   only the columns they use. A Loser snapshot for the Winner's backup history is built in SQL with
   the backups stripped (`meta - 'backups'` on Postgres, `json_remove(meta, '$.backups')` on SQLite)
-  and appended to the Winner in SQL (Postgres `jsonb_set`, SQLite `json_patch`, which creates
+  and appended to the Winner in SQL once per merge, all Losers' snapshots in one array and one `UPDATE`
+  (the statement count is asserted; a per-Loser append would rewrite a large `meta` 200 times)
+  (Postgres `jsonb_set`, SQLite `json_patch`, which creates
   `$.backups` when absent, as the code does today). Neither the Winner's nor a Loser's backup
   history enters Go.
 - Apply revalidation, compute candidate loads and review hydration use the narrow projection.
@@ -586,14 +605,18 @@ landing; a parked apply worker past its lease cannot merge.
 - The deletion hook (D9) runs once per merge, after the Losers are deleted and **before** `InTx`; the
   claimed Cluster is included in the hook's ascending lock set, and `InTx` writes it under that lock,
   so the merge never locks Cluster rows out of order (two-Cluster test, ids 5 and 10, Postgres).
-- The note-block scrub rewrites references in SQL, with today's semantics
+- The note-block scrub runs **once per transaction**, as a keyset over blocks with an `EXISTS` against
+  the staged `reduction_deleted_ids` operation, not once per id chunk. It rewrites references in SQL,
+  with today's semantics
   (`scrubResourcesFromBlockContent`, `block_ref_cleanup.go`): gallery id arrays and calendar
   `calendars[].source.resourceId` entries. Accepted id shapes are today's `toUint` outcomes,
   decided per shape: integers, integral and non-integral floats (truncated, as `toUint` does,
-  including exponent forms), decimal strings with a leading `+` or space and trailing garbage
-  (`Sscanf` semantics); the SQL coercion matches each, and the differential test generates every
-  shape. `content` is cast to TEXT on both engines before `json_each` (SQLite 3.45+ would read a BLOB
-  as JSONB) and written back as TEXT.
+  including exponent forms), decimal strings with a leading space and trailing garbage
+  (`Sscanf` semantics: `" 12abc"` matches 12, `"+12"` is rejected and its reference preserved, both
+  pinned in the differential test); the SQL coercion matches each, and the differential test generates every
+  shape. On SQLite `content` is cast to TEXT before `json_each` (3.45+ would read a BLOB as JSONB) and
+  written back as TEXT; on Postgres it stays `jsonb` throughout (`jsonb_array_elements`, `jsonb_set`,
+  assignment as `jsonb`).
   Blocks are scanned by keyset `id > ?`, 500 per statement, of the gallery and calendar types; the
   UPDATE's `WHERE` is an exact, type-guarded JSON membership test (`json_each` on SQLite, `jsonb_array_elements` on Postgres, where block `content` is `jsonb`,
   with the value compared as an integer after the same coercion today's `toUint` applies, a JSON `null`
@@ -637,7 +660,9 @@ landing; a parked apply worker past its lease cannot merge.
 ## D14b. Request size
 
 Every Reduction route and the bulk Resource delete route get a route-specific body byte limit
-(`http.MaxBytesReader`) applied **before** decoding (the global JSON limit is off, `main.go:214`);
+(`http.MaxBytesReader`) applied **before** decoding and before the CSRF middleware parses the form
+(`server/csrf.go:89`; tested with an oversized cookie-authenticated form) (the global JSON limit is
+off, `main.go:214`);
 element caps (500, 10,000) are checked after a bounded decode.
 
 ## D15. Visible changes (docs-site, openapi)
@@ -829,3 +854,20 @@ Also in this change: the review card layout fix for long Resource names and fail
 | snapshot shape by JSON tags and `omitempty` | D13 |
 | unbounded Go loads on delete paths and merge locks | D9 narrow loads, shared SQL scrub |
 | body size before decoding | D14b |
+
+## v10 findings, where addressed
+
+| Finding | Section |
+|---|---|
+| In-Extent recheck must reject, live SQL predicate (pi P1) | D5 |
+| Postgres scrub must stay `jsonb` (pi P1) | D13 |
+| audit rows after commit lose evidence (pi P1) | D9 audit inside the transaction |
+| actual cascade set, `Select(clause.Associations)` (pi P2) | D9 |
+| `+12` coercion (pi P2) | D13 |
+| byte limit before CSRF form parsing (pi P2) | D14b |
+| invalid Postgres index after a failed build (arch 1) | D1 |
+| full-star justification fields (arch 2) | D5 |
+| scrub once per transaction; atomic delete and merge holds (arch 3) | D13, rule 2 |
+| backup append once per merge (arch 4) | D13 |
+| page member budget (arch 5) | D8 |
+| byte cut at rune boundary (arch 6) | D8 |
