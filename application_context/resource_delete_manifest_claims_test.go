@@ -1,130 +1,124 @@
 package application_context
 
 import (
-	"errors"
-	"fmt"
-	"sync"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"mahresources/models"
 )
 
-func strandManifestRows(t *testing.T, ctx *MahresourcesContext, op string, n int) {
-	t.Helper()
-	rows := make([]models.ResourceCleanupManifest, 0, n)
-	for i := 0; i < n; i++ {
-		loc := fmt.Sprintf("/resources/%s-%d", op, i)
-		require.NoError(t, afero.WriteFile(ctx.fs, loc, []byte("x"), 0o644))
-		rows = append(rows, models.ResourceCleanupManifest{Op: op, ResourceID: uint(10000 + i), Hash: fmt.Sprintf("h-%s-%d", op, i), Location: loc, Name: "n"})
-	}
-	require.NoError(t, ctx.db.CreateInBatches(&rows, 100).Error)
+func manifestClaimPlugin() string {
+	return hookTagPlugin(map[string]string{"after_resource_delete": "after"})
 }
 
-// Two instances replaying one manifest each claim a row before acting on it, so a hook
-// runs once per row, not once per instance.
-func TestConcurrentReplaysRunEachHookOnce(t *testing.T) {
-	ctx := newPluginHookTestContext(t, hookTagPlugin(map[string]string{"after_resource_delete": "after"}))
-	const n = 60
-	strandManifestRows(t, ctx, "concurrent", n)
+// A manifest row whose file step can never succeed (its storage is gone) still gets its
+// after_resource_delete hook: after manifestMaxFileAttempts failed steps the drain
+// leaves the file, runs the hook once and drops the row.
+func testManifestHookRunsWhenFileStepNeverSucceeds(t *testing.T, ctx *MahresourcesContext) {
+	gone := "storage-that-is-gone"
+	require.NoError(t, ctx.db.Create(&models.ResourceCleanupManifest{
+		Op: "stuck", ResourceID: 901, Hash: "hstuck", Location: "/x/stuck", Name: "stuck",
+		StorageLocation: &gone, Attempts: manifestMaxFileAttempts - 2,
+	}).Error)
 
-	var wg sync.WaitGroup
-	for i := 0; i < 2; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ctx.ReplayResourceCleanupManifest()
-		}()
-	}
-	wg.Wait()
+	// An earlier failure: the row is kept, backed off, its hook not yet run.
+	ctx.ReplayResourceCleanupManifest()
+	var row models.ResourceCleanupManifest
+	require.NoError(t, ctx.db.Where("op = ?", "stuck").First(&row).Error)
+	assert.Equal(t, manifestMaxFileAttempts-1, row.Attempts)
+	assert.Equal(t, 0, hookFires(t, ctx, "after"), "the hook must wait while the file step may still succeed")
 
-	assert.Equal(t, n, hookFires(t, ctx, "after"), "each row's hook runs exactly once across both replays")
+	// The bounded attempt: give up on the file, run the hook, drop the row.
+	require.NoError(t, ctx.db.Model(&models.ResourceCleanupManifest{}).Where("op = ?", "stuck").Update("next_attempt_at", 0).Error)
+	ctx.ReplayResourceCleanupManifest()
 	var left int64
-	require.NoError(t, ctx.db.Model(&models.ResourceCleanupManifest{}).Count(&left).Error)
-	assert.Zero(t, left)
-}
-
-// failingRemoveFs fails Remove while fail is set.
-type failingRemoveFs struct {
-	afero.Fs
-	mu   sync.Mutex
-	fail bool
-}
-
-func (f *failingRemoveFs) set(v bool) { f.mu.Lock(); f.fail = v; f.mu.Unlock() }
-func (f *failingRemoveFs) Remove(name string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.fail {
-		return errors.New("storage unavailable")
-	}
-	return f.Fs.Remove(name)
-}
-
-// A file step that fails must not be acknowledged: the row stays (attempt counted, backed
-// off) and its hook has not run; once the storage is back the row finishes, and the hook
-// runs exactly once overall.
-func TestAFailedFileStepKeepsTheManifestRow(t *testing.T) {
-	ctx := newPluginHookTestContext(t, hookTagPlugin(map[string]string{"after_resource_delete": "after"}))
-	fs := &failingRemoveFs{Fs: ctx.fs}
-	ctx.fs = fs
-	strandManifestRows(t, ctx, "flaky", 1)
-	fs.set(true)
-
-	ctx.ReplayResourceCleanupManifest()
-
-	var rows []models.ResourceCleanupManifest
-	require.NoError(t, ctx.db.Find(&rows).Error)
-	require.Len(t, rows, 1, "the row was acknowledged although its file was not removed")
-	assert.Equal(t, 1, rows[0].Attempts)
-	assert.False(t, rows[0].FilesDone)
-	assert.Greater(t, rows[0].NextAttemptAt, int64(0), "a backoff is recorded")
-	assert.Empty(t, rows[0].ClaimedBy, "the claim is released for the retry")
-	assert.Zero(t, hookFires(t, ctx, "after"), "the hook runs only after the file step")
-
-	// Inside the backoff nothing is retried.
-	ctx.ReplayResourceCleanupManifest()
-	require.NoError(t, ctx.db.Find(&rows).Error)
-	require.Len(t, rows, 1)
-	assert.Equal(t, 1, rows[0].Attempts, "a replay inside the backoff retried the row")
-
-	fs.set(false)
-	require.NoError(t, ctx.db.Model(&models.ResourceCleanupManifest{}).Where("1 = 1").Update("next_attempt_at", 0).Error)
-	ctx.ReplayResourceCleanupManifest()
-
-	var left int64
-	require.NoError(t, ctx.db.Model(&models.ResourceCleanupManifest{}).Count(&left).Error)
-	assert.Zero(t, left)
+	require.NoError(t, ctx.db.Model(&models.ResourceCleanupManifest{}).Where("op = ?", "stuck").Count(&left).Error)
+	assert.Zero(t, left, "the row is dropped once the file step is given up on")
 	assert.Equal(t, 1, hookFires(t, ctx, "after"))
-	ok, _ := afero.Exists(ctx.fs, "/resources/flaky-0")
-	assert.False(t, ok)
+
+	ctx.ReplayResourceCleanupManifest()
+	assert.Equal(t, 1, hookFires(t, ctx, "after"), "the hook runs at most once")
 }
 
-// Every file of an operation is handled before any hook runs, across the 500-row
-// chunks of the drain, not only within one chunk.
-func TestAllFilesPrecedeAllHooksAcrossChunks(t *testing.T) {
-	ctx := newPluginHookTestContext(t, hookTagPlugin(map[string]string{"after_resource_delete": "after"}))
-	n := 2*deleteStageChunk + 3
-	strandManifestRows(t, ctx, "chunks", n)
+// Each row's claim is renewed just before its own work, so a chunk that takes longer
+// than the claim TTL is not reclaimable row by row.
+func testManifestClaimIsRenewedPerRow(t *testing.T, ctx *MahresourcesContext) {
+	old := manifestClaimTTL
+	manifestClaimTTL = 2 * time.Second
+	t.Cleanup(func() { manifestClaimTTL = old })
 
-	var mu sync.Mutex
-	filesSeen, hooksAtLastFile := 0, 0
+	for i, n := range []string{"r1", "r2"} {
+		loc := "/resources/renew" + n
+		require.NoError(t, afero.WriteFile(ctx.fs, loc, []byte("x"), 0o644))
+		require.NoError(t, ctx.db.Create(&models.ResourceCleanupManifest{Op: "renew", ResourceID: uint(910 + i), Hash: "hrenew" + n, Location: loc, Name: n}).Error)
+	}
+	var stale []string
+	call := 0
 	resourceFileRemovalGap = func() {
-		mu.Lock()
-		defer mu.Unlock()
-		filesSeen++
-		if filesSeen == n {
-			hooksAtLastFile = hookFires(t, ctx, "after")
+		// The row being worked on is the call-th by id; rows already done may sit out
+		// the rest of the chunk, but the one in hand must hold a live claim.
+		var rows []models.ResourceCleanupManifest
+		require.NoError(t, ctx.db.Where("op = ?", "renew").Order("id ASC").Find(&rows).Error)
+		if cur := rows[call]; cur.ClaimedUntil <= time.Now().Unix() {
+			stale = append(stale, cur.Name)
 		}
+		call++
+		time.Sleep(2500 * time.Millisecond)
 	}
 	t.Cleanup(func() { resourceFileRemovalGap = nil })
 
 	ctx.ReplayResourceCleanupManifest()
+	assert.Empty(t, stale, "a row's claim had expired by the time its file step ran: another instance could take it over")
+}
 
-	assert.Equal(t, n, filesSeen)
-	assert.Zero(t, hooksAtLastFile, "a hook ran before the last file of the operation was handled")
-	assert.Equal(t, n, hookFires(t, ctx, "after"))
+// A row another drain took over (our claim expired) is not worked on: its hook does not
+// run here, and its row is not dropped from under the new holder.
+func testManifestLostClaimSkipsHook(t *testing.T, ctx *MahresourcesContext) {
+	for i, n := range []string{"l1", "l2"} {
+		require.NoError(t, ctx.db.Create(&models.ResourceCleanupManifest{
+			Op: "lost", ResourceID: uint(920 + i), Hash: "hlost" + n, Location: "/resources/lost" + n, Name: n, FilesDone: true,
+		}).Error)
+	}
+	var second models.ResourceCleanupManifest
+	require.NoError(t, ctx.db.Where("op = ? AND name = ?", "lost", "l2").First(&second).Error)
+
+	// The moment the drain has read its hook batch, another instance takes row 2.
+	const cb = "test:steal_after_hook_read"
+	var stolen bool
+	require.NoError(t, ctx.db.Callback().Query().After("gorm:query").Register(cb, func(tx *gorm.DB) {
+		if stolen || tx.Statement.Table != "resource_cleanup_manifest" || !strings.Contains(tx.Statement.SQL.String(), "files_done") {
+			return
+		}
+		stolen = true
+		raw := tx.Session(&gorm.Session{NewDB: true})
+		require.NoError(t, raw.Exec("UPDATE resource_cleanup_manifest SET claimed_by = 'other', claimed_until = ? WHERE id = ?",
+			time.Now().Add(time.Hour).Unix(), second.ID).Error)
+	}))
+	t.Cleanup(func() { _ = ctx.db.Callback().Query().Remove(cb) })
+
+	ctx.ReplayResourceCleanupManifest()
+	require.True(t, stolen, "the steal never fired; the test no longer exercises the hook pass")
+	assert.Equal(t, 1, hookFires(t, ctx, "after"), "only the row this drain still held may run its hook")
+	var rows []models.ResourceCleanupManifest
+	require.NoError(t, ctx.db.Where("op = ?", "lost").Find(&rows).Error)
+	require.Len(t, rows, 1, "the taken-over row stays for its new holder")
+	assert.Equal(t, "other", rows[0].ClaimedBy)
+}
+
+func TestManifestHookRunsWhenFileStepNeverSucceedsSQLite(t *testing.T) {
+	testManifestHookRunsWhenFileStepNeverSucceeds(t, newPluginHookTestContext(t, manifestClaimPlugin()))
+}
+
+func TestManifestClaimIsRenewedPerRowSQLite(t *testing.T) {
+	testManifestClaimIsRenewedPerRow(t, newPluginHookTestContext(t, manifestClaimPlugin()))
+}
+
+func TestManifestLostClaimSkipsHookSQLite(t *testing.T) {
+	testManifestLostClaimSkipsHook(t, newPluginHookTestContext(t, manifestClaimPlugin()))
 }

@@ -260,10 +260,17 @@ func (ctx *MahresourcesContext) drainDB() (*gorm.DB, context.CancelFunc) {
 	return db.WithContext(c), cancel
 }
 
-// manifestClaimTTL is how long a claim holds. It is renewed before every chunk, so it
-// only has to outlast one chunk; a process that dies holding claims blocks its rows for
+// manifestClaimTTL is how long a claim holds. It is renewed before every chunk and just
+// before each row's own work (the file step, then the hook), so it
+// only has to outlast one row; a process that dies holding claims blocks its rows for
 // at most this long.
-const manifestClaimTTL = 5 * time.Minute
+var manifestClaimTTL = 5 * time.Minute
+
+// manifestMaxFileAttempts is how many failed file steps a row survives. At the last one
+// the file is left where it is and the row goes on to its hook, so a file that can never
+// be removed (storage gone, a permanent permission error) does not hold the hook back
+// for ever.
+const manifestMaxFileAttempts = 5
 
 // manifestBackoff is the wait before a failed file step is tried again.
 func manifestBackoff(attempts int) time.Duration {
@@ -321,6 +328,21 @@ func (ctx *MahresourcesContext) drainManifestOp(op string, replay bool) {
 			warn("Failed to renew the delete manifest claim", rerr)
 		}
 	}
+	// hold extends this drain's claim on one row just before it is worked on, and says
+	// whether the row is still ours. A row whose claim lapsed and was taken over by
+	// another instance is no longer ours and must not be worked on or dropped; a row
+	// whose claim merely lapsed with nobody taking it is renewed and carries on.
+	hold := func(id uint) bool {
+		db, cancel := ctx.drainDB()
+		defer cancel()
+		res := db.Exec("UPDATE resource_cleanup_manifest SET claimed_until = ? WHERE id = ? AND claimed_by = ?",
+			time.Now().Add(manifestClaimTTL).Unix(), id, me)
+		if res.Error != nil {
+			warn("Failed to renew a delete manifest row claim", res.Error)
+			return false
+		}
+		return res.RowsAffected == 1
+	}
 	// Whatever this drain still holds when it stops is let go at once, so a failed read
 	// or a failed drop does not park rows behind a claim nobody is working under.
 	defer func() {
@@ -349,7 +371,18 @@ func (ctx *MahresourcesContext) drainManifestOp(op string, replay bool) {
 			if e.FilesDone {
 				continue
 			}
+			if !hold(e.ID) {
+				continue
+			}
 			if ferr := ctx.cleanupManifestFile(e); ferr != nil {
+				if e.Attempts+1 >= manifestMaxFileAttempts {
+					// This file step has failed often enough that it is not going to
+					// succeed: leave the file, and let the hook (which must not be held
+					// back for ever by a file nobody can remove) run.
+					ctx.Logger().Warning(models.LogActionDelete, "resource", &e.ResourceID, "File cleanup failed too many times; leaving the file and running the delete hook", ferr.Error(), nil)
+					done = append(done, e.ID)
+					continue
+				}
 				ctx.Logger().Warning(models.LogActionDelete, "resource", &e.ResourceID, "File cleanup failed; keeping the manifest row to retry", ferr.Error(), nil)
 				db, cancel := ctx.drainDB()
 				uerr := db.Exec("UPDATE resource_cleanup_manifest SET claimed_by = '', claimed_until = 0, attempts = attempts + 1, next_attempt_at = ? WHERE id = ?",
@@ -390,6 +423,9 @@ func (ctx *MahresourcesContext) drainManifestOp(op string, replay bool) {
 		ids := make([]uint, 0, len(entries))
 		for i := range entries {
 			e := &entries[i]
+			if !hold(e.ID) {
+				continue // taken over by another drain: its hook and its row are the new holder's
+			}
 			ids = append(ids, e.ID)
 			hc := ctx.manifestHookContext(e, replay, hookCtxs)
 			if hc == nil {
@@ -397,9 +433,12 @@ func (ctx *MahresourcesContext) drainManifestOp(op string, replay bool) {
 			}
 			hc.RunAfterPluginHooks("after_resource_delete", map[string]any{"id": float64(e.ResourceID), "name": e.Name, "resource_category_id": float64(e.ResourceCategoryID), "owner_id": hookID(e.OwnerID)})
 		}
-		last = ids[len(ids)-1]
+		last = entries[len(entries)-1].ID
+		if len(ids) == 0 {
+			continue
+		}
 		dropDB, cancelDrop := ctx.drainDB()
-		if err := dropDB.Where("id IN ?", ids).Delete(&models.ResourceCleanupManifest{}).Error; err != nil {
+		if err := dropDB.Where("id IN ? AND claimed_by = ?", ids, me).Delete(&models.ResourceCleanupManifest{}).Error; err != nil {
 			warn("Failed to drop drained cleanup manifest rows", err)
 		}
 		cancelDrop()
