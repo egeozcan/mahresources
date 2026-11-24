@@ -340,6 +340,17 @@ func (run *reductionStream) isAvailable(id uint) (bool, error) {
 
 // ---- narrow candidate loads ----------------------------------------------------------------
 
+// inStagedExtent is the test that the Resource id expression is in this
+// generation's staged Extent, binding the Reduction id and the generation. It is a
+// scalar subquery with LIMIT 1, a key probe per row the statement returns, and
+// deliberately not EXISTS: Postgres turns a correlated EXISTS into a hashed subplan
+// that reads the whole staged Extent once per statement whenever it expects many
+// rows (a hub with thousands of pairs, a hash with thousands of holders), which on
+// a two million row Extent is a scan for every 400-row page.
+func inStagedExtent(id string) string {
+	return `((SELECT 1 FROM reduction_extent xe WHERE xe.reduction_id = ? AND xe.generation = ? AND xe.resource_id = ` + id + ` LIMIT 1) IS NOT NULL)`
+}
+
 // candidateRow is the narrow projection of a Resource the Winner Rule and the
 // Cluster build read: no description, meta or own meta ever enters Go.
 type candidateRow struct {
@@ -372,7 +383,7 @@ func (run *reductionStream) candidateSelect() (string, []any) {
 	sql := `r.id, COALESCE(r.hash, '') AS hash, r.width, r.height, r.file_size, r.created_at, r.updated_at, ` +
 		name + cut + ` AS name, ` + contentType + cut + ` AS content_type, r.series_id, r.resource_category_id, ` +
 		`CASE WHEN ` + trim + ` <> '' THEN TRUE ELSE FALSE END AS has_description, ` +
-		`EXISTS (SELECT 1 FROM reduction_extent xe WHERE xe.reduction_id = ? AND xe.generation = ? AND xe.resource_id = r.id) AS in_extent`
+		inStagedExtent("r.id") + ` AS in_extent`
 	return sql, []any{spaceChars, run.r.ID, run.generation}
 }
 

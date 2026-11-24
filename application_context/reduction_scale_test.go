@@ -357,7 +357,9 @@ func (r *scaleRecorder) requireWithinChunk(t *testing.T, scenario string) {
 func explainStatement(ctx *MahresourcesContext, sql string, vars []any) (string, error) {
 	prefix := "EXPLAIN QUERY PLAN "
 	if isPG(ctx) {
-		prefix = "EXPLAIN "
+		// ANALYZE runs the statement (every captured one is a SELECT) so the plan
+		// carries its real row counts and execution time.
+		prefix = "EXPLAIN (ANALYZE, TIMING OFF) "
 	}
 	rows, err := ctx.db.Raw(prefix+sql, vars...).Rows()
 	if err != nil {
@@ -854,11 +856,16 @@ func scaleMerge(t *testing.T, ctx *MahresourcesContext, losers, backupBytes int)
 // one centre.
 type computeFixture struct {
 	Unique, Holders, Spokes int
+	// Pairs is how many hashes are held by exactly two Resources, so that many
+	// Identical Clusters exist in the generation by the time the last hashes are
+	// read: the availability anti-join of every later statement runs against them.
+	Pairs int
 }
 
 func seedComputeLibrary(t *testing.T, ctx *MahresourcesContext, f computeFixture) (hub uint) {
 	t.Helper()
 	seedResources(t, ctx, f.Unique, `'u' || n`, `'h' || n`, `NULL`)
+	seedResources(t, ctx, 2*f.Pairs, `'pair' || n`, `'p' || ((n + 1) / 2)`, `NULL`)
 	seedResources(t, ctx, 5, `'dup' || n`, `'zz-last'`, `NULL`)
 	seedResources(t, ctx, f.Holders, `'holder' || n`, `'zz-holders'`, `NULL`)
 	center := seedResources(t, ctx, f.Spokes+1, `'star' || n`, `'sh' || n`, `NULL`)
@@ -883,16 +890,21 @@ func scaleCompute(t *testing.T, ctx *MahresourcesContext, f computeFixture) floa
 	t.Helper()
 	start := time.Now()
 	hub := seedComputeLibrary(t, ctx, f)
-	t.Logf("SCALE compute fixture: %d unique + 5 duplicates + %d holders + a %d-spoke star seeded in %s", f.Unique, f.Holders, f.Spokes, time.Since(start).Round(time.Second))
+	t.Logf("SCALE compute fixture: %d unique + %d hashes held twice + 5 duplicates + %d holders + a %d-spoke star seeded in %s", f.Unique, f.Pairs, f.Holders, f.Spokes, time.Since(start).Round(time.Second))
 	r := mkStreamReduction(t, ctx, streamSel{All: true})
 	rec := installScaleRecorder(t, ctx)
 	rec.capture("identical chunk", `SELECT hash FROM reduction_extent WHERE reduction_id = \? AND generation = \? AND hash > \?`, "")
-	rec.capture("identical holders", `FROM resources r WHERE r.hash = \? AND r.id > \?`, "zz-holders")
+	// A rare hash (the five duplicates that sort last) must read through the hash
+	// index. The dense hash is asserted only not to scan the table whole: for a hash
+	// held by one Resource in forty the planner may rightly walk the primary key in
+	// id order, which finds a chunk of holders after a bounded number of rows.
+	rec.capture("identical holders", `FROM resources r WHERE r.hash = \? AND r.id > \?`, "zz-last")
+	rec.capture("identical holders (dense hash)", `FROM resources r WHERE r.hash = \? AND r.id > \?`, "zz-holders")
 	rec.capture("neighbours", `FROM resource_similarities s WHERE s\.resource_id1 = \?`, fmt.Sprint(hub))
 	rec.capture("availability probe", `SELECT COUNT\(\*\) FROM resources r WHERE r.id = \?.*NOT EXISTS \(SELECT 1 FROM reduction_members`, "")
 	rec.arm(true)
 	rssLog(t, "compute: before")
-	res := measure(t, fmt.Sprintf("compute over %d Resources", f.Unique+5+f.Holders+f.Spokes+1), func() {
+	res := measure(t, fmt.Sprintf("compute over %d Resources", f.Unique+2*f.Pairs+5+f.Holders+f.Spokes+1), func() {
 		streamCompute(t, ctx, r)
 	})
 	rec.arm(false)
@@ -919,14 +931,15 @@ func scaleCompute(t *testing.T, ctx *MahresourcesContext, f computeFixture) floa
 	require.Equal(t, models.MaxClusterMembers, star.Row.MemberCount, "a star larger than the cap is cut at the cap")
 	require.True(t, star.Row.FixedSeed, "199 insiders found: a full star keeps its seed")
 	require.Equal(t, hub, star.Row.WinnerID)
-	require.Equal(t, len(plan), 3+0, "no other Cluster: every other hash is unique")
+	require.Equal(t, 3+f.Pairs, len(plan), "the pairs, the duplicates, the holders and the star: every other hash is unique")
 
 	// The index each statement is built for, by database.
 	want := map[string][2]string{
-		"identical chunk":    {"idx_re_hash", "idx_re_hash"},
-		"identical holders":  {"idx_resources_hash", "idx_resources_hash"},
-		"neighbours":         {"idx_sim_r1_eff_dist", "idx_sim_r1_eff_dist"},
-		"availability probe": {"idx_rm_resource", "idx_rm_resource"},
+		"identical chunk":                {"idx_re_hash", "idx_re_hash"},
+		"identical holders":              {"idx_resources_hash", "idx_resources_hash"},
+		"identical holders (dense hash)": {"", ""},
+		"neighbours":                     {"idx_sim_r1_eff_dist", "idx_sim_r1_eff_dist"},
+		"availability probe":             {"idx_rm_resource", "idx_rm_resource"},
 	}
 	for name, idx := range want {
 		wantIndex := idx[0]
@@ -966,7 +979,10 @@ func scaleMigrate(t *testing.T, ctx *MahresourcesContext, bigMembers, smallClust
 	legacy := &legacyReduction{ResourceReduction: models.ResourceReduction{Name: "legacy scale", Status: models.ReductionStatusReady, MatchingMode: "both"}, Plan: plan, Extent: extent}
 	require.NoError(t, ctx.db.Create(legacy).Error)
 	t.Logf("SCALE migration fixture: legacy plan of %d MB, one %d-member Cluster and %d small ones", len(plan)>>20, bigMembers, smallClusters)
-	plan = nil
+	// Nothing of the fixture may stay reachable: a live baseline that large would
+	// let the collector's pacing alone add as much garbage as it holds.
+	legacyID := legacy.ID
+	plan, extent, legacy = nil, nil, nil
 	analyzeAll(t, ctx)
 
 	rec := installScaleRecorder(t, ctx)
@@ -979,19 +995,19 @@ func scaleMigrate(t *testing.T, ctx *MahresourcesContext, bigMembers, smallClust
 	requireUnder(t, res, computeHeapLimitMB, "migration")
 	rec.requireWithinChunk(t, "migration")
 	var got models.ResourceReduction
-	require.NoError(t, ctx.db.Select(reductionColumns).First(&got, legacy.ID).Error)
+	require.NoError(t, ctx.db.Select(reductionColumns).First(&got, legacyID).Error)
 	require.Equal(t, 1, got.PlanSchema)
 	var n int64
-	require.NoError(t, ctx.db.Raw("SELECT COUNT(*) FROM reduction_clusters WHERE reduction_id = ?", legacy.ID).Scan(&n).Error)
+	require.NoError(t, ctx.db.Raw("SELECT COUNT(*) FROM reduction_clusters WHERE reduction_id = ?", legacyID).Scan(&n).Error)
 	require.EqualValues(t, smallClusters+1, n)
 	var big models.ReductionClusterRow
-	require.NoError(t, ctx.db.Where("reduction_id = ? AND key = ?", legacy.ID, "c-big").First(&big).Error)
+	require.NoError(t, ctx.db.Where("reduction_id = ? AND key = ?", legacyID, "c-big").First(&big).Error)
 	require.True(t, big.ReadOnly, "an over-cap legacy Cluster is read-only history")
 	require.Equal(t, bigMembers, big.MemberCount, "an over-cap Cluster's counts come from SQL aggregates, not from hydrating it")
 	require.Zero(t, big.GoneMembers)
 	require.Empty(t, big.Fingerprint, "a read-only Cluster is never actionable and has no fingerprint")
 	var unfingerprinted int64
-	require.NoError(t, ctx.db.Raw("SELECT COUNT(*) FROM reduction_clusters WHERE reduction_id = ? AND key <> 'c-big' AND fingerprint = ''", legacy.ID).Scan(&unfingerprinted).Error)
+	require.NoError(t, ctx.db.Raw("SELECT COUNT(*) FROM reduction_clusters WHERE reduction_id = ? AND key <> 'c-big' AND fingerprint = ''", legacyID).Scan(&unfingerprinted).Error)
 	require.Zero(t, unfingerprinted)
 	return res.PeakMB
 }
@@ -1039,7 +1055,7 @@ func runScaleCompute(t *testing.T, newCtx func(*testing.T) *MahresourcesContext)
 	requireScale(t)
 	twoSizes(t, newCtx, "compute", func(t *testing.T, ctx *MahresourcesContext, d int) float64 {
 		return scaleCompute(t, ctx, computeFixture{
-			Unique: scaled(2_000_000, 20_000) / d, Holders: scaled(50_000, 1_000) / d, Spokes: max(scaled(20_000, 5_000)/d, 5_000),
+			Unique: scaled(2_000_000, 20_000) / d, Pairs: scaled(100_000, 2_000) / d, Holders: scaled(50_000, 1_000) / d, Spokes: max(scaled(20_000, 5_000)/d, 5_000),
 		})
 	})
 }

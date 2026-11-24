@@ -184,7 +184,7 @@ func (p *pairStream) fetch(insidersOnly bool) ([]neighbour, error) {
 	within := mrql.SimilarPairPredicate("s", run.threshold, run.aThreshold)
 	prefix, pargs := run.s.with()
 	avail, aargs := run.available("s." + p.other)
-	inExtent := `EXISTS (SELECT 1 FROM reduction_extent xe WHERE xe.reduction_id = ? AND xe.generation = ? AND xe.resource_id = s.` + p.other + `)`
+	inExtent := inStagedExtent("s." + p.other)
 	sql := prefix + `SELECT s.` + p.other + ` AS resource_id, ` + dist + ` AS distance, ` + inExtent + ` AS in_extent
 		FROM resource_similarities s
 		WHERE s.` + p.self + ` = ? AND s.` + p.other + ` <> ? AND ` + within + `
