@@ -86,7 +86,10 @@ func snapshotCol(alias, col string) string { return alias + "." + col }
 // the fraction keeps its digits with trailing zeros dropped, and a zero offset is "Z", as
 // Go writes it. A stored value without an offset reads as UTC. A form this does not
 // recognise falls back to the UTC rendering of the same instant.
-func sqliteTime(c string) string {
+func sqliteTime(col string) string {
+	// The driver also reads a date alone and a time without seconds (with a space or a
+	// T between them); those are completed to the full form the offsets below rely on.
+	c := "(CASE length(" + col + ") WHEN 10 THEN " + col + " || ' 00:00:00' WHEN 16 THEN " + col + " || ':00' ELSE " + col + " END)"
 	rest := "substr(" + c + ", 21)"
 	end := "min(instr(" + rest + " || '+', '+'), instr(" + rest + " || '-', '-'), instr(" + rest + " || 'Z', 'Z'), instr(" + rest + " || ' ', ' '))"
 	hasFrac := "substr(" + c + ", 20, 1) = '.'"
@@ -144,11 +147,12 @@ func resourceSnapshotExpr(dialect, alias string) string {
 				val = "COALESCE(CASE WHEN jsonb_typeof(" + col + ") = 'object' THEN " + col + " - '" + metaBackupsKey + "' ELSE " + col + " END, 'null'::jsonb)"
 			} else {
 				// json_remove drops the first of a repeated key and Go's decode keeps the last, so
-				// a repeated backups key is dropped member by member.
-				member := "m.key <> '" + metaBackupsKey + "'"
-				rebuilt := "json((SELECT '{' || COALESCE(group_concat(json_quote(m.key) || ':' || CASE m.type WHEN 'object' THEN m.value WHEN 'array' THEN m.value WHEN 'null' THEN 'null' WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE json_quote(m.value) END, ','), '') || '}' FROM json_each(" + col + ") m WHERE " + member + "))"
-				repeated := "(SELECT count(*) FROM json_each(" + col + ") m WHERE m.key = '" + metaBackupsKey + "') > 1"
-				val = "json(COALESCE(CASE WHEN json_type(" + col + ") = 'object' THEN CASE WHEN " + repeated + " THEN " + rebuilt + " ELSE json_remove(" + col + ", '$." + metaBackupsKey + "') END ELSE " + col + " END, 'null'))"
+				// a repeated backups key is removed once per occurrence. json_remove keeps every
+				// other member's text as stored, which a rebuild through json_each would not (it
+				// hands back a real as a double: 9.1234567891234549 would come out ...555).
+				occurrences := "(SELECT count(*) FROM json_each(" + col + ") m WHERE m.key = '" + metaBackupsKey + "')"
+				stripped := "(WITH RECURSIVE r(doc, n) AS (SELECT " + col + ", " + occurrences + " UNION ALL SELECT json_remove(doc, '$." + metaBackupsKey + "'), n - 1 FROM r WHERE n > 0) SELECT doc FROM r WHERE n = 0)"
+				val = "json(COALESCE(CASE WHEN json_type(" + col + ") = 'object' THEN " + stripped + " ELSE " + col + " END, 'null'))"
 			}
 		case snapJSON:
 			if postgres {
