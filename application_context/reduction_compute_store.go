@@ -804,8 +804,32 @@ func (ctx *MahresourcesContext) storeDeleteReduction(r *models.ResourceReduction
 			}
 		}
 	}
+	// The compute staging tables are keyed (reduction, generation, resource), so a
+	// chunk is read and deleted as exact (generation, resource) tuples: naming the
+	// resource alone would also take it out of every other generation, and the
+	// statement would remove more rows than the chunk it read.
+	for _, table := range []string{"reduction_extent", "reduction_seeds"} {
+		for {
+			var pairs []struct {
+				Generation string
+				ResourceID uint
+			}
+			if err := s.db.Raw(`SELECT generation, resource_id FROM `+table+` WHERE reduction_id = ? ORDER BY generation, resource_id LIMIT ?`, r.ID, reductionRowChunk).Scan(&pairs).Error; err != nil {
+				return err
+			}
+			if len(pairs) == 0 {
+				break
+			}
+			tuples := make([][]any, len(pairs))
+			for i, p := range pairs {
+				tuples[i] = []any{p.Generation, p.ResourceID}
+			}
+			if err := s.db.Exec(`DELETE FROM `+table+` WHERE reduction_id = ? AND (generation, resource_id) IN ?`, r.ID, tuples).Error; err != nil {
+				return err
+			}
+		}
+	}
 	for _, spec := range []struct{ table, key string }{
-		{"reduction_extent", "resource_id"}, {"reduction_seeds", "resource_id"},
 		{"reduction_extent_resources", "resource_id"}, {"reduction_extent_groups", "group_id"},
 	} {
 		for {
@@ -816,8 +840,8 @@ func (ctx *MahresourcesContext) storeDeleteReduction(r *models.ResourceReduction
 			if len(ids) == 0 {
 				break
 			}
-			// Staging tables are keyed (reduction, generation, resource): delete the chunk
-			// by its key column across generations.
+			// These selection tables are keyed (reduction, key): the chunk's keys are the
+			// chunk's rows.
 			if err := s.db.Exec(`DELETE FROM `+spec.table+` WHERE reduction_id = ? AND `+spec.key+` IN ?`, r.ID, ids).Error; err != nil {
 				return err
 			}
