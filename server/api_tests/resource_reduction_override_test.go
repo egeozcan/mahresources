@@ -615,7 +615,7 @@ func TestAcknowledgingAnOversizedClusterNeedsEveryMemberSeen(t *testing.T) {
 	cluster := plan.Clusters[0]
 	require.True(t, cluster.Oversized)
 
-	check := func(seen uint) error {
+	check := func(seen *uint) error {
 		current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
 		require.NoError(t, err)
 		_, err = tc.AppCtx.OverrideReductionCluster(&query_models.ReductionOverride{
@@ -624,9 +624,11 @@ func TestAcknowledgingAnOversizedClusterNeedsEveryMemberSeen(t *testing.T) {
 		}, owner, restricted)
 		return err
 	}
-	assert.ErrorIs(t, check(1), application_context.ErrReductionOversizedUnexpanded, "only the Winner was on screen")
-	assert.ErrorIs(t, check(uint(len(cluster.Members))-1), application_context.ErrReductionOversizedUnexpanded)
+	count := func(n int) *uint { v := uint(n); return &v }
+	assert.ErrorIs(t, check(count(1)), application_context.ErrReductionOversizedUnexpanded, "only the Winner was on screen")
+	assert.ErrorIs(t, check(count(0)), application_context.ErrReductionOversizedUnexpanded, "a stated zero is not the same as saying nothing")
+	assert.ErrorIs(t, check(count(len(cluster.Members)-1)), application_context.ErrReductionOversizedUnexpanded)
 	assert.False(t, findClusterByID(planOf(t, tc, red.ID), cluster.ID).Checked)
-	require.NoError(t, check(uint(len(cluster.Members))), "every copy seen is accepted")
+	require.NoError(t, check(count(len(cluster.Members))), "every copy seen is accepted")
 	assert.True(t, findClusterByID(planOf(t, tc, red.ID), cluster.ID).Checked)
 }

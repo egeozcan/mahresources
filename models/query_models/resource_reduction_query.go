@@ -132,12 +132,12 @@ type ReductionOverride struct {
 	// MembersSeen is how many of the Cluster's copies the reviewer's page had
 	// rendered when they acknowledged it. The review page sends it, because a page
 	// past its member budget shows only a large Cluster's kept copy until "Show more
-	// members" loads the rest. When it is sent, an acknowledgement is refused unless it
-	// equals the Cluster's member count. Zero means the caller did not say, and the
-	// acknowledgement alone stands: like AcknowledgeOversized itself this is the
-	// caller's own statement, a guard against a page that skipped the copies, not proof
-	// against a caller that lies.
-	MembersSeen uint `json:"membersSeen" schema:"membersSeen"`
+	// members" loads the rest. When it is sent, zero included, an acknowledgement is
+	// refused unless it equals the Cluster's member count. Nil means the caller did not
+	// say, and the acknowledgement alone stands: like AcknowledgeOversized itself this
+	// is the caller's own statement, a guard against a page that skipped the copies,
+	// not proof against a caller that lies.
+	MembersSeen *uint `json:"membersSeen" schema:"membersSeen"`
 }
 
 // ReductionApply is a request to apply what is checked.

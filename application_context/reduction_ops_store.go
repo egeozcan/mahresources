@@ -650,7 +650,7 @@ func (e *overrideEnv) apply(c *storedCluster, o *query_models.ReductionOverride)
 		if c.Row.Oversized && !o.AcknowledgeOversized {
 			return ErrReductionOversizedUnexpanded
 		}
-		if c.Row.Oversized && o.MembersSeen != 0 && int(o.MembersSeen) != c.Row.MemberCount {
+		if c.Row.Oversized && o.MembersSeen != nil && int(*o.MembersSeen) != c.Row.MemberCount {
 			return ErrReductionOversizedUnexpanded
 		}
 		if c.Row.State == models.ReductionClusterStale && c.Row.StaleReason == staleReasonDeleted {

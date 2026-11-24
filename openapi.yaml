@@ -2125,6 +2125,7 @@ components:
                 id:
                     type: integer
                 membersSeen:
+                    nullable: true
                     type: integer
                 resourceId:
                     type: integer
