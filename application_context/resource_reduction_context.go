@@ -184,29 +184,21 @@ func (ctx *MahresourcesContext) withSelectionTransaction(fn func(txCtx *Mahresou
 
 // addOwnedResourcesToExtent selects the Resources a Group owns, or that it and
 // every Group below it own, and reports how many were selected (new or already
-// there). The root is checked before the subtree is walked: collecting the subtree
-// is raw SQL, while the Resource insert applies the principal's scope itself. The
-// request as a whole stays within reductionSelectionCap.
+// there). The root is checked first; the Resource insert applies the principal's
+// scope itself. The request as a whole stays within reductionSelectionCap.
 func (ctx *MahresourcesContext) addOwnedResourcesToExtent(store *reductionStore, row *models.ResourceReduction, ownerID uint, includeDescendants bool) (int, error) {
 	if !ctx.GroupVisible(ownerID) {
 		return 0, ErrReductionGroupNotVisible
 	}
-	owners := []uint{ownerID}
-	if includeDescendants {
-		var err error
-		if owners, err = ctx.collectSubtreeGroupIDs(ownerID); err != nil {
-			return 0, err
-		}
+	// The subtree is joined inside the statements that insert, never listed in Go:
+	// a root with 20,000 empty descendants was 20,000 statements under SQLite's
+	// writer lock.
+	total, err := store.addExtentFromOwners(row, ownerID, includeDescendants)
+	if err != nil {
+		return 0, err
 	}
-	total := 0
-	for _, owner := range owners {
-		n, err := store.addExtentFromGroupResources(row, owner)
-		if err != nil {
-			return 0, err
-		}
-		if total += n; total > reductionSelectionCap {
-			return 0, ErrReductionSelectionTooLarge
-		}
+	if total > reductionSelectionCap {
+		return 0, ErrReductionSelectionTooLarge
 	}
 	return total, nil
 }

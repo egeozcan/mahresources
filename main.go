@@ -1036,14 +1036,15 @@ func main() {
 
 	// After the server is up: sweep the plan generations nobody owns (a compute that
 	// died, a landing that crashed before its staging rows were removed), then move
-	// every legacy Reduction plan to tables. Both are chunked and restartable.
+	// every legacy Reduction plan to tables. Both are chunked and restartable. The
+	// migration runs again every minute until no legacy plan is left: a run that
+	// crashed leaves a live lease, which a single startup pass would skip, and the
+	// Reduction would stay unreadable until the next restart.
 	go func() {
 		if err := context.SweepReductionGenerations(); err != nil {
 			log.Printf("Warning: reduction generation sweep: %v", err)
 		}
-		if err := context.MigrateReductionPlans(); err != nil {
-			log.Printf("Warning: reduction plan migration: %v", err)
-		}
+		<-context.StartReductionMigration(serverCtx, time.Minute)
 	}()
 
 	quit := make(chan os.Signal, 1)

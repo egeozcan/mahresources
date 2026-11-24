@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"mahresources/models"
+	"mahresources/mrql"
 )
 
 // A Reduction's selections as rows (design D5): explicit Resource ids in
@@ -112,23 +113,47 @@ func (s *reductionStore) insertIgnore(rows any) error {
 }
 
 // addExtentFromGroupResources selects every Resource the Group owns that the
-// principal may see, by scoped INSERT ... SELECT in id-keyset chunks, so no id
-// list is held in Go. More than the cap refuses the whole request. It returns how
-// many Resources were selected (new or already there).
+// principal may see. See addExtentFromOwners.
 func (s *reductionStore) addExtentFromGroupResources(r *models.ResourceReduction, groupID uint) (int, error) {
+	return s.addExtentFromOwners(r, groupID, false)
+}
+
+// ownerTreeCTE names the Groups whose Resources are selected: the root alone, or
+// the root and every Group below it (UNION, so a cycle in the tree ends).
+const (
+	ownerTreeOne     = `owner_tree(id) AS (SELECT CAST(? AS bigint))`
+	ownerTreeSubtree = `owner_tree(id) AS (SELECT id FROM groups WHERE id = ? UNION SELECT g.id FROM groups g INNER JOIN owner_tree ot ON g.owner_id = ot.id)`
+)
+
+// addExtentFromOwners selects every Resource a Group owns, or that it and every
+// Group below it own, that the principal may see, by scoped INSERT ... SELECT in
+// id-keyset chunks, so no id list is held in Go and the number of statements does
+// not grow with the number of Groups. More than the cap refuses the whole request.
+// It returns how many Resources were selected (new or already there).
+func (s *reductionStore) addExtentFromOwners(r *models.ResourceReduction, rootID uint, descendants bool) (int, error) {
 	if s.scope.mode == scopeDeny {
 		return 0, nil
 	}
-	prefix, args := s.with()
-	visible := ""
-	if s.scope.mode == scopeSubtree {
-		visible = " AND owner_id IN " + subtreeIDs
+	tree := ownerTreeOne
+	if descendants {
+		tree = ownerTreeSubtree
 	}
+	// The scope's own subtree (scope_tree) comes first when the principal is
+	// confined; the owner tree is a second CTE of the same WITH.
+	prefix, args := "WITH RECURSIVE "+tree+" ", []any{rootID}
+	if s.scope.mode == scopeSubtree {
+		prefix, args = mrql.SubtreeCTEDefinition+", "+tree+" ", []any{s.scope.root, rootID}
+	}
+	owned := " owner_id IN (SELECT id FROM owner_tree)"
+	if s.scope.mode == scopeSubtree {
+		owned += " AND owner_id IN " + subtreeIDs
+	}
+	with := func(extra ...any) []any { return append(append([]any{}, args...), extra...) }
 	total := 0
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		var count int64
-		if err := tx.Raw(prefix+`SELECT COUNT(*) FROM (SELECT 1 FROM resources WHERE owner_id = ?`+visible+` LIMIT ?) capped`,
-			append(append([]any{}, args...), groupID, reductionSelectionCap+1)...).Scan(&count).Error; err != nil {
+		if err := tx.Raw(prefix+`SELECT COUNT(*) FROM (SELECT 1 FROM resources WHERE`+owned+` LIMIT ?) capped`,
+			with(reductionSelectionCap+1)...).Scan(&count).Error; err != nil {
 			return err
 		}
 		if count > reductionSelectionCap {
@@ -140,23 +165,23 @@ func (s *reductionStore) addExtentFromGroupResources(r *models.ResourceReduction
 		after := uint(0)
 		for {
 			var hi uint
-			if err := tx.Raw(prefix+`SELECT COALESCE(MAX(id), 0) FROM (SELECT id FROM resources WHERE owner_id = ?`+visible+` AND id > ? ORDER BY id LIMIT ?) chunk`,
-				append(append([]any{}, args...), groupID, after, reductionRowChunk)...).Scan(&hi).Error; err != nil {
+			if err := tx.Raw(prefix+`SELECT COALESCE(MAX(id), 0) FROM (SELECT id FROM resources WHERE`+owned+` AND id > ? ORDER BY id LIMIT ?) chunk`,
+				with(after, reductionRowChunk)...).Scan(&hi).Error; err != nil {
 				return err
 			}
 			if hi == 0 {
 				return nil
 			}
 			res := tx.Exec(prefix+`INSERT INTO reduction_extent_resources (reduction_id, resource_id)
-				SELECT ?, id FROM resources WHERE owner_id = ?`+visible+` AND id > ? AND id <= ? ORDER BY id
+				SELECT ?, id FROM resources WHERE`+owned+` AND id > ? AND id <= ? ORDER BY id
 				ON CONFLICT DO NOTHING`,
-				append(append([]any{}, args...), r.ID, groupID, after, hi)...)
+				with(r.ID, after, hi)...)
 			if res.Error != nil {
 				return res.Error
 			}
 			var chunk int64
-			if err := tx.Raw(prefix+`SELECT COUNT(*) FROM resources WHERE owner_id = ?`+visible+` AND id > ? AND id <= ?`,
-				append(append([]any{}, args...), groupID, after, hi)...).Scan(&chunk).Error; err != nil {
+			if err := tx.Raw(prefix+`SELECT COUNT(*) FROM resources WHERE`+owned+` AND id > ? AND id <= ?`,
+				with(after, hi)...).Scan(&chunk).Error; err != nil {
 				return err
 			}
 			total += int(chunk)
