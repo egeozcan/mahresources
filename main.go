@@ -791,6 +791,9 @@ func main() {
 			log.Printf("[plugin] Activated %d plugin(s)", len(plugins))
 		}
 	}
+	// A delete that committed but whose files, hooks and manifest were never drained
+	// (a crash, a failed drain) is finished now, before any request can race it.
+	context.ReplayResourceCleanupManifest()
 
 	if err := models.EnsureSupplementalIndexes(db); err != nil {
 		fail("Error when creating supplemental indexes: %v", err)
