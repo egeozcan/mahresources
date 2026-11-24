@@ -63,6 +63,12 @@ type reductionStream struct {
 
 // streamReductionPlan is the whole compute: stage, measure, carry, cluster, land.
 func (ctx *MahresourcesContext) streamReductionPlan(jobCtx context.Context, reductionID uint, jobID, generation string, progress download_queue.ProgressSink) error {
+	return ctx.streamReductionPlanOwned(jobCtx, reductionID, jobID, generation, progress, nil, false)
+}
+
+// streamReductionPlanOwned is streamReductionPlan landing against the owner captured
+// at claim (claimOwner) when checkOwner is set.
+func (ctx *MahresourcesContext) streamReductionPlanOwned(jobCtx context.Context, reductionID uint, jobID, generation string, progress download_queue.ProgressSink, claimOwner *uint, checkOwner bool) error {
 	// Read unscoped by owner: this runs for the Reduction the request already
 	// authorized, and the principal's *data* scope applies through the store.
 	reduction, err := ctx.loadReductionForUpdate(reductionID, nil, false)
@@ -137,7 +143,13 @@ func (ctx *MahresourcesContext) streamReductionPlan(jobCtx context.Context, redu
 		WinnerRule:      rule,
 		ExcludeExternal: reduction.ExcludeExternalResources,
 	}
-	return ctx.finishLanding(reduction, jobID, generation, reduction.Version, coverage, settings)
+	// The landing compares the owner captured at claim, not the one this run re-read
+	// (a caller with no claim, the test seams, falls back to the re-read).
+	landing := *reduction
+	if checkOwner {
+		landing.CreatedByUserId = claimOwner
+	}
+	return ctx.finishLandingOwned(&landing, jobID, generation, reduction.Version, coverage, settings, true)
 }
 
 func (run *reductionStream) report(done, total int64) {

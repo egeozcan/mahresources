@@ -307,6 +307,7 @@ func (a *reductionComputeAdapter) start(ctx context.Context, execution jobs.Exec
 		reduction.ID, nonce, generation, legacyID,
 		jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
 		a.ctx.jobOwnerFor(execution.JobID),
+		reduction.CreatedByUserId,
 	)
 }
 
@@ -585,6 +586,7 @@ func (ctx *MahresourcesContext) startReductionComputeQueueJob(
 	legacyID string,
 	ref jobs.ExecutionRef,
 	ownerUserID *uint,
+	claimOwner *uint,
 ) (*download_queue.DownloadJob, error) {
 	if ctx == nil || ctx.downloadManager == nil {
 		return nil, errors.New("the download queue is not available")
@@ -619,7 +621,7 @@ func (ctx *MahresourcesContext) startReductionComputeQueueJob(
 			}
 			return claimErr
 		}
-		return ctx.runReductionCompute(jobCtx, reductionID, j.ID, generation, p)
+		return ctx.runReductionComputeOwned(jobCtx, reductionID, j.ID, generation, p, claimOwner, true)
 	}
 	if ref.JobID == "" {
 		return ctx.downloadManager.SubmitJobWithOptions(opts, runFn)

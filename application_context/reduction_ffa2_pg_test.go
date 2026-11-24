@@ -4,6 +4,10 @@ package application_context
 
 import "testing"
 
+func TestReductionComputeOwnerDeletedBetweenRequestAndLandingPG(t *testing.T) {
+	testReductionComputeOwnerDeletedBetweenRequestAndLanding(t, withSettings(newReductionPGContext(t)))
+}
+
 func TestReductionOverCapMigrationDerivesKeepsSmallerPG(t *testing.T) {
 	testReductionOverCapMigrationDerivesKeepsSmaller(t, newReductionPGContext(t))
 }

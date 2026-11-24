@@ -73,7 +73,13 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 	// discard them without their author ever seeing a refusal — and "every write
 	// is a compare-and-set" has to mean this write too. The same statement refuses
 	// a running apply or settle, so queued and replayed starts are refused too.
-	nonce, generation, err := ctx.beginReductionComputeStore(reduction.ID, version)
+	if reductionComputeAfterLoadHook != nil {
+		reductionComputeAfterLoadHook()
+	}
+	// Owner-qualified with the owner just loaded: an owner deleted since (nulled, no
+	// version bump) no longer matches, and nothing is claimed (design D2).
+	claimOwner := reduction.CreatedByUserId
+	nonce, generation, err := ctx.beginReductionComputeStoreAs(reduction.ID, version, claimOwner)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +89,7 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 		// No queue in this deployment (the CLI's and the tests' bare contexts).
 		// Running it inline is better than leaving the row at `computing` with
 		// nothing that will ever move it.
-		if runErr := ctx.runReductionCompute(context.Background(), reduction.ID, "", generation, nil); runErr != nil {
+		if runErr := ctx.runReductionComputeOwned(context.Background(), reduction.ID, "", generation, nil, claimOwner, true); runErr != nil {
 			return nil, runErr
 		}
 		return ctx.loadReductionForUpdate(reduction.ID, ownerUserID, ownerRestricted)
@@ -138,7 +144,7 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 	// job with no owner yet never reaches its own submitter's jobs panel — which
 	// is the only place the progress of this run is visible.
 	entry, err := ctx.startReductionComputeQueueJob(reduction.ID, nonce, generation, legacyID,
-		jobs.ExecutionRef{JobID: admission.Execution.JobID, ExecutionToken: admission.Execution.ExecutionToken}, actorUserID)
+		jobs.ExecutionRef{JobID: admission.Execution.JobID, ExecutionToken: admission.Execution.ExecutionToken}, actorUserID, claimOwner)
 	if err != nil {
 		// The queue refused it, so nothing is going to compute this. Put the row
 		// back rather than leaving it at `computing` until the deadline.
@@ -294,6 +300,23 @@ const reductionComputeAttempts = 3
 // it renewed while the Clusters are built in memory, and lands them as a new
 // generation of rows (design D4, D11).
 func (ctx *MahresourcesContext) runReductionCompute(jobCtx context.Context, reductionID uint, jobID, generation string, progress download_queue.ProgressSink) error {
+	return ctx.runReductionComputeOwned(jobCtx, reductionID, jobID, generation, progress, nil, false)
+}
+
+// reductionComputeAfterLoadHook runs between the request's load of the Reduction and
+// its claim. Only a test sets it, to delete the owner in that window.
+var reductionComputeAfterLoadHook func()
+
+// reductionComputeAfterClaimHook runs once the run holds its claim and lease, before
+// the stream reads the Reduction. Only a test sets it, to delete the owner there.
+var reductionComputeAfterClaimHook func()
+
+// runReductionComputeOwned is runReductionCompute carrying the owner the claim was
+// made against. When checkOwner is set the landing compares it with the row's owner
+// under the row lock, so an owner deleted mid-compute does not authorize it. The
+// owner is the one captured at claim, never re-read at the start of the stream: that
+// read already sees a NULL left by a deletion.
+func (ctx *MahresourcesContext) runReductionComputeOwned(jobCtx context.Context, reductionID uint, jobID, generation string, progress download_queue.ProgressSink, claimOwner *uint, checkOwner bool) error {
 	if err := ctx.storeAdmitComputeLease(reductionID, generation); err != nil {
 		if errors.Is(err, ErrReductionLeaseLost) {
 			// Another generation owns the row, or this reservation ran out: the newer
@@ -301,6 +324,9 @@ func (ctx *MahresourcesContext) runReductionCompute(jobCtx context.Context, redu
 			return ErrReductionComputeSuperseded
 		}
 		return ctx.failReductionCompute(reductionID, jobID, generation, err)
+	}
+	if reductionComputeAfterClaimHook != nil {
+		reductionComputeAfterClaimHook()
 	}
 	started := time.Now()
 	ticker, stopTicker := context.WithCancel(jobCtx)
@@ -311,7 +337,7 @@ func (ctx *MahresourcesContext) runReductionCompute(jobCtx context.Context, redu
 
 	var err error
 	for attempt := 0; attempt < reductionComputeAttempts; attempt++ {
-		err = ctx.streamReductionPlan(jobCtx, reductionID, jobID, generation, progress)
+		err = ctx.streamReductionPlanOwned(jobCtx, reductionID, jobID, generation, progress, claimOwner, checkOwner)
 		if err == nil || !isLockContentionError(err) || jobCtx.Err() != nil {
 			break
 		}
