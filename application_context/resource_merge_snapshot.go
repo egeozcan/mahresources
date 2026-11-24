@@ -80,14 +80,25 @@ var resourceSnapshotFields = []snapField{
 // snapshotCol qualifies a column with the alias of the row being snapshotted.
 func snapshotCol(alias, col string) string { return alias + "." + col }
 
-// sqliteTime is an RFC3339Nano UTC rendering of a stored timestamp. The driver
-// stores "2006-01-02 15:04:05.999999999-07:00"; the fraction is kept to the digit
-// and its trailing zeros dropped, as Go's RFC3339Nano does.
+// sqliteTime is the RFC3339Nano rendering json.Marshal gives the time the driver loads
+// from a stored timestamp: the stored wall clock and offset, not the instant in UTC. The
+// driver stores "2006-01-02 15:04:05.999999999-07:00" and parses it back with that offset;
+// the fraction keeps its digits with trailing zeros dropped, and a zero offset is "Z", as
+// Go writes it. A stored value without an offset reads as UTC. A form this does not
+// recognise falls back to the UTC rendering of the same instant.
 func sqliteTime(c string) string {
 	rest := "substr(" + c + ", 21)"
 	end := "min(instr(" + rest + " || '+', '+'), instr(" + rest + " || '-', '-'), instr(" + rest + " || 'Z', 'Z'), instr(" + rest + " || ' ', ' '))"
-	frac := "rtrim(CASE WHEN substr(" + c + ", 20, 1) = '.' THEN substr(" + rest + ", 1, " + end + " - 1) ELSE '' END, '0')"
-	return "(strftime('%Y-%m-%dT%H:%M:%S', " + c + ") || CASE WHEN length(" + frac + ") > 0 THEN '.' || " + frac + " ELSE '' END || 'Z')"
+	hasFrac := "substr(" + c + ", 20, 1) = '.'"
+	frac := "rtrim(CASE WHEN " + hasFrac + " THEN substr(" + rest + ", 1, " + end + " - 1) ELSE '' END, '0')"
+	fracText := "CASE WHEN length(" + frac + ") > 0 THEN '.' || " + frac + " ELSE '' END"
+	off := "CASE WHEN " + hasFrac + " THEN substr(" + c + ", 20 + " + end + ") ELSE substr(" + c + ", 20) END"
+	offText := "CASE WHEN " + off + " IN ('', 'Z', '+00:00', '-00:00') THEN 'Z' ELSE " + off + " END"
+	offOK := "(" + off + " IN ('', 'Z') OR (substr(" + off + ", 1, 1) IN ('+', '-') AND length(" + off + ") = 6 AND substr(" + off + ", 4, 1) = ':'))"
+	wall := "substr(" + c + ", 1, 10) || 'T' || substr(" + c + ", 12, 8)"
+	utc := "strftime('%Y-%m-%dT%H:%M:%S', " + c + ")"
+	return "(CASE WHEN " + offOK + " THEN " + wall + " || " + fracText + " || " + offText +
+		" ELSE " + utc + " || " + fracText + " || 'Z' END)"
 }
 
 // resourceSnapshotExpr is the SQL expression for one row's snapshot object, over
@@ -108,8 +119,13 @@ func resourceSnapshotExpr(dialect, alias string) string {
 			continue
 		case snapNull:
 			val = "NULL"
-		case snapUint, snapString, snapNullable:
+		case snapNullable:
 			val = col
+		case snapUint:
+			// A NULL scans into a Go zero value, which json.Marshal writes as 0.
+			val = "COALESCE(" + col + ", 0)"
+		case snapString:
+			val = "COALESCE(" + col + ", '')"
 		case snapOmitNil:
 			if postgres {
 				optional = append(optional, "CASE WHEN "+col+" IS NOT NULL THEN jsonb_build_object("+key+", "+col+") ELSE '{}'::jsonb END")
@@ -119,15 +135,20 @@ func resourceSnapshotExpr(dialect, alias string) string {
 			continue
 		case snapTime:
 			if postgres {
-				val = "rtrim(rtrim(to_char(" + col + " AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US'), '0'), '.') || 'Z'"
+				val = "COALESCE(rtrim(rtrim(to_char(" + col + " AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US'), '0'), '.') || 'Z', '0001-01-01T00:00:00Z')"
 			} else {
-				val = sqliteTime(col)
+				val = "COALESCE(" + sqliteTime(col) + ", '0001-01-01T00:00:00Z')"
 			}
 		case snapMeta:
 			if postgres {
 				val = "COALESCE(CASE WHEN jsonb_typeof(" + col + ") = 'object' THEN " + col + " - '" + metaBackupsKey + "' ELSE " + col + " END, 'null'::jsonb)"
 			} else {
-				val = "json(COALESCE(CASE WHEN json_type(" + col + ") = 'object' THEN json_remove(" + col + ", '$." + metaBackupsKey + "') ELSE " + col + " END, 'null'))"
+				// json_remove drops the first of a repeated key and Go's decode keeps the last, so
+				// a repeated backups key is dropped member by member.
+				member := "m.key <> '" + metaBackupsKey + "'"
+				rebuilt := "json((SELECT '{' || COALESCE(group_concat(json_quote(m.key) || ':' || CASE m.type WHEN 'object' THEN m.value WHEN 'array' THEN m.value WHEN 'null' THEN 'null' WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE json_quote(m.value) END, ','), '') || '}' FROM json_each(" + col + ") m WHERE " + member + "))"
+				repeated := "(SELECT count(*) FROM json_each(" + col + ") m WHERE m.key = '" + metaBackupsKey + "') > 1"
+				val = "json(COALESCE(CASE WHEN json_type(" + col + ") = 'object' THEN CASE WHEN " + repeated + " THEN " + rebuilt + " ELSE json_remove(" + col + ", '$." + metaBackupsKey + "') END ELSE " + col + " END, 'null'))"
 			}
 		case snapJSON:
 			if postgres {
