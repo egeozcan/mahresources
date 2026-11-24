@@ -359,6 +359,8 @@ It **adds to** the preview image rather than replacing it. The image has its own
 
 Both slots are expanded **server-side before the JSON response is serialized**, so shortcodes resolve normally even though the lightbox is rendered in the browser.
 
+For photo libraries, [`[similar]`](./shortcodes.md#similar----lookalike-thumbnails) in `CustomLightbox` or `CustomSidebar` puts the image's stored lookalikes, each with a Duplicate or Similar badge and a Compare link, next to the image being reviewed.
+
 ## CustomCell
 
 *Resource Categories only.* The resources list has a table view (`/resources/details`) with fixed columns: ID, Name, Preview, Size, Created, Updated, Original Name, Original Location. `CustomCell` adds one more column, headed **Custom**, rendered once per row.

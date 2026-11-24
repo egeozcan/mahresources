@@ -55,6 +55,7 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 | `[autorefresh]` | Block | Re-render the body after an inline editor saves |
 | `[using]` | Block | Render the body with another group, resource or note as the entity |
 | `[adjacent]` | Inline | Previous/next links to the entity's siblings or Series |
+| `[similar]` | Inline | Thumbnails of perceptually similar resources, with tier, distance and a compare link |
 | `[inspect]` | Inline | Live preview only: list the Meta paths, fields and `[each]` element paths available at that point |
 | `[comment]` | Block | Remove a section on the server so it never runs or renders |
 
@@ -1268,6 +1269,84 @@ Only the ID and name of a visible sibling reach the page.
 On entity display pages, in deferred `[lazy]`/`[details]`/`[autorefresh]` bodies, and in the template editor's and the description editor's live previews. Everywhere else it renders the HTML comment `<!-- mr:adjacent unavailable in this context -->`: the MRQL render API, share pages, the lightbox, the entity picker, the AI template generation tools and the CLI.
 
 `[adjacent]` cannot be used inside a `[reload]` button face.
+
+## `[similar]` -- Lookalike Thumbnails
+
+`[similar]` shows the resources that look like the current one: duplicates, re-exports, crops and light edits. It reads the perceptual-hash pairs the hash worker has already stored, the same pairs behind the resource page's Similar Resources panel and MRQL's `SIMILAR TO`. Use it where that panel is not: the lightbox, the sidebar, the detail footer, or a group page through `[using]`.
+
+```
+[similar]
+[similar max-distance="2" limit="12" size="sm" label="Possible duplicates"]
+```
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `max-distance` | No | the hash similarity threshold | The largest perceptual distance shown, a whole number from 0 to 11. Unset, the threshold from the settings applies, the one the Similar Resources panel uses. |
+| `limit` | No | `8` | The most thumbnails shown, a whole number from 1 to 24. The nearest come first; equal distances are in ID order. |
+| `size` | No | `md` | Thumbnail edge: `sm` is 48 px, `md` 96 px, `lg` 200 px. |
+| `label` | No | `Similar resources` | The visible caption, which is also the strip's accessible name. Blank means the default. |
+
+`[similar]` is inline only and has no `id` attribute: it always shows the lookalikes of the current resource. An invalid `max-distance`, `limit` or `size` renders an error marker, and the linter reports the same message.
+
+### Tiers
+
+Each thumbnail carries a badge with its tier and distance, with the same cut-off as the Similar Resources panel:
+
+| Distance | Badge | Meaning |
+|----------|-------|---------|
+| 0 to 2 | `Duplicate · d` | A near-certain duplicate |
+| 3 and above | `Similar · d` | Visually similar |
+
+### Output
+
+```html
+<figure class="similar-strip my-2" data-similar-for="42">
+  <figcaption class="text-xs font-semibold mb-1">Similar resources</figcaption>
+  <ul class="flex flex-wrap gap-2" role="list">
+    <li class="flex flex-col items-center gap-0.5">
+      <a href="/resource?id=17" ...><img src="/v1/resource/preview?id=17&amp;width=96&amp;height=96&amp;v=..." width="96" height="96"
+           loading="lazy" alt="Beach sunset (2), near-certain duplicate, distance 1" ...></a>
+      <span ... aria-hidden="true">Duplicate · 1</span>
+      <a href="/resource/compare?r1=42&amp;r2=17" ...>Compare<span class="sr-only"> Beach sunset (2) with Beach sunset</span></a>
+    </li>
+  </ul>
+</figure>
+```
+
+- The caption names the strip. Each image's alt text gives the name, the tier and the distance, so the badge is hidden from assistive technology. A resource with a blank name is shown as "Resource 17".
+- The Compare link opens the side-by-side compare page. Its accessible name starts with the visible word "Compare" and names both resources.
+- The badges carry their own background, and the caption and links take the slot's text colour, so the strip reads on the white page and on the dark lightbox panel.
+- Names are always HTML-escaped and are never expanded as shortcodes.
+
+### When it renders nothing
+
+- With no stored pairs within the distance, or when the viewer may see none of them, `[similar]` renders nothing. It never hashes images while a page renders, and it does not fall back to exact hash matches. A resource that is not an image has no pairs.
+- On a group or a note it renders an error marker. Use `[using]` to point it at a resource.
+- On share pages it renders `<!-- mr:similar unavailable in this context -->`.
+
+### Another resource: `[using]`
+
+```
+[using type="resource" id-path="cover"][similar label="Lookalikes of the cover"][/using]
+```
+
+Inside `[using]` the strip belongs to the resolved resource: its Compare links compare against that resource and name it. A cover the viewer cannot see resolves to no target, so the block renders its `[else]` branch or nothing.
+
+### Scoping and cost
+
+- Lookalikes are read as the viewer. A group-confined user or guest only sees resources inside their subtree, and an unowned resource is outside every subtree. "No lookalikes" and "lookalikes you may not see" look the same.
+- Each `[similar]` counts one unit of the [per-page query budget](#per-page-query-budget), and an identical one on the same page is free. It runs one indexed `SIMILAR TO` query and one lookup of at most 24 pair rows, so its cost follows the size of the resource's lookalike cluster, not of the library.
+- Put it in `CustomSidebar`, `CustomLightbox` or `CustomDetailFooter`. In a per-card slot it costs one budget unit per card.
+
+### In the lightbox
+
+The lightbox renders `CustomLightbox` (or, when that is empty, `CustomSidebar`) when it opens a resource, so `[similar]` shows the image's lookalikes next to it. Its links are ordinary links: following one leaves the lightbox for the resource or compare page, like the lightbox's own "Open resource page" link.
+
+`[similar]` cannot be used inside a `[reload]` button face.
+
+`similar` is now a reserved shortcode name: text written as `[similar …]` in an existing template renders the strip (or an error marker on a group or note) instead of showing as text.
 
 ## `[comment]` -- Comment out a section
 

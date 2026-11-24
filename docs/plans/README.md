@@ -66,6 +66,7 @@ the code wins. For how the system is actually put together see
 - [2026-11-23-resource-reduction-ux.md](2026-11-23-resource-reduction-ux.md)
 - [2026-11-24-shortcode-adjacent.md](2026-11-24-shortcode-adjacent.md)
 - [2026-11-24-shortcode-inspect.md](2026-11-24-shortcode-inspect.md)
+- [2026-11-24-shortcode-similar.md](2026-11-24-shortcode-similar.md)
 
 ## Archive
 

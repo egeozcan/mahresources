@@ -152,3 +152,37 @@ func readUintField(entity any, name string) (uint, bool) {
 		return 0, false
 	}
 }
+
+// readStringField returns the string value of a named field on entity (a
+// struct or a pointer to one), or "" when the field is missing, not a string or
+// the entity is nil. It is readUintField's string counterpart, for handlers that
+// read a name or hash off a result entity without importing its model.
+func readStringField(entity any, name string) string {
+	if entity == nil {
+		return ""
+	}
+	v := reflect.ValueOf(entity)
+	if v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return ""
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return ""
+	}
+	f := v.FieldByName(name)
+	if !f.IsValid() {
+		return ""
+	}
+	if f.Kind() == reflect.Ptr {
+		if f.IsNil() {
+			return ""
+		}
+		f = f.Elem()
+	}
+	if f.Kind() != reflect.String {
+		return ""
+	}
+	return f.String()
+}

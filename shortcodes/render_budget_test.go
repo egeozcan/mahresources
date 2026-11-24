@@ -286,7 +286,8 @@ func TestBudgetCacheKeyUnchangedForOrdinaryInputs(t *testing.T) {
 	b := budgetCacheKey("a", QueryOptions{SavedName: "b|c"})
 	assert.NotEqual(t, a, b)
 	k := budgetCacheKey("q", QueryOptions{Params: map[string]string{"y": "2", "x": "1"}, Limit: 3})
-	assert.Equal(t, `"q"|""|0|3|0|2|false|"x"="1"|"y"="2"`, k)
+	// The trailing booleans are WantTotal and WantSimilarityDistance.
+	assert.Equal(t, `"q"|""|0|3|0|2|false|false|"x"="1"|"y"="2"`, k)
 }
 
 // A refused pattern costs the page only that conditional: an unbudgeted render

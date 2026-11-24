@@ -227,6 +227,18 @@ Renders a `<nav>` with `rel="prev"`/`rel="next"` links, leaves out a missing sid
 [adjacent series="true" label="Pages"]
 ```
 
+### `[similar]`
+
+Thumbnails of the resources that look like the current one, from the stored perceptual-hash pairs, nearest first (ties by ID). Each has a badge `Duplicate · d` (distance 0–2, a near-certain duplicate) or `Similar · d`, an alt text with name, tier and distance, and a Compare link to `/resource/compare?r1=<this>&r2=<match>`. Attributes: `max-distance` (0–11; unset uses the hash similarity threshold setting), `limit` (1–24, default 8), `size` (`sm` 48 px, `md` 96 px default, `lg` 200 px), `label` (caption and accessible name, default "Similar resources").
+
+Resources only: on a group or note it renders an error marker, so use `[using type="resource" id-path="cover"][similar][/using]` there. Renders nothing when there are no pairs within the distance (non-images never have any). Read as the viewer, so a group-confined user only sees in-subtree resources. One page-query budget unit each: put it in `CustomSidebar`, `CustomLightbox` or `CustomDetailFooter`, not a per-card slot. Renders inline in the lightbox; an "unavailable" comment on share pages. Inline only; not allowed inside a `[reload]` face.
+
+```
+[similar]
+[similar max-distance="2" limit="12" size="sm" label="Possible duplicates"]
+[using type="resource" id-path="cover"][similar label="Lookalikes of the cover"][/using]
+```
+
 ## Built-in Plugin Shortcodes
 
 Only three built-in plugins currently ship shortcodes:

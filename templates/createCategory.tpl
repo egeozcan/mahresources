@@ -288,6 +288,17 @@
 [adjacent series="true" label="Pages"]</code></pre>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[similar]</code>
+                        &mdash; thumbnails of the resources that look like a resource (stored perceptual-hash pairs), nearest first, each with a Duplicate or Similar badge, its distance and a Compare link. It works only on a resource, so here wrap it in [using type="resource" …] to show the lookalikes of one this entity references.
+                        <br><span class="text-stone-400 ml-4">
+                            <b class="text-stone-500">max-distance</b>="0–11"
+                            &middot; <b class="text-stone-500">limit</b>="1–24" (8)
+                            &middot; <b class="text-stone-500">size</b>="sm|md|lg"
+                            &middot; <b class="text-stone-500">label</b>="caption and accessible name"
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[using type="resource" id-path="cover"][similar label="Lookalikes of the cover"][/using]</code></pre>
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[reload]</code>
                         &mdash; a button that re-renders content in place, without navigating. It refreshes the innermost [lazy], [details] or [autorefresh] block around it, or the whole custom-content slot when it sits outside both. Self-closing renders a circular-arrow icon; wrap a body to use that as the button face instead.
                         <br><span class="text-stone-400 ml-4">

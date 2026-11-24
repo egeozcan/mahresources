@@ -353,6 +353,9 @@ func (p *TemplatePrivacy) queryItems(ctx context.Context, w *privacyWalk, items 
 		p.keepScalar(int64(it.ParentGroupID))
 		p.keepScalar(int64(it.RootGroupID))
 		p.keepScalar(int64(it.CategoryID))
+		if it.SimilarityDistance != nil {
+			p.keepScalar(int64(*it.SimilarityDistance))
+		}
 		out[i] = n
 	}
 	return out, nil

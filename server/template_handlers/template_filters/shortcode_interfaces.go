@@ -32,6 +32,7 @@ type QueryExecutorContext interface {
 	CountMRQLScoped(reqCtx context.Context, parsed *mrql.Query, scopeGroupID uint) (int64, error)
 	GetSavedMRQLQueryByName(name string) (*models.SavedMRQLQuery, error)
 	LoadMRQLRenderData(reqCtx context.Context, resourceCategoryIDs, noteTypeIDs, categoryIDs, scopeGroupIDs []uint) (*application_context.MRQLRenderData, error)
+	SimilarityDistancesTo(reqCtx context.Context, targetID uint, ids []uint) (map[uint]int, error)
 	MRQLPageQueryBudget() int
 	Logger() *application_context.Logger
 }
@@ -50,7 +51,8 @@ type budgetLogger interface {
 }
 
 // mrqlShortcodeRunner is the sliver executeMRQLForShortcode needs: scope
-// resolution plus the three execution shapes and saved-query lookup.
+// resolution plus the three execution shapes, saved-query lookup and the
+// similarity distances [similar] asks for.
 type mrqlShortcodeRunner interface {
 	ResolveMRQLScope(q *mrql.Query) (uint, error)
 	ExecuteMRQLScoped(reqCtx context.Context, parsed *mrql.Query, scopeGroupID uint) (*application_context.MRQLResult, error)
@@ -58,6 +60,7 @@ type mrqlShortcodeRunner interface {
 	CountMRQLScoped(reqCtx context.Context, parsed *mrql.Query, scopeGroupID uint) (int64, error)
 	GetSavedMRQLQueryByName(name string) (*models.SavedMRQLQuery, error)
 	LoadMRQLRenderData(reqCtx context.Context, resourceCategoryIDs, noteTypeIDs, categoryIDs, scopeGroupIDs []uint) (*application_context.MRQLRenderData, error)
+	SimilarityDistancesTo(reqCtx context.Context, targetID uint, ids []uint) (map[uint]int, error)
 }
 
 // PageRenderContext supplies the application capabilities used by shared

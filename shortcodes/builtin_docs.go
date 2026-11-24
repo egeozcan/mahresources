@@ -39,7 +39,7 @@ type DocExample struct {
 
 // BuiltinDoc documents one built-in shortcode (meta, datetime, pills,
 // property, mrql, conditional, link, each, item, partial, lazy, details,
-// reload, using, inspect, adjacent, comment).
+// reload, using, inspect, adjacent, similar, comment).
 type BuiltinDoc struct {
 	Name        string          `json:"name"`
 	Syntax      string          `json:"syntax"`
@@ -349,6 +349,23 @@ func BuiltinDocs() []BuiltinDoc {
 			Examples: []DocExample{
 				{Title: "Owner and category siblings", Code: `[adjacent]`},
 				{Title: "Pages of a Series", Code: `[adjacent series="true" label="Pages"]`},
+			},
+		},
+		{
+			Name:        "similar",
+			Syntax:      `[similar]`,
+			Description: "Thumbnails of the resources that look like this one, from the perceptual-hash pairs the hash worker stores, nearest first. Each thumbnail links to its resource and shows a tier badge with the distance: Duplicate for a distance of 2 or less (a near-certain duplicate), Similar above that, the same cut-off as the resource page's Similar Resources panel. Its alt text gives the name, tier and distance, and a Compare link under it opens the side-by-side compare page. It works only on a resource; to show the lookalikes of another resource, such as a group's cover, wrap it in [using type=\"resource\" …]. With no stored pairs within the distance it renders nothing; it never hashes images at render time. Lookalikes are read as the viewer, so a group-confined user only sees resources inside their subtree. Each [similar] costs one unit of the page query budget. It renders on display pages, deferred bodies, the lightbox and the template previews; on share pages it renders an \"unavailable\" comment. Put it in CustomSidebar, CustomLightbox or CustomDetailFooter rather than a per-card slot.",
+			IsBlock:     BlockNo,
+			Attrs: []DocAttr{
+				{Name: "max-distance", Type: "number", Description: "The largest perceptual distance shown, a whole number from 0 to 11. Unset, the hash similarity threshold from the settings applies, the one the Similar Resources panel uses."},
+				{Name: "limit", Type: "number", Default: "8", Description: "The most thumbnails shown, a whole number from 1 to 24."},
+				{Name: "size", Type: "enum", Default: "md", Description: "Thumbnail edge: sm is 48 px, md 96 px, lg 200 px.", Enum: []string{"sm", "md", "lg"}},
+				{Name: "label", Type: "string", Default: "Similar resources", Description: "The visible caption, which is also the strip's accessible name. Blank means the default."},
+			},
+			Examples: []DocExample{
+				{Title: "Lookalikes of this resource", Code: `[similar]`},
+				{Title: "Only near-certain duplicates", Code: `[similar max-distance="2" limit="12" size="sm" label="Possible duplicates"]`},
+				{Title: "A group's cover image", Code: `[using type="resource" id-path="cover"][similar label="Lookalikes of the cover"][/using]`, Notes: "The strip belongs to the cover resource; a cover the viewer cannot see renders nothing."},
 			},
 		},
 		{

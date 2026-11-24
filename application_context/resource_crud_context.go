@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -33,6 +34,56 @@ func (ctx *MahresourcesContext) GetResourceByID(id uint) (*models.Resource, erro
 
 func (ctx *MahresourcesContext) GetSimilarResources(id uint) ([]*models.Resource, error) {
 	return ctx.getSimilarResourcesLimited(id, 0)
+}
+
+// maxSimilarityDistanceIDs bounds SimilarityDistancesTo's IN lists. [similar]
+// asks for at most 24.
+const maxSimilarityDistanceIDs = 100
+
+// SimilarityDistancesTo returns the stored perceptual distance between targetID
+// and each of ids that has a pair with it (COALESCE(p_distance,
+// hamming_distance), the distance SIMILAR TO and the Similar Resources panel
+// read). An ID with no stored pair is absent from the map.
+//
+// It is a Raw query, which runs no scope callback, and that is safe only
+// because of what reaches it: the [similar] executor calls it with exactly the
+// IDs a principal-scoped SIMILAR TO query just returned, and for a target the
+// principal cannot see that query returns nothing, so this is never reached.
+// It reads only pair rows (two IDs and a distance), never a resource.
+// TestSimilarShortcode_HiddenTargetNeverReachesDistances pins that.
+func (ctx *MahresourcesContext) SimilarityDistancesTo(reqCtx context.Context, targetID uint, ids []uint) (map[uint]int, error) {
+	out := make(map[uint]int, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	if len(ids) > maxSimilarityDistanceIDs {
+		return nil, fmt.Errorf("similarity distances: %d ids exceeds the limit of %d", len(ids), maxSimilarityDistanceIDs)
+	}
+	if reqCtx == nil {
+		reqCtx = context.Background()
+	}
+	distance := mrql.SimilarPairDistance("resource_similarities")
+	query := fmt.Sprintf(`
+		SELECT resource_id2 AS id, %s AS d FROM resource_similarities WHERE resource_id1 = ? AND resource_id2 IN ?
+		UNION ALL
+		SELECT resource_id1 AS id, %s AS d FROM resource_similarities WHERE resource_id2 = ? AND resource_id1 IN ?`,
+		distance, distance)
+	rows, err := ctx.db.WithContext(reqCtx).Raw(query, targetID, ids, targetID, ids).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id uint
+		var d int
+		if err := rows.Scan(&id, &d); err != nil {
+			return nil, err
+		}
+		if prev, ok := out[id]; !ok || d < prev {
+			out[id] = d
+		}
+	}
+	return out, rows.Err()
 }
 
 // getSimilarResourcesLimited is GetSimilarResources with an optional cap on how many

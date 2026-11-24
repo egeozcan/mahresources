@@ -140,7 +140,7 @@ func KnownFromBuiltins() KnownShortcodes {
 var conditionalOperators = []string{"eq", "neq", "gt", "lt", "gte", "lte", "in", "contains", "matches", "empty", "not-empty"}
 
 // builtinBaseNames is used for near-miss detection of misspelled shortcodes.
-var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "inspect", "adjacent", "comment"}
+var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "similar", "inspect", "adjacent", "comment"}
 
 // looseBracketPattern finds bracket expressions that lead with an identifier,
 // used to detect shortcode-looking brackets that did not parse as real
@@ -431,6 +431,15 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			}
 		case "using":
 			lintUsing(w, tk, add)
+		case "similar":
+			// The renderer's own validation, so lint and page say the same thing.
+			if _, problem := parseSimilarAttrs(tk.attrs); problem != "" {
+				add(tk.start, tk.end, SeverityError, problem)
+			}
+			if insideSpans(tk.start, reloadSpans) {
+				add(tk.start, tk.end, SeverityError,
+					"[similar] cannot be used inside a [reload] button face")
+			}
 		case "reload":
 			// A <button> may not contain another button. The renderer refuses the
 			// whole thing rather than emit invalid interactive nesting, so say so

@@ -29,3 +29,9 @@ const ResourceTableIndexBuildLockKey = int64(0x4D52465453534D50)
 // while it builds the notes and groups [adjacent] indexes CONCURRENTLY
 // ("MRADJNAV"). The resources one is built under ResourceTableIndexBuildLockKey.
 const SiblingNavIndexBuildLockKey = int64(0x4D5241444A4E4156)
+
+// SimilarityDuplicateMaxDistance is the largest perceptual distance that counts
+// as a near-certain duplicate rather than merely similar. The resource page's
+// Similar Resources panel (models.Resource.SimilarityTier) and the [similar]
+// shortcode both read it, so the two tiers cannot drift apart.
+const SimilarityDuplicateMaxDistance = 2
