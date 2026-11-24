@@ -1,0 +1,131 @@
+package application_context
+
+import (
+	"fmt"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+
+	"mahresources/models"
+)
+
+// A Reduction's selections as rows (design D5): explicit Resource ids in
+// reduction_extent_resources, Group ids in reduction_extent_groups, and the
+// whole-library flag on the Reduction row. They replace the Extent JSON.
+
+// reductionSelectionCap is the most ids one create or widen request may add, and
+// the most Resources "from a Group's Resources" may take.
+const reductionSelectionCap = 10000
+
+// reductionSelectionPreview is how many names the review's selection preview lists.
+const reductionSelectionPreview = 20
+
+// ErrReductionSelectionTooLarge refuses a selection above the per-request cap.
+var ErrReductionSelectionTooLarge = fmt.Errorf("a selection may name at most %d Resources or Groups at a time", reductionSelectionCap)
+
+// addExtentResources adds explicit Resource ids, ignoring ones already selected.
+func (s *reductionStore) addExtentResources(r *models.ResourceReduction, ids []uint) error {
+	if len(ids) > reductionSelectionCap {
+		return ErrReductionSelectionTooLarge
+	}
+	rows := make([]models.ReductionExtentResource, 0, len(ids))
+	for _, id := range dedupeUints(ids) {
+		rows = append(rows, models.ReductionExtentResource{ReductionID: r.ID, ResourceID: id})
+	}
+	return s.insertIgnore(rows)
+}
+
+// addExtentGroups adds Group ids, ignoring ones already selected.
+func (s *reductionStore) addExtentGroups(r *models.ResourceReduction, ids []uint) error {
+	if len(ids) > reductionSelectionCap {
+		return ErrReductionSelectionTooLarge
+	}
+	rows := make([]models.ReductionExtentGroup, 0, len(ids))
+	for _, id := range dedupeUints(ids) {
+		rows = append(rows, models.ReductionExtentGroup{ReductionID: r.ID, GroupID: id})
+	}
+	return s.insertIgnore(rows)
+}
+
+func (s *reductionStore) insertIgnore(rows any) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		return tx.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(rows, reductionRowChunk).Error
+	})
+}
+
+// addExtentFromGroupResources selects every Resource the Group owns that the
+// principal may see, by scoped INSERT ... SELECT in id-keyset chunks, so no id
+// list is held in Go. More than the cap refuses the whole request. It returns how
+// many Resources were selected (new or already there).
+func (s *reductionStore) addExtentFromGroupResources(r *models.ResourceReduction, groupID uint) (int, error) {
+	if s.scope.mode == scopeDeny {
+		return 0, nil
+	}
+	prefix, args := s.with()
+	visible := ""
+	if s.scope.mode == scopeSubtree {
+		visible = " AND owner_id IN " + subtreeIDs
+	}
+	total := 0
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var count int64
+		if err := tx.Raw(prefix+`SELECT COUNT(*) FROM (SELECT 1 FROM resources WHERE owner_id = ?`+visible+` LIMIT ?) capped`,
+			append(append([]any{}, args...), groupID, reductionSelectionCap+1)...).Scan(&count).Error; err != nil {
+			return err
+		}
+		if count > reductionSelectionCap {
+			return ErrReductionSelectionTooLarge
+		}
+		after := uint(0)
+		for {
+			var hi uint
+			if err := tx.Raw(prefix+`SELECT COALESCE(MAX(id), 0) FROM (SELECT id FROM resources WHERE owner_id = ?`+visible+` AND id > ? ORDER BY id LIMIT ?) chunk`,
+				append(append([]any{}, args...), groupID, after, reductionRowChunk)...).Scan(&hi).Error; err != nil {
+				return err
+			}
+			if hi == 0 {
+				return nil
+			}
+			res := tx.Exec(prefix+`INSERT INTO reduction_extent_resources (reduction_id, resource_id)
+				SELECT ?, id FROM resources WHERE owner_id = ?`+visible+` AND id > ? AND id <= ? ORDER BY id
+				ON CONFLICT DO NOTHING`,
+				append(append([]any{}, args...), r.ID, groupID, after, hi)...)
+			if res.Error != nil {
+				return res.Error
+			}
+			var chunk int64
+			if err := tx.Raw(prefix+`SELECT COUNT(*) FROM resources WHERE owner_id = ?`+visible+` AND id > ? AND id <= ?`,
+				append(append([]any{}, args...), groupID, after, hi)...).Scan(&chunk).Error; err != nil {
+				return err
+			}
+			total += int(chunk)
+			after = hi
+		}
+	})
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// extentPreview is the review's selection preview: how many Resources are
+// selected explicitly, and the first names among those the principal may see.
+func (s *reductionStore) extentPreview(r *models.ResourceReduction) (int64, []string, error) {
+	var n int64
+	if err := s.db.Model(&models.ReductionExtentResource{}).Where("reduction_id = ?", r.ID).Count(&n).Error; err != nil {
+		return 0, nil, err
+	}
+	prefix, args := s.with()
+	visible := ""
+	switch s.scope.mode {
+	case scopeSubtree:
+		visible = " AND r.owner_id IN " + subtreeIDs
+	case scopeDeny:
+		return n, nil, nil
+	}
+	var names []string
+	err := s.db.Raw(prefix+`SELECT r.name FROM reduction_extent_resources e JOIN resources r ON r.id = e.resource_id
+		WHERE e.reduction_id = ?`+visible+` ORDER BY e.resource_id LIMIT ?`,
+		append(append([]any{}, args...), r.ID, reductionSelectionPreview)...).Scan(&names).Error
+	return n, names, err
+}

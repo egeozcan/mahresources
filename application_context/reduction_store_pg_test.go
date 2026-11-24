@@ -84,3 +84,11 @@ func TestReductionMigrationFailsComputingAndMigratesDraftsPG(t *testing.T) {
 func TestReductionMigrationResumesAfterTakeoverPG(t *testing.T) {
 	testReductionMigrationResumesAfterTakeover(t, newReductionPGContext(t))
 }
+
+func TestReductionSelectionsPG(t *testing.T) { testReductionSelections(t, newReductionPGContext(t)) }
+
+func TestReductionSelectFromGroupPG(t *testing.T) {
+	testReductionSelectFromGroup(t, newReductionPGContext(t))
+}
+
+func TestReductionLeasesPG(t *testing.T) { testReductionLeases(t, newReductionPGContext(t)) }
