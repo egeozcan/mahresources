@@ -152,7 +152,7 @@ func (ctx *MahresourcesContext) clusterNearIdentical(jobCtx context.Context, ext
 			if len(cluster.LoserIDs()) == 0 {
 				continue
 			}
-			if err := ctx.refreshLossy(cluster); err != nil {
+			if err := ctx.refreshLossy(cluster, rule); err != nil {
 				return nil, err
 			}
 		}

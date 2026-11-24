@@ -2079,6 +2079,36 @@ components:
             type: object
         ReductionApply:
             properties:
+                applyToken:
+                    type: string
+                expectedClusters:
+                    nullable: true
+                    type: integer
+                expectedLosers:
+                    nullable: true
+                    type: integer
+                id:
+                    type: integer
+                requestId:
+                    type: string
+                settleOnly:
+                    type: boolean
+                version:
+                    type: integer
+            type: object
+        ReductionBulkOverride:
+            properties:
+                action:
+                    type: string
+                allIdentical:
+                    type: boolean
+                clusterIds:
+                    items:
+                        type: string
+                    type: array
+                expectedCount:
+                    nullable: true
+                    type: integer
                 id:
                     type: integer
                 version:
@@ -2576,6 +2606,8 @@ components:
             type: object
         ResourceReductionCreator:
             properties:
+                all:
+                    type: boolean
                 excludeExternalResources:
                     type: boolean
                 groupIds:
@@ -11941,6 +11973,27 @@ paths:
                         application/json: {}
                     description: Successful response
             summary: Record a review decision about one Cluster
+            tags:
+                - reductions
+    /v1/reduction/clusters:
+        post:
+            description: Approves (check) or clears (uncheck) either the listed Cluster ids, any tier, or every open Identical Cluster (allIdentical, which needs the expectedCount the caller saw and never reaches the Near-Identical tier). A check leaves alone every Cluster that needs individual review (lossy, oversized, or keeping a lower-resolution copy) and counts them in needsReview. An unknown Cluster, or one the caller may not see, refuses the whole request like a single unknown Cluster; so does one that is not open. Carries the version the caller last saw; a stale one is refused with 409. Returns the new version, how many Clusters changed and how many need review.
+            operationId: bulkCheckResourceReductionClusters
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ReductionBulkOverride'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/ReductionBulkOverride'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Check or uncheck many Clusters of a Resource Reduction at once
             tags:
                 - reductions
     /v1/reduction/compute:

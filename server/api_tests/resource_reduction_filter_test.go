@@ -33,9 +33,12 @@ func TestReductionReviewPageFiltersByClusterStatus(t *testing.T) {
 	// Skip one Cluster; the other stays open.
 	override(t, tc, red.ID, plan.Clusters[0].ID, application_context.ReductionActionSkip, 0)
 
-	// Unfiltered: both render.
+	// With no status the page lands on the Open tab: the skipped Cluster is not
+	// there. status=all is the unfiltered list.
 	body := tc.MakeRequest(http.MethodGet, reductionPath(red.ID), nil).Body.String()
-	assert.Equal(t, 2, strings.Count(body, `data-testid="reduction-cluster"`), "both Clusters render unfiltered")
+	assert.Equal(t, 1, strings.Count(body, `data-testid="reduction-cluster"`), "the default view is the Open tab")
+	body = tc.MakeRequest(http.MethodGet, reductionPath(red.ID)+"&status=all", nil).Body.String()
+	assert.Equal(t, 2, strings.Count(body, `data-testid="reduction-cluster"`), "both Clusters render with status=all")
 
 	// Filtered to skipped: only the frozen one, which offers Reopen.
 	body = tc.MakeRequest(http.MethodGet, reductionPath(red.ID)+"&Status=skipped", nil).Body.String()
@@ -80,8 +83,8 @@ func TestReductionReviewPageFiltersByReviewed(t *testing.T) {
 	assert.Contains(t, body, "Reviewed", "the card still reads Reviewed")
 
 	body = tc.MakeRequest(http.MethodGet, reductionPath(red.ID)+"&Status=open", nil).Body.String()
-	assert.Equal(t, 0, strings.Count(body, `data-testid="reduction-cluster"`),
-		"an acted-on Cluster is no longer Open")
+	assert.Equal(t, 1, strings.Count(body, `data-testid="reduction-cluster"`),
+		"an acted-on Cluster is still Open: approving it must not move it to another tab")
 }
 
 // The tier filter separates the two match kinds, which is the distinction the
@@ -121,11 +124,10 @@ func TestReductionReviewPageFilterControlsReflectTheQuery(t *testing.T) {
 	computeReduction(t, tc, red.ID)
 
 	body := tc.MakeRequest(http.MethodGet, reductionPath(red.ID)+"&Status=skipped&Status=stale&Tier=near&Attention=1", nil).Body.String()
-	assert.Contains(t, body, `name="Status" value="skipped" checked`, "an active status renders checked")
-	assert.Contains(t, body, `name="Status" value="stale" checked`)
-	assert.Contains(t, body, `name="Tier" value="near" checked`)
-	assert.Contains(t, body, `name="Attention" value="1" checked`, "the attention toggle reflects the query")
-	assert.NotContains(t, body, `name="Tier" value="identical" checked`)
+	assert.Regexp(t, `data-testid="reduction-tab-skipped"[^>]*aria-current="page"`, body, "the first requested status is the current tab")
+	assert.Regexp(t, `data-testid="reduction-chip-tier-near-identical" aria-current="true"`, body, "an active tier renders as on")
+	assert.Regexp(t, `data-testid="reduction-chip-attention" aria-current="true"`, body, "the attention chip reflects the query")
+	assert.NotRegexp(t, `data-testid="reduction-chip-tier-identical" aria-current="true"`, body)
 }
 
 // The filter applies before pagination, exactly as a list query's WHERE runs

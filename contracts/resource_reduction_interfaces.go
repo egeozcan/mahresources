@@ -15,6 +15,10 @@ type ResourceReductionReader interface {
 	GetResourceReductions(offset, maxResults int, query *query_models.ResourceReductionQuery) ([]models.ResourceReduction, error)
 	GetResourceReductionCount(query *query_models.ResourceReductionQuery) (int64, error)
 	GetResourceReduction(id uint, ownerUserID *uint, ownerRestricted bool) (*models.ResourceReduction, error)
+	// GetReductionProgress counts each of the given Reductions' Clusters by state,
+	// over the Clusters the caller may fully see. The rows are the page the caller
+	// already loaded, so nothing outside it is read.
+	GetReductionProgress(reductions []models.ResourceReduction) (map[uint]ReductionProgress, error)
 	// GetReductionReview is one page of a Reduction's plan with the Resources
 	// behind it, filtered by the caller's Cluster query. Filtering happens before
 	// pagination, so the page count and the ClusterCount in the review describe
@@ -35,6 +39,10 @@ type ResourceReductionWriter interface {
 	// OverrideReductionCluster records one review decision — promote, eject,
 	// restore, skip, reopen, check or uncheck.
 	OverrideReductionCluster(override *query_models.ReductionOverride, ownerUserID *uint, ownerRestricted bool) (*models.ResourceReduction, error)
+	// BulkOverrideReductionClusters checks or unchecks many Clusters in one
+	// compare-and-set write. Clusters that need attention are never checked in bulk;
+	// they are counted in the result instead.
+	BulkOverrideReductionClusters(request *query_models.ReductionBulkOverride, ownerUserID *uint, ownerRestricted bool) (*ReductionBulkResult, error)
 	// ApplyResourceReduction merges every checked Cluster, reporting per Cluster
 	// what happened. Partial and repeatable: what is not checked stays open, and a
 	// Cluster refused at revalidation is named in the result and kept.

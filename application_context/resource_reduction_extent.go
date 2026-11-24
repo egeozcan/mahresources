@@ -34,11 +34,14 @@ type ReductionExtent struct {
 	// with it: an exact count of Groups they can no longer open is a fact about
 	// those Groups.
 	SelectedGroups int
+	// All is the whole library as the principal can see it. Nothing is listed: the
+	// scoped handle decides what "everything" is, on every use.
+	All bool
 }
 
 // Empty reports an Extent that names nothing.
 func (e *ReductionExtent) Empty() bool {
-	return len(e.ResourceIDs) == 0 && len(e.GroupIDs) == 0
+	return !e.All && len(e.ResourceIDs) == 0 && len(e.GroupIDs) == 0
 }
 
 // resolveReductionExtent expands the stored Extent against the current database
@@ -54,6 +57,7 @@ func (ctx *MahresourcesContext) resolveReductionExtent(stored models.ResourceRed
 	extent := &ReductionExtent{
 		ResourceIDs: map[uint]bool{},
 		GroupIDs:    map[uint]bool{},
+		All:         stored.All,
 	}
 
 	// Explicit Resource ids, filtered to the ones that still exist and that this
@@ -103,6 +107,13 @@ func (ctx *MahresourcesContext) resolveReductionExtent(stored models.ResourceRed
 // resources list shows both — an Extent that covered only one would silently miss
 // half of what "everything filed under Holidays" means.
 func (ctx *MahresourcesContext) extentResourceIDs(extent *ReductionExtent, fn func(ids []uint) error) error {
+	if extent.All {
+		// Everything the handle can see, in id-keyset pages: no OFFSET to rescan on a
+		// library of millions, and no set of seen ids to hold, because each id is
+		// visited exactly once. Pluck runs the scope callback, so a confined
+		// principal's "everything" is their subtree.
+		return ctx.walkVisibleResourceIDs(fn)
+	}
 	seen := map[uint]bool{}
 	emit := func(ids []uint) error {
 		fresh := make([]uint, 0, len(ids))
@@ -166,6 +177,13 @@ func (ctx *MahresourcesContext) extentResourceIDs(extent *ReductionExtent, fn fu
 // is the figure the last compute recorded, which is also the figure its coverage
 // line is about.
 func (ctx *MahresourcesContext) countExtentResources(extent *ReductionExtent) (int, error) {
+	if extent.All {
+		var count int64
+		if err := ctx.db.Model(&models.Resource{}).Count(&count).Error; err != nil {
+			return 0, fmt.Errorf("counting the library: %w", err)
+		}
+		return int(count), nil
+	}
 	total := 0
 	err := ctx.extentResourceIDs(extent, func(ids []uint) error {
 		total += len(ids)
@@ -183,6 +201,13 @@ func (ctx *MahresourcesContext) countExtentResources(extent *ReductionExtent) (i
 // Resources created since the last compute are ever materialised, and a Resource
 // that is both named explicitly and owned by a named Group must be counted once.
 func (ctx *MahresourcesContext) extentArrivalsSince(extent *ReductionExtent, since time.Time) (int, error) {
+	if extent.All {
+		var count int64
+		if err := ctx.db.Model(&models.Resource{}).Where("resources.created_at > ?", since).Count(&count).Error; err != nil {
+			return 0, err
+		}
+		return int(count), nil
+	}
 	arrivals := map[uint]bool{}
 	collect := func(ids []uint) {
 		for _, id := range ids {
@@ -230,6 +255,22 @@ func (ctx *MahresourcesContext) extentArrivalsSince(extent *ReductionExtent, sin
 // the answer costs one query per chunk of candidates however wide the Extent is.
 func (ctx *MahresourcesContext) containsResources(extent *ReductionExtent, candidates []uint) (map[uint]bool, error) {
 	inside := map[uint]bool{}
+	if extent.All {
+		// Everything the handle can see is inside; asking the database is what makes
+		// a candidate it cannot see fall outside, rather than assuming.
+		for _, chunk := range chunkUints(candidates, idChunk) {
+			var found []uint
+			if err := ctx.db.Model(&models.Resource{}).
+				Where("resources.id IN ?", chunk).
+				Pluck("resources.id", &found).Error; err != nil {
+				return nil, err
+			}
+			for _, id := range found {
+				inside[id] = true
+			}
+		}
+		return inside, nil
+	}
 	remaining := make([]uint, 0, len(candidates))
 	for _, id := range candidates {
 		if extent.ResourceIDs[id] {
@@ -270,6 +311,29 @@ func (ctx *MahresourcesContext) containsResources(extent *ReductionExtent, candi
 		}
 	}
 	return inside, nil
+}
+
+// walkVisibleResourceIDs streams every Resource id the handle can see through fn,
+// idChunk at a time, ascending by id.
+func (ctx *MahresourcesContext) walkVisibleResourceIDs(fn func(ids []uint) error) error {
+	var last uint
+	for {
+		var ids []uint
+		if err := ctx.db.Model(&models.Resource{}).
+			Where("resources.id > ?", last).
+			Order("resources.id ASC").
+			Limit(idChunk).
+			Pluck("resources.id", &ids).Error; err != nil {
+			return fmt.Errorf("walking the library: %w", err)
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		if err := fn(ids); err != nil {
+			return err
+		}
+		last = ids[len(ids)-1]
+	}
 }
 
 func mapKeys(m map[uint]bool) []uint {

@@ -1,0 +1,179 @@
+# Resource Reduction UX: backend contract
+
+What the backend lane (B1-B8 of `2026-11-23-resource-reduction-ux.md`) delivers, for the frontend lane. Everything below is implemented and tested; where the plan and the code differ, the code is described here.
+
+Naming rule for template access: Go structs have no json tags unless stated, so in pongo2 and in the `.json` twin of a page their fields keep Go names (`review.TabCounts.Open`). Keys built as `pongo2.Context` maps are lowerCamel. Both are listed with the name the template uses.
+
+## 1. Review page: `GET /reduction?id=N` (and `.json`)
+
+### 1.1 Query parameters
+
+All combine; unknown values fall back to the default and never error.
+
+| Param | Values | Default | Meaning |
+|-------|--------|---------|---------|
+| `status` (repeatable) | `open`, `reviewed`, `skipped`, `stale`, `applied`, `all` | `open` when absent | `open` is every open Cluster, acted on or not (the old `reviewed` folds into it). `reviewed` is still accepted and means open Clusters the reviewer acted on. `all` is no state filter. Several values are an OR. |
+| `tier` (repeatable) | `identical`, `near` | none | unchanged |
+| `attention` | `true` | off | unchanged meaning, now also matches `KeepsSmaller` |
+| `approval` | `approved`, `unapproved` | none | `approved` = checked, `unapproved` = not checked |
+| `sort` | `copies`, `size`, `computed` | `copies` | `copies`: most members first. `size`: largest total member file size first. `computed`: the plan's own order. Ties break by Cluster id, so pages are stable across refreshes. |
+| `pageSize` | `20`, `50`, `100` | `20` | anything else is 20 |
+| `page` | 1-based | 1 | unchanged |
+
+A Cluster the viewer may not fully see ("withheld") is absent from every view: no tab, no filter including `status=all`, no count, no page position, in the HTML and the `.json` twin. A stub is no longer rendered; only a Cluster that becomes unreachable between the page's reads and its hydration could still produce one, and the review reads from one snapshot to prevent that.
+
+### 1.2 New and changed top-level context keys
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `statusTab` | string | The tab the page is on: first requested status, or `open`. |
+| `tabCounts` | map `{open, skipped, stale, applied}` ints | Clusters per tab over visible Clusters only, ignoring every filter and chip. |
+| `reviewSort` | string | Effective sort: `copies`, `size` or `computed`. |
+| `reviewApproval` | string | `approved`, `unapproved` or `""`. |
+| `pageSize` | int | Effective page size. Also `review.PageSize`. |
+| `pageSizes` | `[20, 50, 100]` | The offered sizes. |
+| `reviewFilterActive` | bool | True when the reviewer set a filter. The default `open` tab does not count. Now includes `approval`. |
+| `applyFigures` | map | `{identical: {clusters, losers, keepAsVersion}, near: {clusters, losers, keepAsVersion}, keepsSmaller}`. Over approved, open, fully visible Clusters of the whole plan. Fully visible means every member, ejected ones included, is one the viewer may see: the same rule as the tabs, bulk and apply. `losers` is copies that would be removed. `keepAsVersion` is the Reduction's flag for that tier. `keepsSmaller` is how many of those approved Clusters keep a lower-resolution copy. |
+| `bulk` | map `{identicalApprovable, identicalOpen}` | `identicalApprovable` is the number on `Approve all Identical (n)`: open, fully visible Identical Clusters that are not yet approved and do not need attention, i.e. exactly what a click would change. `identicalOpen` is the count for the matching uncheck (attention Clusters included). Pass these as `expectedCount`. |
+| `settingsChanged` | bool | The row's matching mode, winner rule or exclude-external differs from what the plan was computed with. False for plans computed before this change. Keep-as-version flags are not compared. |
+| `lastApply` | null or map | `{startedAt, finishedAt, applied, removed, stale, running, interrupted}`. Times are RFC 3339 strings, `finishedAt` is null while running. `running` is true until finished. `interrupted` is true when `running` for longer than 30 minutes (the apply ceiling): then Clusters it did not reach are still approved. Null before the first apply. Also `countsHidden` (bool): true when `applied`, `removed` and `stale` were zeroed because a scoped viewer can no longer see every Cluster they count; render the times and state without numbers ("The last apply finished at ..."). Always false for an unrestricted viewer. |
+| `extentAll` | bool | Whole-library Reduction: render `Everything you can access`, hide the exclude-external option. |
+
+Unchanged and still present: `reduction`, `raw`, `review`, `clusters`, `coverage`, `pagination`, `winnerRule`, `extent`, `winnerCriteria`, `winnerRuleSlots`, `clusterStatusOptions`, `clusterTierOptions`, `attentionActive`. `clusterStatusOptions` is built from the request's own `status` values (empty by default), not from the defaulted `open`; use `statusTab`.
+
+`review.ClusterCount` is the count after filters (what pagination uses). `review.CheckedCount` and `review.CheckedLoserCount` remain whole-plan, visible-only, and equal `applyFigures` sums.
+
+Not yet computed (`Status` draft): `tabCounts` are zero, `lastApply` null, no Clusters.
+
+### 1.3 Per-Cluster view (`clusters[i]`, a `ReductionClusterView`)
+
+The embedded Cluster keeps its json tags (`id`, `tier`, `winnerId`, `members`, `decidedBy`, `margin`, `undecided`, `lossy`, `state`, `checked`, `reviewed`, `oversized`, `staleReason`, `appliedAt`, `merged`) and gains:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `keepsSmaller` (embedded, json) / `KeepsSmaller` (template) | bool | The kept copy has fewer pixels than a copy being removed. Pixels only. Suppressed when the first criterion of the rule the plan was computed under (`plan.settings.winnerRule`; the row's current rule only for a plan with none) is `pixels_asc`, never suppressed after a manual promotion. Recomputed on promote, eject and restore. For a plan stored before the flag existed (no `plan.settings`) the review derives it at read time, so the card, `applyFigures`, the attention filter and bulk approval all agree. |
+| `NeedsAttention` | bool | Lossy, Oversized or KeepsSmaller. Bulk approval skips these. |
+| `KeptDimensions`, `LargerDimensions` | string | `"800×533"`, `"1600×1066"`: the kept copy and the largest copy being removed. Empty unless `KeepsSmaller`. |
+| `LargestMemberID` | uint | The copy `Keep the larger copy instead` promotes (`action=promote`, `resourceId`). 0 unless `KeepsSmaller`. |
+| `DecidedByLabel` | string | Now also `you chose it` for `decidedBy = "manual"`. |
+
+`decidedBy` is `manual` after any promotion, with empty `margin` and `undecided` false. A withheld Cluster is the redacted stub as before: all new fields are zero.
+
+### 1.4 Per-member view (`clusters[i].Members[j]`)
+
+Existing: `Resource` (full model: `Width`, `Height`, `FileSize`, `ContentType`, `CreatedAt`, ...), `IsWinner`, `IsLoser`, `DistanceLabel`, plus the embedded member (`resourceId`, `hash`, `inExtent`, `ejected`, `ejectedReason`, `distance`). New: `TagCount`, `NoteCount`, `GroupCount` (ints, counted through the viewer's scope; 0 when `Resource` is nil).
+
+## 2. List page: `GET /reductions` (and `.json`)
+
+Each `reductions[i]` row gains:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `Progress` | `{Clusters, Open, Approved, Skipped, Stale, Applied}` ints | Over visible Clusters. `Open` is state open (includes the approved ones), `Approved` is the open and checked part. Zero before the first compute. |
+| `DonePercent` | int 0-100 | `(Applied + Skipped) * 100 / Clusters`. |
+| `ActionKind`, `ActionLabel` | string | `find` / `Find duplicates` (not computed), `retry` / `Try again` (failed), `continue` / `Continue review` (ready with open Clusters), otherwise `view` / `View` (also computing). |
+
+Computed on read for the page of rows; a scope-confined viewer's counts exclude withheld Clusters.
+
+## 3. API
+
+### 3.1 `POST /v1/reduction/clusters` (operationId `bulkCheckResourceReductionClusters`, MCP class `mutating`)
+
+JSON or form body:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | uint | the Reduction |
+| `version` | uint | the version the caller last saw; stale is 409 |
+| `action` | `check` or `uncheck` | anything else is 400 |
+| `clusterIds` | string[] | the ids the page rendered, any tier. Exactly one of `clusterIds` / `allIdentical`. |
+| `allIdentical` | bool | every open Identical Cluster in the whole plan; never the Near tier |
+| `expectedCount` | uint | required with `allIdentical`; `bulk.identicalApprovable` for `check`, `bulk.identicalOpen` for `uncheck` |
+
+Response `200`: `{"id", "version", "changed", "needsReview"}`. `version` is the new version for the next write. `changed` is how many Clusters flipped approval. `needsReview` is how many Clusters a `check` left untouched because they need attention (lossy, oversized, keeps smaller); those are not marked reviewed. Every other targeted Cluster is marked reviewed (frozen), as a single act does. `uncheck` never skips.
+
+Errors: `400` neither or both of `clusterIds`/`allIdentical`, bad `action`, `allIdentical` without `expectedCount`. `409` stale `version`, `expectedCount` mismatch, any named Cluster not open (skipped, stale, applied are reopened or settled one at a time), Reduction still computing. An unknown id, or one the viewer may not fully see, refuses the whole request with the same error as one unknown Cluster in `POST /v1/reduction/cluster`. Nothing is written on any error. The visibility check is repeated inside the write (members selected through the viewer's scope with a share lock, Postgres), so a Resource leaving their subtree mid-request fails the same way; `POST /v1/reduction/cluster` has the same guarantee.
+
+### 3.2 `POST /v1/reduction` (create): new field
+
+`all` (bool, JSON or form `all=true`): whole-library Reduction. `resourceIds`/`groupIds` may then be empty. Stored as `Extent.All`. With `id` set, `all=true` widens an existing Reduction to the whole library. Without `all`, an empty selection is still 400. `matchingMode`, `winnerRule`, `excludeExternalResources` and the keep-as-version flags were already accepted.
+
+### 3.3 `POST /v1/reduction/apply`: behavior change
+
+Request: `{id, version, expectedClusters?, expectedLosers?}` (JSON or form). `expectedClusters` and `expectedLosers` are the figures the apply dialog confirmed: `applyFigures.identical.clusters + near.clusters` and `identical.losers + near.losers` as of the page the dialog read. When present, the apply is refused with `409` (`what this apply would merge changed since you confirmed it; reload and review again`) and nothing is written unless the open, approved, fully visible Clusters the caller can see right now add up to exactly those numbers. Each is checked only when sent; omit both only for a caller that confirmed nothing. The set the apply acts on is fixed once, before the claim, so a scope change during the batch cannot widen it.
+
+The response is unchanged (`applied`, `stale`, `destroyed`) except that a Cluster the caller may not fully see (any member, ejected included, outside their access) is left completely untouched and does not appear in either list; the old `withheld` outcome flag is gone. The batch runs on a context detached from the request (30 minute ceiling), so a closed tab does not strand a Cluster; once the ceiling passes no new Cluster starts, the one in flight is settled on its own short context (a failed merge is demoted to stale), and Clusters not reached stay approved and open. It writes `lastApply` running at the claim and finished at the end (section 1.2). A second apply is refused with `409` while `lastApply` is running and younger than the ceiling (including one that read a version after the first claim), and allowed once it is `interrupted`.
+
+### 3.4 `POST /v1/reduction/cluster` (single override)
+
+Promote now sets `decidedBy = "manual"`. Nothing else changed.
+
+## 4. Plan document additions (`raw.Plan` is not exposed; for reference)
+
+`plan.settings {matchingMode, winnerRule, excludeExternal}` written at compute. `plan.lastApply {startedAt, finishedAt, applied, removed, stale}` written by apply, preserved by compute and every override. Cluster `keepsSmaller`. Extent `all`.
+
+## 5. Redaction audit of the new keys
+
+Withheld Clusters are in no count: `tabCounts`, `applyFigures`, `bulk`, list `Progress`, bulk `changed`/`needsReview`/`expectedCount`, the apply result and its `expectedClusters`/`expectedLosers` check. The new per-Cluster fields are zero on a redacted stub. Test: `server/api_tests/resource_reduction_context_keys_test.go`.
+
+`lastApply` counts what the last apply did. The record stores the ids of the Clusters it counted; a scoped viewer is shown the numbers only while every one of them is still fully visible to them, otherwise `countsHidden` is true and the numbers are zero. A Cluster withheld from the applier is not in the apply result at all, so it is in no stored count.
+
+## 6. Things the frontend should know
+
+- The existing `Status=open` link semantic changed: it now includes acted-on Clusters. `status=all` restores the old unfiltered list.
+- The default view hides withheld stubs, so a scope-confined reviewer sees `Open (n)` with n over visible Clusters only.
+- `Approve page` should send `clusterIds` from the rendered `clusters[].id`, skipping withheld stubs (their `id` is empty).
+- Apply is still synchronous; reload after a lost response and read `lastApply`.
+- Whole-library clustering walks the library through the scoped handle in id pages. Identical-tier compute on a very large library is slower than a group-scoped one (no `GROUP BY hash` shortcut yet).
+
+## 7. Addendum: `reviewSelection` (D8)
+
+Top-level review-page key (also in `.json`): `reviewSelection = {groups: [{id, name}], resources: [{id, name}], moreGroups, moreResources}`. First 20 of each by id, only what the viewer can see; invisible ones are in neither the lists nor `more*`. Empty lists for a whole-library Reduction (`extentAll`). Cost: one visibility read plus one name read per kind, through the scoped handle.
+
+## 8. Addendum: live review fixes
+
+- Deleted members. For an unrestricted principal a pending (open or skipped) Cluster with a non-ejected member that no longer exists (typically merged away by another Reduction) reads as `stale` with `staleReason` `a Resource in this Cluster no longer exists`, unapproved, in the review tabs, filters, `applyFigures`, bulk and the list `Progress`, all through one rule (`reviewReach`). Its `Members[i].Resource` is null for the deleted one and `Withheld` is 0, so the card must tolerate a missing Resource. A scope-confined principal cannot tell deleted from out of scope: the Cluster stays withheld and in no count. The reading is not persisted by a page view.
+- Ejecting the last Loser clears `checked`. Promoting any member clears `checked` (the reviewer approves the new proposal).
+- `stateLabel`: `Approved` (open, checked), `Not approved` (open, unchecked, acted on, e.g. after Reopen), `Open` (untouched), plus Skipped, Applied and Stale as before.
+
+## 9. Addendum: round 2
+
+- `applyToken` (top-level review key, 32 hex characters): digest over the approved, open, fully visible Clusters with at least one Loser (cluster id, Winner and its reviewed hash, each Loser with its reviewed hash). `POST /v1/reduction/apply` accepts `applyToken`; when present it must equal the server's current token or the apply is `409` and nothing is claimed. `expectedClusters` and `expectedLosers` remain optional.
+- `POST /v1/reduction/apply` accepts `requestId` (at most 64 characters). It is stored in the record and returned as `lastApply.requestId` so the client can match its own attempt.
+- A claimed but unconfirmed Cluster (state applied, `merged` false) is `Merging`: `tabCounts.merging` (new key), list `Progress.Merging`, `stateLabel` `Merging`. `Applied` counts and the `applied` status filter cover confirmed merges only. Each claim carries a `claimId`. The merge marks the Cluster merged in the same transaction that deletes its Losers (Reduction row locked first, then Series, then Resources) and refuses to run unless its claim is still current, so a claimed and unmerged Cluster was not merged. Settlement writes match the claim id. Abandoned claims are settled only inside the next apply's batch claim or `settleOnly`, never by a page read: all members present means back to open and approved, any gone means stale (`a Resource in this Cluster no longer exists`).
+- A member that leaves the caller's access after the claim (an ejected one too) releases the claim back to open and approved and the apply reports nothing about it.
+- A Cluster with no Loser left cannot be approved: single check answers `409 every copy in this Cluster is kept, so there is nothing to approve`, bulk check skips it, and apply ignores it.
+- Approving a Cluster that is stale because a Resource in it is gone answers `409 this Cluster is stale and cannot be approved: ...`, not "no such Cluster". `stateLabel` for stale is `Stale`; the reason is in `staleReason`.
+- A recompute keeps the keeps-smaller warning of legacy frozen Clusters it carries over.
+- `clusters[i].LoserCount` (template `LoserCount`, int): copies the Cluster would remove (not the Winner, not ejected). 0 means nothing to approve; show that instead of the Approve control. 0 on a redacted stub.
+- List `Progress.Approved`, the tabs, `applyFigures` and the apply all use one predicate: open, checked, at least one Loser, fully visible.
+- Recovering a stale Cluster: Eject (`Don't remove`) is allowed on a stale Cluster's members and reopens it; recompute does not rebuild a frozen stale Cluster. If the Winner itself changed or is gone, start a new Reduction.
+- The page's version, figures and `applyToken` all come from `review.Reduction`.
+
+## 10. Addendum: round 4
+
+- Every write that carries `version` (apply, bulk, single override, settings) is refused with `409` when it differs from the loaded row's version, and writes against the loaded version.
+- `POST /v1/reduction/apply` response gains `changed` (int): approved Clusters another decision moved before their turn. They are not stale and not on the Stale tab; `lastApply.stale` equals what the Stale tab gained. Request gains `settleOnly` (bool): runs only the claim reconciliation (same refusals, `409` while an apply is running), merges nothing, records no `lastApply`, returns an empty result. It is the same route, so the MCP safety class stays `destructive` (it is a subset of what apply does and the class is per route).
+- A stale Cluster from a failed hash or pair check records the failing members: `clusters[i].Members[j].Changed` (bool) and `clusters[i].WinnerChanged` (bool, the kept copy itself is among them). Cleared when the Cluster is reopened. Only visible members are shown, as always.
+- Stale links: link to the Stale tab (`/reduction?id=N&status=stale`), not to a card fragment: a stale Cluster may be beyond page one.
+- A recompute leaves the members of an unconfirmed claim out of the candidate pool.
+- A merge that cannot see a member on the subtree as it is now releases the claim and reports nothing.
+- `approvalFilter`, `stateLabel` and every count use one predicate: checked with at least one Loser.
+
+## 11. Addendum: round 5
+
+- `settleableClaims` (top-level review key, int): Clusters claimed and not merged that the viewer can fully see, when no running apply owns them. Independent of filters and tabs. Show the recovery button when it is above 0.
+- Settle-only and the reconciliation in a normal apply settle only claims the caller can fully see; a hidden claim is left for an unrestricted caller, and when nothing visible needs settling the version does not change.
+- A normal apply's `stale` list and `lastApply.stale` include the visible Clusters its reconciliation turned stale (a copy was deleted). `settleOnly` returns and records nothing.
+- Recording a stale outcome takes the Reduction row, then every member of the Cluster in canonical order through the caller's scope as it is now, and writes only if the Cluster is still open and approved with the proposal that failed. A Cluster that left scope is omitted; one a decision superseded counts as `changed`. A stale count is added only after the transition commits.
+- A merge refusal after the claim (changed bytes, lost pair) carries the failing members: `Members[j].Changed` and `WinnerChanged` are set on the demoted Cluster too.
+- List `Progress` is computed from the plans and member visibility read in one snapshot.
+- `clusters[i].MergedCount` (copies a confirmed merge removed) and `clusters[i].LeftOutCount` (ejected members left alone). An applied card should say "N copies removed, M left out".
+
+## 12. Addendum: round 6
+
+- Applied-history visibility. The merge records `loserOwners` (resource id to owning Group id, 0 for none) on the Cluster in the merge transaction. For a scoped viewer an applied (merged) Cluster is visible only if the Winner is visible now and every recorded owner is in their current subtree; a Cluster without the record is withheld for scoped viewers and visible to unrestricted ones. This governs the Applied tab, counts, list `Progress`, `lastApply` counts and overrides alike.
+- A reviewer whose account changed after the claim gets the same treatment as one who lost visibility: the claim is released and the outcome omitted.
+- Claim reconciliation (batch claim and `settleOnly`) runs in one transaction: Reduction row lock, then each claimed Cluster's members locked and checked through the current scope. A scoped caller leaves a claim it cannot fully see untouched (it cannot tell deleted from out of reach); only an unrestricted caller turns a claim with a missing member stale.
+- The apply response gains `errors` (int): Clusters the batch could not read; neither stale nor changed, still approved. Hitting the deadline just stops the batch.
+- `cluster.WinnerChanged` is also true for an unrestricted viewer when the kept copy is deleted (stale card): the card should say to start a new Reduction.

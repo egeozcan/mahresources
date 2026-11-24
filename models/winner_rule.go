@@ -39,6 +39,11 @@ const (
 // reviewer knows the choice was a tiebreaker of last resort and can look closer.
 const UndecidedCriterion = "lowest_id"
 
+// ManualCriterion is what a Cluster reports as its deciding criterion after the
+// reviewer promoted a member: no rule picked that Winner, they did. Like
+// UndecidedCriterion it is a label for the page and never part of a rule.
+const ManualCriterion = "manual"
+
 // DefaultWinnerRule is pixel count, then file size, then oldest.
 //
 // Resolution first because it is the one criterion where more is unambiguously
@@ -69,6 +74,7 @@ var winnerCriteria = map[string]string{
 	WinnerCriterionAssociationsDesc: "most tags, notes and groups",
 	WinnerCriterionAssociationsAsc:  "fewest tags, notes and groups",
 	UndecidedCriterion:              "no criterion could decide",
+	ManualCriterion:                 "you chose it",
 }
 
 // WinnerCriterionLabel returns the human label for a criterion token, or the
@@ -85,7 +91,7 @@ func WinnerCriterionLabel(criterion string) string {
 // dropped criterion would change which Resource is deleted.
 func IsWinnerCriterion(criterion string) bool {
 	_, ok := winnerCriteria[criterion]
-	return ok && criterion != UndecidedCriterion
+	return ok && criterion != UndecidedCriterion && criterion != ManualCriterion
 }
 
 // NormalizeWinnerRule drops unknown and duplicate criteria and falls back to the

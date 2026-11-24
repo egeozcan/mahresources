@@ -319,6 +319,7 @@ var (
 	reductionEditorType   = reflect.TypeOf(query_models.ResourceReductionEditor{})
 	reductionOverrideType = reflect.TypeOf(query_models.ReductionOverride{})
 	reductionApplyType    = reflect.TypeOf(query_models.ReductionApply{})
+	reductionBulkType     = reflect.TypeOf(query_models.ReductionBulkOverride{})
 )
 
 var authLoginRequestType = reflect.TypeOf(struct {
@@ -3231,6 +3232,18 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		Description:          "Promotes a member to Winner, ejects or restores a member, skips or reopens a Cluster, or checks and unchecks it. Promotion is refused when it would demote a Winner outside the Extent, and on the Near-Identical tier it ejects any Loser with no stored pair to the new Winner. Carries the version the caller last saw; a stale one is refused with 409.",
 		Tags:                 []string{"reductions"},
 		RequestType:          reductionOverrideType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/reduction/clusters",
+		OperationID:          "bulkCheckResourceReductionClusters",
+		Summary:              "Check or uncheck many Clusters of a Resource Reduction at once",
+		Description:          "Approves (check) or clears (uncheck) either the listed Cluster ids, any tier, or every open Identical Cluster (allIdentical, which needs the expectedCount the caller saw and never reaches the Near-Identical tier). A check leaves alone every Cluster that needs individual review (lossy, oversized, or keeping a lower-resolution copy) and counts them in needsReview. An unknown Cluster, or one the caller may not see, refuses the whole request like a single unknown Cluster; so does one that is not open. Carries the version the caller last saw; a stale one is refused with 409. Returns the new version, how many Clusters changed and how many need review.",
+		Tags:                 []string{"reductions"},
+		RequestType:          reductionBulkType,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})

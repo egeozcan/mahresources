@@ -124,6 +124,7 @@ func buildCluster(tier string, candidates []clusterCandidate, rule []string) *mo
 		State:     models.ReductionClusterOpen,
 	}
 	cluster.Lossy = lossyFields(kept, winner.Resource.ID)
+	cluster.KeepsSmaller = keepsSmaller(kept, winner.Resource.ID, rule, cluster.DecidedBy)
 	applyTierDefaults(cluster)
 	return cluster
 }
@@ -181,6 +182,45 @@ func lossyFields(candidates []clusterCandidate, winnerID uint) []string {
 		}
 	}
 	return lossy
+}
+
+// keepsSmaller reports whether the Winner has fewer pixels than a copy that would
+// be removed.
+//
+// Pixels only, because a smaller *file* at the same resolution is usually the
+// better copy, and comparing sizes would flag every Cluster under the "Smallest
+// file" preset. A copy with no known resolution cannot be compared, so it never
+// raises the flag on either side.
+//
+// Suppressed when the rule's first criterion is pixels_asc, since the reviewer
+// asked for the smaller copy. Not suppressed once the reviewer has promoted a
+// member by hand (decidedBy is manual): that mis-click is exactly what this
+// exists to catch.
+func keepsSmaller(candidates []clusterCandidate, winnerID uint, rule []string, decidedBy string) bool {
+	if decidedBy != models.ManualCriterion && len(rule) > 0 && rule[0] == models.WinnerCriterionPixelsAsc {
+		return false
+	}
+	var winner *models.Resource
+	for i := range candidates {
+		if candidates[i].Resource.ID == winnerID {
+			winner = candidates[i].Resource
+			break
+		}
+	}
+	if winner == nil || pixelsOf(winner) == 0 {
+		return false
+	}
+	for i := range candidates {
+		other := candidates[i].Resource
+		if other.ID != winnerID && pixelsOf(other) > pixelsOf(winner) {
+			return true
+		}
+	}
+	return false
+}
+
+func pixelsOf(r *models.Resource) uint64 {
+	return uint64(r.Width) * uint64(r.Height)
 }
 
 func contains(list []string, value string) bool {
@@ -269,11 +309,31 @@ func ruleUsesAssociations(rule []string) bool {
 	return false
 }
 
+// resourceAssociationCounts is how many tags, notes and related Groups one
+// Resource holds.
+type resourceAssociationCounts struct {
+	Tags, Notes, Groups int
+}
+
 // countResourceAssociations totals the tags, notes and related groups each
 // Resource holds — the "someone curated this copy" signal the Winner Rule can be
 // asked to prefer.
 func (ctx *MahresourcesContext) countResourceAssociations(ids []uint) (map[uint]int, error) {
-	counts := map[uint]int{}
+	byKind, err := ctx.countResourceAssociationKinds(ids)
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[uint]int, len(byKind))
+	for id, c := range byKind {
+		counts[id] = c.Tags + c.Notes + c.Groups
+	}
+	return counts, nil
+}
+
+// countResourceAssociationKinds counts each Resource's tags, notes and related
+// Groups separately, which is what a review card shows.
+func (ctx *MahresourcesContext) countResourceAssociationKinds(ids []uint) (map[uint]resourceAssociationCounts, error) {
+	counts := map[uint]resourceAssociationCounts{}
 
 	// Two things make these counts respect the caller's subtree, and both are
 	// necessary. The far side is the query's *model*, so the GORM scope callback
@@ -289,22 +349,23 @@ func (ctx *MahresourcesContext) countResourceAssociations(ids []uint) (map[uint]
 	// join table.
 	sources := []struct {
 		name  string
+		add   func(c *resourceAssociationCounts, n int)
 		build func(chunk []uint) *gorm.DB
 	}{
-		{"tags", func(chunk []uint) *gorm.DB {
+		{"tags", func(c *resourceAssociationCounts, n int) { c.Tags += n }, func(chunk []uint) *gorm.DB {
 			return ctx.db.Table("resource_tags").
 				Select("resource_id, count(*) AS total").
 				Where("resource_id IN ?", chunk).
 				Group("resource_id")
 		}},
-		{"notes", func(chunk []uint) *gorm.DB {
+		{"notes", func(c *resourceAssociationCounts, n int) { c.Notes += n }, func(chunk []uint) *gorm.DB {
 			return ctx.db.Model(&models.Note{}).
 				Joins("INNER JOIN resource_notes rn ON rn.note_id = notes.id").
 				Select("rn.resource_id AS resource_id, count(*) AS total").
 				Where("rn.resource_id IN ?", chunk).
 				Group("rn.resource_id")
 		}},
-		{"groups", func(chunk []uint) *gorm.DB {
+		{"groups", func(c *resourceAssociationCounts, n int) { c.Groups += n }, func(chunk []uint) *gorm.DB {
 			return ctx.db.Model(&models.Group{}).
 				Joins("INNER JOIN groups_related_resources grr ON grr.group_id = groups.id").
 				Select("grr.resource_id AS resource_id, count(*) AS total").
@@ -323,7 +384,9 @@ func (ctx *MahresourcesContext) countResourceAssociations(ids []uint) (map[uint]
 				return nil, fmt.Errorf("counting %s associations: %w", source.name, err)
 			}
 			for _, row := range rows {
-				counts[row.ResourceID] += row.Total
+				c := counts[row.ResourceID]
+				source.add(&c, row.Total)
+				counts[row.ResourceID] = c
 			}
 		}
 	}

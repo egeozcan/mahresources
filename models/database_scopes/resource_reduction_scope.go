@@ -23,9 +23,9 @@ func ResourceReductionQuery(query *query_models.ResourceReductionQuery, ignoreSo
 		dbQuery := db
 
 		if !ignoreSort {
-			// Newest first. Two Reductions with similar names are told apart by
-			// their creation date and time, so that is what the list leads with.
-			dbQuery = ApplySortColumns(dbQuery, query.SortBy, "", "created_at desc")
+			// Most recently worked on first, so the review in progress is on top. Two
+			// similar names are still told apart by the creation date each card shows.
+			dbQuery = ApplySortColumns(dbQuery, query.SortBy, "", "updated_at desc")
 		}
 
 		if query.Name != "" {

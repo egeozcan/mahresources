@@ -155,12 +155,51 @@ const (
 type ResourceReductionExtent struct {
 	ResourceIDs []uint `json:"resourceIds,omitempty"`
 	GroupIDs    []uint `json:"groupIds,omitempty"`
+	// All is the whole library as the acting principal can see it. It is stored
+	// as a flag and never expanded at rest: the Resources a principal may see
+	// change, and the resolver iterates them through the scoped handle.
+	All bool `json:"all,omitempty"`
 }
 
 // ResourceReductionPlan is the computed proposal plus the review made of it.
 type ResourceReductionPlan struct {
 	Clusters []*ReductionCluster `json:"clusters"`
 	Coverage ReductionCoverage   `json:"coverage"`
+	// Settings are the Reduction settings the compute ran with. Nil for a plan
+	// computed before they were recorded, which reads as "nothing to compare".
+	Settings *ReductionSettings `json:"settings,omitempty"`
+	// LastApply is the most recent apply's record. Compute's plan rebuild and every
+	// per-Cluster write carry it over; only the apply writes it.
+	LastApply *ReductionLastApply `json:"lastApply,omitempty"`
+}
+
+// ReductionSettings is what a compute actually used, so the page can say when
+// the Reduction's current settings differ from the ones the plan reflects.
+// Keep-as-version flags are not part of it: they act at apply, not at compute.
+type ReductionSettings struct {
+	// MatchingMode is the normalised mode the clustering ran with.
+	MatchingMode string `json:"matchingMode"`
+	// WinnerRule is the normalised rule.
+	WinnerRule      []string `json:"winnerRule"`
+	ExcludeExternal bool     `json:"excludeExternal"`
+}
+
+// ReductionLastApply records the most recent apply: written once, running, by
+// the batch's claim and completed once at the end of the loop. Counts only. A
+// stale Cluster that was withheld from the applier is not counted, so a
+// scope-restricted owner cannot learn how many were.
+type ReductionLastApply struct {
+	StartedAt time.Time `json:"startedAt"`
+	// FinishedAt is nil while the apply is running or if it was interrupted.
+	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+	Applied    int        `json:"applied"`
+	Removed    int        `json:"removed"`
+	Stale      int        `json:"stale"`
+	// ClusterIDs are the Clusters the counts above are about (applied and stale).
+	// The page shows the counts only to a viewer who may still see all of them.
+	ClusterIDs []string `json:"clusterIds,omitempty"`
+	// RequestID is the client's own id for the apply that wrote this record.
+	RequestID string `json:"requestId,omitempty"`
 }
 
 // ReductionCoverage reports how much of the Extent the clustering could actually
@@ -208,6 +247,14 @@ type ReductionCluster struct {
 	Margin    string `json:"margin,omitempty"`
 	Undecided bool   `json:"undecided,omitempty"`
 
+	// KeepsSmaller is set when the Winner has fewer pixels than a copy that would
+	// be removed. Pixels only: a smaller file at the same pixels is usually the
+	// better copy. Suppressed when the rule's first criterion is pixels_asc (the
+	// reviewer asked for the smaller copy) and never when the reviewer promoted
+	// the Winner by hand, because a mis-click there is what it exists to catch.
+	// Recomputed wherever Lossy is.
+	KeepsSmaller bool `json:"keepsSmaller,omitempty"`
+
 	// Lossy names the fields a Loser holds and the Winner does not — merge drops
 	// all three, so this is the warning that stops a curated copy being discarded
 	// silently. Recomputed on every change of Winner.
@@ -243,6 +290,20 @@ type ReductionCluster struct {
 	// reading a missing member as "merged away" rather than "outside your access"
 	// needs this stronger statement.
 	Merged bool `json:"merged,omitempty"`
+	// ClaimID is the random token of the claim that took this Cluster out of play.
+	// Every write that settles that claim (confirm, demote, release, reconcile) must
+	// present it, so a delayed settlement of an old claim cannot touch a newer one.
+	ClaimID string `json:"claimId,omitempty"`
+	// ChangedMembers are the members whose bytes (or, on the Near tier, whose
+	// perceptual match to the Winner) failed the apply's revalidation. Cleared when
+	// the Cluster is reopened.
+	ChangedMembers []uint `json:"changedMembers,omitempty"`
+	// LoserOwners records, when the merge deletes the Losers, the Group that owned
+	// each one (0 for none). A scoped viewer can see a merged Cluster only if every
+	// recorded owner is inside their current subtree: the Losers no longer exist to
+	// be asked. A Cluster merged before this was recorded has none, and fails closed
+	// for a scoped viewer.
+	LoserOwners map[uint]uint `json:"loserOwners,omitempty"`
 }
 
 // ReductionMember is one Resource in a Cluster.

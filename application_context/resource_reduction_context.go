@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"mahresources/models"
 	"mahresources/models/database_scopes"
@@ -76,7 +78,7 @@ func (ctx *MahresourcesContext) createOrExtendResourceReductionOnce(creator *que
 		}
 		resourceIDs = dedupeUints(append(resourceIDs, owned...))
 	}
-	if creator.ID == 0 && len(resourceIDs) == 0 && len(groupIDs) == 0 {
+	if creator.ID == 0 && len(resourceIDs) == 0 && len(groupIDs) == 0 && !creator.All {
 		return nil, errors.New("a Resource Reduction needs at least one Resource or Group")
 	}
 	if creator.ID != 0 {
@@ -90,6 +92,7 @@ func (ctx *MahresourcesContext) createOrExtendResourceReductionOnce(creator *que
 		}
 		extent.ResourceIDs = dedupeUints(append(extent.ResourceIDs, resourceIDs...))
 		extent.GroupIDs = dedupeUints(append(extent.GroupIDs, groupIDs...))
+		extent.All = extent.All || creator.All
 		encoded, err := encodeJSON(extent)
 		if err != nil {
 			return nil, err
@@ -105,7 +108,7 @@ func (ctx *MahresourcesContext) createOrExtendResourceReductionOnce(creator *que
 	if name == "" {
 		name = "Resource Reduction"
 	}
-	extentJSON, err := encodeJSON(models.ResourceReductionExtent{ResourceIDs: resourceIDs, GroupIDs: groupIDs})
+	extentJSON, err := encodeJSON(models.ResourceReductionExtent{ResourceIDs: resourceIDs, GroupIDs: groupIDs, All: creator.All})
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +223,10 @@ func (ctx *MahresourcesContext) UpdateResourceReductionSettings(editor *query_mo
 		if err != nil || len(updates) == 0 {
 			return existing, err
 		}
-		return ctx.casReductionAndReload(existing.ID, editor.Version, updates, ownerUserID, ownerRestricted)
+		if editor.Version != existing.Version {
+			return nil, ErrReductionConflict
+		}
+		return ctx.casReductionAndReload(existing.ID, existing.Version, updates, ownerUserID, ownerRestricted)
 	})
 }
 
@@ -310,6 +316,17 @@ func (ctx *MahresourcesContext) casReduction(id, expectedVersion uint, updates m
 // of this helper; see retryReductionWrite for why. Reads after it are safe: the
 // transaction already holds the writer lock.
 func (ctx *MahresourcesContext) casReductionAndReload(id, expectedVersion uint, updates map[string]any, ownerUserID *uint, ownerRestricted bool) (*models.ResourceReduction, error) {
+	return ctx.casReductionAndReloadHolding(id, expectedVersion, updates, ownerUserID, ownerRestricted, nil)
+}
+
+// casReductionAndReloadHolding is casReductionAndReload for a decision about
+// Clusters: inside the same transaction, after the compare-and-set, it re-asserts
+// that every member of those Clusters is still visible to the caller and holds
+// their rows until the transaction ends. The visibility read the caller made
+// before is not atomic with this write, and a Resource moving out of the subtree
+// in between would otherwise let a decision land on a Cluster the caller can no
+// longer see.
+func (ctx *MahresourcesContext) casReductionAndReloadHolding(id, expectedVersion uint, updates map[string]any, ownerUserID *uint, ownerRestricted bool, clusters []*models.ReductionCluster) (*models.ResourceReduction, error) {
 	var reduction *models.ResourceReduction
 	err := ctx.WithTransaction(func(txCtx *MahresourcesContext) error {
 		ok, err := txCtx.casReduction(id, expectedVersion, updates)
@@ -319,6 +336,9 @@ func (ctx *MahresourcesContext) casReductionAndReload(id, expectedVersion uint, 
 		if !ok {
 			return ErrReductionConflict
 		}
+		if err := txCtx.lockClusterMembersVisible(clusters); err != nil {
+			return err
+		}
 		reduction, err = txCtx.loadReductionForUpdate(id, ownerUserID, ownerRestricted)
 		return err
 	})
@@ -326,6 +346,50 @@ func (ctx *MahresourcesContext) casReductionAndReload(id, expectedVersion uint, 
 		return nil, err
 	}
 	return reduction, nil
+}
+
+// lockClusterMembersVisible reads the members of the Clusters through the scoped
+// handle and takes a share lock on each row (Postgres; SQLite serializes writers
+// already), in ascending id order so two decisions cannot deadlock. A member that
+// does not come back is deleted or outside the caller's subtree, which answers as
+// an unknown Cluster, exactly as the read before the write does.
+//
+// A share lock rather than an update lock: the point is that a mover or a delete
+// of these rows waits for this transaction, while two decisions on overlapping
+// Clusters need not wait for each other. The Loser of a Cluster whose merge is
+// confirmed is exempt, as everywhere: it no longer exists.
+//
+// An unconfined caller has nothing hidden from them, so a member that is gone is a
+// deleted one and blocks nothing (a deleted ejected copy must not stop an unrelated
+// approval); the rows that exist are still locked. A scoped caller fails closed.
+func (ctx *MahresourcesContext) lockClusterMembersVisible(clusters []*models.ReductionCluster) error {
+	var wanted []uint
+	for _, cluster := range clusters {
+		for _, member := range cluster.Members {
+			if cluster.Merged && member.IsLoser(cluster.WinnerID) {
+				continue
+			}
+			wanted = append(wanted, member.ResourceID)
+		}
+	}
+	wanted = dedupeUints(wanted)
+	sort.Slice(wanted, func(i, j int) bool { return wanted[i] < wanted[j] })
+	found := 0
+	for _, chunk := range chunkUints(wanted, idChunk) {
+		query := ctx.db.Model(&models.Resource{}).Where("resources.id IN ?", chunk).Order("resources.id")
+		if ctx.db.Dialector.Name() == "postgres" {
+			query = query.Clauses(clause.Locking{Strength: "SHARE"})
+		}
+		var ids []uint
+		if err := query.Pluck("resources.id", &ids).Error; err != nil {
+			return err
+		}
+		found += len(ids)
+	}
+	if found != len(wanted) && ctx.isScopedPrincipal() {
+		return ErrReductionClusterNotFound
+	}
+	return nil
 }
 
 // retryReductionWrite runs one request-side Reduction writer, from its first read,

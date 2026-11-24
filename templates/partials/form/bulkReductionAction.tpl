@@ -18,10 +18,12 @@
             aria-controls="{{ panelId }}"
             @click="toggle()"
             class="{% if reductionOwnerId %}inline-flex justify-center py-1 px-2 border border-stone-300 text-xs font-mono font-semibold tracking-wide rounded text-stone-700 bg-white hover:bg-stone-50 focus:outline-hidden focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 transition-colors duration-100{% else %}bulk-action-btn{% endif %}">
-        {% if reductionOwnerId %}Reduce{% else %}Resource Reduction{% endif %}
+        Find duplicates
     </button>
 
-    <div id="{{ panelId }}" x-show="open" x-cloak x-collapse class="absolute {% if reductionOwnerId %}right-0 z-20{% else %}left-0 top-full z-40{% endif %} mt-2 p-3 bg-white border border-stone-200 rounded-md shadow-sm w-72">
+    <div id="{{ panelId }}" x-ref="panel" x-show="open" x-cloak x-collapse class="reduction-popover absolute {% if reductionOwnerId %}right-0 z-20{% else %}left-0 top-full z-40{% endif %} mt-2 p-3 bg-white border border-stone-200 rounded-md shadow-sm w-80 max-w-[calc(100vw-2rem)]">
+        <p class="mb-1 text-sm font-medium text-stone-800" x-text="heading()" data-testid="bulk-reduction-heading"></p>
+        <p class="mb-2 text-xs text-stone-600">Nothing is removed until you review and apply.</p>
         {% if reductionOwnerId %}
         <label class="flex items-center gap-2 mb-2 text-sm text-stone-700">
             <input type="checkbox" x-model="includeDescendants" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
@@ -30,7 +32,7 @@
         <p class="mb-2 text-xs text-stone-600" x-text="includeDescendants ? 'Includes resources owned by this group and all subgroups.' : 'Includes resources owned directly by this group.'"></p>
         {% endif %}
         <fieldset>
-            <legend class="sr-only">Add {{ noun }} to a Resource Reduction</legend>
+            <legend class="sr-only">Find duplicates in {{ noun }}</legend>
             <label class="flex items-center gap-2 text-sm text-stone-700">
                 <input type="radio" x-model="mode" value="new" class="border-stone-300 text-amber-700 focus:ring-amber-600">
                 New Resource Reduction
@@ -43,7 +45,7 @@
 
         <div x-show="mode === 'new'" class="mt-2">
             <label class="block text-sm font-medium font-mono text-stone-700" for="{{ panelId }}-name">Name</label>
-            <input id="{{ panelId }}-name" type="text" x-model="name" placeholder="Resource Reduction"
+            <input id="{{ panelId }}-name" type="text" x-model="name" placeholder="Named after your selection and today's date"
                    data-testid="bulk-reduction-name"
                    class="mt-1 block w-full rounded-md border-stone-300 shadow-sm text-sm focus:border-amber-600 focus:ring-amber-600">
             <label class="flex items-center gap-2 mt-2 text-sm text-stone-700">
@@ -51,10 +53,10 @@
                        data-testid="bulk-reduction-exclude-external"
                        aria-describedby="{{ panelId }}-external-hint"
                        class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
-                Exclude external resources
+                Only keep copies from this selection
             </label>
             <p id="{{ panelId }}-external-hint" class="mt-1 text-xs text-stone-600">
-                Only compare resources within the Extent.
+                Otherwise a better copy elsewhere in your library may be kept instead.
             </p>
         </div>
 
@@ -78,6 +80,12 @@
         </p>
         {% endif %}
         <p x-show="error" x-cloak x-text="error" data-testid="bulk-reduction-error" class="mt-1 text-xs text-red-700" role="alert"></p>
+
+        <label class="flex items-center gap-2 mt-3 text-sm text-stone-700">
+            <input type="checkbox" x-model="computeNow" data-testid="bulk-reduction-compute-now"
+                   class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
+            Find duplicates now
+        </label>
 
         <button type="button"
                 data-testid="bulk-reduction-submit"

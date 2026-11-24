@@ -91,7 +91,9 @@
         {% block header %}{% endblock %}
     </header>
     {% include "/partials/title.tpl" %}
-    <div class="content pb-16{% if hideSidebar %} content--no-sidebar{% endif %}" id="main-content">
+    {# A page's own skip links, before the sidebar so a keyboard user reaches them first. #}
+    {% block skiplinks %}{% endblock %}
+    <div class="content pb-16{% if hideSidebar %} content--no-sidebar{% endif %}{% block contentModifier %}{% endblock %}" id="main-content">
         {# Findings 25/62/63/80: below 900px the sidebar simply stacks above the results #}
         {# at full height, so the first card sat at y=1745 on /groups, 1574 on /notes    #}
         {# and 2124 on /resources against an 844px viewport — two to two-and-a-half      #}
@@ -108,7 +110,7 @@
         {# not contain "sidebar" — `[class*="sidebar"]` is a live locator in five specs  #}
         {# and would resolve to the wrapper, which precedes the aside in document order. #}
         <details id="sidebar-disclosure" class="detail-collapsible filter-disclosure" open>
-            <summary class="filter-disclosure-summary">Filters and details</summary>
+            <summary class="filter-disclosure-summary">{% block sidebarLabel %}Filters and details{% endblock %}</summary>
             <aside class="sidebar"{% if savedSearchView %} data-list-sidebar{% endif %}>
             {# Saved searches belong to the filter controls they capture. Keeping #}
             {# this in the base layout makes it the first sidebar control on every #}

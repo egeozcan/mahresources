@@ -34,6 +34,12 @@ var (
 	ErrReductionClusterNotFound = errors.New("no such Cluster in this Resource Reduction")
 	// ErrReductionMemberNotFound is an id no member of that Cluster carries.
 	ErrReductionMemberNotFound = errors.New("no such member in this Cluster")
+	// ErrReductionNothingToRemove refuses approving a Cluster whose every copy is
+	// kept: a merge that removes nothing.
+	ErrReductionNothingToRemove = errors.New("every copy in this Cluster is kept, so there is nothing to approve")
+	// ErrReductionClusterStale refuses approving a Cluster that was made stale by a
+	// Resource that is gone.
+	ErrReductionClusterStale = errors.New("this Cluster is stale and cannot be approved: a Resource in it no longer exists. Don't remove that copy, or recompute")
 	// ErrReductionClusterSettled refuses an override on a Cluster whose merge has
 	// already happened. Its Losers do not exist any more.
 	ErrReductionClusterSettled = errors.New("this Cluster has already been applied")
@@ -82,6 +88,11 @@ func (ctx *MahresourcesContext) overrideReductionClusterOnce(override *query_mod
 	if EffectiveReductionStatus(reduction) == models.ReductionStatusComputing {
 		return nil, ErrReductionBusy
 	}
+	// The plan below is the one at the loaded version; a request that names another
+	// is refused, and the write is made against the loaded one.
+	if override.Version != reduction.Version {
+		return nil, ErrReductionConflict
+	}
 
 	plan, err := DecodeReductionPlan(reduction.Plan)
 	if err != nil {
@@ -111,8 +122,17 @@ func (ctx *MahresourcesContext) overrideReductionClusterOnce(override *query_mod
 	if cluster.State == models.ReductionClusterApplied {
 		return nil, ErrReductionClusterSettled
 	}
+	// Read the way the page does, so a Cluster the page shows as stale for a deleted
+	// copy is refused as stale, not as unknown.
+	if !ctx.isScopedPrincipal() {
+		visible, err := ctx.visibleMemberIDs(reductionMemberIDs([]*models.ReductionCluster{cluster}))
+		if err != nil {
+			return nil, err
+		}
+		ctx.readDeletions(&models.ResourceReductionPlan{Clusters: []*models.ReductionCluster{cluster}}, visible)
+	}
 
-	if err := ctx.applyOverride(cluster, override); err != nil {
+	if err := ctx.applyOverride(cluster, override, planWinnerRule(reduction, &plan)); err != nil {
 		return nil, err
 	}
 
@@ -120,13 +140,13 @@ func (ctx *MahresourcesContext) overrideReductionClusterOnce(override *query_mod
 	if err != nil {
 		return nil, err
 	}
-	return ctx.casReductionAndReload(reduction.ID, override.Version, map[string]any{"plan": encoded}, ownerUserID, ownerRestricted)
+	return ctx.casReductionAndReloadHolding(reduction.ID, reduction.Version, map[string]any{"plan": encoded}, ownerUserID, ownerRestricted, []*models.ReductionCluster{cluster})
 }
 
-func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, override *query_models.ReductionOverride) error {
+func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, override *query_models.ReductionOverride, rule []string) error {
 	switch override.Action {
 	case ReductionActionPromote:
-		return ctx.promoteMember(cluster, override.ResourceID)
+		return ctx.promoteMember(cluster, override.ResourceID, rule)
 
 	case ReductionActionEject:
 		member := findMember(cluster, override.ResourceID)
@@ -142,11 +162,17 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 		if cluster.State == models.ReductionClusterStale {
 			cluster.State = models.ReductionClusterOpen
 			cluster.StaleReason = ""
+			cluster.ChangedMembers = nil
+		}
+		// Nothing left to remove: approving it would count a Cluster that merges
+		// nothing in "N approved".
+		if len(cluster.LoserIDs()) == 0 {
+			cluster.Checked = false
 		}
 		// The curation warning is about which Losers hold what, so it changes with
 		// the membership. Leaving it stale after an ejection warns about a copy that
 		// is no longer going anywhere.
-		return ctx.refreshLossy(cluster)
+		return ctx.refreshLossy(cluster, rule)
 
 	case ReductionActionRestore:
 		member := findMember(cluster, override.ResourceID)
@@ -190,7 +216,7 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 		// And after a restore it changes the other way: the member coming back may
 		// be the one holding the description the Winner lacks, and merging it away
 		// with no warning is exactly what D8b exists to prevent.
-		return ctx.refreshLossy(cluster)
+		return ctx.refreshLossy(cluster, rule)
 
 	case ReductionActionSkip:
 		cluster.State = models.ReductionClusterSkipped
@@ -201,6 +227,7 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 	case ReductionActionReopen:
 		cluster.State = models.ReductionClusterOpen
 		cluster.StaleReason = ""
+		cluster.ChangedMembers = nil
 		cluster.Reviewed = true
 		return nil
 
@@ -212,11 +239,18 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 		if cluster.Oversized && !override.AcknowledgeOversized {
 			return ErrReductionOversizedUnexpanded
 		}
+		if cluster.State == models.ReductionClusterStale && cluster.StaleReason == staleReasonDeleted {
+			return ErrReductionClusterStale
+		}
+		if len(cluster.LoserIDs()) == 0 {
+			return ErrReductionNothingToRemove
+		}
 		cluster.Checked = true
 		cluster.Reviewed = true
 		if cluster.State == models.ReductionClusterSkipped || cluster.State == models.ReductionClusterStale {
 			cluster.State = models.ReductionClusterOpen
 			cluster.StaleReason = ""
+			cluster.ChangedMembers = nil
 		}
 		return nil
 
@@ -242,7 +276,7 @@ func (ctx *MahresourcesContext) applyOverride(cluster *models.ReductionCluster, 
 // The Identical tier needs no re-check. Hash equality is transitive, so the
 // members are a true equivalence class and any of them is as good a Winner as any
 // other.
-func (ctx *MahresourcesContext) promoteMember(cluster *models.ReductionCluster, resourceID uint) error {
+func (ctx *MahresourcesContext) promoteMember(cluster *models.ReductionCluster, resourceID uint, rule []string) error {
 	member := findMember(cluster, resourceID)
 	if member == nil {
 		return ErrReductionMemberNotFound
@@ -267,16 +301,22 @@ func (ctx *MahresourcesContext) promoteMember(cluster *models.ReductionCluster, 
 	}
 
 	cluster.WinnerID = member.ResourceID
+	// An approval belongs to the proposal it was given to. A different kept copy is
+	// a different proposal, so the reviewer approves it again.
+	cluster.Checked = false
 	member.Ejected = false
 	member.EjectedReason = ""
 	member.Distance = nil
 	cluster.Reviewed = true
-	cluster.DecidedBy = ""
+	// No rule picked this Winner, the reviewer did. The page says so, and the
+	// keeps-smaller warning is never suppressed for it.
+	cluster.DecidedBy = models.ManualCriterion
 	cluster.Margin = ""
 	cluster.Undecided = false
 	if cluster.State == models.ReductionClusterStale {
 		cluster.State = models.ReductionClusterOpen
 		cluster.StaleReason = ""
+		cluster.ChangedMembers = nil
 	}
 
 	if cluster.Tier == models.ReductionTierNear {
@@ -284,7 +324,7 @@ func (ctx *MahresourcesContext) promoteMember(cluster *models.ReductionCluster, 
 			return err
 		}
 	}
-	return ctx.refreshLossy(cluster)
+	return ctx.refreshLossy(cluster, rule)
 }
 
 // rejustifyAgainstWinner ejects every Loser with no stored pair to the current
@@ -357,10 +397,12 @@ func (ctx *MahresourcesContext) distanceToWinner(winnerID, memberID uint) (uint8
 	return best, found, nil
 }
 
-// refreshLossy recomputes the curation warning after a change of Winner: which
-// fields a merge would now discard is a property of the Winner, not of the
-// Cluster.
-func (ctx *MahresourcesContext) refreshLossy(cluster *models.ReductionCluster) error {
+// refreshLossy recomputes the curation warnings after a change of Winner or of
+// membership: which fields a merge would now discard, and whether it would now
+// discard a higher-resolution copy, are properties of the Winner and the
+// remaining members, not of the Cluster. The rule is what tells a deliberately
+// smaller Winner (pixels_asc first) from a mistaken one.
+func (ctx *MahresourcesContext) refreshLossy(cluster *models.ReductionCluster, rule []string) error {
 	ids := make([]uint, 0, len(cluster.Members))
 	for _, member := range cluster.Members {
 		if !member.Ejected {
@@ -378,6 +420,7 @@ func (ctx *MahresourcesContext) refreshLossy(cluster *models.ReductionCluster) e
 		}
 	}
 	cluster.Lossy = lossyFields(candidates, cluster.WinnerID)
+	cluster.KeepsSmaller = keepsSmaller(candidates, cluster.WinnerID, rule, cluster.DecidedBy)
 	return nil
 }
 
@@ -386,30 +429,24 @@ func (ctx *MahresourcesContext) refreshLossy(cluster *models.ReductionCluster) e
 //
 // Asked through the scoped handle, so "deleted" and "outside your subtree" are
 // one answer, which is what keeps the refusal from being an oracle. A Loser of a
-// Cluster whose merge is confirmed is exempt: it was destroyed by this very row,
-// so its absence is the record of what happened rather than something withheld —
-// the same rule the render applies.
+// Cluster whose merge is confirmed no longer exists, so for a scoped caller it is
+// judged by the owning Group recorded when it was merged (withMergedHistory), the
+// same rule the render applies.
 func (ctx *MahresourcesContext) clusterFullyVisible(cluster *models.ReductionCluster) (bool, error) {
-	wanted := make([]uint, 0, len(cluster.Members))
-	for _, member := range cluster.Members {
-		if cluster.Merged && member.IsLoser(cluster.WinnerID) {
-			continue
-		}
-		wanted = append(wanted, member.ResourceID)
-	}
-	if len(wanted) == 0 {
+	// Nothing is withheld from an unconfined caller: a missing member is a deleted
+	// one, and the Cluster reads as stale (see reviewReach).
+	if !ctx.isScopedPrincipal() {
 		return true, nil
 	}
-	found, err := ctx.loadResourcesByID(wanted)
+	one := []*models.ReductionCluster{cluster}
+	visible, err := ctx.visibleMemberIDs(reductionMemberIDs(one))
 	if err != nil {
 		return false, err
 	}
-	for _, id := range wanted {
-		if found[id] == nil {
-			return false, nil
-		}
+	if visible, err = ctx.withMergedHistory(one, visible); err != nil {
+		return false, err
 	}
-	return true, nil
+	return !clusterWithheld(cluster, visible), nil
 }
 
 func findCluster(plan *models.ResourceReductionPlan, id string) *models.ReductionCluster {

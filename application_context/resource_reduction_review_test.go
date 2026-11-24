@@ -18,6 +18,7 @@ func reviewCluster(tier string, state string, reviewed bool) *models.ReductionCl
 		Tier:     tier,
 		State:    state,
 		Reviewed: reviewed,
+		Merged:   state == models.ReductionClusterApplied,
 	}
 }
 
@@ -59,8 +60,12 @@ func TestFilterReviewClustersByStatus(t *testing.T) {
 	got = filterReviewClusters(clusters, visible, &query_models.ResourceReductionReviewQuery{
 		Status: []string{"open"},
 	})
-	require.Len(t, got, 1)
-	assert.False(t, got[0].Reviewed, "\"open\" selects only the untouched open Cluster")
+	require.Len(t, got, 2, "\"open\" is every open Cluster: approving one must not move it to another tab")
+
+	got = filterReviewClusters(clusters, visible, &query_models.ResourceReductionReviewQuery{
+		Status: []string{"all"},
+	})
+	require.Len(t, got, 5, "\"all\" is no state filter")
 
 	got = filterReviewClusters(clusters, visible, &query_models.ResourceReductionReviewQuery{
 		Status: []string{"reviewed"},
@@ -71,7 +76,7 @@ func TestFilterReviewClustersByStatus(t *testing.T) {
 	got = filterReviewClusters(clusters, visible, &query_models.ResourceReductionReviewQuery{
 		Status: []string{"open", models.ReductionClusterSkipped},
 	})
-	require.Len(t, got, 2, "several statuses are an OR")
+	require.Len(t, got, 3, "several statuses are an OR")
 
 	got = filterReviewClusters(clusters, visible, &query_models.ResourceReductionReviewQuery{
 		Status: []string{models.ReductionClusterApplied, models.ReductionClusterStale},
@@ -166,10 +171,11 @@ func TestFilterReviewClustersNeverMatchesWithheld(t *testing.T) {
 	}
 }
 
-// A Cluster whose only unreachable member is a confirmed-merged Loser is not
-// withheld: the reviewer performed that deletion, so the record of it stays
-// visible. The same exception the render applies.
-func TestFilterReviewClustersMergedLosersAreNotWithheld(t *testing.T) {
+// A confirmed-merged Loser no longer exists, so its visibility is settled before the
+// filter runs (withMergedHistory: its recorded owner is within the viewer's scope).
+// Settled as visible, the Cluster matches; left unsettled, a scoped viewer's Cluster
+// is withheld.
+func TestFilterReviewClustersMergedLosersFollowTheirSettledVisibility(t *testing.T) {
 	applied := reviewClusterWithMember(models.ReductionTierIdentical, models.ReductionClusterApplied, 7)
 	applied.WinnerID = 9
 	applied.Merged = true
@@ -177,11 +183,17 @@ func TestFilterReviewClustersMergedLosersAreNotWithheld(t *testing.T) {
 		{ResourceID: 9},
 		{ResourceID: 7},
 	}
-	// Resource 7 (the merged-away Loser) is unreachable; the Winner 9 is not.
-	visible := map[uint]bool{9: true}
+	query := &query_models.ResourceReductionReviewQuery{Status: []string{models.ReductionClusterApplied}}
 
-	got := filterReviewClusters([]*models.ReductionCluster{applied}, visible, &query_models.ResourceReductionReviewQuery{
-		Status: []string{models.ReductionClusterApplied},
-	})
-	require.Len(t, got, 1, "the confirmed merge keeps the Cluster visible to its reviewer")
+	got := filterReviewClusters([]*models.ReductionCluster{applied}, map[uint]bool{9: true, 7: true}, query)
+	require.Len(t, got, 1, "its Loser's recorded owner is in reach, so the Cluster is visible")
+	assert.Empty(t, filterReviewClusters([]*models.ReductionCluster{applied}, map[uint]bool{9: true}, query),
+		"no settled visibility for the Loser means withheld")
+}
+
+// A Cluster keeping a lower-resolution copy asks for individual review, like a
+// lossy or oversized one: a bulk approval must never sweep it up.
+func TestKeepsSmallerNeedsAttention(t *testing.T) {
+	assert.True(t, clusterNeedsAttention(&models.ReductionCluster{KeepsSmaller: true}))
+	assert.False(t, clusterNeedsAttention(&models.ReductionCluster{}))
 }

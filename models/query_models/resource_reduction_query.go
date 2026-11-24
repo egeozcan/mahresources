@@ -23,6 +23,10 @@ type ResourceReductionCreator struct {
 	OwnerId            uint `json:"ownerId" schema:"ownerId"`
 	IncludeDescendants bool `json:"includeDescendants" schema:"includeDescendants"`
 
+	// All selects the whole library as the creating principal can see it, instead
+	// of named Resources and Groups. Stored as a flag, never expanded at rest.
+	All bool `json:"all" schema:"all"`
+
 	// MatchingMode is "identical" or "both". Empty means both, which is the
 	// default a new Reduction is created with.
 	MatchingMode string `json:"matchingMode" schema:"matchingMode"`
@@ -59,8 +63,9 @@ type ResourceReductionQuery struct {
 //
 // Unlike the list query it is applied in memory: the plan is one decoded JSON
 // document, so there is no SQL to scope. The values are the tokens the page's
-// own labels map to: open / reviewed / skipped / applied / stale for Status,
-// identical / near for Tier.
+// own labels map to: open / reviewed / skipped / applied / stale for Status
+// ("open" is every open Cluster, acted on or not; "reviewed" only the acted-on
+// ones; "all" no state filter), identical / near for Tier.
 type ResourceReductionReviewQuery struct {
 	// Status is an OR over the Cluster states the page shows. "reviewed" is not
 	// a state of its own — it is a judgement recorded on an open Cluster — so it
@@ -75,6 +80,16 @@ type ResourceReductionReviewQuery struct {
 	// server-side at all — withheld Clusters are decided at render time and are
 	// deliberately not part of it.
 	NeedsAttention bool `schema:"attention"`
+	// Approval keeps only approved (Checked) or unapproved Clusters: "approved" or
+	// "unapproved". Any other value is ignored.
+	Approval string `schema:"approval"`
+	// Sort orders the filtered Clusters before pagination: "copies" (the default,
+	// most members first), "size" (largest total member file size first) or
+	// "computed" (the plan's own order). Ties break by Cluster id, so pages are
+	// stable across refreshes.
+	Sort string `schema:"sort"`
+	// PageSize is Clusters per page: 20, 50 or 100. Anything else is 20.
+	PageSize int `schema:"pageSize"`
 }
 
 // ResourceReductionEditor updates a Reduction's own settings, as opposed to its
@@ -119,4 +134,47 @@ type ReductionOverride struct {
 type ReductionApply struct {
 	ID      uint `json:"id" schema:"id"`
 	Version uint `json:"version" schema:"version"`
+	// ExpectedClusters and ExpectedLosers are the figures the caller confirmed: how
+	// many approved Clusters, and how many copies in them, the apply dialog named.
+	// When given, the apply is refused with 409 and nothing is merged unless the
+	// approved Clusters the caller can see right now add up to exactly those
+	// numbers. The version alone cannot say so, because what a caller may see
+	// changes without the plan changing (a scope change). Each is checked only when
+	// present.
+	ExpectedClusters *uint `json:"expectedClusters" schema:"expectedClusters"`
+	ExpectedLosers   *uint `json:"expectedLosers" schema:"expectedLosers"`
+	// ApplyToken is the review's `applyToken`: a digest of the exact proposals the
+	// dialog confirmed (each approved Cluster's id, Winner, Losers and reviewed
+	// hashes). Equal totals cannot stand in for it, because a different pair with
+	// the same counts is a different merge. When sent it must match exactly, or the
+	// apply is refused with 409 before anything is claimed.
+	ApplyToken string `json:"applyToken" schema:"applyToken"`
+	// RequestID is an opaque client-chosen id (at most 64 characters), stored with
+	// the apply record so a client that lost the response can tell its own attempt
+	// from another tab's.
+	RequestID string `json:"requestId" schema:"requestId"`
+	// SettleOnly runs only the reconciliation of Clusters an earlier batch claimed
+	// and never finished, and merges nothing.
+	SettleOnly bool `json:"settleOnly" schema:"settleOnly"`
+}
+
+// ReductionBulkOverride checks or unchecks many Clusters in one write, with exactly
+// one way of naming them: the ids the page rendered, or every open Identical
+// Cluster.
+type ReductionBulkOverride struct {
+	ID      uint `json:"id" schema:"id"`
+	Version uint `json:"version" schema:"version"`
+	// Action is "check" or "uncheck".
+	Action string `json:"action" schema:"action"`
+	// ClusterIDs are the Clusters to act on, any tier. Exactly one of ClusterIDs
+	// and AllIdentical must be given.
+	ClusterIDs []string `json:"clusterIds" schema:"clusterIds"`
+	// AllIdentical acts on every open Identical Cluster in the whole plan, never on
+	// the Near-Identical tier, so approval of perceptual matches across pages the
+	// reviewer has not seen stays impossible.
+	AllIdentical bool `json:"allIdentical" schema:"allIdentical"`
+	// ExpectedCount is how many Clusters the caller believes AllIdentical names (the
+	// number on its button). Required with AllIdentical; a different number is
+	// refused with 409 so a stale button cannot approve more than it said.
+	ExpectedCount *uint `json:"expectedCount" schema:"expectedCount"`
 }

@@ -61,6 +61,16 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 	if EffectiveReductionStatus(reduction) == models.ReductionStatusComputing {
 		return nil, ErrReductionBusy
 	}
+	// A recompute replaces the plan under a running apply's feet. The same refusal
+	// the batch claim and settle-only make: a record still running and younger than
+	// the ceiling owns the Reduction; past the ceiling it is an interrupted one.
+	// A plan that cannot be read has no record to consult; the compute itself reports
+	// that, as it always has.
+	if plan, decodeErr := DecodeReductionPlan(reduction.Plan); decodeErr == nil {
+		if last := plan.LastApply; last != nil && last.FinishedAt == nil && time.Since(last.StartedAt) <= ReductionApplyCeiling {
+			return nil, ErrReductionConflict
+		}
+	}
 
 	// The caller's version, not the one just read. Recompute replaces the plan,
 	// so a request made from a page that predates somebody else's decisions would
@@ -370,6 +380,13 @@ func (ctx *MahresourcesContext) computeReductionPlan(jobCtx context.Context, red
 	if err != nil {
 		return plan, version, err
 	}
+	// A plan from before the keeps-smaller flag has no recorded settings, and this
+	// compute is about to write them, which would end the read-time derivation. The
+	// frozen Clusters it carries over are therefore given their flag now, under the
+	// rule they were made with.
+	if err := ctx.deriveKeepsSmallerForOldPlan(&previous, reduction); err != nil {
+		return plan, version, err
+	}
 	rule := DecodeWinnerRule(reduction.WinnerRule)
 
 	if progress != nil {
@@ -407,6 +424,14 @@ func (ctx *MahresourcesContext) computeReductionPlan(jobCtx context.Context, red
 	for _, cluster := range previous.Clusters {
 		if cluster.State == models.ReductionClusterApplied {
 			carried = append(carried, cluster)
+			// A claim that is not confirmed is a keep decision in flight (or stranded
+			// by a crash): its Resources stay out of the pool until it settles, or a
+			// recompute could propose the Winner as a Loser of a new Cluster.
+			if !cluster.Merged {
+				for _, member := range cluster.Members {
+					excluded[member.ResourceID] = true
+				}
+			}
 			continue
 		}
 		if !cluster.Frozen() {
@@ -463,6 +488,17 @@ func (ctx *MahresourcesContext) computeReductionPlan(jobCtx context.Context, red
 
 	plan.Clusters = append(carried, fresh...)
 	ensureDistinctClusterIDs(plan.Clusters)
+	// What this plan was computed with, so the page can say when the settings have
+	// since changed. The matching mode and rule are the normalised ones actually
+	// used, not whatever the row's column happened to hold.
+	plan.Settings = &models.ReductionSettings{
+		MatchingMode:    normalizeMatchingMode(reduction.MatchingMode),
+		WinnerRule:      rule,
+		ExcludeExternal: reduction.ExcludeExternalResources,
+	}
+	// The record of the last apply is not the compute's to rebuild: carried over
+	// from the plan it replaces.
+	plan.LastApply = previous.LastApply
 	return plan, version, nil
 }
 

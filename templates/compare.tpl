@@ -13,6 +13,10 @@
 })">
     {# Names what is being compared and gives a route back to it; nothing else on #}
     {# the page does either. #}
+    {# Opened from a Resource Reduction (?from=reduction:<id>): the way back, shown once the server agrees the viewer can open it. #}
+    <p x-data="reductionBackLink" x-show="href" x-cloak class="compare-back">
+        <a :href="href" x-text="label" data-testid="compare-back-to-reduction"></a>
+    </p>
     <nav class="compare-breadcrumb" aria-label="Breadcrumb">
         <a href="/resources">Resources</a>
         <span aria-hidden="true">/</span>

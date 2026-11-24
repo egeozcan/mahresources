@@ -28,10 +28,10 @@ func TestReductionPageRendersClustersAndTheirJustification(t *testing.T) {
 	body := response.Body.String()
 
 	assert.Contains(t, body, `data-testid="reduction-cluster"`)
-	assert.Contains(t, body, "Identical Resources")
+	assert.Regexp(t, `Identical\s+&middot;\s+2 copies`, body)
 	assert.Contains(t, body, "highest resolution", "the deciding criterion is on the page")
 	assert.Contains(t, body, "4x the pixels", "and so is the margin that decided it")
-	assert.Contains(t, body, "Will be deleted", "a Loser says what will happen to it")
+	assert.Contains(t, body, `data-testid="member-role">Remove<`, "a Loser says what will happen to it")
 	assert.Contains(t, body, "cannot be undone", "and the page says there is no way back")
 }
 
@@ -49,7 +49,7 @@ func TestReductionPageDistinguishesNotComputedFromNothingFound(t *testing.T) {
 	computeReduction(t, tc, red.ID)
 
 	body = tc.MakeRequest(http.MethodGet, reductionPath(red.ID), nil).Body.String()
-	assert.Contains(t, body, "No matching resources found")
+	assert.Contains(t, body, "No copies found in this selection")
 	assert.Contains(t, body, "have a content hash", "and the coverage line says what could be examined")
 }
 

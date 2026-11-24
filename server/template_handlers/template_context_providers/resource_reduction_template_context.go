@@ -3,6 +3,7 @@ package template_context_providers
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/flosch/pongo2/v4"
 
@@ -99,9 +100,16 @@ func ResourceReductionListContextProvider(context ResourceReductionPageContext) 
 			return addErrContext(err, baseContext)
 		}
 
+		progress, err := context.GetReductionProgress(reductions)
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
 		rows := make([]reductionRow, 0, len(reductions))
 		for i := range reductions {
-			rows = append(rows, describeReduction(&reductions[i]))
+			row := describeReduction(&reductions[i])
+			row.Progress = progress[reductions[i].ID]
+			row.DonePercent, row.ActionKind, row.ActionLabel = describeProgress(row.Progress, row.StatusEffective)
+			rows = append(rows, row)
 		}
 
 		return pongo2.Context{
@@ -124,6 +132,8 @@ func ResourceReductionCreateContextProvider(_ ResourceReductionPageContext) func
 	return func(request *http.Request) pongo2.Context {
 		return pongo2.Context{
 			"pageTitle": "New Resource Reduction",
+			// The vocabulary for the Winner Rule's Custom preset.
+			"winnerCriteria": allWinnerCriteria(),
 		}.Update(StaticTemplateCtx(request))
 	}
 }
@@ -149,10 +159,25 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 		if err := decoder.Decode(&reviewQuery, request.URL.Query()); err != nil {
 			return addErrContext(err, baseContext)
 		}
+		// Open is the tab the page lands on: with no status given the review shows the
+		// open Clusters, acted on or not. What the reviewer asked for is kept apart,
+		// so "nothing matches your filters" is not claimed of the default view.
+		// Only known statuses survive: the value reaches the page's state JSON and its
+		// links, and an unknown one falls back to the default like any other
+		// unrecognised parameter.
+		reviewQuery.Status = knownReviewStatuses(reviewQuery.Status)
+		requested := reviewQuery
+		if len(reviewQuery.Status) == 0 {
+			reviewQuery.Status = []string{models.ReductionClusterOpen}
+		}
 		review, err := context.GetReductionReview(uint(id), owner, restricted, int(page), &reviewQuery)
 		if err != nil {
 			return addErrContext(err, baseContext)
 		}
+
+		// One source for the whole page: the version the figures and the apply token
+		// were read at, not an earlier read of the row.
+		reduction = review.Reduction
 
 		if redirect := outOfRangePageRedirect(request, int64(review.ClusterCount), review.PageSize, page); redirect != nil {
 			return redirect
@@ -192,8 +217,103 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 			// True when any filter is active, so the empty state can say "nothing
 			// matches" rather than "nothing repeats" — the second is a claim about
 			// the whole Extent, and a filter may simply have excluded everything.
-			"reviewFilterActive": reviewQuery.NeedsAttention || len(reviewQuery.Status) > 0 || len(reviewQuery.Tier) > 0,
+			"reviewFilterActive": requested.NeedsAttention || len(requested.Status) > 0 || len(requested.Tier) > 0 ||
+				requested.Approval == "approved" || requested.Approval == "unapproved",
+
+			// The status tab the page is on: the first requested status, or open.
+			"statusTab": reviewQuery.Status[0],
+			// The review's own settings, normalised, so the controls show what the
+			// server used rather than what the URL said.
+			"reviewApproval": normalizedApproval(reviewQuery.Approval),
+			"reviewSort":     normalizedSort(reviewQuery.Sort),
+			"pageSize":       review.PageSize,
+			"pageSizes":      application_context.ReductionPageSizes,
+			// Counts over the Clusters this principal may fully see; a withheld
+			// Cluster is in none of them.
+			"tabCounts": pongo2.Context{
+				"open":    review.TabCounts.Open,
+				"skipped": review.TabCounts.Skipped,
+				"stale":   review.TabCounts.Stale,
+				"applied": review.TabCounts.Applied,
+				// Claimed by an apply and not yet confirmed: copies still exist.
+				"merging": review.TabCounts.Merging,
+			},
+			// What the apply dialog states, per tier, over approved visible Clusters.
+			"applyToken": review.ApplyToken,
+			// Stranded claims the viewer can settle, whatever the filters show.
+			"settleableClaims": review.SettleableClaims,
+			"applyFigures": pongo2.Context{
+				"identical":    tierFigures(review.ApplyFigures.Identical),
+				"near":         tierFigures(review.ApplyFigures.Near),
+				"keepsSmaller": review.ApplyFigures.KeepsSmaller,
+			},
+			// The numbers on the bulk buttons.
+			"bulk": pongo2.Context{
+				"identicalApprovable": review.Bulk.IdenticalApprovable,
+				"identicalOpen":       review.Bulk.IdenticalOpen,
+			},
+			"settingsChanged": review.SettingsChanged,
+			"lastApply":       describeLastApplyContext(review.LastApply),
+			"extentAll":       review.ExtentAll,
+			// The selection by name, first 20 of each by id, visible ones only.
+			"reviewSelection": pongo2.Context{
+				"groups":        review.SelectionGroups,
+				"resources":     review.SelectionResources,
+				"moreGroups":    review.MoreGroups,
+				"moreResources": review.MoreResources,
+			},
+			// Links of the tabs, chips and sort form, each the current query with one
+			// thing changed.
+			"reviewNav": reviewNav(request.URL.Query(), uint(id), reviewQuery.Status[0], map[string]int{
+				models.ReductionClusterOpen:    review.TabCounts.Open,
+				models.ReductionClusterSkipped: review.TabCounts.Skipped,
+				models.ReductionClusterStale:   review.TabCounts.Stale,
+				models.ReductionClusterApplied: review.TabCounts.Applied,
+			}),
 		}.Update(baseContext)
+	}
+}
+
+func normalizedApproval(v string) string {
+	if v == "approved" || v == "unapproved" {
+		return v
+	}
+	return ""
+}
+
+func normalizedSort(v string) string {
+	if v == "size" || v == "computed" {
+		return v
+	}
+	return "copies"
+}
+
+func tierFigures(f contracts.ReductionTierFigures) pongo2.Context {
+	return pongo2.Context{"clusters": f.Clusters, "losers": f.Losers, "keepAsVersion": f.KeepAsVersion}
+}
+
+// describeLastApplyContext is the last apply record as the page and its .json twin
+// carry it: counts and times only, nil before the first apply.
+func describeLastApplyContext(last *contracts.ReductionLastApplyView) any {
+	if last == nil {
+		return nil
+	}
+	var finished any
+	if last.FinishedAt != nil {
+		finished = last.FinishedAt.Format(time.RFC3339)
+	}
+	return pongo2.Context{
+		"startedAt":   last.StartedAt.Format(time.RFC3339),
+		"finishedAt":  finished,
+		"applied":     last.Applied,
+		"removed":     last.Removed,
+		"stale":       last.Stale,
+		"running":     last.Running,
+		"interrupted": last.Interrupted,
+		// True when applied, removed and stale were zeroed because they count
+		// Clusters the viewer may no longer see.
+		"countsHidden": last.CountsHidden,
+		"requestId":    last.RequestID,
 	}
 }
 
@@ -280,6 +400,14 @@ type reductionRow struct {
 	// time.Time — a nil one takes the whole page down with a 500 rather than
 	// rendering an empty cell.
 	ComputedAtLabel string
+
+	// Progress, DonePercent and the action are filled on the list page only, from
+	// the Clusters the viewer may see. DonePercent is the share of those that are
+	// applied or skipped. ActionKind is one of find, continue, view or retry.
+	Progress    contracts.ReductionProgress
+	DonePercent int
+	ActionKind  string
+	ActionLabel string
 }
 
 func describeReduction(r *models.ResourceReduction) reductionRow {
@@ -295,6 +423,24 @@ func describeReduction(r *models.ResourceReduction) reductionRow {
 		MatchingLabel:     matchingModeLabel(r.MatchingMode),
 		ComputedAtLabel:   computed,
 	}
+}
+
+// describeProgress turns the counts into the list card's bar and its one button:
+// Find duplicates before a compute, Continue review while Clusters are open, Try
+// again after a failure, View otherwise.
+func describeProgress(p contracts.ReductionProgress, status string) (percent int, kind, label string) {
+	if p.Clusters > 0 {
+		percent = (p.Applied + p.Skipped) * 100 / p.Clusters
+	}
+	switch {
+	case status == models.ReductionStatusDraft:
+		return percent, "find", "Find duplicates"
+	case status == models.ReductionStatusFailed:
+		return percent, "retry", "Try again"
+	case status == models.ReductionStatusReady && p.Open > 0:
+		return percent, "continue", "Continue review"
+	}
+	return percent, "view", "View"
 }
 
 func reductionStatusLabel(status string) string {
@@ -350,4 +496,17 @@ func allWinnerCriteria() []pongo2.Context {
 		models.WinnerCriterionAssociationsAsc,
 	}
 	return describeWinnerRule(order)
+}
+
+// knownReviewStatuses keeps the review statuses the page understands, in order.
+func knownReviewStatuses(asked []string) []string {
+	known := map[string]bool{"open": true, "reviewed": true, "all": true,
+		models.ReductionClusterSkipped: true, models.ReductionClusterStale: true, models.ReductionClusterApplied: true}
+	var out []string
+	for _, status := range asked {
+		if known[status] {
+			out = append(out, status)
+		}
+	}
+	return out
 }

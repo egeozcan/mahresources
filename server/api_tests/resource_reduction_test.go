@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -294,4 +295,28 @@ func TestTheWinnerRuleCanBeReordered(t *testing.T) {
 	assert.Equal(t,
 		[]string{models.WinnerCriterionNameAsc, models.WinnerCriterionCreatedAsc},
 		application_context.DecodeWinnerRule(after.WinnerRule))
+}
+
+// The list leads with the Reduction worked on most recently, so the one a
+// reviewer is in the middle of is at the top when they come back to it.
+func TestReductionListLeadsWithTheMostRecentlyUpdated(t *testing.T) {
+	tc := SetupTestEnv(t)
+	owner, restricted := asAdmin()
+
+	older := createReduction(t, tc, "Worked on later", []uint{1})
+	createReduction(t, tc, "Created last", []uint{1})
+
+	// SQLite stores timestamps with sub-second precision, but make the order
+	// unambiguous rather than depend on it.
+	require.NoError(t, tc.DB.Model(&models.ResourceReduction{}).Where("id <> ?", older.ID).
+		Update("updated_at", older.UpdatedAt.Add(-time.Hour)).Error)
+	_, err := tc.AppCtx.UpdateResourceReductionSettings(&query_models.ResourceReductionEditor{
+		ID: older.ID, Name: "Worked on later", Version: older.Version,
+	}, owner, restricted)
+	require.NoError(t, err)
+
+	rows, err := tc.AppCtx.GetResourceReductions(0, 10, &query_models.ResourceReductionQuery{})
+	require.NoError(t, err)
+	require.NotEmpty(t, rows)
+	assert.Equal(t, older.ID, rows[0].ID)
 }

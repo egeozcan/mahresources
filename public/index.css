@@ -1153,6 +1153,8 @@ html {
 
 .detail-panel-header {
     display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
     align-items: center;
     justify-content: space-between;
     padding: 0.75rem 1rem;
@@ -1190,8 +1192,11 @@ html {
 
 .detail-panel-actions {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
+    justify-content: flex-end;
     gap: 0.5rem;
+    min-width: 0;
 }
 
 .detail-panel-body {
@@ -4332,62 +4337,220 @@ progress.export-progress-bar::-moz-progress-bar {
    -------------------------------------------------------------------------- */
 
 .reduction-cluster {
-    padding-bottom: 0.25rem;
+    padding: 0.75rem 0.75rem 0.5rem;
+    /* The apply bar is sticky at the bottom of the column; a card brought into view
+       by the keyboard must clear it. */
+    scroll-margin-bottom: 7rem;
 }
 
-/* A Resource's name can be a long unbroken URL (a remote download keeps its
-   source URL as the name), and the header prints it in the "Winner:" meta line.
-   .card-meta-item is white-space: nowrap and a flex item with min-width: auto,
-   so it refuses to shrink below the name's full width and leaks outside the
-   card — worst at reduced zoom, where the card narrows and the nowrap content
-   does not. Scoped to this page: let the meta item shrink and break the link
-   where it has to. overflow-wrap: anywhere rather than break-all, following the
-   .card-title precedent (Finding 148), so ordinary names keep word boundaries. */
-.reduction-cluster .card-meta-item {
-    min-width: 0;
-    white-space: normal;
+.reduction-cluster:focus-visible {
+    outline: 2px solid #b45309;
+    outline-offset: 2px;
 }
 
-.reduction-cluster .card-meta-link {
-    min-width: 0;
+/* A Cluster that wants a decision of its own: a thick accent on the left, whose two
+   touching corners stay square. */
+.reduction-cluster--attention {
+    border-left: 4px solid #b45309;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+}
+
+.reduction-cluster--applied {
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+    background: #fafaf9;
+}
+
+.reduction-cluster-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+}
+
+.reduction-cluster-heading {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    flex: 0 0 auto;
+}
+
+.reduction-cluster-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: #1c1917;
     overflow-wrap: anywhere;
+}
+
+.reduction-state {
+    font-size: 0.75rem;
+    color: #57534e;
+}
+
+/* The one sentence a Cluster is reviewed by. Long names break rather than push the
+   card past the column. */
+.reduction-reason {
+    flex: 1 1 18rem;
+    min-width: 0;
+    font-size: 0.875rem;
+    color: #292524;
+    overflow-wrap: anywhere;
+}
+
+.reduction-cluster-controls {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-left: auto;
+}
+
+.reduction-approve[aria-pressed="true"] {
+    background: #166534;
+    border-color: #166534;
+    color: #fff;
+}
+
+.reduction-approve[aria-pressed="true"]:hover:not(:disabled) {
+    background: #14532d;
+}
+
+.reduction-warning {
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    font-size: 0.875rem;
+    color: #78350f;
+    background: #fffbeb;
+    border-left: 4px solid #b45309;
+    border-radius: 0 0.375rem 0.375rem 0;
+}
+
+.reduction-warning--text {
+    display: block;
+}
+
+/* The copies flow in a grid that uses the card's width. Each copy is five rows
+   (badges, preview, name, facts, actions) taken from the grid itself (subgrid), so
+   the previews, the facts and the buttons of copies in one row line up whatever
+   wraps inside them. */
+.reduction-cluster-members {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(10.5rem, 15rem));
+    gap: 0.75rem;
+    padding: 0.75rem 0;
+}
+
+@media (max-width: 639px) {
+    .reduction-cluster-members {
+        grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+        gap: 0.5rem;
+    }
+}
+
+.reduction-footnote {
+    font-size: 0.75rem;
+    color: #57534e;
 }
 
 .reduction-member {
     display: flex;
     flex-direction: column;
-    width: 10rem;
+    gap: 0.25rem;
+    min-width: 0;
     padding: 0.5rem;
-    border: 1px solid #e7e5e4;
+    border: 2px solid #e7e5e4;
     border-radius: 0.375rem;
     background: #fff;
 }
 
+@supports (grid-template-rows: subgrid) {
+    .reduction-member:not(.reduction-member--gone) {
+        display: grid;
+        grid-template-rows: subgrid;
+        grid-row: span 5;
+        row-gap: 0.25rem;
+    }
+
+    .reduction-member-actions {
+        align-self: end;
+    }
+}
+
 .reduction-member img {
+    display: block;
     max-width: 100%;
     height: auto;
+    max-height: 160px;
+    margin: 0 auto;
     border-radius: 0.25rem;
 }
 
-.reduction-member--winner {
-    border-color: #b45309;
-    box-shadow: inset 0 0 0 1px #b45309;
+.reduction-member--keep {
+    border-color: #166534;
 }
 
-/* Ejected members stay visible and stay legible. Dimming them to the point of
-   illegibility would fail contrast, and "this one is out of the Cluster" is
-   already stated in words by its badge. */
+.reduction-member--remove {
+    border-color: #b91c1c;
+}
+
+/* Left out of the Cluster stays visible and legible: dimming to the point of
+   illegibility would fail contrast, and the label already says it in words. */
 .reduction-member--ejected {
     background: #fafaf9;
     border-style: dashed;
+    border-color: #a8a29e;
+}
+
+.reduction-member--gone {
+    border-style: dashed;
+    border-color: #d6d3d1;
+}
+
+.reduction-roles {
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    gap: 0.25rem;
+}
+
+.reduction-member-name {
+    font-size: 0.75rem;
+    color: #44403c;
+    max-width: 100%;
+}
+
+.reduction-facts {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-size: 0.75rem;
+    color: #44403c;
+}
+
+.reduction-fact--differs {
+    font-weight: 700;
+    color: #1c1917;
+}
+
+.reduction-member-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-top: auto;
+    min-width: 0;
 }
 
 .reduction-badge {
     display: inline-flex;
     align-items: center;
-    padding: 0.125rem 0.375rem;
+    padding: 0.125rem 0.5rem;
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     font-weight: 600;
     border-radius: 9999px;
     background: #f5f5f4;
@@ -4396,22 +4559,22 @@ progress.export-progress-bar::-moz-progress-bar {
     white-space: nowrap;
 }
 
-.reduction-badge--winner {
-    background: #fef3c7;
-    color: #78350f;
-    border-color: #f59e0b;
+.reduction-badge--keep {
+    background: #f0fdf4;
+    color: #14532d;
+    border-color: #86efac;
 }
 
-.reduction-badge--loser {
+.reduction-badge--remove {
     background: #fef2f2;
     color: #991b1b;
-    border-color: #fecaca;
+    border-color: #fca5a5;
 }
 
 .reduction-badge--ejected {
     background: #f5f5f4;
-    color: #57534e;
-    border-color: #d6d3d1;
+    color: #44403c;
+    border-color: #a8a29e;
 }
 
 .reduction-badge--outside {
@@ -4426,34 +4589,569 @@ progress.export-progress-bar::-moz-progress-bar {
     border-color: #bbf7d0;
 }
 
-.reduction-action {
+/* One button style for the page. 44px tall: these controls approve and apply the
+   deletion of files, and the bar is used with a thumb. */
+.reduction-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0.25rem 0.625rem;
+    min-height: 2.75rem;
+    padding: 0.25rem 0.875rem;
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.8125rem;
     font-weight: 500;
     border-radius: 0.375rem;
-    border: 1px solid #d6d3d1;
+    border: 1px solid #a8a29e;
     background: #fff;
-    color: #44403c;
+    color: #292524;
     cursor: pointer;
+    text-decoration: none;
 }
 
-.reduction-action:hover:not(:disabled) {
+.reduction-btn:hover:not(:disabled) {
     background: #f5f5f4;
-    border-color: #a8a29e;
+    border-color: #78716c;
 }
 
-.reduction-action:disabled {
+.reduction-btn:focus-visible,
+.reduction-chip:focus-visible,
+.reduction-tab:focus-visible,
+.reduction-select:focus-visible,
+.reduction-about summary:focus-visible {
+    outline: 2px solid #b45309;
+    outline-offset: 2px;
+}
+
+.reduction-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }
 
-.reduction-action--small {
-    padding: 0.125rem 0.5rem;
+.reduction-btn--small {
+    min-height: 2.25rem;
+    padding: 0.125rem 0.625rem;
+    font-size: 0.75rem;
+}
+
+.reduction-btn--primary {
+    background: #b45309;
+    border-color: #b45309;
+    color: #fff;
+}
+
+.reduction-btn--primary:hover:not(:disabled) {
+    background: #92400e;
+    border-color: #92400e;
+}
+
+.reduction-btn--danger {
+    background: #b91c1c;
+    border-color: #b91c1c;
+    color: #fff;
+}
+
+.reduction-btn--danger:hover:not(:disabled) {
+    background: #991b1b;
+    border-color: #991b1b;
+}
+
+.reduction-btn--link {
+    border-color: transparent;
+    background: transparent;
+    color: #92400e;
+    text-decoration: underline;
+}
+
+.reduction-link {
+    color: #92400e;
+    text-decoration: underline;
+}
+
+.reduction-sort .reduction-select {
+    margin-left: 0.25rem;
+}
+
+/* background-color, not the shorthand: the forms plugin paints the select's
+   chevron as a background image, and the shorthand wiped it on this page only. */
+.reduction-select {
+    min-height: 2.5rem;
+    border: 1px solid #a8a29e;
+    border-radius: 0.375rem;
+    background-color: #fff;
+    font-size: 0.875rem;
+    padding: 0.25rem 2rem 0.25rem 0.5rem;
+}
+
+/* Status header, notices, tabs, chips. */
+.reduction-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+}
+
+.reduction-status-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-left: auto;
+}
+
+.reduction-pill {
+    display: inline-flex;
+    padding: 0.125rem 0.625rem;
+    border-radius: 9999px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border: 1px solid #d6d3d1;
+    background: #f5f5f4;
+    color: #292524;
+}
+
+.reduction-pill--ready {
+    background: #f0fdf4;
+    border-color: #86efac;
+    color: #14532d;
+}
+
+.reduction-pill--computing {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+    color: #1e3a8a;
+}
+
+.reduction-pill--failed {
+    background: #fef2f2;
+    border-color: #fca5a5;
+    color: #7f1d1d;
+}
+
+.reduction-progress-bar {
+    width: 100%;
+    max-width: 28rem;
+    height: 0.75rem;
+}
+
+.reduction-notice {
+    margin-top: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    font-size: 0.875rem;
+    color: #1c1917;
+    background: #fafaf9;
+    border-left: 4px solid #78716c;
+    border-radius: 0 0.375rem 0.375rem 0;
+}
+
+.reduction-notice--info {
+    background: #eff6ff;
+    border-left-color: #1d4ed8;
+}
+
+.reduction-notice--warn {
+    background: #fffbeb;
+    border-left-color: #b45309;
+    color: #78350f;
+}
+
+.reduction-notice--ok {
+    background: #f0fdf4;
+    border-left-color: #166534;
+    display: block;
+}
+
+.reduction-notice--ok:focus-visible {
+    outline: 2px solid #166534;
+    outline-offset: 2px;
+}
+
+.reduction-notice--error {
+    background: #fef2f2;
+    border-left-color: #b91c1c;
+    color: #7f1d1d;
+}
+
+.reduction-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-top: 1rem;
+    border-bottom: 2px solid #e7e5e4;
+}
+
+.reduction-tab {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    padding: 0 0.875rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.875rem;
+    color: #44403c;
+    text-decoration: none;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
+}
+
+.reduction-tab:hover {
+    color: #1c1917;
+    background: #f5f5f4;
+}
+
+.reduction-tab[aria-current="page"] {
+    color: #1c1917;
+    font-weight: 600;
+    border-bottom-color: #b45309;
+}
+
+.reduction-tab-count {
+    margin-left: 0.25rem;
+    color: #57534e;
+}
+
+.reduction-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    margin-top: 0.75rem;
+}
+
+.reduction-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.reduction-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.25rem;
+    padding: 0 0.75rem;
+    border: 1px solid #a8a29e;
+    border-radius: 9999px;
+    font-size: 0.8125rem;
+    color: #292524;
+    text-decoration: none;
+    background: #fff;
+}
+
+.reduction-chip:hover {
+    background: #f5f5f4;
+}
+
+/* Not colour alone: the active chip is filled and gains a check. */
+.reduction-chip[aria-current="true"] {
+    background: #fef3c7;
+    border-color: #92400e;
+    color: #78350f;
+    font-weight: 600;
+}
+
+.reduction-chip[aria-current="true"]::before {
+    content: "\2713";
+    margin-right: 0.375rem;
+}
+
+.reduction-chip--clear {
+    border-style: dashed;
+}
+
+.reduction-sortbox {
+    margin-left: auto;
+}
+
+.reduction-sortbox-summary {
+    display: none;
+}
+
+.reduction-sort {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+}
+
+/* Not a state with something to say: sentence-case text on the left, not the
+   shared centred "-- text --" line. */
+.detail-empty.reduction-empty {
+    text-align: left;
+    font-family: inherit;
+    font-size: 0.9375rem;
+    letter-spacing: normal;
+    color: #44403c;
+    padding-left: 0;
+    padding-right: 0;
+}
+
+.detail-empty.reduction-empty::before,
+.detail-empty.reduction-empty::after {
+    content: none;
+}
+
+/* A card's metadata wraps rather than running past the card on a phone. */
+.reduction-card .card-meta-item {
+    white-space: normal;
+}
+
+@media (max-width: 639px), (pointer: coarse) {
+    .reduction-shortcuts-btn {
+        display: none;
+    }
+}
+
+/* A phone: the tabs and the chips each get one row that scrolls sideways, and the
+   sort controls fold into a disclosure, so the first Cluster is on the first
+   screen rather than under four rows of controls. */
+@media (max-width: 639px) {
+    .reduction-tabs {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        margin-top: 0.5rem;
+        scrollbar-width: thin;
+    }
+
+    .reduction-tab {
+        flex: 0 0 auto;
+        padding: 0 0.625rem;
+        white-space: nowrap;
+    }
+
+    /* Inset: the row scrolls, so an outline drawn outside it would be clipped. */
+    .reduction-tab:focus-visible {
+        outline-offset: -3px;
+    }
+
+    .reduction-filters {
+        margin-top: 0.5rem;
+        gap: 0.25rem;
+    }
+
+    .reduction-chips {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        flex: 1 1 100%;
+        padding: 0.25rem 0.25rem 0.25rem 0.125rem;
+        scrollbar-width: thin;
+    }
+
+    .reduction-chip {
+        flex: 0 0 auto;
+        white-space: nowrap;
+        min-height: 2.5rem;
+    }
+
+    .reduction-sortbox {
+        flex: 1 1 100%;
+        margin-left: 0;
+    }
+
+    /* The sidebar disclosure directly above is the Settings entry on a phone. */
+    .reduction-status-actions [data-testid="reduction-settings-link"] {
+        display: none;
+    }
+
+    .reduction-status {
+        flex-wrap: nowrap;
+        gap: 0.25rem 0.5rem;
+    }
+
+    .reduction-status [data-testid="reduction-computed-at"] {
+        flex: 1 1 auto;
+        min-width: 0;
+        font-size: 0.75rem;
+    }
+
+    .reduction-pill {
+        flex: 0 0 auto;
+    }
+
+    .reduction-status-actions {
+        margin-left: auto;
+    }
+
+    .reduction-status-actions .reduction-btn {
+        min-height: 2.5rem;
+        padding: 0.125rem 0.625rem;
+    }
+
+    .reduction-clusters-title {
+        margin-bottom: 0.25rem;
+    }
+
+    .reduction-sortbox-summary {
+        display: flex;
+        align-items: center;
+        min-height: 2.75rem;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.8125rem;
+        cursor: pointer;
+    }
+
+    .reduction-sortbox-summary:focus-visible {
+        outline: 2px solid #b45309;
+        outline-offset: 2px;
+    }
+
+    .reduction-clusters-region {
+        margin-top: 0.5rem;
+    }
+}
+
+.reduction-clusters-region {
+    margin-top: 1rem;
+}
+
+/* Room for the sticky bar, so the last card is never covered. Only on the tab
+   that has a bar. */
+.reduction-clusters-region--bar {
+    padding-bottom: 7rem;
+}
+
+.reduction-clusters-region:focus-visible {
+    outline: 2px solid #b45309;
+    outline-offset: 2px;
+}
+
+.reduction-clusters-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+/* The apply bar. Sticky inside the main column with the page background behind
+   it, so cards scroll under it. */
+.reduction-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    padding: 0.625rem 0.75rem;
+    margin-top: -6.5rem;
+    background: #fafaf9;
+    border-top: 2px solid #d6d3d1;
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.06);
+}
+
+.reduction-bar-counts {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #1c1917;
+}
+
+.reduction-bar-notice {
+    flex: 1 1 100%;
+    font-size: 0.8125rem;
+    color: #44403c;
+}
+
+.reduction-bar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-left: auto;
+    position: relative;
+}
+
+.reduction-bulk {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.reduction-more {
+    display: none;
+}
+
+.reduction-apply-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.reduction-apply-warning {
     font-size: 0.6875rem;
+    color: #57534e;
+    text-align: center;
+}
+
+@media (max-width: 639px) {
+    .reduction-more {
+        display: inline-flex;
+    }
+
+    /* Counts and Apply stay; the bulk buttons become a menu above the bar. */
+    .reduction-bulk {
+        display: none;
+        position: absolute;
+        bottom: calc(100% + 0.75rem);
+        right: 0;
+        flex-direction: column;
+        min-width: 14rem;
+        padding: 0.5rem;
+        background: #fff;
+        border: 1px solid #a8a29e;
+        border-radius: 0.5rem;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+    }
+
+    .reduction-bulk.is-open {
+        display: flex;
+    }
+
+    .reduction-bar-actions {
+        margin-left: 0;
+        flex: 1 1 100%;
+        justify-content: space-between;
+    }
+}
+
+.reduction-about {
+    margin-top: 1.5rem;
+    border: 1px solid #e7e5e4;
+    border-radius: 0.5rem;
+    background: #fff;
+}
+
+.reduction-about > summary {
+    cursor: pointer;
+    padding: 0.75rem 1rem;
+    min-height: 2.75rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+
+.reduction-about-body {
+    padding: 0 1rem 1rem;
+}
+
+.reduction-shortcut-list {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.375rem 1rem;
+    margin-top: 0.75rem;
+    font-size: 0.875rem;
+}
+
+.reduction-shortcut-list kbd {
+    padding: 0.0625rem 0.375rem;
+    border: 1px solid #a8a29e;
+    border-radius: 0.25rem;
+    background: #f5f5f4;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8125rem;
 }
 
 /* WCAG 2.2 SC 2.5.8. A checkbox or radio painted at its browser default is 13-16px
@@ -4486,3 +5184,203 @@ progress.export-progress-bar::-moz-progress-bar {
 .mrql-compact .card-image img { width: 100%; height: 100%; object-fit: cover; }
 .mrql-compact .card-description { max-height: 4.5rem; overflow: hidden; }
 .mrql-compact .card { margin-bottom: 0; }
+
+
+/* Resource Reduction, round 2. */
+.compare-back {
+    margin-bottom: 0.5rem;
+    font-size: 0.875rem;
+}
+
+.compare-back a {
+    color: #92400e;
+    text-decoration: underline;
+}
+
+.reduction-sortbox-summary::before {
+    content: "\25B8";
+    margin-right: 0.5rem;
+}
+
+.reduction-sortbox[open] > .reduction-sortbox-summary::before {
+    content: "\25BE";
+}
+
+@media (max-width: 639px) {
+    /* The rows scroll sideways. The cue is an edge shadow painted behind the text
+       (scroll-shadow gradients), never a mask over it, so no text is ever dimmed. */
+    .reduction-tabs,
+    .reduction-chips {
+        scroll-padding-inline: 1rem;
+        background:
+            linear-gradient(to right, #fafaf9 30%, rgba(250, 250, 249, 0)) left center / 2rem 100% no-repeat local,
+            linear-gradient(to left, #fafaf9 30%, rgba(250, 250, 249, 0)) right center / 2rem 100% no-repeat local,
+            radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.28), rgba(0, 0, 0, 0)) left center / 0.625rem 100% no-repeat scroll,
+            radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.28), rgba(0, 0, 0, 0)) right center / 0.625rem 100% no-repeat scroll;
+    }
+}
+
+/* A short viewport (a landscape phone, 200% zoom): the apply bar becomes one slim row. */
+@media (max-height: 500px) {
+    .reduction-bar {
+        gap: 0.5rem;
+        padding: 0.25rem 0.5rem;
+        margin-top: -3.5rem;
+    }
+
+    .reduction-clusters-region--bar {
+        padding-bottom: 4rem;
+    }
+
+    .reduction-bar .reduction-btn {
+        min-height: 2.25rem;
+    }
+
+    .reduction-bar-actions {
+        flex-wrap: nowrap;
+    }
+
+    .reduction-apply-wrap {
+        flex-direction: row;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .reduction-apply-warning {
+        font-size: 0.625rem;
+        text-align: left;
+        max-width: 7rem;
+        line-height: 1.1;
+    }
+
+    .reduction-bar-notice {
+        flex: 1 1 auto;
+    }
+}
+
+.reduction-nothing {
+    font-size: 0.8125rem;
+    color: #44403c;
+    align-self: center;
+}
+
+/* The preview link keeps a usable target before its lazy image has loaded. */
+.reduction-member a[data-lightbox-item] {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 6rem;
+}
+
+/* The narrowest phones: a slimmer bar, and a status row that wraps instead of
+   squeezing "Last computed" into a column. */
+@media (max-width: 380px) {
+    .reduction-status {
+        flex-wrap: wrap;
+    }
+
+    .reduction-status [data-testid="reduction-computed-at"] {
+        flex: 1 0 100%;
+        order: 3;
+    }
+
+    .reduction-status-actions {
+        order: 2;
+    }
+
+    .reduction-bar {
+        padding: 0.375rem 0.5rem;
+        gap: 0.25rem 0.5rem;
+    }
+
+    .reduction-bar-counts {
+        font-size: 0.8125rem;
+    }
+
+    .reduction-bar .reduction-btn {
+        min-height: 2.5rem;
+    }
+
+    .reduction-apply-warning {
+        font-size: 0.625rem;
+    }
+}
+
+.reduction-badge--changed {
+    background: #fffbeb;
+    color: #78350f;
+    border-color: #f59e0b;
+}
+
+.reduction-bar-error {
+    flex: 1 1 100%;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.375rem 0.5rem;
+    font-size: 0.875rem;
+    color: #7f1d1d;
+    background: #fef2f2;
+    border-left: 4px solid #b91c1c;
+}
+
+.reduction-bar-error:focus-visible {
+    outline: 2px solid #b91c1c;
+    outline-offset: 2px;
+}
+
+/* A short viewport: a bar stuck to the bottom would cover the tab row at rest,
+   so it sits in the flow after the Clusters (Skip to Apply still reaches it). */
+@media (max-height: 699px) {
+    .reduction-bar {
+        position: static;
+        margin-top: 0.75rem;
+    }
+
+    .reduction-clusters-region--bar {
+        padding-bottom: 0;
+    }
+}
+
+/* The approval toggle always reads "Approve"; pressed adds a check beside it. */
+.reduction-approve-check {
+    display: none;
+    margin-right: 0.375rem;
+}
+
+.reduction-approve[aria-pressed="true"] .reduction-approve-check {
+    display: inline;
+}
+
+/* "Find duplicates" popovers: on a phone they are as wide as the screen allows,
+   never wider, whatever the button's own position. */
+@media (max-width: 399px) {
+    .reduction-popover.reduction-popover {
+        position: fixed;
+        left: 1rem;
+        right: 1rem;
+        width: auto;
+        max-width: none;
+        margin-top: 0.5rem;
+    }
+}
+
+/* The list card's actions wrap, and the button takes the card's width on the narrowest screens. */
+.reduction-card-actions {
+    max-width: 100%;
+}
+
+@media (max-width: 359px) {
+    .reduction-card-actions {
+        flex: 1 1 100%;
+        width: 100%;
+    }
+
+    .reduction-card-actions > div,
+    .reduction-card-actions > a,
+    .reduction-card-actions [data-testid="reduction-action"] {
+        flex: 1 1 100%;
+        width: 100%;
+    }
+}

@@ -31,22 +31,22 @@ import (
 // server/api_tests/group_reparent_stale_scope_test.go prove the behaviour.
 func TestContainmentWritersRederiveTheirScope(t *testing.T) {
 	pinned := map[string]bool{
-		"UpdateGroup":             true,
-		"MergeGroups":             true,
-		"massEdit":                true,
-		"EditResource":            true,
-		"CreateOrUpdateNote":      true,
-		"MergeResourcesExpecting": true,
-		"DeleteGroup":             true,
-		"BulkDeleteGroups":        true,
-		"DeleteResource":          true,
-		"BulkDeleteResources":     true,
-		"DeleteNote":              true,
-		"BulkDeleteNotes":         true,
+		"UpdateGroup":           true,
+		"MergeGroups":           true,
+		"massEdit":              true,
+		"EditResource":          true,
+		"CreateOrUpdateNote":    true,
+		"MergeResourcesLocking": true,
+		"DeleteGroup":           true,
+		"BulkDeleteGroups":      true,
+		"DeleteResource":        true,
+		"BulkDeleteResources":   true,
+		"DeleteNote":            true,
+		"BulkDeleteNotes":       true,
 	}
 	exempt := map[string]string{
 		"deleteGroupInTransaction": "delete helper; its callers (DeleteGroup, BulkDeleteGroups, MergeGroups) rescope first",
-		"deleteResourceDBOnly":     "delete helper; its callers (BulkDeleteResources, MergeResourcesExpecting) rescope first",
+		"deleteResourceDBOnly":     "delete helper; its callers (BulkDeleteResources, MergeResourcesLocking) rescope first",
 		"deleteNoteInTransaction":  "delete helper; its callers (DeleteNote, BulkDeleteNotes) rescope first",
 	}
 	// Each signature is a set of substrings that must all appear in one body.
