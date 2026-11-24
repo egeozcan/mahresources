@@ -1,0 +1,390 @@
+package application_context
+
+import (
+	"encoding/json"
+	"errors"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"gorm.io/gorm"
+
+	"mahresources/contracts"
+	"mahresources/models"
+	"mahresources/models/database_scopes"
+	"mahresources/models/query_models"
+)
+
+// The table-backed review reader (design D8, D10), beside the JSON one in
+// resource_reduction_review.go and not wired to a route: storeGetReductionReview
+// builds the same contracts.ReductionReview, from the plan tables, in bounded
+// memory. The provider switches over once the writers do.
+//
+// Everything the review states is one read snapshot at one plan generation: the
+// Reduction row first (version, plan_schema, plan_generation), then counts,
+// figures, token and the page at that generation.
+
+// ErrReductionUpgrading answers a Reduction whose plan is still the legacy JSON
+// document: the migration has not moved it to tables yet (design D8, HTTP 503).
+var ErrReductionUpgrading = errors.New("this Resource Reduction is being upgraded; try again shortly")
+
+const (
+	// reductionDisplayTextBytes bounds every text field that crosses into Go on
+	// the review and list paths (names, original names, content types).
+	reductionDisplayTextBytes = 1024
+	// reductionSmallCluster is the size up to which a Cluster always renders in full.
+	reductionSmallCluster = 12
+	// reductionPageMemberBudget is the members the Clusters over reductionSmallCluster
+	// of one page share. One past the budget shows its Winner and a members cursor.
+	reductionPageMemberBudget = 2000
+	// reductionNoGeneration is the generation a Reduction with no landed plan reads
+	// at: none, so nothing matches.
+	reductionNoGeneration = "none:no-plan-landed"
+)
+
+// reductionGenerationOf is the generation a Reduction's plan is read at.
+func reductionGenerationOf(r *models.ResourceReduction) string {
+	if r.PlanGeneration == nil || *r.PlanGeneration == "" {
+		return reductionNoGeneration
+	}
+	return *r.PlanGeneration
+}
+
+// boundedText is a SQL expression for the first reductionDisplayTextBytes bytes of
+// a text column, as bytes (BLOB on SQLite, bytea on Postgres), so a multibyte
+// character cut in half never reaches a text type in the driver. Go trims the
+// remainder to a rune boundary (trimDisplayText).
+func (s *reductionStore) boundedText(expr string) string {
+	if s.postgres() {
+		return "substring(convert_to(" + expr + ", 'UTF8') from 1 for " + strconv.Itoa(reductionDisplayTextBytes) + ")"
+	}
+	return "substr(CAST(" + expr + " AS BLOB), 1, " + strconv.Itoa(reductionDisplayTextBytes) + ")"
+}
+
+// trimDisplayText turns bounded bytes into text, dropping an incomplete rune the
+// byte cut left at the end. A value shorter than the bound is returned untouched.
+func trimDisplayText(b []byte) string {
+	if len(b) < reductionDisplayTextBytes {
+		return string(b)
+	}
+	for i := 1; i < utf8.UTFMax && i <= len(b); i++ {
+		if utf8.RuneStart(b[len(b)-i]) {
+			if !utf8.FullRune(b[len(b)-i:]) {
+				b = b[:len(b)-i]
+			}
+			break
+		}
+	}
+	return string(b)
+}
+
+// reductionClusterExtra is what the page needs to say about a Cluster that
+// contracts.ReductionClusterView has no field for yet; the provider that wires
+// this reader carries it onto the view.
+type reductionClusterExtra struct {
+	// MemberCount is every stored member; MembersShown how many the page carries.
+	MemberCount  int
+	MembersShown int
+	// Truncated counts eligible copies the compute's member cap left out (D6). Always
+	// zero for a scoped viewer: omitted copies may lie outside their scope.
+	Truncated int
+	// MoreMembers is true when members were left out of this page, and MembersAfter
+	// the cursor to ask for the next ones from ("" is from the start). A Cluster past
+	// the page budget shows only its Winner and has MembersAfter "".
+	MoreMembers  bool
+	MembersAfter string
+}
+
+// reductionReviewExtras is the review's side output, keyed by Cluster key.
+type reductionReviewExtras struct {
+	Clusters map[string]reductionClusterExtra
+}
+
+// loadReductionForStoreRead reads a Reduction under the visibility predicate with
+// the ordinary projection (never the legacy plan and extent documents).
+func (ctx *MahresourcesContext) loadReductionForStoreRead(id uint, ownerUserID *uint, ownerRestricted bool) (*models.ResourceReduction, error) {
+	var row models.ResourceReduction
+	err := ctx.db.Select(reductionColumns).
+		Scopes(database_scopes.ResourceReductionQuery(reductionQueryFor(ownerUserID, ownerRestricted), true)).
+		Where("id = ?", id).
+		First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrReductionNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// storeGetReductionReview is GetReductionReview over the plan tables. One read
+// snapshot, the same contracts.ReductionReview, plus the per-Cluster extras the
+// contract cannot carry yet.
+func (ctx *MahresourcesContext) storeGetReductionReview(id uint, ownerUserID *uint, ownerRestricted bool, page int, query *query_models.ResourceReductionReviewQuery) (*contracts.ReductionReview, *reductionReviewExtras, error) {
+	var review *contracts.ReductionReview
+	var extras *reductionReviewExtras
+	err := ctx.withReadSnapshot(func(snap *MahresourcesContext) error {
+		var err error
+		review, extras, err = snap.storeReviewInSnapshot(id, ownerUserID, ownerRestricted, page, query)
+		return err
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return review, extras, nil
+}
+
+type storedLastApply struct {
+	models.ReductionLastApply
+	BatchID string `json:"batchId"`
+}
+
+func decodeStoredJSON(raw []byte, into any) (bool, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return false, nil
+	}
+	return true, json.Unmarshal(raw, into)
+}
+
+func (ctx *MahresourcesContext) storeReviewInSnapshot(id uint, ownerUserID *uint, ownerRestricted bool, page int, query *query_models.ResourceReductionReviewQuery) (*contracts.ReductionReview, *reductionReviewExtras, error) {
+	reduction, err := ctx.loadReductionForStoreRead(id, ownerUserID, ownerRestricted)
+	if err != nil {
+		return nil, nil, err
+	}
+	if reduction.PlanSchema == 0 {
+		return nil, nil, ErrReductionUpgrading
+	}
+	generation := reductionGenerationOf(reduction)
+	store := ctx.reductionStore()
+	scoped := ctx.isScopedPrincipal()
+
+	if page < 1 {
+		page = 1
+	}
+	pageSize := ReductionClustersPerPage
+	if query != nil {
+		pageSize = normalizeReviewPageSize(query.PageSize)
+	}
+
+	tabs, err := store.tabCounts(reduction, generation)
+	if err != nil {
+		return nil, nil, err
+	}
+	figures, err := store.figures(reduction, generation)
+	if err != nil {
+		return nil, nil, err
+	}
+	token, _, _, err := store.applyEligibility(reduction, generation)
+	if err != nil {
+		return nil, nil, err
+	}
+	settleable, err := store.settleableClaims(reduction, generation, time.Now())
+	if err != nil {
+		return nil, nil, err
+	}
+	rows, clusterCount, err := store.pageClusters(reduction, generation, query, (page-1)*pageSize, pageSize)
+	if err != nil {
+		return nil, nil, err
+	}
+	views, extras, err := ctx.hydrateReviewPage(store, reduction, rows, scoped)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	figures.Apply.Identical.KeepAsVersion = reduction.KeepAsVersionIdentical
+	figures.Apply.Near.KeepAsVersion = reduction.KeepAsVersionNear
+
+	// The coverage, the drift report and the selection preview.
+	var coverage models.ReductionCoverage
+	if _, err := decodeStoredJSON(reduction.Coverage, &coverage); err != nil {
+		return nil, nil, err
+	}
+	sel, err := store.selectionSummary(reduction)
+	if err != nil {
+		return nil, nil, err
+	}
+	entered := 0
+	if reduction.ComputedAt != nil {
+		if entered, err = store.enteredSince(reduction, *reduction.ComputedAt); err != nil {
+			return nil, nil, err
+		}
+	}
+	// Coverage answers a question about the whole Extent, so only a principal who
+	// can see all of it is shown it (the JSON reader's rule, kept).
+	coverageTrusted := !scoped && sel.resources == sel.storedResources && sel.groups == sel.storedGroups
+	extentSize := coverage.ExtentSize
+	if !coverageTrusted {
+		coverage = models.ReductionCoverage{}
+		extentSize = 0
+	}
+
+	var settings *models.ReductionSettings
+	{
+		var s models.ReductionSettings
+		if ok, err := decodeStoredJSON(reduction.PlanSettings, &s); err != nil {
+			return nil, nil, err
+		} else if ok {
+			settings = &s
+		}
+	}
+
+	var lastView *contracts.ReductionLastApplyView
+	{
+		var rec storedLastApply
+		if ok, err := decodeStoredJSON(reduction.LastApply, &rec); err != nil {
+			return nil, nil, err
+		} else if ok {
+			lastView = describeLastApply(&rec.ReductionLastApply)
+			if scoped {
+				visible, err := store.lastApplyCountsVisible(reduction, generation, rec.BatchID, rec.Applied+rec.Stale)
+				if err != nil {
+					return nil, nil, err
+				}
+				if !visible {
+					lastView.Applied, lastView.Removed, lastView.Stale = 0, 0, 0
+					lastView.CountsHidden = true
+				}
+			}
+		}
+	}
+
+	return &contracts.ReductionReview{
+		SelectionGroups:     sel.groupRefs,
+		SelectionResources:  sel.resourceRefs,
+		MoreGroups:          max(0, sel.groups-reductionSelectionNamesShown),
+		MoreResources:       max(0, sel.resources-reductionSelectionNamesShown),
+		Reduction:           reduction,
+		Status:              EffectiveReductionStatus(reduction),
+		Coverage:            coverage,
+		CoverageTrusted:     coverageTrusted,
+		Clusters:            views,
+		ClusterCount:        clusterCount,
+		CheckedCount:        figures.Checked,
+		CheckedLoserCount:   figures.CheckedLosers,
+		Page:                page,
+		PageSize:            pageSize,
+		SelectedResources:   sel.resources,
+		SelectedGroups:      sel.groups,
+		ExtentSize:          extentSize,
+		EnteredSinceCompute: entered,
+		ExtentAll:           reduction.ExtentAll,
+		TabCounts:           tabs,
+		ApplyFigures:        figures.Apply,
+		ApplyToken:          token,
+		SettleableClaims:    settleable,
+		Bulk:                figures.Bulk,
+		SettingsChanged:     reductionSettingsChanged(reduction, settings),
+		LastApply:           lastView,
+	}, extras, nil
+}
+
+// reductionSelection is the review's view of what was selected: counts as the
+// current principal sees them, the first names, and the stored totals the
+// coverage trust rule compares against.
+type reductionSelectionSummary struct {
+	resources, groups             int
+	storedResources, storedGroups int
+	resourceRefs, groupRefs       []contracts.ReductionNamedRef
+}
+
+// selectionSummary counts and names the Reduction's explicit selection through
+// the principal's subtree: a Resource or Group outside it is neither named nor
+// counted (design D5, D8). A whole-library Reduction selects nothing by name.
+func (s *reductionStore) selectionSummary(r *models.ResourceReduction) (*reductionSelectionSummary, error) {
+	out := &reductionSelectionSummary{}
+	if r.ExtentAll || s.scope.mode == scopeDeny {
+		return out, nil
+	}
+	prefix, args := s.with()
+	resVisible, groupVisible := "", ""
+	if s.scope.mode == scopeSubtree {
+		resVisible = " AND x.owner_id IN " + subtreeIDs
+		groupVisible = " AND x.id IN " + subtreeIDs
+	}
+	count := func(sql string, extra ...any) (int, error) {
+		var n int64
+		err := s.db.Raw(sql, extra...).Scan(&n).Error
+		return int(n), err
+	}
+	var err error
+	if out.storedResources, err = count(`SELECT COUNT(*) FROM reduction_extent_resources WHERE reduction_id = ?`, r.ID); err != nil {
+		return nil, err
+	}
+	if out.storedGroups, err = count(`SELECT COUNT(*) FROM reduction_extent_groups WHERE reduction_id = ?`, r.ID); err != nil {
+		return nil, err
+	}
+	if out.resources, err = count(prefix+`SELECT COUNT(*) FROM reduction_extent_resources e JOIN resources x ON x.id = e.resource_id WHERE e.reduction_id = ?`+resVisible,
+		append(append([]any{}, args...), r.ID)...); err != nil {
+		return nil, err
+	}
+	if out.groups, err = count(prefix+`SELECT COUNT(*) FROM reduction_extent_groups e JOIN groups x ON x.id = e.group_id WHERE e.reduction_id = ?`+groupVisible,
+		append(append([]any{}, args...), r.ID)...); err != nil {
+		return nil, err
+	}
+	named := func(sql string, extra ...any) ([]contracts.ReductionNamedRef, error) {
+		var rows []struct {
+			ID   uint
+			Name []byte
+		}
+		if err := s.db.Raw(sql, extra...).Scan(&rows).Error; err != nil {
+			return nil, err
+		}
+		refs := make([]contracts.ReductionNamedRef, 0, len(rows))
+		for _, row := range rows {
+			refs = append(refs, contracts.ReductionNamedRef{ID: row.ID, Name: trimDisplayText(row.Name)})
+		}
+		return refs, nil
+	}
+	if out.resources > 0 {
+		if out.resourceRefs, err = named(prefix+`SELECT x.id AS id, `+s.boundedText("x.name")+` AS name FROM reduction_extent_resources e JOIN resources x ON x.id = e.resource_id
+			WHERE e.reduction_id = ?`+resVisible+` ORDER BY x.id LIMIT ?`, append(append([]any{}, args...), r.ID, reductionSelectionNamesShown)...); err != nil {
+			return nil, err
+		}
+	}
+	if out.groups > 0 {
+		if out.groupRefs, err = named(prefix+`SELECT x.id AS id, `+s.boundedText("x.name")+` AS name FROM reduction_extent_groups e JOIN groups x ON x.id = e.group_id
+			WHERE e.reduction_id = ?`+groupVisible+` ORDER BY x.id LIMIT ?`, append(append([]any{}, args...), r.ID, reductionSelectionNamesShown)...); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// enteredSince counts the Resources that joined the selection after the given
+// instant, the drift figure: the explicit ones, the ones a selected Group (or any
+// descendant) owns or is related to, or everything for a whole-library Reduction,
+// each once and only as the principal may see it.
+func (s *reductionStore) enteredSince(r *models.ResourceReduction, since time.Time) (int, error) {
+	if s.scope.mode == scopeDeny {
+		return 0, nil
+	}
+	prefix, args := s.with()
+	where := "x.created_at > ?"
+	queryArgs := []any{since}
+	if s.scope.mode == scopeSubtree {
+		where += " AND x.owner_id IN " + subtreeIDs
+	}
+	if !r.ExtentAll {
+		anchor := "SELECT g.id FROM groups g WHERE g.id IN (SELECT group_id FROM reduction_extent_groups WHERE reduction_id = ?)"
+		if s.scope.mode == scopeSubtree {
+			anchor += " AND g.id IN " + subtreeIDs
+		}
+		extTree := "ext_tree(id) AS (" + anchor + " UNION SELECT g.id FROM groups g INNER JOIN ext_tree et ON g.owner_id = et.id)"
+		if prefix == "" {
+			prefix = "WITH RECURSIVE " + extTree + " "
+		} else {
+			prefix = strings.TrimSuffix(prefix, " ") + ", " + extTree + " "
+		}
+		args = append(args, r.ID)
+		where += ` AND (x.id IN (SELECT resource_id FROM reduction_extent_resources WHERE reduction_id = ?)
+			OR x.owner_id IN (SELECT id FROM ext_tree)
+			OR x.id IN (SELECT grr.resource_id FROM groups_related_resources grr WHERE grr.group_id IN (SELECT id FROM ext_tree)))`
+		queryArgs = append(queryArgs, r.ID)
+	}
+	var n int64
+	if err := s.db.Raw(prefix+"SELECT COUNT(*) FROM resources x WHERE "+where, append(args, queryArgs...)...).Scan(&n).Error; err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
