@@ -44,3 +44,19 @@ func TestReductionStoreRoundTripPG(t *testing.T) {
 func TestReductionStoreReadsPG(t *testing.T) {
 	testReductionStoreReads(t, newReductionPGContext(t))
 }
+
+func TestReductionVisibilityMatchesScopeCallbackPG(t *testing.T) {
+	testReductionVisibilityMatchesScopeCallback(t, newReductionPGContext, []int64{1, 2, 3})
+}
+
+func TestReductionSubqueryArgGetsScopeCallbackPG(t *testing.T) {
+	testReductionSubqueryArgGetsScopeCallback(t, newReductionPGContext(t))
+}
+
+func TestReductionConfinedShapesNeverShowTheTwinPG(t *testing.T) {
+	testReductionConfinedShapesNeverShowTheTwin(t, newReductionPGContext(t))
+}
+
+func TestReductionTwentyThousandGroupSubtreePG(t *testing.T) {
+	testReductionTwentyThousandGroupSubtree(t, newReductionPGContext(t))
+}
