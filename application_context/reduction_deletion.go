@@ -70,12 +70,23 @@ func opLiteral(op string) string {
 // gallery `resourceIds` array and calendar `calendars[].source.resourceId` in
 // note_blocks, in SQL, once per transaction.
 //
-// Blocks are visited by keyset (id > ?, 500 per statement); each UPDATE's WHERE is
-// an exact, type-guarded membership test, so only blocks that reference a removed
-// id are written. What counts as a reference is what toUint accepts (see
-// block_ref_cleanup.go): integers, floats truncated, and decimal strings with
-// leading space and trailing garbage; "+12" is not one. A block whose content is
-// not a JSON object, or whose field has another shape, is left alone.
+// Blocks are visited by keyset (id > ?, 500 per page) in ascending id order, and a
+// block that references a removed id is rewritten by ONE statement that updates its
+// gallery and calendar references together. Every transaction therefore takes its
+// block row locks in id order, which two concurrent deletes cannot turn into a cycle
+// (a gallery pass followed by a calendar pass locked different blocks in each pass
+// and did: 40P01).
+//
+// What counts as a reference is what toUint accepts (see block_ref_cleanup.go): an
+// integer, a float taken as float64 and truncated, and a string read the way
+// Sscanf("%d") reads it (leading Unicode space, then digits, then anything); "+12" is
+// not one. A block whose content is not a JSON object, or whose field has another
+// shape, is left alone.
+//
+// Go reads the last of a repeated object key and SQLite's JSON functions the first,
+// so a SQLite block that repeats a key this scrub reads (resourceIds, calendars, a
+// calendar's source or its source's resourceId) is scrubbed by the Go version, that
+// one block at a time. Postgres's jsonb has dropped repeated keys on write.
 func scrubDeletedResourcesFromBlocks(db *gorm.DB, op string) error {
 	var s blockScrubSQL
 	switch db.Dialector.Name() {
@@ -84,47 +95,87 @@ func scrubDeletedResourcesFromBlocks(db *gorm.DB, op string) error {
 	default:
 		s = sqliteBlockScrub(opLiteral(op))
 	}
+	var staged map[uint]bool
 	var last uint
 	for {
-		var ids []uint
-		if err := db.Raw(
-			"SELECT id FROM note_blocks WHERE id > ? AND type IN ('gallery','calendar') ORDER BY id LIMIT ?",
-			last, deleteStageChunk,
-		).Scan(&ids).Error; err != nil {
+		var blocks []struct {
+			ID  uint
+			Dup int
+		}
+		if err := db.Raw(s.candidates, last, deleteStageChunk).Scan(&blocks).Error; err != nil {
 			return err
 		}
-		if len(ids) == 0 {
+		if len(blocks) == 0 {
 			return nil
 		}
-		lo, hi := ids[0], ids[len(ids)-1]
-		for _, stmt := range []string{s.gallery, s.calendar} {
-			if err := db.Exec(stmt, lo, hi).Error; err != nil {
+		for _, b := range blocks {
+			if b.Dup == 0 {
+				if err := db.Exec(s.update, b.ID).Error; err != nil {
+					return err
+				}
+				continue
+			}
+			if staged == nil {
+				var ids []uint
+				if err := db.Raw("SELECT resource_id FROM reduction_deleted_ids WHERE op = ?", op).Scan(&ids).Error; err != nil {
+					return err
+				}
+				staged = make(map[uint]bool, len(ids))
+				for _, id := range ids {
+					staged[id] = true
+				}
+			}
+			if err := scrubBlockInGo(db, b.ID, staged); err != nil {
 				return err
 			}
 		}
-		last = hi
+		last = blocks[len(blocks)-1].ID
 	}
 }
 
-// blockScrubSQL is the two UPDATE statements of one dialect, each taking the
-// chunk's lowest and highest block id.
-type blockScrubSQL struct{ gallery, calendar string }
+// scrubBlockInGo is the Go scrub of one block, for a document SQL cannot read the way
+// Go does.
+func scrubBlockInGo(db *gorm.DB, id uint, staged map[uint]bool) error {
+	var row struct{ Content string }
+	if err := db.Raw("SELECT CAST(content AS TEXT) AS content FROM note_blocks WHERE id = ?", id).Scan(&row).Error; err != nil {
+		return err
+	}
+	updated, changed, err := scrubResourcesFromBlockContent(row.Content, staged)
+	if err != nil {
+		return fmt.Errorf("block %d: %w", id, err)
+	}
+	if !changed {
+		return nil
+	}
+	return db.Exec("UPDATE note_blocks SET content = ? WHERE id = ?", updated, id).Error
+}
 
-const blockScrubWhitespace = " \t\f\v\r"
+// blockScrubSQL is one dialect's two statements. candidates takes (id > ?, LIMIT ?)
+// and returns the next page of blocks to look at, each with dup set when only the Go
+// scrub reads it right. update takes one block id and rewrites that block's gallery
+// and calendar references in a single statement.
+type blockScrubSQL struct{ candidates, update string }
+
+// blockScrubWhitespace is what Sscanf("%d") skips before a number: the Unicode space
+// set of fmt's isSpace except the newline (a newline is an error, which no digit
+// follows, so leaving it out reads the same).
+const blockScrubWhitespace = " \t\f\v\r\u0085                 　"
 
 func sqliteBlockScrub(op string) blockScrubSQL {
-	staged := "SELECT 1 FROM reduction_deleted_ids d WHERE d.op = " + op
-	// match reports whether a JSON value of type t (json_each's type names) held in
-	// v names a staged id. A text value is decoded as Sscanf("%d") does: leading
-	// whitespace, then digits, then anything. The digits are compared as text with
-	// the id, so an overlong digit run cannot overflow.
+	// match reports whether a JSON value of type t (json_each's type names) held in v
+	// names a staged id. The id v names is computed first and then probed by the
+	// primary key (op, resource_id), so a block costs one probe per reference, not a
+	// scan of every staged id. A real is cast the way uint(float64) truncates it; a
+	// text value is read as Sscanf("%d") does: whitespace, zeros, then the digit run,
+	// which CAST ... AS INTEGER reads as its leading integer prefix. A run too long for
+	// 18 digits saturates and names no id.
 	match := func(t, v string) string {
 		trimmed := "ltrim(ltrim(" + v + ", '" + blockScrubWhitespace + "'), '0')"
-		return "EXISTS (" + staged + " AND (" +
-			"(" + t + " = 'integer' AND " + v + " = d.resource_id) OR " +
-			"(" + t + " = 'real' AND " + v + " >= 1 AND " + v + " < 9e18 AND CAST(" + v + " AS INTEGER) = d.resource_id) OR " +
-			"(" + t + " = 'text' AND substr(" + trimmed + ", 1, length(d.resource_id)) = CAST(d.resource_id AS TEXT)" +
-			" AND substr(" + trimmed + ", length(d.resource_id) + 1, 1) NOT BETWEEN '0' AND '9')))"
+		rid := "CASE " + t +
+			" WHEN 'integer' THEN " + v +
+			" WHEN 'real' THEN CASE WHEN " + v + " >= 1 AND " + v + " < 9e18 THEN CAST(" + v + " AS INTEGER) END" +
+			" WHEN 'text' THEN CASE WHEN substr(" + trimmed + ", 1, 1) BETWEEN '0' AND '9' THEN CAST(" + trimmed + " AS INTEGER) END END"
+		return "EXISTS (SELECT 1 FROM reduction_deleted_ids d WHERE d.op = " + op + " AND d.resource_id = " + rid + ")"
 	}
 	elem := func(j string) string {
 		return "CASE " + j + ".type WHEN 'object' THEN " + j + ".value WHEN 'array' THEN " + j + ".value" +
@@ -135,33 +186,46 @@ func sqliteBlockScrub(op string) blockScrubSQL {
 	object := "CASE WHEN json_valid(" + c + ") THEN json_type(" + c + ") = 'object' ELSE 0 END"
 
 	galleryHas := "json_type(" + c + ", '$.resourceIds') = 'array' AND EXISTS (SELECT 1 FROM json_each(" + c + ", '$.resourceIds') j WHERE " + match("j.type", "j.value") + ")"
-	gallery := "UPDATE note_blocks SET content = json_set(" + c + ", '$.resourceIds', json((" +
-		"SELECT '[' || COALESCE(group_concat(x.txt, ','), '') || ']' FROM (" +
-		"SELECT " + elem("j") + " AS txt FROM json_each(" + c + ", '$.resourceIds') j WHERE NOT " + match("j.type", "j.value") + " ORDER BY j.key) x)))" +
-		" WHERE id BETWEEN ? AND ? AND type IN ('gallery','calendar') AND CASE WHEN " + object + " THEN (" + galleryHas + ") ELSE 0 END"
+	galleryArr := "json((SELECT '[' || COALESCE(group_concat(x.txt, ','), '') || ']' FROM (" +
+		"SELECT " + elem("j") + " AS txt FROM json_each(" + c + ", '$.resourceIds') j WHERE NOT " + match("j.type", "j.value") + " ORDER BY j.key) x))"
 
-	// json_extract reads the first of two duplicate keys and Go's decoder the last, so
-	// the member walk below tests every "resourceId" member and the rewrite drops all
-	// of them: a deleted id can be named by either and neither survives.
+	// A calendar's source is walked member by member and the rewrite drops its
+	// resourceId. A repeated key is the Go scrub's (dupHas), so exactly one resourceId
+	// member exists wherever this runs.
 	calMatch := "k.type = 'object' AND json_type(k.value, '$.source') = 'object' AND EXISTS (SELECT 1 FROM json_each(k.value, '$.source') s WHERE s.key = 'resourceId' AND " + match("s.type", "s.value") + ")"
 	calRemove := "json_set(k.value, '$.source', json((SELECT '{' || COALESCE(group_concat(json_quote(s.key) || ':' || " + elem("s") + ", ','), '') || '}' FROM json_each(k.value, '$.source') s WHERE s.key <> 'resourceId')))"
 	calendarHas := "json_type(" + c + ", '$.calendars') = 'array' AND EXISTS (SELECT 1 FROM json_each(" + c + ", '$.calendars') k WHERE " + calMatch + ")"
-	calendar := "UPDATE note_blocks SET content = json_set(" + c + ", '$.calendars', json((" +
-		"SELECT '[' || COALESCE(group_concat(x.txt, ','), '') || ']' FROM (" +
+	calendarArr := "json((SELECT '[' || COALESCE(group_concat(x.txt, ','), '') || ']' FROM (" +
 		"SELECT CASE WHEN " + calMatch + " THEN " + calRemove + " ELSE " + elem("k") + " END AS txt" +
-		" FROM json_each(" + c + ", '$.calendars') k ORDER BY k.key) x)))" +
-		" WHERE id BETWEEN ? AND ? AND type IN ('gallery','calendar') AND CASE WHEN " + object + " THEN (" + calendarHas + ") ELSE 0 END"
-	return blockScrubSQL{gallery: gallery, calendar: calendar}
+		" FROM json_each(" + c + ", '$.calendars') k ORDER BY k.key) x))"
+
+	// A repeated key the scrub reads: Go keeps the last, json_each walks them all.
+	dupHas := "EXISTS (SELECT 1 FROM json_each(" + c + ") t WHERE t.key IN ('resourceIds', 'calendars') GROUP BY t.key HAVING count(*) > 1)" +
+		" OR (json_type(" + c + ", '$.calendars') = 'array' AND EXISTS (SELECT 1 FROM json_each(" + c + ", '$.calendars') k WHERE k.type = 'object' AND (" +
+		"EXISTS (SELECT 1 FROM json_each(k.value) m WHERE m.key = 'source' GROUP BY m.key HAVING count(*) > 1)" +
+		" OR EXISTS (SELECT 1 FROM json_each(k.value, '$.source') s WHERE s.key = 'resourceId' GROUP BY s.key HAVING count(*) > 1))))"
+
+	after := "CASE WHEN " + galleryHas + " THEN json_set(" + c + ", '$.resourceIds', " + galleryArr + ") ELSE " + c + " END"
+	update := "UPDATE note_blocks SET content = CASE WHEN " + calendarHas +
+		" THEN json_set(" + after + ", '$.calendars', " + calendarArr + ") ELSE " + after + " END" +
+		" WHERE id = ? AND type IN ('gallery','calendar') AND CASE WHEN " + object + " THEN (" + galleryHas + ") OR (" + calendarHas + ") ELSE 0 END"
+	candidates := "SELECT id, CASE WHEN " + dupHas + " THEN 1 ELSE 0 END AS dup FROM note_blocks" +
+		" WHERE id > ? AND type IN ('gallery','calendar') AND CASE WHEN " + object + " THEN (" + dupHas + ") OR (" + galleryHas + ") OR (" + calendarHas + ") ELSE 0 END" +
+		" ORDER BY id LIMIT ?"
+	return blockScrubSQL{candidates: candidates, update: update}
 }
 
 func postgresBlockScrub(op string) blockScrubSQL {
 	staged := "SELECT 1 FROM reduction_deleted_ids d WHERE d.op = " + op
 	ws := "'^[" + blockScrubWhitespace + "]*([0-9]+)'"
-	// refid is the id a JSON value v names, or NULL.
+	// refid is the id a JSON value v names, or NULL. A number is taken as float64 and
+	// truncated, as uint(float64) does, so 11.9999999999999999 names 12; the numeric is
+	// range-checked before the float cast so an out-of-range literal cannot raise.
 	refid := func(v string) string {
 		digits := "ltrim(substring(" + v + " #>> '{}' from " + ws + "), '0')"
+		f := "(" + v + ")::numeric::float8"
 		return "CASE jsonb_typeof(" + v + ")" +
-			" WHEN 'number' THEN (CASE WHEN (" + v + ")::numeric >= 1 AND (" + v + ")::numeric < 1e18 THEN trunc((" + v + ")::numeric)::bigint END)" +
+			" WHEN 'number' THEN (CASE WHEN (" + v + ")::numeric > 0 AND (" + v + ")::numeric < 1e18 THEN (CASE WHEN " + f + " >= 1 THEN trunc(" + f + ")::bigint END) END)" +
 			" WHEN 'string' THEN (CASE WHEN length(" + digits + ") BETWEEN 1 AND 18 THEN (" + digits + ")::bigint END)" +
 			" END"
 	}
@@ -170,17 +234,21 @@ func postgresBlockScrub(op string) blockScrubSQL {
 	}
 	object := "jsonb_typeof(content) = 'object'"
 	galleryHas := "jsonb_typeof(content->'resourceIds') = 'array' AND EXISTS (SELECT 1 FROM jsonb_array_elements(content->'resourceIds') e(v) WHERE " + match("e.v") + ")"
-	gallery := "UPDATE note_blocks SET content = jsonb_set(content, '{resourceIds}', COALESCE((" +
-		"SELECT jsonb_agg(e.v ORDER BY e.ord) FROM jsonb_array_elements(content->'resourceIds') WITH ORDINALITY e(v, ord) WHERE NOT " + match("e.v") + "), '[]'::jsonb))" +
-		" WHERE id BETWEEN ? AND ? AND type IN ('gallery','calendar') AND CASE WHEN " + object + " THEN (" + galleryHas + ") ELSE false END"
+	galleryArr := "COALESCE((SELECT jsonb_agg(e.v ORDER BY e.ord) FROM jsonb_array_elements(content->'resourceIds') WITH ORDINALITY e(v, ord) WHERE NOT " + match("e.v") + "), '[]'::jsonb)"
 
 	calMatch := "jsonb_typeof(e.v) = 'object' AND jsonb_typeof(e.v->'source') = 'object' AND " + match("(e.v->'source'->'resourceId')")
 	calendarHas := "jsonb_typeof(content->'calendars') = 'array' AND EXISTS (SELECT 1 FROM jsonb_array_elements(content->'calendars') e(v) WHERE " + calMatch + ")"
-	calendar := "UPDATE note_blocks SET content = jsonb_set(content, '{calendars}', COALESCE((" +
-		"SELECT jsonb_agg(CASE WHEN " + calMatch + " THEN jsonb_set(e.v, '{source}', (e.v->'source') - 'resourceId') ELSE e.v END ORDER BY e.ord)" +
-		" FROM jsonb_array_elements(content->'calendars') WITH ORDINALITY e(v, ord)), '[]'::jsonb))" +
-		" WHERE id BETWEEN ? AND ? AND type IN ('gallery','calendar') AND CASE WHEN " + object + " THEN (" + calendarHas + ") ELSE false END"
-	return blockScrubSQL{gallery: gallery, calendar: calendar}
+	calendarArr := "COALESCE((SELECT jsonb_agg(CASE WHEN " + calMatch + " THEN jsonb_set(e.v, '{source}', (e.v->'source') - 'resourceId') ELSE e.v END ORDER BY e.ord)" +
+		" FROM jsonb_array_elements(content->'calendars') WITH ORDINALITY e(v, ord)), '[]'::jsonb)"
+
+	after := "CASE WHEN " + galleryHas + " THEN jsonb_set(content, '{resourceIds}', " + galleryArr + ") ELSE content END"
+	update := "UPDATE note_blocks SET content = CASE WHEN " + calendarHas +
+		" THEN jsonb_set(" + after + ", '{calendars}', " + calendarArr + ") ELSE " + after + " END" +
+		" WHERE id = ? AND type IN ('gallery','calendar') AND CASE WHEN " + object + " THEN (" + galleryHas + ") OR (" + calendarHas + ") ELSE false END"
+	candidates := "SELECT id, 0 AS dup FROM note_blocks" +
+		" WHERE id > ? AND type IN ('gallery','calendar') AND CASE WHEN " + object + " THEN (" + galleryHas + ") OR (" + calendarHas + ") ELSE false END" +
+		" ORDER BY id LIMIT ?"
+	return blockScrubSQL{candidates: candidates, update: update}
 }
 
 // reductionHookStep is how many Clusters one step of the deletion hook's walk

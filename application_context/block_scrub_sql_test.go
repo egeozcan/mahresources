@@ -16,7 +16,7 @@ import (
 // toUint decides on its own terms, so the SQL scrub is differentially tested
 // against it shape by shape (design D13).
 func refShapes(rng *rand.Rand, id uint) any {
-	switch rng.Intn(16) {
+	switch rng.Intn(25) {
 	case 0:
 		return id
 	case 1:
@@ -47,6 +47,26 @@ func refShapes(rng *rand.Rand, id uint) any {
 		return fmt.Sprintf("7%d", id) // a different id that merely ends alike
 	case 14:
 		return fmt.Sprintf("%dx", id)
+	case 15:
+		// A float that float64 parsing rounds up to the next integer: Go reads id+1.
+		return json.RawMessage(fmt.Sprintf("%d.9999999999999999", id))
+	case 16:
+		// Rounds up to 1 under float64 parsing.
+		return json.RawMessage("0.99999999999999999")
+	case 17:
+		return json.RawMessage(fmt.Sprintf("%d.99999", id)) // truncated, not rounded
+	case 18:
+		return "\u00a0" + fmt.Sprintf("%d", id) // a Unicode space Sscanf skips
+	case 19:
+		return "\u3000\u2003" + fmt.Sprintf("%dz", id)
+	case 20:
+		return "\u200b" + fmt.Sprintf("%d", id) // zero-width space: not a space
+	case 21:
+		return "\n" + fmt.Sprintf("%d", id) // a newline is an error, not a space
+	case 22:
+		return "\r" + fmt.Sprintf("%d", id)
+	case 23:
+		return "\u0085" + fmt.Sprintf("%d", id)
 	default:
 		return float64(id)
 	}
