@@ -100,3 +100,27 @@ func TestReductionDenyWithholdsEveryClusterPG(t *testing.T) {
 func TestReductionTokenOrdersByKeyAcrossChunksPG(t *testing.T) {
 	testReductionTokenOrdersByKeyAcrossChunks(t, newReductionPGContext(t))
 }
+
+func newOpsPGContext(t *testing.T) *MahresourcesContext {
+	return withSettings(newReductionPGContext(t))
+}
+
+func TestOpsOverrideActionsPG(t *testing.T)  { testOpsOverrideActions(t, newOpsPGContext(t)) }
+func TestOpsOverrideRefusalsPG(t *testing.T) { testOpsOverrideRefusals(t, newOpsPGContext(t)) }
+func TestOpsOverrideNearPG(t *testing.T)     { testOpsOverrideNear(t, newOpsPGContext(t)) }
+func TestOpsOverrideFullStarAndGonePG(t *testing.T) {
+	testOpsOverrideFullStarAndGone(t, newOpsPGContext(t))
+}
+func TestOpsOverrideMatchesLegacyPG(t *testing.T) {
+	for _, seed := range []int64{1, 2} {
+		testOpsOverrideMatchesLegacy(t, newOpsPGContext(t), seed)
+	}
+}
+func TestOpsBulkByIDsPG(t *testing.T)        { testOpsBulkByIDs(t, newOpsPGContext(t)) }
+func TestOpsBulkAllIdenticalPG(t *testing.T) { testOpsBulkAllIdentical(t, newOpsPGContext(t)) }
+func TestOpsBulkScopedPG(t *testing.T)       { testOpsBulkScoped(t, newOpsPGContext(t)) }
+func TestOpsBulkMatchesLegacyLoopPG(t *testing.T) {
+	for _, seed := range []int64{1, 2} {
+		testOpsBulkMatchesLegacyLoop(t, newOpsPGContext(t), seed)
+	}
+}
