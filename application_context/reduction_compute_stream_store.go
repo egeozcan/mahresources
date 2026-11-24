@@ -77,7 +77,7 @@ func (ctx *MahresourcesContext) streamReductionPlanOwned(jobCtx context.Context,
 	}
 	rule := DecodeWinnerRule(reduction.WinnerRule)
 	run := &reductionStream{
-		ctx: ctx, s: ctx.reductionStore(), r: reduction, generation: generation, rule: rule,
+		ctx: ctx, s: ctx.reductionStore().boundTo(jobCtx), r: reduction, generation: generation, rule: rule,
 		assoc:  ruleUsesAssociations(rule),
 		jobCtx: jobCtx, progress: progress,
 	}
@@ -89,7 +89,7 @@ func (ctx *MahresourcesContext) streamReductionPlanOwned(jobCtx context.Context,
 
 	// Generations nobody owns any more (a failed or crashed compute's) go first, at
 	// compute start as design D4 says; a failure here is logged, not fatal.
-	if err := ctx.sweepReductionGenerations(); err != nil {
+	if err := run.s.sweepGenerations(); err != nil {
 		ctx.logReductionWriteFailure(reductionID, "sweep at compute start", err)
 	}
 	// An earlier attempt's rows of this generation go next.

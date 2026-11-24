@@ -1,6 +1,8 @@
 package application_context
 
 import (
+	"context"
+
 	"mahresources/models"
 	"mahresources/mrql"
 )
@@ -128,4 +130,36 @@ func (s *reductionStore) base(r *models.ResourceReduction, generation string) (p
 	where = "c.reduction_id = ? AND c.generation = ? AND NOT " + s.withheld("c")
 	args = append(args, r.ID, generation)
 	return prefix, where, args
+}
+
+// valuesFrom is a context that is cancelled with done and carries the values of
+// base: the worker's cancellation and deadline, the handle's own principal, scope
+// and transaction values.
+type valuesFrom struct {
+	context.Context // done: cancellation and deadline
+	base            context.Context
+}
+
+func (v valuesFrom) Value(key any) any {
+	if val := v.base.Value(key); val != nil {
+		return val
+	}
+	return v.Context.Value(key)
+}
+
+// boundTo returns the store with every statement carrying done's cancellation, so
+// cancelling a worker blocked on a lock reaches the server and releases what that
+// statement's transaction had taken. The handle's own context values (principal,
+// subtree scope) are kept.
+func (s *reductionStore) boundTo(done context.Context) *reductionStore {
+	if done == nil || s.db == nil {
+		return s
+	}
+	base := context.Background()
+	if s.db.Statement != nil && s.db.Statement.Context != nil {
+		base = s.db.Statement.Context
+	}
+	bound := *s
+	bound.db = s.db.WithContext(valuesFrom{Context: done, base: base})
+	return &bound
 }

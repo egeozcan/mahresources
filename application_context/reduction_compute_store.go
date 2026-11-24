@@ -670,7 +670,12 @@ func (ctx *MahresourcesContext) SweepReductionGenerations() error {
 // read keeps it. Rows whose Reduction no longer exists are removed by the same
 // guard. It runs after landing, at compute start and at startup.
 func (ctx *MahresourcesContext) sweepReductionGenerations() error {
-	s := ctx.reductionStore()
+	return ctx.reductionStore().sweepGenerations()
+}
+
+// sweepGenerations is the sweep over this store's handle, so a worker's compute-start
+// sweep can carry the worker's context.
+func (s *reductionStore) sweepGenerations() error {
 	for _, table := range []string{"reduction_members", "reduction_clusters"} {
 		if err := s.sweepTable(table, "id", planGuard, planPairProtected); err != nil {
 			return err

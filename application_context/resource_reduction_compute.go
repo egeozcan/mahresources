@@ -332,7 +332,7 @@ func (ctx *MahresourcesContext) runReductionComputeOwned(jobCtx context.Context,
 	ticker, stopTicker := context.WithCancel(jobCtx)
 	defer stopTicker()
 	go runLeaseTicker(ticker, leaseRenewEvery, func(now time.Time) (bool, error) {
-		return ctx.reductionStore().renewComputeLease(reductionID, generation, started, now)
+		return ctx.reductionStore().boundTo(ticker).renewComputeLease(reductionID, generation, started, now)
 	})
 
 	var err error
