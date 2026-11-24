@@ -364,19 +364,33 @@ func TestKeepsSmallerIsDerivedForAPlanStoredBeforeTheFlag(t *testing.T) {
 	require.True(t, plan.Clusters[0].KeepsSmaller)
 	plan = override(t, tc, red.ID, plan.Clusters[0].ID, application_context.ReductionActionCheck, 0)
 
-	// Rewrite the stored plan as an older release left it: no settings recorded. The
-	// flag itself is a stored column now: a plan with no flag is derived when the
-	// legacy JSON plan is migrated into tables (reduction_store_migration.go), not at
-	// read time, so the Cluster keeps the flag the override computed.
+	// Rewrite the stored plan as an older release left it: a JSON document with no
+	// settings recorded and no keeps-smaller flag on the Cluster, in a Reduction whose
+	// plan is not in tables yet. The flag is derived when the legacy plan is migrated
+	// (reduction_store_migration.go), and the table-backed read shows what it stored.
 	legacy := plan
 	legacy.Settings = nil
-	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	for i := range legacy.Clusters {
+		legacy.Clusters[i].KeepsSmaller = false
+	}
+	document, err := json.Marshal(legacy)
 	require.NoError(t, err)
-	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, legacy))
+	require.NoError(t, tc.DB.Exec(`DELETE FROM reduction_members WHERE reduction_id = ?`, red.ID).Error)
+	require.NoError(t, tc.DB.Exec(`DELETE FROM reduction_clusters WHERE reduction_id = ?`, red.ID).Error)
+	// The legacy columns are not part of the current schema; an upgraded database still has them.
+	jsonType := "JSON"
+	if tc.DB.Dialector.Name() == "postgres" {
+		jsonType = "JSONB"
+	}
+	require.NoError(t, tc.DB.Exec(`ALTER TABLE resource_reductions ADD COLUMN plan `+jsonType).Error)
+	require.NoError(t, tc.DB.Exec(`ALTER TABLE resource_reductions ADD COLUMN extent `+jsonType).Error)
+	require.NoError(t, tc.DB.Exec(`UPDATE resource_reductions SET plan = ?, plan_schema = 0, plan_generation = NULL WHERE id = ?`, string(document), red.ID).Error)
+	require.NoError(t, tc.AppCtx.SpoolReductionMigrations())
+	require.NoError(t, tc.AppCtx.MigrateReductionPlans())
 
 	review := reviewOf(t, tc, red.ID, 1, nil)
 	require.Len(t, review.Clusters, 1)
-	assert.True(t, review.Clusters[0].KeepsSmaller, "the stored flag is what the card, figures and filter read")
+	assert.True(t, review.Clusters[0].KeepsSmaller, "the migration derived the flag the legacy plan never stored")
 	assert.True(t, review.Clusters[0].NeedsAttention)
 	assert.Equal(t, 1, review.ApplyFigures.KeepsSmaller)
 	assert.Equal(t, 0, review.Bulk.IdenticalApprovable, "it needs attention, so the bulk button skips it")
