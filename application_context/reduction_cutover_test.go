@@ -148,9 +148,9 @@ func TestAQueuedComputeWaitsForTheMigrationRatherThanBlocking(t *testing.T) {
 	r := legacyRow(t, ctx, models.ReductionStatusFailed)
 	adapter := &reductionComputeAdapter{ctx: ctx, kind: JobKindReductionCompute}
 
-	previous := reductionUpgradePoll
-	reductionUpgradePoll = 5 * time.Millisecond
-	t.Cleanup(func() { reductionUpgradePoll = previous })
+	previous, previousWait := reductionUpgradePoll, reductionUpgradeMaxWait
+	reductionUpgradePoll, reductionUpgradeMaxWait = 5*time.Millisecond, 10*time.Second
+	t.Cleanup(func() { reductionUpgradePoll, reductionUpgradeMaxWait = previous, previousWait })
 
 	go func() {
 		time.Sleep(60 * time.Millisecond)

@@ -35,9 +35,9 @@ func claimedReductionExecution(t *testing.T, ctx *MahresourcesContext, reduction
 
 func fastReductionWaits(t *testing.T) {
 	t.Helper()
-	prev := reductionUpgradePoll
-	reductionUpgradePoll = 5 * time.Millisecond
-	t.Cleanup(func() { reductionUpgradePoll = prev })
+	prev, prevWait := reductionUpgradePoll, reductionUpgradeMaxWait
+	reductionUpgradePoll, reductionUpgradeMaxWait = 5*time.Millisecond, 10*time.Minute
+	t.Cleanup(func() { reductionUpgradePoll, reductionUpgradeMaxWait = prev, prevWait })
 }
 
 // A run authorized before it waits for the migration is authorized again after:

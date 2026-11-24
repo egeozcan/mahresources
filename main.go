@@ -820,9 +820,14 @@ func main() {
 	// effective distance. CONCURRENTLY and beside the server on Postgres; on SQLite
 	// one table scan under the writer lock, before any request is served.
 	if db.Dialector.Name() == "postgres" {
-		go ensureIndexesUntilBuilt("similarity distance indexes", func() error {
-			return models.EnsureSimilarityDistanceIndexesOnOwnConnection(context.Config.DbDsn)
-		}, jobFilterIndexRetryInterval)
+		go func() {
+			ensureIndexesUntilBuilt("similarity distance indexes", func() error {
+				return models.EnsureSimilarityDistanceIndexesOnOwnConnection(context.Config.DbDsn)
+			}, jobFilterIndexRetryInterval)
+			// A clustering run that found them still building is held, not waiting in a
+			// worker: return those to the queue now.
+			context.ResumeIndexBlockedReductionComputes()
+		}()
 	} else if err := models.EnsureSimilarityDistanceIndexes(db); err != nil {
 		fail("Error when creating similarity distance indexes: %v", err)
 		return

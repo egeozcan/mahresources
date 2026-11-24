@@ -181,7 +181,17 @@ func (a *reductionComputeAdapter) Dispatch(ctx context.Context, execution jobs.E
 		if err != nil {
 			var refused *reductionStartRefusal
 			if errors.As(err, &refused) {
-				return a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, refused.reason)
+				if reductionBeforeHoldHook != nil {
+					reductionBeforeHoldHook(refused.reason)
+				}
+				if berr := a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, refused.reason); berr != nil {
+					return berr
+				}
+				// The condition may have cleared between the check that refused and the
+				// block just written, when its resumer found nothing held: look again,
+				// and resume now rather than leave the Job held for good.
+				a.ctx.resumeIfHoldCleared(refused.reason, input.ReductionID)
+				return nil
 			}
 			if errors.Is(err, errReductionStartCancelled) {
 				return a.ctx.finishQueueJob(execution, jobs.StateCancelled, nil, nil)
@@ -374,12 +384,32 @@ func (a *reductionComputeAdapter) start(ctx context.Context, execution jobs.Exec
 // submits the queue entry. Only a test sets it, to record a cancel in that window.
 var reductionStartAfterClaimHook func(execution jobs.Execution)
 
+// reductionBeforeHoldHook runs between the refusal of a start and the block that
+// records it. Only a test sets it, to publish the migration in that window.
+var reductionBeforeHoldHook func(reason string)
+
 // reductionStartRefusal is a start that must end the Job blocked with a reason.
-type reductionStartRefusal struct{ reason string }
+type reductionStartRefusal struct {
+	reason string
+	// cause is the condition the run is held for, when one is waiting to clear.
+	cause error
+}
 
 func (r *reductionStartRefusal) Error() string {
+	if r.cause != nil {
+		return "the clustering run may not start: " + r.reason + ": " + r.cause.Error()
+	}
 	return "the clustering run may not start: " + r.reason
 }
+
+func (r *reductionStartRefusal) Unwrap() error { return r.cause }
+
+// Reasons a run is held for a condition that clears on its own. Each has a
+// resumer: the migration's publication, and the index build's completion.
+const (
+	reductionHoldMigrationPending = "migration-pending"
+	reductionHoldIndexesBuilding  = "indexes-building"
+)
 
 // errReductionStartCancelled ends a start whose Job was cancelled while it waited.
 var errReductionStartCancelled = errors.New("the clustering run was cancelled before it started")
@@ -399,17 +429,21 @@ func (ctx *MahresourcesContext) executionCancelled(execution jobs.Execution) boo
 	return current.ControlIntent == jobs.ControlIntentCancel
 }
 
-// reductionUpgradePoll is how often a deferred compute looks again at a Reduction
-// the migration has not published.
+// reductionUpgradePoll is how often a start that waits in the worker looks again.
 var reductionUpgradePoll = 2 * time.Second
 
-// reductionUpgradeMaxWait is how long a deferred compute waits for the migration
-// before it fails with a message saying so.
-var reductionUpgradeMaxWait = 30 * time.Minute
+// reductionUpgradeMaxWait is how long a start waits in the worker for the migration
+// before it holds the Job as "migration-pending". It is zero: a wait inside the
+// worker occupies an execution slot, up to the deployment's budget, for a condition
+// that has nothing to do with the work the slot is for. The Job is held at once
+// (blocked, the slot released) and the migration's publication resumes it
+// (resumeBlockedReductionComputes). A test sets it to exercise the wait itself.
+var reductionUpgradeMaxWait = time.Duration(0)
 
-// awaitUpgrade loads the Reduction a queued compute names, waiting while its plan is
-// still the legacy document. The wait ends when the migration publishes, the deadline passes, the
-// Reduction is deleted, or the run is cancelled.
+// awaitUpgrade loads the Reduction a queued compute names. A plan that is still the
+// legacy document is waited for up to reductionUpgradeMaxWait, then held. The wait
+// ends when the migration publishes, the limit passes, the Reduction is deleted, or
+// the run is cancelled.
 func (a *reductionComputeAdapter) awaitUpgrade(ctx context.Context, execution jobs.Execution, reductionID uint) (*models.ResourceReduction, error) {
 	deadline := time.Now().Add(reductionUpgradeMaxWait)
 	for {
@@ -426,7 +460,7 @@ func (a *reductionComputeAdapter) awaitUpgrade(ctx context.Context, execution jo
 		if !time.Now().Before(deadline) {
 			// The migration is slow, not the compute wrong: the Job is held, not failed
 			// (design D12), and its Resume runs it once the plan is published.
-			return nil, &reductionStartRefusal{reason: "migration-pending"}
+			return nil, &reductionStartRefusal{reason: reductionHoldMigrationPending}
 		}
 		select {
 		case <-ctx.Done():
@@ -436,12 +470,14 @@ func (a *reductionComputeAdapter) awaitUpgrade(ctx context.Context, execution jo
 	}
 }
 
-// reductionIndexMaxWait bounds the wait for the similarity distance indexes.
-var reductionIndexMaxWait = 30 * time.Minute
+// reductionIndexMaxWait is how long a start waits in the worker for the similarity
+// distance indexes, zero for the reason reductionUpgradeMaxWait is.
+var reductionIndexMaxWait = time.Duration(0)
 
 // awaitSimilarityIndexes returns once both similarity distance indexes read valid.
-// Only ErrReductionIndexesBuilding is waited on; the deadline ends the wait with it
-// (wrapped), and a cancelled run stops at once.
+// Only ErrReductionIndexesBuilding is held for; past the limit the Job is held as
+// "indexes-building" (the build's completion resumes it), and a cancelled run stops
+// at once.
 func (a *reductionComputeAdapter) awaitSimilarityIndexes(ctx context.Context, execution jobs.Execution) error {
 	deadline := time.Now().Add(reductionIndexMaxWait)
 	for {
@@ -453,7 +489,7 @@ func (a *reductionComputeAdapter) awaitSimilarityIndexes(ctx context.Context, ex
 			return err
 		}
 		if !time.Now().Before(deadline) {
-			return fmt.Errorf("%w (still building after %s)", err, reductionIndexMaxWait)
+			return &reductionStartRefusal{reason: reductionHoldIndexesBuilding, cause: err}
 		}
 		select {
 		case <-ctx.Done():
