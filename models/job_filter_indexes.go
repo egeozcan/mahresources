@@ -26,18 +26,24 @@ type plannedIndex struct {
 // pg_get_indexdef line or sqlite_master's sql) ends in this index's column list
 // and so has neither a WHERE nor other columns. The two databases respell an
 // expression (casts, extra parentheses, case), so both sides are reduced to
-// lower-case with spaces, parentheses, quotes and ::casts removed.
+// lower-case with spaces, parentheses, quotes and casts on literals removed.
 func (p plannedIndex) definitionMatches(def string) bool {
 	return strings.HasSuffix(normalizeIndexDefinition(def), normalizeIndexDefinition(p.columns))
 }
 
-var indexCastPattern = regexp.MustCompile(`::[a-z_]+`)
+// Only a cast on a literal ('x'::text, 0::bigint) is Postgres respelling the
+// same expression. A cast on a column or an expression changes its type, so it
+// is kept and the definition no longer matches the planned one.
+var (
+	stringLiteralCast  = regexp.MustCompile(`('[^']*')::[a-z_]+`)
+	numericLiteralCast = regexp.MustCompile(`(^|[^a-z0-9_.])([0-9]+)::[a-z_]+`)
+)
 
 func normalizeIndexDefinition(s string) string {
 	s = strings.ToLower(s)
-	s = strings.NewReplacer(" ", "", "\n", "", "\t", "").Replace(s)
-	s = indexCastPattern.ReplaceAllString(s, "")
-	return strings.NewReplacer("(", "", ")", "", `"`, "").Replace(s)
+	s = strings.NewReplacer(" ", "", "\n", "", "\t", "", "(", "", ")", "", `"`, "").Replace(s)
+	s = stringLiteralCast.ReplaceAllString(s, "$1")
+	return numericLiteralCast.ReplaceAllString(s, "$1$2")
 }
 
 // isExpression reports an index over an expression (its column list holds a

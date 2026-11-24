@@ -35,7 +35,10 @@ func TestPostMigrateAnalyzeDoesNotWaitOnASimilarityIndexBuild(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- models.AnalyzePerceptualHashTables(db) }()
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("the post-migrate ANALYZE failed: %v", err)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the post-migrate ANALYZE blocked on the table another build holds")
 	}

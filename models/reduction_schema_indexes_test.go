@@ -12,6 +12,13 @@ func TestSimilarityIndexReadinessChecksTheDefinitionOnSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A named in-memory database lives while any connection to it is open, so an
+	// unclosed pool would carry its tables into the next run (-count=2).
+	t.Cleanup(func() {
+		if sqlDB, err := db.DB(); err == nil {
+			sqlDB.Close()
+		}
+	})
 	if err := db.Exec("CREATE TABLE resource_similarities (resource_id1 integer, resource_id2 integer, p_distance integer, hamming_distance integer)").Error; err != nil {
 		t.Fatal(err)
 	}
