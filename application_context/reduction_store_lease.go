@@ -24,6 +24,20 @@ const (
 // expired or its generation was superseded. Whatever it was about to write stops.
 var ErrReductionLeaseLost = errors.New("this Resource Reduction's compute or apply lease is no longer held")
 
+// leaseNow is the clock a renewal or fence reads after it holds the row. It is a
+// variable so a test can inject the wait for the lock.
+var leaseNow = time.Now
+
+// afterLock is the later of the caller's clock and a fresh one read now that the
+// row is held: the caller read its own before waiting for the lock, so alone it
+// would let a lease that expired during the wait pass as live.
+func afterLock(callers time.Time) time.Time {
+	if fresh := leaseNow(); fresh.After(callers) {
+		return fresh
+	}
+	return callers
+}
+
 // leaseDeadline is min(now + 10 min, started + 24 h).
 func leaseDeadline(now, started time.Time) int64 {
 	d := now.Add(leaseWindow)
@@ -53,6 +67,7 @@ func (s *reductionStore) renewComputeLease(id uint, generation string, started, 
 		if err := tx.Raw(`SELECT compute_lease_until FROM resource_reductions WHERE id = ?`, id).Scan(&old).Error; err != nil {
 			return err
 		}
+		now = afterLock(now)
 		if old <= now.UnixNano() {
 			return nil
 		}
@@ -83,7 +98,7 @@ func fenceComputeIn(tx *gorm.DB, id uint, generation string, now time.Time) erro
 	if err := tx.Raw(`SELECT compute_lease_until FROM resource_reductions WHERE id = ?`, id).Scan(&lease).Error; err != nil {
 		return err
 	}
-	if lease <= now.UnixNano() {
+	if lease <= afterLock(now).UnixNano() {
 		return ErrReductionLeaseLost
 	}
 	return nil
