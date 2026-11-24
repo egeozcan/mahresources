@@ -355,7 +355,26 @@ func lockReductionRowNarrow(tx *gorm.DB, id uint) error {
 // from its checkpoint, and one whose lease is still live is left to its holder
 // (StartReductionMigration comes back for it).
 func (ctx *MahresourcesContext) MigrateReductionPlans() error {
-	firstErr := ctx.SpoolReductionMigrations()
+	return ctx.migrateReductionPlans(true)
+}
+
+// onlineSpoolAllowed reports whether the periodic runner may run the spool
+// statement. On SQLite it may not: that statement writes a whole legacy plan in one
+// transaction under the database-wide writer lock, which D12 reserves for startup,
+// before any request is served. A Reduction the startup spool did not reach (the
+// writer lock was held elsewhere and it timed out) stays "being upgraded" until the
+// next startup spool rather than blocking every writer mid-traffic. On Postgres the
+// statement takes row locks only and runs online.
+func (ctx *MahresourcesContext) onlineSpoolAllowed() bool {
+	return ctx.reductionStore().db.Dialector.Name() == "postgres"
+}
+
+// migrateReductionPlans is MigrateReductionPlans with the spool step optional.
+func (ctx *MahresourcesContext) migrateReductionPlans(spool bool) error {
+	var firstErr error
+	if spool {
+		firstErr = ctx.SpoolReductionMigrations()
+	}
 	s := ctx.reductionStore()
 	after := uint(0)
 	for {
@@ -385,6 +404,28 @@ func (ctx *MahresourcesContext) ReductionMigrationPending() (bool, error) {
 	return n > 0, err
 }
 
+// reductionMigrationPendingOnline is ReductionMigrationPending as the periodic
+// runner sees it: where the runner may not spool, a legacy Reduction without a
+// migration record is not its work (only the next startup's spool can take it), so
+// it does not keep the runner alive.
+func (ctx *MahresourcesContext) reductionMigrationPendingOnline(spool bool) (bool, error) {
+	if spool {
+		return ctx.ReductionMigrationPending()
+	}
+	var n int64
+	err := ctx.reductionStore().db.Raw(`SELECT COUNT(*) FROM (SELECT 1 FROM resource_reductions r WHERE r.plan_schema = 0
+		AND EXISTS (SELECT 1 FROM reduction_migrations m WHERE m.reduction_id = r.id) LIMIT 1) one`).Scan(&n).Error
+	return n > 0, err
+}
+
+// unspooledLegacyCount counts legacy Reductions with no migration record.
+func (ctx *MahresourcesContext) unspooledLegacyCount() (int64, error) {
+	var n int64
+	err := ctx.reductionStore().db.Raw(`SELECT COUNT(*) FROM resource_reductions r WHERE r.plan_schema = 0
+		AND NOT EXISTS (SELECT 1 FROM reduction_migrations m WHERE m.reduction_id = r.id)`).Scan(&n).Error
+	return n, err
+}
+
 // StartReductionMigration runs the migration now and then every interval until no
 // legacy plan is left or stop is done, and closes the returned channel when it
 // ends. One pass skips a Reduction whose migration lease another run still holds
@@ -393,16 +434,25 @@ func (ctx *MahresourcesContext) ReductionMigrationPending() (bool, error) {
 // lapsed lease over. Each pass also sweeps spool rows a crash left behind.
 func (ctx *MahresourcesContext) StartReductionMigration(stop context.Context, interval time.Duration) <-chan struct{} {
 	done := make(chan struct{})
+	spool := ctx.onlineSpoolAllowed()
 	go func() {
 		defer close(done)
+		warned := false
 		for {
+			if !spool && !warned {
+				if n, err := ctx.unspooledLegacyCount(); err == nil && n > 0 {
+					warned = true
+					ctx.Logger().Warning(models.LogActionSystem, "", nil, "", fmt.Sprintf(
+						"%d legacy Resource Reduction(s) were not spooled at startup (the writer lock was held elsewhere); they keep answering \"being upgraded\" until the next startup, because the online runner never runs the spool statement on SQLite", n), nil)
+				}
+			}
 			if err := ctx.SweepOrphanReductionSpool(); err != nil {
 				ctx.Logger().Warning(models.LogActionSystem, "", nil, "", fmt.Sprintf("reduction spool sweep: %v", err), nil)
 			}
-			if err := ctx.MigrateReductionPlans(); err != nil {
+			if err := ctx.migrateReductionPlans(spool); err != nil {
 				ctx.Logger().Warning(models.LogActionSystem, "", nil, "", fmt.Sprintf("reduction plan migration pass, retried: %v", err), nil)
 			}
-			pending, err := ctx.ReductionMigrationPending()
+			pending, err := ctx.reductionMigrationPendingOnline(spool)
 			if err == nil && !pending {
 				return
 			}

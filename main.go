@@ -836,7 +836,10 @@ func main() {
 	// spool keeps its legacy plan and answers "being upgraded" until a later run.
 	if db.Dialector.Name() != "postgres" {
 		if err := context.SpoolReductionMigrations(); err != nil {
-			log.Printf("Warning: reduction plan spool: %v", err)
+			// Not retried online: on SQLite the periodic runner never runs the spool
+			// statement (it would hold the writer lock mid-traffic), so a Reduction
+			// missed here answers "being upgraded" until the next startup.
+			log.Printf("Warning: reduction plan spool failed; unspooled Reductions answer 'being upgraded' until the next startup: %v", err)
 		}
 	}
 
