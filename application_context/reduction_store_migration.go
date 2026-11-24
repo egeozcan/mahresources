@@ -371,11 +371,31 @@ func (ctx *MahresourcesContext) onlineSpoolAllowed() bool {
 
 // migrateReductionPlans is MigrateReductionPlans with the spool step optional.
 func (ctx *MahresourcesContext) migrateReductionPlans(spool bool) error {
+	return ctx.migrateReductionPlansUntil(context.Background(), spool)
+}
+
+// cancelled reports the cancellation of the context this store's statements carry.
+func (s *reductionStore) cancelled() error {
+	if s.db == nil || s.db.Statement == nil || s.db.Statement.Context == nil {
+		return nil
+	}
+	return s.db.Statement.Context.Err()
+}
+
+// migrateReductionPlansUntil is migrateReductionPlans that stops when stop is done:
+// it is checked before each Reduction and before each Cluster of one, and the
+// store's statements carry it, so a runner started with a cancelled context
+// migrates and publishes nothing, and one cancelled part-way stops at its next
+// checkpoint (which is durable, so the next start resumes there).
+func (ctx *MahresourcesContext) migrateReductionPlansUntil(stop context.Context, spool bool) error {
+	if err := stop.Err(); err != nil {
+		return err
+	}
 	var firstErr error
 	if spool {
 		firstErr = ctx.SpoolReductionMigrations()
 	}
-	s := ctx.reductionStore()
+	s := ctx.reductionStore().boundTo(stop)
 	after := uint(0)
 	for {
 		var ids []uint
@@ -383,7 +403,12 @@ func (ctx *MahresourcesContext) migrateReductionPlans(spool bool) error {
 			return err
 		}
 		for _, id := range ids {
-			if err := s.migrateReduction(id); err != nil && !errors.Is(err, errReductionMigrationBusy) {
+			if err := stop.Err(); err != nil {
+				return err
+			}
+			if err := s.migrateReduction(id); err != nil && stop.Err() != nil {
+				return stop.Err()
+			} else if err != nil && !errors.Is(err, errReductionMigrationBusy) {
 				ctx.Logger().Warning(models.LogActionSystem, "", nil, "", fmt.Sprintf("reduction %d migration: %v", id, err), nil)
 				if firstErr == nil {
 					firstErr = err
@@ -449,7 +474,7 @@ func (ctx *MahresourcesContext) StartReductionMigration(stop context.Context, in
 			if err := ctx.SweepOrphanReductionSpool(); err != nil {
 				ctx.Logger().Warning(models.LogActionSystem, "", nil, "", fmt.Sprintf("reduction spool sweep: %v", err), nil)
 			}
-			if err := ctx.migrateReductionPlans(spool); err != nil {
+			if err := ctx.migrateReductionPlansUntil(stop, spool); err != nil && stop.Err() == nil {
 				ctx.Logger().Warning(models.LogActionSystem, "", nil, "", fmt.Sprintf("reduction plan migration pass, retried: %v", err), nil)
 			}
 			pending, err := ctx.reductionMigrationPendingOnline(spool)
@@ -580,6 +605,9 @@ func (s *reductionStore) migrateReduction(id uint) error {
 		return err
 	}
 	for {
+		if err := s.cancelled(); err != nil {
+			return err
+		}
 		var heads []spoolHead
 		if err := s.db.Raw(`SELECT cluster_ord, COUNT(CASE WHEN resource_id > 0 THEN 1 END) AS n, COUNT(CASE WHEN rejected THEN 1 END) AS bad FROM reduction_migration_rows
 			WHERE reduction_id = ? AND generation = ? AND kind = 'member' AND cluster_ord >= ?
@@ -802,6 +830,9 @@ func (s *reductionStore) migrateOverCapCluster(mig *models.ReductionMigration, h
 	}
 	const spoolCluster = `s.reduction_id = ? AND s.generation = ? AND s.kind = 'member' AND s.cluster_ord = ? AND s.resource_id > 0`
 	for {
+		if err := s.cancelled(); err != nil {
+			return err
+		}
 		finished := false
 		next := mig.MemberCheckpoint
 		err := s.db.Transaction(func(tx *gorm.DB) error {

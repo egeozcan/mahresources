@@ -28,3 +28,7 @@ func TestStoreComputeSeamsPG(t *testing.T)    { testStoreComputeSeams(t, newOpsP
 func TestStoreSweepExaminesOnlyStalePG(t *testing.T) {
 	testStoreSweepExaminesOnlyStale(t, newOpsPGContext(t))
 }
+
+func TestMigrationRunnerHonoursACancelledContextPG(t *testing.T) {
+	testMigrationRunnerHonoursACancelledContext(t, newOpsPGContext(t))
+}
