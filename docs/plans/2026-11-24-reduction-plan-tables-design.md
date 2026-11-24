@@ -986,7 +986,7 @@ within 16 MB of the quarter-size peak.
 | Apply of 2,000 Clusters (2,000 merges) | +6.3 MB, 7.7 s | +7.6 MB, 25.9 s |
 | Bulk delete of 10,000 ids, one Resource with 1,000,000 pairs | +27.7 MB, 3.5 s | +27.1 MB, 39.8 s |
 | Merge of 199 Losers into a Winner with 50 MB of backups | +4.6 MB, 12.5 s, RSS 693 MB | +11.2 MB, 22.9 s |
-| Compute over 2,270,006 Resources (2,000,000 unique hashes, 100,000 hashes held twice, 5 duplicates last in hash order, a 50,000 holder hash, a 20,000 spoke star) | +9.3 MB (quarter size +8.6 MB), 1 m 32 s | +11.4 MB (quarter size +9.9 MB), 5 m 46 s |
+| Compute over 2,270,006 Resources (2,000,000 unique hashes, 100,000 hashes held twice, 5 duplicates last in hash order, a 50,000 holder hash, a 20,000 spoke star) | +6.0 MB (quarter size +5.3 MB), 1 m 33 s | +5.8 MB (quarter size +5.7 MB), 5 m 50 s |
 | Migration of a 13 MB legacy plan (one 50,000 member Cluster, 50,000 small ones) | +8.0 MB (quarter size +7.6 MB), 18.8 s | +17.6 MB (quarter size +8.1 MB), 72.8 s |
 
 Notes on the figures:
@@ -1026,7 +1026,7 @@ statement does not scan `resources` whole.
 
 ### What the proofs found
 
-Four boundedness defects, each fixed test-first in this slice:
+Four boundedness defects, each fixed test-first in this slice (the compute rows above are from after the last two fixes):
 
 1. **Resource delete, staged ids and claim renewal.** A 10,000 id delete purged `reduction_deleted_ids` and renewed the
    manifest claim with one statement over every row of the operation, in the same transaction as the delete. Both now run a
@@ -1041,6 +1041,10 @@ Four boundedness defects, each fixed test-first in this slice:
    whenever it expects many rows. A hub of 4,000 pairs over a 60,000 row Extent read all 60,000 rows for each 400-row page. It
    is now a scalar subquery with `LIMIT 1`, a key probe per returned row. Test:
    `TestComputeNeighbourStatementDoesNotReadTheWholeExtentPG`.
-4. **Hub seeding order.** Not a defect: the first fixture put the star's hub behind its spokes in the Winner Rule's order, so
-   the hub was never a seed. The dense star fixture now makes the hub the largest file, and asserts a 200 member Cluster with
-   `fixed_seed` and the hub as Winner.
+4. **Postgres anti-join over the generation's members.** The availability test was a plain `NOT EXISTS`, which Postgres
+   flattened to a merge or hash anti join reading all of the generation's members and Clusters per statement: a 3,000 holder
+   hash over 25,000 Clusters read 50,000 member rows for one page. `LIMIT 1 OFFSET 0` keeps it a per-row probe. Test:
+   `TestComputeHolderStatementDoesNotReadTheGenerationsMembersPG`.
+
+The dense star fixture makes the hub the largest file so that it is the first seed of the default Winner Rule, and asserts a
+200 member Cluster with `fixed_seed` and the hub as Winner.
