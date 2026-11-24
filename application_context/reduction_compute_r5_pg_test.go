@@ -21,6 +21,25 @@ func TestCarryVerificationRefusesAnIncompleteCopyPG(t *testing.T) {
 	testCarryVerificationRefusesAnIncompleteCopy(t, newOpsPGContext(t))
 }
 
+func TestLandingRechecksCancelUnderTheRowLockPG(t *testing.T) {
+	testLandingRechecksCancelUnderTheRowLock(t, newOpsPGContext(t))
+}
+func TestInsertionRefusesAMemberMovedOutOfTheSubtreePG(t *testing.T) {
+	testInsertionRefusesAMemberMovedOutOfTheSubtree(t, newOpsPGContext(t))
+}
+func TestAssociationsRuleOverAHugeSubtreePG(t *testing.T) {
+	testAssociationsRuleOverAHugeSubtree(t, newOpsPGContext(t))
+}
+func TestEjectedSurvivorOfAMergedClusterStaysOutPG(t *testing.T) {
+	testEjectedSurvivorOfAMergedClusterStaysOut(t, newOpsPGContext(t))
+}
+func TestRelatedGroupStagingProbesPerResourcePG(t *testing.T) {
+	testRelatedGroupStagingProbesPerResource(t, newOpsPGContext(t))
+}
+func TestHolderCursorIsServedByTheHashIDIndexPG(t *testing.T) {
+	testHolderCursorIsServedByTheHashIDIndex(t, newOpsPGContext(t))
+}
+
 // The real Postgres failure: a lock_timeout (55P03) on a member's Resource row held
 // by another transaction. The retry, after the blocker is gone, copies the chunk.
 func TestCarryOverRetriesARealLockTimeoutPG(t *testing.T) {

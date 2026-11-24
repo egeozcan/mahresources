@@ -3,6 +3,7 @@ package application_context
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -132,6 +133,140 @@ func testInsertionRefusesAMemberMovedOutOfTheSubtree(t *testing.T, ctx *Mahresou
 	require.NoError(t, ctx.db.Raw(`SELECT resource_id FROM reduction_members WHERE reduction_id = ? AND generation = ?`, r.ID, gen).Scan(&members).Error)
 	require.NotContains(t, members, external, "a Resource moved out of the subtree is not proposed")
 	require.ElementsMatch(t, []uint{inExtent, external2}, members)
+}
+
+// associations_desc counts through the store's one-bind subtree query: a principal
+// whose subtree holds more Groups than a statement may bind still clusters.
+func testAssociationsRuleOverAHugeSubtree(t *testing.T, ctx *MahresourcesContext) {
+	root := &models.Group{Name: "root"}
+	require.NoError(t, ctx.db.Create(root).Error)
+	require.NoError(t, ctx.db.Exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 70000)
+		INSERT INTO groups (name, owner_id, created_at, updated_at) SELECT 'g' || i, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP FROM n`, root.ID).Error)
+	one := mkStreamRes(t, ctx.db, streamRes{Hash: "dup", W: 10, H: 10, Size: 1, Owner: &root.ID})
+	two := mkStreamRes(t, ctx.db, streamRes{Hash: "dup", W: 20, H: 20, Size: 2, Owner: &root.ID})
+	note := &models.Note{Name: "n", OwnerId: &root.ID}
+	require.NoError(t, ctx.db.Create(note).Error)
+	require.NoError(t, ctx.db.Exec(`INSERT INTO resource_notes (resource_id, note_id) VALUES (?, ?)`, one, note.ID).Error)
+
+	scoped := ctx.WithPrincipal(&auth.Principal{Role: models.RoleUser, UserID: 7, ScopeGroupID: &root.ID})
+	r := mkStreamReduction(t, ctx, streamSel{All: true, Identical: true, Rule: []string{models.WinnerCriterionAssociationsDesc}})
+	cur := loadReductionRow(t, ctx.db, r.ID)
+	_, gen, err := scoped.beginReductionComputeStore(cur.ID, cur.Version)
+	require.NoError(t, err)
+	require.NoError(t, scoped.runReductionCompute(context.Background(), cur.ID, "", gen, nil))
+	var winner uint
+	require.NoError(t, ctx.db.Raw(`SELECT winner_id FROM reduction_clusters WHERE reduction_id = ? AND generation = ?`, r.ID, gen).Scan(&winner).Error)
+	require.Equal(t, one, winner, "the Resource with a Note wins on associations")
+	_ = two
+}
+
+// A reviewer's "don't remove" on a member of a Cluster that was later applied and
+// merged (a migrated over-cap Cluster keeps such survivors) is still a decision: the
+// ejected survivor must not reappear in a fresh Cluster, while its Winner may.
+func testEjectedSurvivorOfAMergedClusterStaysOut(t *testing.T, ctx *MahresourcesContext) {
+	r := applyReduction(t, ctx)
+	res := func(name string) uint { return makeResource(t, ctx.db, name, opsRes{Hash: "he", W: 10, H: 10}) }
+	w, kept, other := res("w"), res("kept"), res("other")
+	c := &storedCluster{Row: models.ReductionClusterRow{Key: "merged", Tier: models.ReductionTierIdentical, State: models.ReductionClusterApplied,
+		Position: 1, Merged: true, ReadOnly: false, WinnerID: w}, Members: []models.ReductionMemberRow{opsMember(w, "he"), ejectedMember(kept, "he")}}
+	require.NoError(t, ctx.reductionStore().insertCluster(r, opsGen, c))
+
+	streamCompute(t, ctx, r)
+	var fresh []uint
+	require.NoError(t, ctx.db.Raw(`SELECT m.resource_id FROM reduction_members m JOIN reduction_clusters c ON c.id = m.cluster_id
+		WHERE c.reduction_id = ? AND c.key <> 'merged' AND c.generation = (SELECT plan_generation FROM resource_reductions WHERE id = ?)`, r.ID, r.ID).Scan(&fresh).Error)
+	require.NotContains(t, fresh, kept, "an ejected survivor of a merged Cluster is not proposed again")
+	require.ElementsMatch(t, []uint{w, other}, fresh)
+}
+
+// Staging the Resources related to a selected Group probes the relationship table
+// once per candidate Resource (correlated), where an IN over the subquery makes
+// SQLite materialize the Group's whole relationship list on every page.
+func testRelatedGroupStagingProbesPerResource(t *testing.T, ctx *MahresourcesContext) {
+	require.NoError(t, models.EnsureSupplementalIndexes(ctx.db))
+	g := &models.Group{Name: "G"}
+	require.NoError(t, ctx.db.Create(g).Error)
+	for i := 0; i < 6; i++ {
+		id := mkStreamRes(t, ctx.db, streamRes{Hash: "dup", W: uint(10 + i), H: 10, Size: int64(i)})
+		require.NoError(t, ctx.db.Exec(`INSERT INTO groups_related_resources (group_id, resource_id) VALUES (?, ?)`, g.ID, id).Error)
+	}
+	rec := installScaleRecorder(t, ctx)
+	rec.capture("related-page", `SELECT r\.id FROM resources r WHERE r\.id > \?.*groups_related_resources`, "")
+	rec.capture("live-extent", `SELECT r\.id FROM resources r WHERE r\.id IN \(.*groups_related_resources`, "")
+	r := mkStreamReduction(t, ctx, streamSel{Groups: []uint{g.ID}, Identical: true})
+	streamCompute(t, ctx, r)
+	for _, name := range []string{"related-page", "live-extent"} {
+		plan := rec.explain(t, ctx, name)
+		if isPG(ctx) {
+			// Postgres plans the semi-join itself; the table is small in this fixture.
+			continue
+		}
+		require.Regexp(t, `(?m)^\s*SEARCH grr .*resource_id=\?`, plan, "%s probes the relationship table per Resource", name)
+		require.NotRegexp(t, `(?m)^\s*SCAN (grr|groups_related_resources)`, plan, name)
+		// The only list built is the Group tree's ids, never the relationship rows.
+		require.NotRegexp(t, `LIST SUBQUERY \d+\s*\n\s*SEARCH grr`, plan, name)
+	}
+}
+
+func TestRelatedGroupStagingProbesPerResourceSQLite(t *testing.T) {
+	testRelatedGroupStagingProbesPerResource(t, newScaleSQLiteContext(t))
+}
+
+// The Identical tier pages a hash's holders by id: the (hash, id) key serves both the
+// equality and the order, so no sort sits between the index and the LIMIT.
+func testHolderCursorIsServedByTheHashIDIndex(t *testing.T, ctx *MahresourcesContext) {
+	require.NoError(t, models.EnsureSupplementalIndexes(ctx.db))
+	for i := 0; i < 6; i++ {
+		mkStreamRes(t, ctx.db, streamRes{Hash: "dup", W: uint(10 + i), H: 10, Size: int64(i)})
+	}
+	rec := installScaleRecorder(t, ctx)
+	rec.capture("holders", `FROM resources r WHERE r\.hash = \? AND r\.id > \?`, "")
+	r := mkStreamReduction(t, ctx, streamSel{All: true, Identical: true})
+	streamCompute(t, ctx, r)
+	rec.mu.Lock()
+	stmt, ok := rec.captured["holders"]
+	rec.mu.Unlock()
+	require.True(t, ok, "the holder statement was sent")
+
+	var lines []string
+	if isPG(ctx) {
+		require.NoError(t, ctx.db.Transaction(func(tx *gorm.DB) error {
+			for _, off := range []string{"enable_seqscan", "enable_sort", "enable_bitmapscan"} {
+				if err := tx.Exec(`SET LOCAL ` + off + ` = off`).Error; err != nil {
+					return err
+				}
+			}
+			return tx.Raw("EXPLAIN "+stmt.SQL, stmt.Vars...).Scan(&lines).Error
+		}))
+	} else {
+		var rows []struct{ Detail string }
+		require.NoError(t, ctx.db.Raw("EXPLAIN QUERY PLAN "+stmt.SQL, stmt.Vars...).Scan(&rows).Error)
+		for _, row := range rows {
+			lines = append(lines, row.Detail)
+		}
+	}
+	plan := strings.Join(lines, "\n")
+	t.Logf("holder plan:\n%s", plan)
+	want := "idx_resources_hash"
+	if isPG(ctx) {
+		want = "idx__resources__hash_id"
+	}
+	require.Contains(t, plan, want)
+	for _, bad := range []string{"TEMP B-TREE", "Sort", "Seq Scan", "SCAN r"} {
+		require.NotContains(t, plan, bad)
+	}
+}
+
+func TestHolderCursorIsServedByTheHashIDIndexSQLite(t *testing.T) {
+	testHolderCursorIsServedByTheHashIDIndex(t, newScaleSQLiteContext(t))
+}
+
+func TestEjectedSurvivorOfAMergedClusterStaysOutSQLite(t *testing.T) {
+	testEjectedSurvivorOfAMergedClusterStaysOut(t, withSettings(newReductionSQLiteContext(t)))
+}
+
+func TestAssociationsRuleOverAHugeSubtreeSQLite(t *testing.T) {
+	testAssociationsRuleOverAHugeSubtree(t, withSettings(newReductionSQLiteContext(t)))
 }
 
 func TestInsertionRefusesAMemberMovedOutOfTheSubtreeSQLite(t *testing.T) {

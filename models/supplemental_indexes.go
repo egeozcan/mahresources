@@ -19,6 +19,11 @@ func EnsureSupplementalIndexes(db *gorm.DB) error {
 	}
 	if db.Dialector.Name() == "postgres" {
 		queries = append(queries, "CREATE INDEX IF NOT EXISTS idx__groups_related_resources__resource_id___hash ON groups_related_resources USING HASH (resource_id)")
+		// The Reduction compute pages a content hash's holders by id (hash = ? AND id > ?
+		// ORDER BY id LIMIT n). Postgres' hash index holds the hash alone, so without
+		// the pair it walks the primary key filtering on the hash. SQLite's hash index
+		// carries the rowid, which is the id, so it needs nothing more.
+		queries = append(queries, "CREATE INDEX IF NOT EXISTS idx__resources__hash_id ON resources(hash, id)")
 	} else {
 		queries = append(queries, "CREATE INDEX IF NOT EXISTS idx__groups_related_resources__resource_id___hash ON groups_related_resources(resource_id)")
 	}

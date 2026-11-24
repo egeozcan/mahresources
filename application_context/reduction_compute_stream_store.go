@@ -257,8 +257,10 @@ func (run *reductionStream) stageExtent() error {
 	if err := walk(tree+`SELECT r.id FROM resources r WHERE r.id > ? AND r.owner_id IN (SELECT id FROM ext_tree)`+visible+` ORDER BY r.id LIMIT ?`, targs...); err != nil {
 		return err
 	}
-	return walk(tree+`SELECT r.id FROM resources r WHERE r.id > ? AND r.id IN
-		(SELECT grr.resource_id FROM groups_related_resources grr WHERE grr.group_id IN (SELECT id FROM ext_tree))`+visible+` ORDER BY r.id LIMIT ?`, targs...)
+	// Correlated, not IN: SQLite would materialize the Groups' whole relationship list
+	// for every page, where this is one index probe per candidate Resource.
+	return walk(tree+`SELECT r.id FROM resources r WHERE r.id > ? AND EXISTS
+		(SELECT 1 FROM groups_related_resources grr WHERE grr.resource_id = r.id AND grr.group_id IN (SELECT id FROM ext_tree))`+visible+` ORDER BY r.id LIMIT ?`, targs...)
 }
 
 // liveInExtent answers, for at most a Cluster's worth of ids, which of them are in
@@ -282,7 +284,7 @@ func (s *reductionStore) liveInExtent(run *reductionStream, ids []uint) (map[uin
 		sql = tree + `SELECT r.id FROM resources r WHERE r.id IN ?` + visible + ` AND (
 			r.id IN (SELECT e.resource_id FROM reduction_extent_resources e WHERE e.reduction_id = ?)
 			OR r.owner_id IN (SELECT id FROM ext_tree)
-			OR r.id IN (SELECT grr.resource_id FROM groups_related_resources grr WHERE grr.group_id IN (SELECT id FROM ext_tree)))`
+			OR EXISTS (SELECT 1 FROM groups_related_resources grr WHERE grr.resource_id = r.id AND grr.group_id IN (SELECT id FROM ext_tree)))`
 		args = append(targs, ids, run.r.ID)
 	}
 	var found []uint
@@ -337,7 +339,9 @@ func (run *reductionStream) coverage() (models.ReductionCoverage, error) {
 // is unavailable when it is a member of a Cluster of this generation that is not
 // an applied-and-merged one, except that read-only history reserves only the
 // members a reviewer ejected (an explicit "don't remove" must not return in an
-// auto-checked Cluster). col is the Resource id expression.
+// auto-checked Cluster). An ejected member is reserved in every Cluster, an
+// applied-and-merged one included: the survivor of a merge is that decision too.
+// col is the Resource id expression.
 //
 // LIMIT 1 OFFSET 0 is a fence, not a bound: it stops Postgres from flattening the
 // NOT EXISTS into a join, which it plans as a merge or hash anti join that reads the
@@ -346,7 +350,7 @@ func (run *reductionStream) coverage() (models.ReductionCoverage, error) {
 func (run *reductionStream) available(col string) (string, []any) {
 	return `NOT EXISTS (SELECT 1 FROM reduction_members am JOIN reduction_clusters ac ON ac.id = am.cluster_id
 		WHERE am.reduction_id = ? AND am.generation = ? AND am.resource_id = ` + col + `
-		AND ((ac.state = 'applied' AND NOT ac.merged) OR (ac.state <> 'applied' AND (NOT ac.read_only OR am.ejected)))
+		AND ((ac.state = 'applied' AND NOT ac.merged) OR am.ejected OR (ac.state <> 'applied' AND NOT ac.read_only))
 		LIMIT 1 OFFSET 0)`,
 		[]any{run.r.ID, run.generation}
 }
@@ -432,12 +436,15 @@ func (run *reductionStream) withAssociations(cands []clusterCandidate) error {
 	for i, c := range cands {
 		ids[i] = c.Resource.ID
 	}
-	counts, err := run.ctx.countResourceAssociations(ids)
+	// The store's query binds the principal's subtree once; the context's counts go
+	// through the scope callback, which flattens the subtree into one bind per Group.
+	counts, err := run.s.associationKinds(ids)
 	if err != nil {
 		return err
 	}
 	for i := range cands {
-		cands[i].Associations = counts[cands[i].Resource.ID]
+		c := counts[cands[i].Resource.ID]
+		cands[i].Associations = c.Tags + c.Notes + c.Groups
 	}
 	return nil
 }
