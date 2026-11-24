@@ -23,13 +23,23 @@ type plannedIndex struct {
 }
 
 // definitionMatches reports whether a database's spelling of an index (a
-// pg_get_indexdef line or sqlite_master's sql) ends in this index's column list
-// and so has neither a WHERE nor other columns. The two databases respell an
-// expression (casts, extra parentheses, case), so both sides are reduced to
-// lower-case with spaces, parentheses, quotes and casts on literals removed.
+// pg_get_indexdef line or sqlite_master's sql) has exactly this index's key
+// list: no extra leading or trailing column, no INCLUDE and no WHERE. The two
+// databases respell an expression (casts, extra parentheses, case), so both
+// sides are reduced to lower-case with spaces, parentheses, quotes and casts on
+// literals removed.
 func (p plannedIndex) definitionMatches(def string) bool {
-	return strings.HasSuffix(normalizeIndexDefinition(def), normalizeIndexDefinition(p.columns))
+	m := indexKeyList.FindStringSubmatch(def)
+	if m == nil {
+		return false
+	}
+	return normalizeIndexDefinition(m[1]) == normalizeIndexDefinition(p.columns)
 }
+
+// indexKeyList captures what sits between the parentheses that open after
+// "ON <table> [USING <method>]" and the last closing one. A trailing WHERE or
+// INCLUDE is then part of the capture, and so never equals the planned columns.
+var indexKeyList = regexp.MustCompile(`(?is)\bon\s+[^\s(]+\s*(?:using\s+\w+\s*)?\((.*)\)\s*$`)
 
 // Only a cast on a literal ('x'::text, 0::bigint) is Postgres respelling the
 // same expression. A cast on a column or an expression changes its type, so it

@@ -42,3 +42,28 @@ func TestPlannedIndexDefinitionToleratesCastsOnLiterals(t *testing.T) {
 		t.Error("a cast on a text literal was refused")
 	}
 }
+
+// An index with the planned columns after an extra leading column serves other
+// reads: the match is on the whole key list, not on its tail.
+func TestPlannedIndexDefinitionRequiresTheExactKeyList(t *testing.T) {
+	index := plannedIndex{"idx_jobs_state_phase", "jobs", "state, phase, accepted_at, id"}
+	cases := []struct {
+		name string
+		def  string
+		want bool
+	}{
+		{"postgres exact", "CREATE INDEX idx_jobs_state_phase ON public.jobs USING btree (state, phase, accepted_at, id)", true},
+		{"sqlite exact", "CREATE INDEX idx_jobs_state_phase ON jobs (state, phase, accepted_at, id)", true},
+		{"postgres extra leading column", "CREATE INDEX idx_jobs_state_phase ON public.jobs USING btree (owner_user_id, state, phase, accepted_at, id)", false},
+		{"sqlite extra leading column", "CREATE INDEX idx_jobs_state_phase ON jobs (owner_user_id, state, phase, accepted_at, id)", false},
+		{"sqlite extra leading column, no space", "CREATE INDEX idx_jobs_state_phase ON jobs(x,state,phase,accepted_at,id)", false},
+		{"partial", "CREATE INDEX idx_jobs_state_phase ON public.jobs USING btree (state, phase, accepted_at, id) WHERE (id > 0)", false},
+		{"included column", "CREATE INDEX idx_jobs_state_phase ON public.jobs USING btree (state, phase, accepted_at, id) INCLUDE (name)", false},
+		{"truncated", "CREATE INDEX idx_jobs_state_phase ON public.jobs USING btree (phase, accepted_at, id)", false},
+	}
+	for _, c := range cases {
+		if got := index.definitionMatches(c.def); got != c.want {
+			t.Errorf("%s: definitionMatches = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
