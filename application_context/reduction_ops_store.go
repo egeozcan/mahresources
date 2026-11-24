@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -152,32 +153,86 @@ func (s *reductionStore) memberResourceIDs(clusterID uint) ([]uint, error) {
 	return ids, err
 }
 
-// lockedCluster takes the locks a writer of one Cluster needs and re-reads it. It
-// finds the Cluster by key (not yet judged visible), share-locks the member
-// Resources ascending, locks the Cluster row, and only then loads the Cluster the
-// way a reader would: a Cluster the principal may not fully see answers
-// gorm.ErrRecordNotFound, exactly as an unknown key does. Visibility is decided
-// with the members' Resources locked, so an owner move cannot slip between the
-// check and the write.
-func (s *reductionStore) lockedCluster(r *models.ResourceReduction, generation, key string) (*storedCluster, error) {
+// reductionOpsAfterLocksHook runs inside a writer's transaction right after it has
+// taken its Resource and Cluster locks and before it decides anything from what
+// they protect. Only a test sets it, to park the transaction there while another
+// one tries to move what is locked.
+var reductionOpsAfterLocksHook atomic.Pointer[func()]
+
+func afterLocks() {
+	if hook := reductionOpsAfterLocksHook.Load(); hook != nil {
+		(*hook)()
+	}
+}
+
+// errClusterWithheld says the Cluster exists but the principal may not fully see
+// it. Callers that must not tell it from an unknown key (every request-side
+// writer) treat it as gorm.ErrRecordNotFound.
+var errClusterWithheld = errors.New("the Cluster is withheld from this principal")
+
+// lockHead finds a Cluster by key (not yet judged visible) and takes the locks a
+// writer of it needs, in the one order: its member Resources share-locked
+// ascending (when resources is set), then the Cluster row. It returns the row id,
+// or gorm.ErrRecordNotFound for an unknown key.
+func (s *reductionStore) lockHead(reductionID uint, generation, key string, resources bool) (uint, error) {
 	var head []uint
-	if err := s.db.Raw(`SELECT id FROM reduction_clusters WHERE reduction_id = ? AND generation = ? AND "key" = ?`, r.ID, generation, key).Scan(&head).Error; err != nil {
-		return nil, err
+	if err := s.db.Raw(`SELECT id FROM reduction_clusters WHERE reduction_id = ? AND generation = ? AND "key" = ?`, reductionID, generation, key).Scan(&head).Error; err != nil {
+		return 0, err
 	}
 	if len(head) == 0 {
-		return nil, gorm.ErrRecordNotFound
+		return 0, gorm.ErrRecordNotFound
 	}
-	ids, err := s.memberResourceIDs(head[0])
+	if resources {
+		ids, err := s.memberResourceIDs(head[0])
+		if err != nil {
+			return 0, err
+		}
+		if err := s.shareLockResources(ids); err != nil {
+			return 0, err
+		}
+	}
+	return head[0], s.lockClusterRows(head)
+}
+
+// lockedCluster locks a Cluster and re-reads it the way a reader would: a Cluster
+// the principal may not fully see is errClusterWithheld, decided with the members'
+// Resources locked, so an owner move cannot slip between the check and the write.
+// An unknown key is gorm.ErrRecordNotFound.
+func (s *reductionStore) lockedCluster(r *models.ResourceReduction, generation, key string) (*storedCluster, error) {
+	if _, err := s.lockHead(r.ID, generation, key, true); err != nil {
+		return nil, err
+	}
+	afterLocks()
+	c, err := s.loadCluster(r, generation, key)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errClusterWithheld
+	}
+	return c, err
+}
+
+// lockedClusterUnfiltered locks a Cluster and re-reads it with no visibility test:
+// for the bookkeeping that settles a claim this same caller took, which judged
+// visibility when it took it.
+func (s *reductionStore) lockedClusterUnfiltered(reductionID uint, generation, key string, resources bool) (*storedCluster, error) {
+	id, err := s.lockHead(reductionID, generation, key, resources)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.shareLockResources(ids); err != nil {
+	return s.loadClusterByID(id)
+}
+
+// loadClusterByID reads one Cluster row and its first members, with no visibility
+// test.
+func (s *reductionStore) loadClusterByID(id uint) (*storedCluster, error) {
+	var row models.ReductionClusterRow
+	if err := s.db.First(&row, id).Error; err != nil {
 		return nil, err
 	}
-	if err := s.lockClusterRows(head); err != nil {
+	members, err := s.loadMembers(id, reductionMemberCap)
+	if err != nil {
 		return nil, err
 	}
-	return s.loadCluster(r, generation, key)
+	return &storedCluster{Row: row, Members: members}, nil
 }
 
 // clusterColumns are the Cluster columns a decision or an apply write may change,
@@ -465,7 +520,7 @@ func (ctx *MahresourcesContext) storeOverrideCluster(r *models.ResourceReduction
 			}
 			st := store.in(tx)
 			c, err := st.lockedCluster(r, generation, override.ClusterID)
-			if errors.Is(err, gorm.ErrRecordNotFound) {
+			if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, errClusterWithheld) {
 				// An unknown key and a Cluster reaching a Resource this caller may
 				// not see are one answer, so the refusal is no oracle for hidden ids.
 				return ErrReductionClusterNotFound

@@ -3,9 +3,11 @@ package application_context
 import (
 	"fmt"
 	"math/rand"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"mahresources/auth"
 	"mahresources/models"
@@ -328,4 +330,58 @@ func TestOpsBulkMatchesLegacyLoopSQLite(t *testing.T) {
 	for _, seed := range []int64{1, 2, 3} {
 		testOpsBulkMatchesLegacyLoop(t, withSettings(newReductionSQLiteContext(t)), seed)
 	}
+}
+
+// Every marking, counting and writing chunk is a keyset on idx_rc_bulk: its plan
+// searches that index and neither sorts nor scans the table.
+func testOpsBulkChunksAreKeysets(t *testing.T, ctx *MahresourcesContext) {
+	r := newPlanReduction(t, ctx.db)
+	bulkInsert(t, ctx, r, 600, nil)
+	require.NoError(t, ctx.db.Exec(`UPDATE reduction_clusters SET bulk_op = 'op1' WHERE id % 3 = 0`).Error)
+	if ctx.db.Dialector.Name() == "postgres" {
+		require.NoError(t, ctx.db.Exec(`ANALYZE reduction_clusters`).Error)
+	} else {
+		require.NoError(t, ctx.db.Exec(`ANALYZE`).Error)
+	}
+	store := ctx.reductionStore()
+	candidates, cargs := store.identicalCandidates(r, opsGen, 0)
+	statements := map[string]struct {
+		sql  string
+		args []any
+	}{
+		"marking":  {candidates, cargs},
+		"counting": {markedChunkSQL, []any{r.ID, opsGen, "op1", 0, reductionRowChunk}},
+		"writing":  {writeMarkedSQL, []any{true, true, true, r.ID, opsGen, "op1", 0, 1000}},
+	}
+	for name, st := range statements {
+		var plan []string
+		if ctx.db.Dialector.Name() == "postgres" {
+			require.NoError(t, ctx.db.Transaction(func(tx *gorm.DB) error {
+				// A test table this small is planned for cheap sorts and scans; what is
+				// asserted is that the index can serve the keyset order, so the planner
+				// is denied the alternatives.
+				for _, off := range []string{"enable_seqscan", "enable_sort", "enable_bitmapscan"} {
+					if err := tx.Exec(`SET LOCAL ` + off + ` = off`).Error; err != nil {
+						return err
+					}
+				}
+				return tx.Raw("EXPLAIN "+st.sql, st.args...).Scan(&plan).Error
+			}), name)
+		} else {
+			var rows []struct{ Detail string }
+			require.NoError(t, ctx.db.Raw("EXPLAIN QUERY PLAN "+st.sql, st.args...).Scan(&rows).Error, name)
+			for _, row := range rows {
+				plan = append(plan, row.Detail)
+			}
+		}
+		text := strings.Join(plan, "\n")
+		require.Contains(t, text, "idx_rc_bulk", "%s: %s", name, text)
+		for _, bad := range []string{"TEMP B-TREE", "Sort", "Seq Scan", "SCAN reduction_clusters", "SCAN c\n", "SCAN c "} {
+			require.NotContains(t, text, bad, "%s: %s", name, text)
+		}
+	}
+}
+
+func TestOpsBulkChunksAreKeysetsSQLite(t *testing.T) {
+	testOpsBulkChunksAreKeysets(t, withSettings(newReductionSQLiteContext(t)))
 }

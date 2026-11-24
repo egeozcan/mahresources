@@ -124,3 +124,12 @@ func TestOpsBulkMatchesLegacyLoopPG(t *testing.T) {
 		testOpsBulkMatchesLegacyLoop(t, newOpsPGContext(t), seed)
 	}
 }
+
+func TestOpsClaimPG(t *testing.T)            { testOpsClaim(t, newOpsPGContext(t)) }
+func TestOpsFencesPG(t *testing.T)           { testOpsFences(t, newOpsPGContext(t)) }
+func TestOpsDemoteAndReleasePG(t *testing.T) { testOpsDemoteAndRelease(t, newOpsPGContext(t)) }
+func TestOpsRecordStalePG(t *testing.T)      { testOpsRecordStale(t, newOpsPGContext(t)) }
+func TestOpsReconcilePG(t *testing.T)        { testOpsReconcile(t, newOpsPGContext(t)) }
+func TestOpsSettlePG(t *testing.T)           { testOpsSettle(t, newOpsPGContext(t)) }
+
+func TestOpsBulkChunksAreKeysetsPG(t *testing.T) { testOpsBulkChunksAreKeysets(t, newOpsPGContext(t)) }

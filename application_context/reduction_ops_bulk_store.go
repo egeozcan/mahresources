@@ -188,6 +188,7 @@ func (s *reductionStore) markNamed(r *models.ResourceReduction, generation, op s
 	if err := s.shareLockMembersOf(r, generation, `c."key" IN ?`, named); err != nil {
 		return err
 	}
+	afterLocks()
 	prefix, where, args := s.base(r, generation)
 	var rows []struct {
 		ID          uint
@@ -230,12 +231,12 @@ func (s *reductionStore) markAllIdentical(r *models.ResourceReduction, generatio
 	if err := s.shareLockMembersOf(r, generation, `c.tier = 'identical' AND c.state = 'open'`); err != nil {
 		return err
 	}
-	prefix, where, args := s.base(r, generation)
+	afterLocks()
 	after := uint(0)
 	for {
 		var ids []uint
-		if err := s.db.Raw(prefix+`SELECT c.id FROM reduction_clusters c WHERE `+where+` AND c.tier = 'identical' AND `+actionable("c")+` AND c.id > ? ORDER BY c.id LIMIT ?`,
-			append(append([]any(nil), args...), after, reductionRowChunk)...).Scan(&ids).Error; err != nil {
+		sql, args := s.identicalCandidates(r, generation, after)
+		if err := s.db.Raw(sql, args...).Scan(&ids).Error; err != nil {
 			return err
 		}
 		if len(ids) == 0 {
@@ -251,6 +252,19 @@ func (s *reductionStore) markAllIdentical(r *models.ResourceReduction, generatio
 	}
 }
 
+// identicalCandidates is one keyset chunk of the open Identical Clusters the
+// principal may fully see, after the id `after`. The bulk_op = ” equality is what
+// lets idx_rc_bulk (reduction, generation, bulk_op, id) serve the id order: every
+// unmarked Cluster of the generation is walked once across all chunks, never a sort
+// of the whole open set per chunk. Nothing else is marked while this runs: the
+// Reduction row's compare-and-set serializes bulk writers.
+func (s *reductionStore) identicalCandidates(r *models.ResourceReduction, generation string, after uint) (string, []any) {
+	prefix, where, args := s.base(r, generation)
+	return prefix + `SELECT c.id FROM reduction_clusters c WHERE ` + where + ` AND c.bulk_op = '' AND c.tier = 'identical' AND ` + actionable("c") +
+			` AND c.id > ? ORDER BY c.id LIMIT ?`,
+		append(append([]any(nil), args...), after, reductionRowChunk)
+}
+
 type bulkCounts struct {
 	// counted is what a click on the button would change (the expectedCount's set).
 	counted     int
@@ -258,14 +272,15 @@ type bulkCounts struct {
 	needsReview int
 }
 
+const markedChunkSQL = `SELECT MAX(id) FROM (SELECT id FROM reduction_clusters WHERE reduction_id = ? AND generation = ? AND bulk_op = ? AND id > ? ORDER BY id LIMIT ?) chunk`
+
 // markedChunks walks the Clusters marked bulk_op = op by id keyset and hands each
 // chunk's id range (lo, hi] to fn.
 func (s *reductionStore) markedChunks(r *models.ResourceReduction, generation, op string, fn func(lo, hi uint) error) error {
 	lo := uint(0)
 	for {
 		var hi *uint
-		if err := s.db.Raw(`SELECT MAX(id) FROM (SELECT id FROM reduction_clusters WHERE reduction_id = ? AND generation = ? AND bulk_op = ? AND id > ? ORDER BY id LIMIT ?) chunk`,
-			r.ID, generation, op, lo, reductionRowChunk).Scan(&hi).Error; err != nil {
+		if err := s.db.Raw(markedChunkSQL, r.ID, generation, op, lo, reductionRowChunk).Scan(&hi).Error; err != nil {
 			return err
 		}
 		if hi == nil {
@@ -311,13 +326,15 @@ func (s *reductionStore) countMarked(r *models.ResourceReduction, generation, op
 // remove or one that needs attention (it stays exactly as it was); everything else
 // marked is set to the decision and frozen as reviewed.
 func (s *reductionStore) writeMarked(r *models.ResourceReduction, generation, op string, checking bool) error {
-	writable := `(NOT ? OR (loser_count > 0 AND NOT needs_attention))`
 	return s.markedChunks(r, generation, op, func(lo, hi uint) error {
-		return s.db.Exec(`UPDATE reduction_clusters SET
-				checked = CASE WHEN `+writable+` THEN ? ELSE checked END,
-				reviewed = CASE WHEN `+writable+` THEN TRUE ELSE reviewed END,
-				bulk_op = ''
-			WHERE reduction_id = ? AND generation = ? AND bulk_op = ? AND id > ? AND id <= ?`,
-			checking, checking, checking, r.ID, generation, op, lo, hi).Error
+		return s.db.Exec(writeMarkedSQL, checking, checking, checking, r.ID, generation, op, lo, hi).Error
 	})
 }
+
+// writeMarkedSQL: the parameters are the decision three times (the writable test
+// twice and the value), then the chunk (reduction, generation, op, lo, hi).
+const writeMarkedSQL = `UPDATE reduction_clusters SET
+		checked = CASE WHEN (NOT ? OR (loser_count > 0 AND NOT needs_attention)) THEN ? ELSE checked END,
+		reviewed = CASE WHEN (NOT ? OR (loser_count > 0 AND NOT needs_attention)) THEN TRUE ELSE reviewed END,
+		bulk_op = ''
+	WHERE reduction_id = ? AND generation = ? AND bulk_op = ? AND id > ? AND id <= ?`
