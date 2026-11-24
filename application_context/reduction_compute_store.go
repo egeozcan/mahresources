@@ -672,12 +672,12 @@ func (ctx *MahresourcesContext) SweepReductionGenerations() error {
 func (ctx *MahresourcesContext) sweepReductionGenerations() error {
 	s := ctx.reductionStore()
 	for _, table := range []string{"reduction_members", "reduction_clusters"} {
-		if err := s.sweepTable(table, "id", planGuard); err != nil {
+		if err := s.sweepTable(table, "id", planGuard, planPairProtected); err != nil {
 			return err
 		}
 	}
 	for _, table := range []string{"reduction_extent", "reduction_seeds"} {
-		if err := s.sweepTable(table, "resource_id", stagingGuard); err != nil {
+		if err := s.sweepTable(table, "resource_id", stagingGuard, stagingPairProtected); err != nil {
 			return err
 		}
 	}
@@ -689,7 +689,28 @@ func (ctx *MahresourcesContext) sweepReductionGenerations() error {
 	return nil
 }
 
-func (s *reductionStore) sweepTable(table, keyCol string, guard func(x string) string) error {
+// planPairProtected is planGuard asked once for a whole (reduction, generation) pair
+// instead of once per row: ownership is a property of the pair, so a live
+// generation of any size costs one point query, not a scan of its rows.
+func planPairProtected(reductionID uint, generation string) (string, []any) {
+	return `SELECT 1 FROM resource_reductions r WHERE r.id = ? AND (? = r.plan_generation OR ? = r.compute_generation OR ` +
+			`EXISTS (SELECT 1 FROM reduction_migrations mg WHERE mg.reduction_id = r.id AND mg.generation = ?))`,
+		[]any{reductionID, generation, generation, generation}
+}
+
+func stagingPairProtected(reductionID uint, generation string) (string, []any) {
+	return `SELECT 1 FROM resource_reductions r WHERE r.id = ? AND r.status = 'computing' AND ? = r.compute_generation`,
+		[]any{reductionID, generation}
+}
+
+// sweepTable walks the distinct (reduction_id, generation) pairs of table through
+// its index. A pair that is protected is skipped without reading any of its rows;
+// a stale pair is deleted in chunks of reductionRowChunk, each chunk's ids read by
+// the pair's index prefix alone (what was deleted is gone, so no keyset is needed)
+// with the guard restated in the delete itself, so a compute that claims the
+// generation after the read keeps it: the delete then removes nothing and the pair
+// is left. The work is proportional to the stale rows plus one seek per pair.
+func (s *reductionStore) sweepTable(table, keyCol string, guard func(x string) string, protected func(uint, string) (string, []any)) error {
 	lastReduction, lastGeneration := uint(0), ""
 	first := true
 	for {
@@ -700,8 +721,8 @@ func (s *reductionStore) sweepTable(table, keyCol string, guard func(x string) s
 		cond := "1 = 1"
 		args := []any{}
 		if !first {
-			cond = "(reduction_id > ? OR (reduction_id = ? AND generation > ?))"
-			args = []any{lastReduction, lastReduction, lastGeneration}
+			cond = "(reduction_id, generation) > (?, ?)"
+			args = []any{lastReduction, lastGeneration}
 		}
 		if err := s.db.Raw(`SELECT reduction_id, generation FROM `+table+` WHERE `+cond+` ORDER BY reduction_id, generation LIMIT 1`, args...).Scan(&pair).Error; err != nil {
 			return err
@@ -711,11 +732,17 @@ func (s *reductionStore) sweepTable(table, keyCol string, guard func(x string) s
 		}
 		first = false
 		lastReduction, lastGeneration = pair[0].ReductionID, pair[0].Generation
-		after := uint(0)
+		guardSQL, guardArgs := protected(lastReduction, lastGeneration)
+		var owned []int
+		if err := s.db.Raw(guardSQL+` LIMIT 1`, guardArgs...).Scan(&owned).Error; err != nil {
+			return err
+		}
+		if len(owned) > 0 {
+			continue
+		}
 		for {
 			var ids []uint
-			if err := s.db.Raw(`SELECT x.`+keyCol+` FROM `+table+` x WHERE x.reduction_id = ? AND x.generation = ? AND x.`+keyCol+` > ? AND `+guard("x")+
-				` ORDER BY x.`+keyCol+` LIMIT ?`, lastReduction, lastGeneration, after, reductionRowChunk).Scan(&ids).Error; err != nil {
+			if err := s.db.Raw(`SELECT x.`+keyCol+` FROM `+table+` x WHERE x.reduction_id = ? AND x.generation = ? LIMIT ?`, lastReduction, lastGeneration, reductionRowChunk).Scan(&ids).Error; err != nil {
 				return err
 			}
 			if len(ids) == 0 {
@@ -724,10 +751,13 @@ func (s *reductionStore) sweepTable(table, keyCol string, guard func(x string) s
 			if sweepBetweenReadAndDeleteHook != nil {
 				sweepBetweenReadAndDeleteHook()
 			}
-			if err := s.db.Exec(`DELETE FROM `+table+` WHERE reduction_id = ? AND generation = ? AND `+keyCol+` IN ? AND `+guard(table), lastReduction, lastGeneration, ids).Error; err != nil {
-				return err
+			res := s.db.Exec(`DELETE FROM `+table+` WHERE reduction_id = ? AND generation = ? AND `+keyCol+` IN ? AND `+guard(table), lastReduction, lastGeneration, ids)
+			if res.Error != nil {
+				return res.Error
 			}
-			after = ids[len(ids)-1]
+			if res.RowsAffected == 0 {
+				break // claimed since the read: the pair is protected now
+			}
 		}
 	}
 }

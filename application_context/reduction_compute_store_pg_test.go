@@ -24,3 +24,7 @@ func TestStoreSweepFirstComputeFailsPG(t *testing.T) {
 }
 func TestStoreDeleteReductionPG(t *testing.T) { testStoreDeleteReduction(t, newOpsPGContext(t)) }
 func TestStoreComputeSeamsPG(t *testing.T)    { testStoreComputeSeams(t, newOpsPGContext(t)) }
+
+func TestStoreSweepExaminesOnlyStalePG(t *testing.T) {
+	testStoreSweepExaminesOnlyStale(t, newOpsPGContext(t))
+}
