@@ -130,7 +130,7 @@ func testStoreMembersRequestReadsTheBoundedName(t *testing.T, ctx *MahresourcesC
 	for _, sql := range capture.sqls {
 		if strings.Contains(sql, "resource_reductions") && strings.Contains(sql, "SELECT") {
 			saw = true
-			assert.Contains(t, strings.ToLower(sql), "substr(", "the name is cut in SQL: %s", sql)
+			assert.Regexp(t, `substr(ing)?\(`, strings.ToLower(sql), "the name is cut in SQL: %s", sql)
 		}
 	}
 	assert.True(t, saw)
