@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { matchPreset, nameToSend, PRESETS } from './reductionSettings.js';
+import { isNameEdited, matchPreset, nameToSend, PRESETS } from './reductionSettings.js';
 
 describe('matchPreset', () => {
   it('recognises each preset by its exact ordered rule', () => {
@@ -17,6 +17,19 @@ describe('nameToSend', () => {
   it('sends nothing for a name the reviewer did not change, so a bounded display name never overwrites the stored one', () => {
     const shown = 'a'.repeat(341);
     expect(nameToSend(shown, shown)).toBe('');
+  });
+
+  it('sends nothing for a stored name with a newline the input stripped from its value', () => {
+    const original = 'First line\nSecond line\r\nthird';
+    const shownInInput = 'First lineSecond linethird';
+    expect(nameToSend(shownInInput, shownInInput, original)).toBe('');
+    expect(isNameEdited(shownInInput, shownInInput, original)).toBe(false);
+  });
+
+  it('sends the typed name when the reviewer edited a name that had a newline', () => {
+    const original = 'First line\nSecond line';
+    expect(nameToSend('First lineSecond line!', 'First lineSecond line', original)).toBe('First lineSecond line!');
+    expect(isNameEdited('First lineSecond line!', 'First lineSecond line', original)).toBe(true);
   });
 
   it('sends the new name once the reviewer edited it', () => {

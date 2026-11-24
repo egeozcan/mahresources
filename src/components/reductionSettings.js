@@ -30,8 +30,19 @@ export const HINTS = {
  * unchanged would overwrite a longer stored name with its own truncation; the
  * server leaves the name alone when none is sent.
  */
-export function nameToSend(typed, shown) {
-  return typed === shown ? '' : typed;
+export function nameToSend(typed, shown, original = shown) {
+  return isNameEdited(typed, shown, original) ? typed : '';
+}
+
+/**
+ * Whether the reviewer changed the name. Unchanged means the field still holds what it
+ * was given: its default value, or the stored name as a single-line input keeps it (a
+ * text input drops line breaks from its value, so a stored name containing one never
+ * equals its own default). The stored name is compared exactly, from the server's state.
+ */
+export function isNameEdited(typed, shown, original = shown) {
+  if (typed === shown || typed === original) return false;
+  return typed !== String(original ?? '').replace(/[\r\n]/g, '');
 }
 
 export function matchPreset(tokens) {
@@ -162,11 +173,13 @@ export function reductionSettingsForm(rule) {
       this.notice = '';
       const data = new FormData(form);
       const typedName = data.get('name') || '';
-      const renamed = typedName !== form.elements.namedItem('name')?.defaultValue;
+      const shownName = form.elements.namedItem('name')?.defaultValue;
+      const storedName = review.serverSettings?.name ?? shownName;
+      const renamed = isNameEdited(typedName, shownName, storedName);
       const body = {
         id: review.reductionId,
         version: review.version,
-        name: nameToSend(typedName, form.elements.namedItem('name')?.defaultValue),
+        name: nameToSend(typedName, shownName, storedName),
         matchingMode: data.get('matchingMode') || 'both',
         winnerRule: this.slots.filter(Boolean),
         keepAsVersionNear: this.$refs.keepNear.checked,
@@ -196,7 +209,7 @@ export function reductionSettingsForm(rule) {
         if (!response.ok) throw new Error(await window.errorMessageFromResponse(response));
         const saved = await response.json();
         this.synced = {
-          name: typedName,
+          name: renamed ? typedName : storedName,
           matchingMode: body.matchingMode,
           winnerRule: body.winnerRule,
           keepAsVersionNear: body.keepAsVersionNear,
