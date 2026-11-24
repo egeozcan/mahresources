@@ -138,6 +138,11 @@ type ReductionOverride struct {
 	// is the caller's own statement, a guard against a page that skipped the copies,
 	// not proof against a caller that lies.
 	MembersSeen *uint `json:"membersSeen" schema:"membersSeen"`
+
+	// WinnerID is the copy the reviewer's card showed as kept. When sent, a check is
+	// refused with a version conflict unless the Cluster keeps that copy now: the
+	// approval is of the Cluster the reviewer saw, not of one re-decided since.
+	WinnerID *uint `json:"winnerId" schema:"winnerId"`
 }
 
 // ReductionApply is a request to apply what is checked.

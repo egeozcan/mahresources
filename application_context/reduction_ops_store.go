@@ -650,6 +650,9 @@ func (e *overrideEnv) apply(c *storedCluster, o *query_models.ReductionOverride)
 		if c.Row.Oversized && !o.AcknowledgeOversized {
 			return ErrReductionOversizedUnexpanded
 		}
+		if o.WinnerID != nil && *o.WinnerID != c.Row.WinnerID {
+			return ErrReductionConflict
+		}
 		if c.Row.Oversized && o.MembersSeen != nil && int(*o.MembersSeen) != c.Row.MemberCount {
 			return ErrReductionOversizedUnexpanded
 		}

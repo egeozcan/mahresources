@@ -13,7 +13,7 @@ import (
 // the review page cut short (design D8). The Cluster is looked up through the same
 // withheld filter the page uses, so a Cluster the principal may not fully see is an
 // unknown one; the Resources behind the members are the narrow, scoped projection.
-func (ctx *MahresourcesContext) storeClusterMembers(r *models.ResourceReduction, key string, after reductionMemberCursor) (*contracts.ReductionMembersPage, error) {
+func (ctx *MahresourcesContext) storeClusterMembers(r *models.ResourceReduction, key string, after reductionMemberCursor, expectWinner *uint) (*contracts.ReductionMembersPage, error) {
 	store := ctx.reductionStore()
 	c, err := store.loadCluster(r, reductionGenerationOf(r), key)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -21,6 +21,9 @@ func (ctx *MahresourcesContext) storeClusterMembers(r *models.ResourceReduction,
 	}
 	if err != nil {
 		return nil, err
+	}
+	if expectWinner != nil && *expectWinner != c.Row.WinnerID {
+		return nil, ErrReductionConflict
 	}
 	rows, err := store.memberPage(c.Row.ID, after, reductionMemberCap+1)
 	if err != nil {

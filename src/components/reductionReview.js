@@ -299,6 +299,10 @@ export function registerReductionReviewStore(Alpine) {
     // The counts the apply banner reports, from the response or from the plan.
     applyCounts: null,
     loadingMembers: false,
+    // Bumped whenever the Clusters are re-rendered; a members response only lands if the
+    // epoch it was requested under is still current.
+    _membersEpoch: 0,
+    _membersAbort: null,
     // Set while the outcome of an apply is not known (a lost response).
     applyUnknown: '',
     // The reviewer sent the running dialog to the background.
@@ -462,6 +466,12 @@ export function registerReductionReviewStore(Alpine) {
     /** A refresh re-renders the Clusters from the server and drops the copies paging appended. */
     forgetShownMembers() {
       this.allMembersShown = {};
+      // The card was re-rendered from the server, so a "Show more members" request still
+      // in flight describes the card as it was: its copies would join a Cluster whose Keep
+      // may be a different copy now. Abort it, and let its handler see the epoch moved.
+      this._membersEpoch++;
+      this._membersAbort?.abort();
+      this._membersAbort = null;
     },
 
     expand(clusterId) {
@@ -488,6 +498,10 @@ export function registerReductionReviewStore(Alpine) {
         extra.membersSeen = card
           ? card.querySelectorAll('.reduction-cluster-members [data-testid="reduction-member"], .reduction-cluster-members [data-testid="reduction-member-withheld"]').length
           : 0;
+        // The kept copy the reviewer was looking at: the server refuses the approval if
+        // the Cluster keeps a different one now.
+        const keptId = Number(card?.querySelector('[data-testid="reduction-member"][data-winner="true"]')?.dataset.resourceId);
+        if (keptId) extra.winnerId = keptId;
       }
       return this.act(clusterId, pressed ? 'uncheck' : 'check', 0, extra);
     },
@@ -1066,6 +1080,12 @@ export function registerReductionReviewStore(Alpine) {
       const list = card?.querySelector('.reduction-cluster-members');
       if (!list) return;
       this.loadingMembers = true;
+      const epoch = this._membersEpoch;
+      const abort = new AbortController();
+      this._membersAbort = abort;
+      const superseded = () => epoch !== this._membersEpoch || !button.isConnected || !card.isConnected;
+      // The card as this request saw it: the version, and the copy it kept.
+      const requestedWinner = card.querySelector('[data-testid="reduction-member"][data-winner="true"]')?.dataset.resourceId || '';
       // Focus belongs to the reviewer: it moves to the new copies only if it is still on
       // the trigger (or was dropped to the page by disabling it), not if they tabbed elsewhere.
       const focusUnmoved = () => {
@@ -1081,10 +1101,15 @@ export function registerReductionReviewStore(Alpine) {
         url.searchParams.set('cluster', clusterId);
         const after = button.dataset.membersAfter || '';
         if (after) url.searchParams.set('after', after);
-        const response = await fetch(url, { headers: { Accept: 'application/json' } });
+        // The server refuses a page for a Reduction or a kept copy that is no longer these.
+        url.searchParams.set('version', String(this.version));
+        if (requestedWinner) url.searchParams.set('winner', requestedWinner);
+        const response = await fetch(url, { headers: { Accept: 'application/json' }, signal: abort.signal });
+        if (superseded()) return;
         if (response.status === 503) throw new Error(UPGRADING_MESSAGE);
         if (!response.ok) throw new Error(await window.errorMessageFromResponse(response));
         const page = await response.json();
+        if (superseded()) return;
         const present = new Set([...list.querySelectorAll('[data-testid="reduction-member"]')].map((m) => m.dataset.resourceId));
         const view = {
           fixedKeep: card.dataset.clusterFixedKeep === 'true',
@@ -1120,13 +1145,19 @@ export function registerReductionReviewStore(Alpine) {
           if (unmoved) (added.find((n) => n.hasAttribute('tabindex')) || card).focus();
         }
       } catch (err) {
+        if (superseded() || err?.name === 'AbortError') return;
         this.error = err.message;
         this._announceError(`Could not load more copies: ${err.message}`);
         button.removeAttribute('aria-disabled');
         button.disabled = false;
         if (focusUnmoved()) button.focus();
       } finally {
-        this.loadingMembers = false;
+        if (this._membersAbort === abort) {
+          this._membersAbort = null;
+          this.loadingMembers = false;
+        } else if (!this._membersAbort) {
+          this.loadingMembers = false;
+        }
       }
     },
 

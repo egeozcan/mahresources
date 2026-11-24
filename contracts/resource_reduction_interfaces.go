@@ -27,6 +27,10 @@ type ResourceReductionReader interface {
 	// (a ReductionClusterView's MembersAfter), for a Cluster the review page cut
 	// short. A Cluster the caller may not fully see answers as an unknown one.
 	GetReductionClusterMembers(id uint, ownerUserID *uint, ownerRestricted bool, clusterKey, after string) (*ReductionMembersPage, error)
+	// GetReductionClusterMembersChecked is GetReductionClusterMembers for a card whose
+	// render is known: a Reduction version or a kept copy that no longer matches is a
+	// version conflict, so a delayed page cannot join a card that was re-rendered.
+	GetReductionClusterMembersChecked(id uint, ownerUserID *uint, ownerRestricted bool, clusterKey, after string, expect ReductionMembersExpect) (*ReductionMembersPage, error)
 	// GetReductionReview is one page of a Reduction's plan with the Resources
 	// behind it, filtered by the caller's Cluster query. Filtering happens before
 	// pagination, so the page count and the ClusterCount in the review describe

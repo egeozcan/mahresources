@@ -48,6 +48,14 @@ func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, o
 // hydrated like the review card's own. A Cluster the caller may not fully see is
 // an unknown one.
 func (ctx *MahresourcesContext) GetReductionClusterMembers(id uint, ownerUserID *uint, ownerRestricted bool, clusterKey, after string) (*contracts.ReductionMembersPage, error) {
+	return ctx.GetReductionClusterMembersChecked(id, ownerUserID, ownerRestricted, clusterKey, after, contracts.ReductionMembersExpect{})
+}
+
+// GetReductionClusterMembersChecked is GetReductionClusterMembers for a card whose
+// render the caller names: a Reduction version or a kept copy that differs from it
+// is ErrReductionConflict, so a page requested for one render is never appended to
+// another.
+func (ctx *MahresourcesContext) GetReductionClusterMembersChecked(id uint, ownerUserID *uint, ownerRestricted bool, clusterKey, after string, expect contracts.ReductionMembersExpect) (*contracts.ReductionMembersPage, error) {
 	cursor, err := parseReductionMemberCursor(after)
 	if err != nil {
 		return nil, err
@@ -61,7 +69,10 @@ func (ctx *MahresourcesContext) GetReductionClusterMembers(id uint, ownerUserID 
 		if reduction.PlanSchema == 0 {
 			return ErrReductionUpgrading
 		}
-		page, err = snap.storeClusterMembers(reduction, clusterKey, cursor)
+		if expect.Version != nil && *expect.Version != reduction.Version {
+			return ErrReductionConflict
+		}
+		page, err = snap.storeClusterMembers(reduction, clusterKey, cursor, expect.WinnerID)
 		return err
 	})
 	return page, err

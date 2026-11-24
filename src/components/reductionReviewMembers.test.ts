@@ -265,3 +265,50 @@ describe('approving a large Cluster whose copies are not all on the page', () =>
     expect(store.isReviewable('c1', true, true)).toBe(false);
   });
 });
+
+describe('a members response that outlives a refresh', () => {
+  test('is discarded when the card was re-rendered while it was in flight', async () => {
+    document.body.innerHTML = cardHtml();
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members: [member(2), { ...member(3), IsWinner: true }], after: '' });
+
+    const pending = store.loadMoreMembers('c1', trigger);
+    // Another tab promoted a different copy; the refresh re-rendered the card and
+    // called forgetShownMembers, as _refresh does after every morph.
+    store.forgetShownMembers();
+    release();
+    await pending;
+
+    expect(document.querySelectorAll('[data-testid="reduction-member"]').length).toBe(1);
+    expect(store.allMembersShown.c1).toBeUndefined();
+    expect(document.querySelector('[data-testid="cluster-more-members"]')).not.toBeNull();
+  });
+
+  test('aborts the request itself on a refresh', async () => {
+    document.body.innerHTML = cardHtml();
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: RequestInit) => {
+      signal = init.signal as AbortSignal;
+      return new Promise(() => {});
+    }));
+    void store.loadMoreMembers('c1', trigger);
+    store.forgetShownMembers();
+    expect(signal?.aborted).toBe(true);
+  });
+
+  test('sends the version and the kept copy the card showed', async () => {
+    document.body.innerHTML = cardHtml().replace('data-resource-id="1"', 'data-resource-id="1" data-winner="true"');
+    const store = makeStore();
+    store.version = 12;
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ members: [] }) }));
+    vi.stubGlobal('fetch', fetchMock);
+    await store.loadMoreMembers('c1', trigger);
+    const url = new URL(String((fetchMock.mock.calls[0] as unknown[])[0]));
+    expect(url.searchParams.get('version')).toBe('12');
+    expect(url.searchParams.get('winner')).toBe('1');
+  });
+});

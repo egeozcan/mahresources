@@ -103,6 +103,16 @@ type ReductionClusterView struct {
 	Truncated int `json:"truncated,omitempty"`
 }
 
+// ReductionMembersExpect is what a members request says its card looked like. Each
+// field is checked only when present; a mismatch is a version conflict, so a page
+// requested for one render of a card is never appended to another.
+type ReductionMembersExpect struct {
+	// Version is the Reduction version the card was rendered at.
+	Version *uint
+	// WinnerID is the copy the card showed as kept.
+	WinnerID *uint
+}
+
 // ReductionMembersPage is one page of a Cluster's members, hydrated the way the
 // review card shows them.
 type ReductionMembersPage struct {

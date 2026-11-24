@@ -3186,6 +3186,8 @@ func registerDownloadRoutes(r *openapi.Registry) {
 			{Name: "id", Type: "integer", Required: true, Description: "The Reduction's id."},
 			{Name: "cluster", Type: "string", Required: true, Description: "The Cluster's key."},
 			{Name: "after", Type: "string", Description: "The cursor to continue from; empty starts at the first member."},
+			{Name: "version", Type: "integer", Description: "The Reduction version the card was rendered at. When sent, a different current version is refused with 409."},
+			{Name: "winner", Type: "integer", Description: "The id of the copy the card showed as kept. When sent, a Cluster that keeps a different copy is refused with 409."},
 		},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
@@ -3244,7 +3246,7 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		Path:                 "/v1/reduction/cluster",
 		OperationID:          "overrideResourceReductionCluster",
 		Summary:              "Record a review decision about one Cluster",
-		Description:          "Promotes a member to Winner, ejects or restores a member, skips or reopens a Cluster, or checks and unchecks it. Promotion is refused when it would demote a Winner outside the Extent, and on the Near-Identical tier it ejects any Loser with no stored pair to the new Winner. Checking an unusually large Near-Identical Cluster needs `acknowledgeOversized`. A `membersSeen` that is sent, zero included, must equal the Cluster's copy count or the check is refused with 400; leaving it out lets the acknowledgement alone stand. Carries the version the caller last saw; a stale one is refused with 409.",
+		Description:          "Promotes a member to Winner, ejects or restores a member, skips or reopens a Cluster, or checks and unchecks it. Promotion is refused when it would demote a Winner outside the Extent, and on the Near-Identical tier it ejects any Loser with no stored pair to the new Winner. Checking an unusually large Near-Identical Cluster needs `acknowledgeOversized`. A `membersSeen` that is sent, zero included, must equal the Cluster's copy count or the check is refused with 400; leaving it out lets the acknowledgement alone stand. A `winnerId` that is sent must be the copy the Cluster keeps, or the check is refused with 409. Carries the version the caller last saw; a stale one is refused with 409.",
 		Tags:                 []string{"reductions"},
 		RequestType:          reductionOverrideType,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},

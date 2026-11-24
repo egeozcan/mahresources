@@ -3,6 +3,7 @@ package api_handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -137,7 +138,21 @@ func GetResourceReductionMembersHandler(ctx ResourceReductionContext) func(http.
 			return
 		}
 		owner, restricted := reductionScope(auth.PrincipalFromContext(request.Context()))
-		page, err := ctx.GetReductionClusterMembers(uint(id), owner, restricted, request.URL.Query().Get("cluster"), request.URL.Query().Get("after"))
+		var expect contracts.ReductionMembersExpect
+		for name, target := range map[string]**uint{"version": &expect.Version, "winner": &expect.WinnerID} {
+			raw := request.URL.Query().Get(name)
+			if raw == "" {
+				continue
+			}
+			n, err := strconv.ParseUint(raw, 10, 32)
+			if err != nil {
+				http_utils.HandleError(fmt.Errorf("%s must be a whole number", name), writer, request, http.StatusBadRequest)
+				return
+			}
+			v := uint(n)
+			*target = &v
+		}
+		page, err := ctx.GetReductionClusterMembersChecked(uint(id), owner, restricted, request.URL.Query().Get("cluster"), request.URL.Query().Get("after"), expect)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
