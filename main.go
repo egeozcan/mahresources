@@ -1022,6 +1022,9 @@ func main() {
 	// This allows long-lived handlers (e.g. SSE) to detect shutdown and return.
 	serverCtx, serverCancel := gocontext.WithCancel(gocontext.Background())
 	context.StartMetadataIndexer(serverCtx)
+	// A manifest row that comes due later (a failed file step's backoff) or whose drain
+	// died is retried here, not only at the next start.
+	manifestReplayDone := context.StartResourceManifestReplay(serverCtx, application_context.ResourceManifestReplayInterval)
 	srv.BaseContext = func(_ net.Listener) gocontext.Context {
 		return serverCtx
 	}
@@ -1055,6 +1058,10 @@ func main() {
 	}
 
 	serverCancel()
+	select {
+	case <-manifestReplayDone:
+	case <-time.After(5 * time.Second):
+	}
 
 	shutdownCtx, shutdownCancel := gocontext.WithTimeout(gocontext.Background(), 30*time.Second)
 	defer shutdownCancel()

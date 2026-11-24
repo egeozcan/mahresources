@@ -188,6 +188,10 @@ func finishResourceDeletion(db *gorm.DB, op string) error {
 	return purgeDeletedIDs(db, op)
 }
 
+// manifestAfterHookGap is a test seam called after a row's after-delete hook ran and
+// before its manifest row is dropped. Production leaves it nil.
+var manifestAfterHookGap func(resourceID uint)
+
 // manifestChunkTimeout bounds each manifest read and each manifest delete of a drain. The
 // drain is detached from the request that caused it, so something has to end it.
 const manifestChunkTimeout = 2 * time.Minute
@@ -312,25 +316,33 @@ func (ctx *MahresourcesContext) claimManifestChunk(op, me string, last uint) ([]
 
 // drainManifestOp does op's after-commit work in two passes over its manifest: all
 // files, then all hooks. A row is claimed before anything is done to it and dropped
-// once its hook has run; a file step that fails releases the row with a backoff and an
-// attempt count (kept for a later replay, its hook not yet run), and nothing already
+// right after its own hook; a file step that fails releases the row with a backoff and
+// an attempt count (kept for a later replay, its hook not yet run), and nothing already
 // done is done again.
+//
+// Every write a drain makes is conditional on the claim being this drain's and still
+// live, read from a fresh clock (claimed_by = me AND claimed_until > now). A drain that
+// stalled past the TTL while another instance took its rows therefore cannot clear the
+// successor's claim, mark its file step done, or delete its row; the row it lost is
+// the successor's, and at worst its hook runs a second time (at-least-once).
 func (ctx *MahresourcesContext) drainManifestOp(op string, replay bool) {
 	me := newDeleteOp()
 	warn := func(msg string, err error) {
 		ctx.Logger().Warning(models.LogActionDelete, "resource", nil, msg, err.Error(), nil)
 	}
+	const owned = "claimed_by = ? AND claimed_until > ?"
 	renew := func() {
 		db, cancel := ctx.drainDB()
 		defer cancel()
 		// A chunk of rows per statement, by id keyset: a drain may hold every row of
 		// a 10,000 id delete, and one statement over all of them would be the longest
-		// write of the operation.
-		until := time.Now().Add(manifestClaimTTL).Unix()
+		// write of the operation. Only rows still held live are renewed.
+		now := time.Now()
+		until := now.Add(manifestClaimTTL).Unix()
 		var after uint
 		for {
 			var held []uint
-			if rerr := db.Model(&models.ResourceCleanupManifest{}).Where("op = ? AND claimed_by = ? AND id > ?", op, me, after).
+			if rerr := db.Model(&models.ResourceCleanupManifest{}).Where("op = ? AND "+owned+" AND id > ?", op, me, now.Unix(), after).
 				Order("id ASC").Limit(deleteStageChunk).Pluck("id", &held).Error; rerr != nil {
 				warn("Failed to renew the delete manifest claim", rerr)
 				return
@@ -338,7 +350,7 @@ func (ctx *MahresourcesContext) drainManifestOp(op string, replay bool) {
 			if len(held) == 0 {
 				return
 			}
-			if rerr := db.Exec("UPDATE resource_cleanup_manifest SET claimed_until = ? WHERE id IN ? AND claimed_by = ?", until, held, me).Error; rerr != nil {
+			if rerr := db.Exec("UPDATE resource_cleanup_manifest SET claimed_until = ? WHERE id IN ? AND "+owned, until, held, me, now.Unix()).Error; rerr != nil {
 				warn("Failed to renew the delete manifest claim", rerr)
 				return
 			}
@@ -346,14 +358,15 @@ func (ctx *MahresourcesContext) drainManifestOp(op string, replay bool) {
 		}
 	}
 	// hold extends this drain's claim on one row just before it is worked on, and says
-	// whether the row is still ours. A row whose claim lapsed and was taken over by
-	// another instance is no longer ours and must not be worked on or dropped; a row
-	// whose claim merely lapsed with nobody taking it is renewed and carries on.
+	// whether the row is still ours and live. A row whose claim lapsed is no longer
+	// ours, whether or not another instance has taken it yet: it is neither worked on
+	// nor dropped, and the next replay picks it up.
 	hold := func(id uint) bool {
 		db, cancel := ctx.drainDB()
 		defer cancel()
-		res := db.Exec("UPDATE resource_cleanup_manifest SET claimed_until = ? WHERE id = ? AND claimed_by = ?",
-			time.Now().Add(manifestClaimTTL).Unix(), id, me)
+		now := time.Now()
+		res := db.Exec("UPDATE resource_cleanup_manifest SET claimed_until = ? WHERE id = ? AND "+owned,
+			now.Add(manifestClaimTTL).Unix(), id, me, now.Unix())
 		if res.Error != nil {
 			warn("Failed to renew a delete manifest row claim", res.Error)
 			return false
@@ -365,7 +378,7 @@ func (ctx *MahresourcesContext) drainManifestOp(op string, replay bool) {
 	defer func() {
 		db, cancel := ctx.drainDB()
 		defer cancel()
-		if rerr := db.Exec("UPDATE resource_cleanup_manifest SET claimed_by = '', claimed_until = 0 WHERE op = ? AND claimed_by = ?", op, me).Error; rerr != nil {
+		if rerr := db.Exec("UPDATE resource_cleanup_manifest SET claimed_by = '', claimed_until = 0 WHERE op = ? AND "+owned, op, me, time.Now().Unix()).Error; rerr != nil {
 			warn("Failed to release the delete manifest claim", rerr)
 		}
 	}()
@@ -382,7 +395,6 @@ func (ctx *MahresourcesContext) drainManifestOp(op string, replay bool) {
 			break
 		}
 		last = entries[len(entries)-1].ID
-		var done []uint
 		for i := range entries {
 			e := &entries[i]
 			if e.FilesDone {
@@ -397,24 +409,21 @@ func (ctx *MahresourcesContext) drainManifestOp(op string, replay bool) {
 					// succeed: leave the file, and let the hook (which must not be held
 					// back for ever by a file nobody can remove) run.
 					ctx.Logger().Warning(models.LogActionDelete, "resource", &e.ResourceID, "File cleanup failed too many times; leaving the file and running the delete hook", ferr.Error(), nil)
-					done = append(done, e.ID)
+				} else {
+					ctx.Logger().Warning(models.LogActionDelete, "resource", &e.ResourceID, "File cleanup failed; keeping the manifest row to retry", ferr.Error(), nil)
+					db, cancel := ctx.drainDB()
+					now := time.Now()
+					uerr := db.Exec("UPDATE resource_cleanup_manifest SET claimed_by = '', claimed_until = 0, attempts = attempts + 1, next_attempt_at = ? WHERE id = ? AND "+owned,
+						now.Add(manifestBackoff(e.Attempts)).Unix(), e.ID, me, now.Unix()).Error
+					cancel()
+					if uerr != nil {
+						warn("Failed to record a failed file cleanup", uerr)
+					}
 					continue
 				}
-				ctx.Logger().Warning(models.LogActionDelete, "resource", &e.ResourceID, "File cleanup failed; keeping the manifest row to retry", ferr.Error(), nil)
-				db, cancel := ctx.drainDB()
-				uerr := db.Exec("UPDATE resource_cleanup_manifest SET claimed_by = '', claimed_until = 0, attempts = attempts + 1, next_attempt_at = ? WHERE id = ?",
-					time.Now().Add(manifestBackoff(e.Attempts)).Unix(), e.ID).Error
-				cancel()
-				if uerr != nil {
-					warn("Failed to record a failed file cleanup", uerr)
-				}
-				continue
 			}
-			done = append(done, e.ID)
-		}
-		if len(done) > 0 {
 			db, cancel := ctx.drainDB()
-			uerr := db.Exec("UPDATE resource_cleanup_manifest SET files_done = ? WHERE id IN ?", true, done).Error
+			uerr := db.Exec("UPDATE resource_cleanup_manifest SET files_done = ? WHERE id = ? AND "+owned, true, e.ID, me, time.Now().Unix()).Error
 			cancel()
 			if uerr != nil {
 				warn("Failed to record finished file cleanup", uerr)
@@ -437,28 +446,26 @@ func (ctx *MahresourcesContext) drainManifestOp(op string, replay bool) {
 		if len(entries) == 0 {
 			return
 		}
-		ids := make([]uint, 0, len(entries))
 		for i := range entries {
 			e := &entries[i]
 			if !hold(e.ID) {
-				continue // taken over by another drain: its hook and its row are the new holder's
+				continue // lost to another drain, or lapsed: its hook and its row are not ours
 			}
-			ids = append(ids, e.ID)
-			hc := ctx.manifestHookContext(e, replay, hookCtxs)
-			if hc == nil {
-				continue
+			if hc := ctx.manifestHookContext(e, replay, hookCtxs); hc != nil {
+				hc.RunAfterPluginHooks("after_resource_delete", map[string]any{"id": float64(e.ResourceID), "name": e.Name, "resource_category_id": float64(e.ResourceCategoryID), "owner_id": hookID(e.OwnerID)})
 			}
-			hc.RunAfterPluginHooks("after_resource_delete", map[string]any{"id": float64(e.ResourceID), "name": e.Name, "resource_category_id": float64(e.ResourceCategoryID), "owner_id": hookID(e.OwnerID)})
+			if manifestAfterHookGap != nil {
+				manifestAfterHookGap(e.ResourceID)
+			}
+			// Dropped right after its own hook, so a later row's slow hook cannot leave
+			// this one behind for a successor to run again.
+			dropDB, cancelDrop := ctx.drainDB()
+			if err := dropDB.Where("id = ? AND "+owned, e.ID, me, time.Now().Unix()).Delete(&models.ResourceCleanupManifest{}).Error; err != nil {
+				warn("Failed to drop a drained cleanup manifest row", err)
+			}
+			cancelDrop()
 		}
 		last = entries[len(entries)-1].ID
-		if len(ids) == 0 {
-			continue
-		}
-		dropDB, cancelDrop := ctx.drainDB()
-		if err := dropDB.Where("id IN ? AND claimed_by = ?", ids, me).Delete(&models.ResourceCleanupManifest{}).Error; err != nil {
-			warn("Failed to drop drained cleanup manifest rows", err)
-		}
-		cancelDrop()
 	}
 }
 
@@ -577,4 +584,33 @@ func resourceRowsFromLocked(locked map[uint]*models.Resource, ids []uint) []mode
 		}
 	}
 	return rows
+}
+
+// ResourceManifestReplayInterval is how often the running server looks for manifest
+// rows that became due or whose claim lapsed since the last look: a failed file step's
+// backoff elapsing, or a drain that died holding rows. Without it only a restart
+// would retry them.
+const ResourceManifestReplayInterval = time.Minute
+
+// StartResourceManifestReplay replays the delete manifest every interval until stop is
+// cancelled, with the same claim logic as the startup replay (so it never works a row
+// another drain holds, and a delete that has only just committed is at worst drained
+// by whichever claims its rows first). The returned channel closes when the loop has
+// stopped.
+func (ctx *MahresourcesContext) StartResourceManifestReplay(stop context.Context, interval time.Duration) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop.Done():
+				return
+			case <-ticker.C:
+				ctx.ReplayResourceCleanupManifest()
+			}
+		}
+	}()
+	return done
 }
