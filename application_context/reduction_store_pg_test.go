@@ -22,8 +22,9 @@ func newReductionPGContext(t *testing.T) *MahresourcesContext {
 		&models.Resource{}, &models.Note{}, &models.Tag{}, &models.Group{},
 		&models.Category{}, &models.NoteType{}, &models.TemplateRevision{}, &models.ResourceCategory{},
 		&models.Series{}, &models.Preview{}, &models.GroupRelation{},
-		&models.GroupRelationType{}, &models.ImageHash{}, &models.ResourceSimilarity{},
+		&models.GroupRelationType{}, &models.ImageHash{}, &models.ResourceSimilarity{}, &models.ResourceReduction{}, &models.ReductionClusterRow{}, &models.ReductionMemberRow{}, &models.ReductionDeletedID{}, &models.ResourceCleanupManifest{}, &models.ReductionMigration{}, &models.Job{}, &models.JobResourceReceipt{},
 		&models.ResourceVersion{}, &models.NoteBlock{}, &models.LogEntry{}, &models.User{},
+		&models.Job{}, &models.JobResourceReceipt{},
 	))
 	require.NoError(t, db.AutoMigrate(reductionTables...))
 	require.NoError(t, models.EnsureReductionKeyCollation(db))

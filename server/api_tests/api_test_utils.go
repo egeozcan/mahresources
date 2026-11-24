@@ -150,6 +150,7 @@ func setupTestEnvOn(t *testing.T, db *gorm.DB, mutate func(*application_context.
 		&models.GroupRelationType{},
 		&models.ImageHash{},
 		&models.ResourceSimilarity{},
+		&models.ResourceReduction{}, &models.ReductionClusterRow{}, &models.ReductionMemberRow{}, &models.ReductionDeletedID{}, &models.ResourceCleanupManifest{}, &models.ReductionMigration{},
 		&models.LogEntry{},
 		&models.PluginState{},
 		&models.PluginKV{},

@@ -19,3 +19,15 @@ func TestDeletionHookMarksMembersGonePG(t *testing.T) {
 func TestDeletionHookWalksClustersAscendingPG(t *testing.T) {
 	testDeletionHookWalksClustersAscending(t, newReductionPGContext(t))
 }
+
+func TestMergeSnapshotMatchesMarshalPG(t *testing.T) {
+	testMergeSnapshotMatchesMarshal(t, newReductionPGContext(t))
+}
+
+func TestDeletePathsClearChildrenInChunksPG(t *testing.T) {
+	testDeletePathsClearChildrenInChunks(t, newReductionPGContext(t))
+}
+
+func TestDeletePathsFinishTheSameWayPG(t *testing.T) {
+	testDeletePathsFinishTheSameWay(t, newReductionPGContext(t))
+}

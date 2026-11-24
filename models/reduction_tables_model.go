@@ -165,6 +165,12 @@ type ResourceCleanupManifest struct {
 	Hash            string `gorm:"not null;default:''"`
 	Location        string `gorm:"not null;default:''"`
 	StorageLocation *string
+	// Name, OwnerID and ResourceCategoryID are what the after-delete hook and the
+	// backup path need, so the drain after commit reads them back from here
+	// instead of holding the whole request's Resources in Go.
+	Name               string `gorm:"not null;default:''"`
+	OwnerID            *uint
+	ResourceCategoryID uint `gorm:"not null;default:0"`
 }
 
 func (ResourceCleanupManifest) TableName() string { return "resource_cleanup_manifest" }

@@ -140,13 +140,15 @@ func sqliteBlockScrub(op string) blockScrubSQL {
 		"SELECT " + elem("j") + " AS txt FROM json_each(" + c + ", '$.resourceIds') j WHERE NOT " + match("j.type", "j.value") + " ORDER BY j.key) x)))" +
 		" WHERE id BETWEEN ? AND ? AND type IN ('gallery','calendar') AND CASE WHEN " + object + " THEN (" + galleryHas + ") ELSE 0 END"
 
-	calType := "json_type(k.value, '$.source.resourceId')"
-	calVal := "json_extract(k.value, '$.source.resourceId')"
-	calMatch := "k.type = 'object' AND json_type(k.value, '$.source') = 'object' AND " + match(calType, calVal)
+	// json_extract reads the first of two duplicate keys and Go's decoder the last, so
+	// the member walk below tests every "resourceId" member and the rewrite drops all
+	// of them: a deleted id can be named by either and neither survives.
+	calMatch := "k.type = 'object' AND json_type(k.value, '$.source') = 'object' AND EXISTS (SELECT 1 FROM json_each(k.value, '$.source') s WHERE s.key = 'resourceId' AND " + match("s.type", "s.value") + ")"
+	calRemove := "json_set(k.value, '$.source', json((SELECT '{' || COALESCE(group_concat(json_quote(s.key) || ':' || " + elem("s") + ", ','), '') || '}' FROM json_each(k.value, '$.source') s WHERE s.key <> 'resourceId')))"
 	calendarHas := "json_type(" + c + ", '$.calendars') = 'array' AND EXISTS (SELECT 1 FROM json_each(" + c + ", '$.calendars') k WHERE " + calMatch + ")"
 	calendar := "UPDATE note_blocks SET content = json_set(" + c + ", '$.calendars', json((" +
 		"SELECT '[' || COALESCE(group_concat(x.txt, ','), '') || ']' FROM (" +
-		"SELECT CASE WHEN " + calMatch + " THEN json_remove(k.value, '$.source.resourceId') ELSE " + elem("k") + " END AS txt" +
+		"SELECT CASE WHEN " + calMatch + " THEN " + calRemove + " ELSE " + elem("k") + " END AS txt" +
 		" FROM json_each(" + c + ", '$.calendars') k ORDER BY k.key) x)))" +
 		" WHERE id BETWEEN ? AND ? AND type IN ('gallery','calendar') AND CASE WHEN " + object + " THEN (" + calendarHas + ") ELSE 0 END"
 	return blockScrubSQL{gallery: gallery, calendar: calendar}

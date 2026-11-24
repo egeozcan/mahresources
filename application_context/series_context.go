@@ -278,6 +278,18 @@ func seriesWriteQuery(tx *gorm.DB) *gorm.DB {
 // acquire destination then source: reciprocal moves would take opposite orders
 // and deadlock.
 func lockSeriesRowsForWrite(tx *gorm.DB, ids ...uint) (map[uint]*models.Series, error) {
+	return lockSeriesRows(tx, nil, ids...)
+}
+
+// lockSeriesIDsForWrite is lockSeriesRowsForWrite for a caller that needs only the
+// lock: it reads the id and nothing else, so a Series with a large meta never
+// crosses the wire (design D13).
+func lockSeriesIDsForWrite(tx *gorm.DB, ids ...uint) error {
+	_, err := lockSeriesRows(tx, []string{"id"}, ids...)
+	return err
+}
+
+func lockSeriesRows(tx *gorm.DB, columns []string, ids ...uint) (map[uint]*models.Series, error) {
 	unique := make(map[uint]struct{}, len(ids))
 	ordered := make([]uint, 0, len(ids))
 	for _, id := range ids {
@@ -296,7 +308,11 @@ func lockSeriesRowsForWrite(tx *gorm.DB, ids ...uint) (map[uint]*models.Series, 
 	}
 
 	var rows []models.Series
-	if err := seriesWriteQuery(tx).Where("id IN ?", ordered).Order("id ASC").Find(&rows).Error; err != nil {
+	query := seriesWriteQuery(tx)
+	if len(columns) > 0 {
+		query = query.Select(columns)
+	}
+	if err := query.Where("id IN ?", ordered).Order("id ASC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	if len(rows) != len(ordered) {

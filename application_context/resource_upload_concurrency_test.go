@@ -92,6 +92,8 @@ func migrateWALTestSchema(t *testing.T, db *gorm.DB) {
 		&models.GroupRelationType{},
 		&models.ImageHash{},
 		&models.ResourceSimilarity{},
+		&models.ResourceReduction{}, &models.ReductionClusterRow{}, &models.ReductionMemberRow{}, &models.ReductionDeletedID{}, &models.ResourceCleanupManifest{}, &models.ReductionMigration{},
+		&models.Job{}, &models.JobResourceReceipt{},
 		&models.LogEntry{},
 		&models.ResourceCategory{},
 		&models.Series{},

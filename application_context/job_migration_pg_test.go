@@ -27,7 +27,7 @@ func TestJobMigrationPlaintextRetirementPostgresResumesAfterCrashMidScrub(t *tes
 		&models.PluginCommandRunOutput{}, &models.PluginCommandImport{}, &models.PluginCommandImportMap{},
 		&models.ResourceReduction{}, &models.Query{}, &models.SavedMRQLQuery{}, &models.SavedSearch{},
 		&models.UserSetting{}, &models.Session{}, &models.ApiToken{}, &models.TemplatePartial{},
-		&models.ResourceSimilarity{}, &models.PluginSchedule{},
+		&models.ResourceSimilarity{}, &models.ResourceReduction{}, &models.ReductionClusterRow{}, &models.ReductionMemberRow{}, &models.ReductionDeletedID{}, &models.ResourceCleanupManifest{}, &models.ReductionMigration{}, &models.Job{}, &models.JobResourceReceipt{}, &models.PluginSchedule{},
 		&models.Job{}, &models.JobResourceReceipt{}, &models.JobEvent{}, &models.JobEventSequence{},
 		&models.JobLink{}, &models.JobOutput{}, &models.JobReplayEnvelope{}, &models.JobClaim{},
 		&models.JobCapacityLease{}, &models.JobPreference{}, &models.JobPinGuard{},

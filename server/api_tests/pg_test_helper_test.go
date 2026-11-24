@@ -78,6 +78,7 @@ func setupPostgresTestEnvWith(t *testing.T, mutate func(*application_context.Mah
 		&models.GroupRelation{},
 		&models.ImageHash{},
 		&models.ResourceSimilarity{},
+		&models.ResourceReduction{}, &models.ReductionClusterRow{}, &models.ReductionMemberRow{}, &models.ReductionDeletedID{}, &models.ResourceCleanupManifest{}, &models.ReductionMigration{},
 		&models.User{},
 		&models.SavedSearch{}, &models.UserSetting{},
 		&models.Session{},
