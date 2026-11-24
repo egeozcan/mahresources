@@ -94,7 +94,7 @@ func (ctx *MahresourcesContext) createOrExtendResourceReductionOnce(creator *que
 	}
 
 	var out *models.ResourceReduction
-	err := ctx.WithTransaction(func(txCtx *MahresourcesContext) error {
+	err := ctx.withSelectionTransaction(func(txCtx *MahresourcesContext) error {
 		row := existing
 		if row == nil {
 			name := strings.TrimSpace(creator.Name)
@@ -162,6 +162,24 @@ func (ctx *MahresourcesContext) createOrExtendResourceReductionOnce(creator *que
 		return nil, err
 	}
 	return out, nil
+}
+
+// withSelectionTransaction is WithTransaction with the isolation a selection needs:
+// the Groups of a subtree are read one statement apiece, and under Postgres' default
+// READ COMMITTED each would see whatever committed since the last, so a Resource moved
+// from a later Group into an earlier one after the earlier was read is in the subtree
+// throughout and in no statement's answer. REPEATABLE READ gives them one snapshot.
+// SQLite's writer lock already does.
+func (ctx *MahresourcesContext) withSelectionTransaction(fn func(txCtx *MahresourcesContext) error) error {
+	var options []*sql.TxOptions
+	if ctx.db.Dialector.Name() == "postgres" {
+		options = append(options, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	}
+	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		txCtx := *ctx
+		txCtx.db = tx
+		return fn(&txCtx)
+	}, options...)
 }
 
 // addOwnedResourcesToExtent selects the Resources a Group owns, or that it and

@@ -78,7 +78,12 @@ func TestAComputeIsRefusedUntilTheSimilarityIndexesAreBuilt(t *testing.T) {
 	_, err = ctx.RequestReductionCompute(r.ID, r.Version, nil, false, nil)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
-		return loadReductionRow(t, ctx.db, r.ID).Status == models.ReductionStatusReady
+		// A shared-cache table lock lost to the worker's own write is not an answer.
+		var status string
+		if err := ctx.db.Raw(`SELECT status FROM resource_reductions WHERE id = ?`, r.ID).Scan(&status).Error; err != nil {
+			return false
+		}
+		return status == models.ReductionStatusReady
 	}, 10*time.Second, 20*time.Millisecond, "the compute lands its plan once the indexes exist")
 }
 

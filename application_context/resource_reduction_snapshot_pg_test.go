@@ -23,7 +23,7 @@ import (
 // COMMITTED every chunk's query would see the move the instant it commits.
 func TestAGroupSelectionIsReadFromOneSnapshotPG(t *testing.T) {
 	db, dsn := pgContainer.CreateTestDBWithDSN(t)
-	require.NoError(t, db.AutoMigrate(&models.Group{}, &models.Resource{}, &models.ResourceCategory{}, &models.TemplateRevision{}, &models.ResourceReduction{}))
+	require.NoError(t, db.AutoMigrate(&models.Group{}, &models.Resource{}, &models.ResourceCategory{}, &models.TemplateRevision{}, &models.ResourceReduction{}, &models.ReductionExtentResource{}, &models.ReductionExtentGroup{}))
 	readOnly, err := sqlx.Connect("pgx", dsn)
 	require.NoError(t, err)
 	t.Cleanup(func() { readOnly.Close() })
@@ -46,25 +46,23 @@ func TestAGroupSelectionIsReadFromOneSnapshotPG(t *testing.T) {
 	mover, err := sqlx.Connect("pgx", dsn)
 	require.NoError(t, err)
 	t.Cleanup(func() { mover.Close() })
+	// The competing move commits between the first Group's count and its inserts, from
+	// a connection of its own; under READ COMMITTED the later statements would see it.
 	var once sync.Once
-	const name = "test:move_between_chunks_pg"
-	require.NoError(t, db.Callback().Query().After("gorm:query").Register(name, func(tx *gorm.DB) {
-		if tx.Statement.Table != "resources" {
-			return
-		}
+	selectionAfterPreflight = func(*gorm.DB) {
 		once.Do(func() {
 			if _, err := mover.Exec(`UPDATE resources SET owner_id = $1 WHERE id = $2`, earlier, moved.ID); err != nil {
 				t.Errorf("competing move: %v", err)
 			}
 		})
-	}))
-	t.Cleanup(func() { _ = db.Callback().Query().Remove(name) })
+	}
+	t.Cleanup(func() { selectionAfterPreflight = nil })
 
 	created, err := ctx.CreateOrExtendResourceReduction(&query_models.ResourceReductionCreator{
 		OwnerId: root.ID, IncludeDescendants: true,
 	}, nil, false)
 	require.NoError(t, err)
-	extent, err := DecodeReductionExtent(created.Extent)
+	extent, err := ctx.ExtentForTest(created.ID)
 	require.NoError(t, err)
 	assert.Equal(t, []uint{moved.ID}, extent.ResourceIDs)
 }
