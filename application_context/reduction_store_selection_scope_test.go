@@ -14,7 +14,7 @@ import (
 // scopedSelectionWorld is two sibling Groups, a child of the first, and a
 // Resource in each plus one with no owner.
 type scopedSelectionWorld struct {
-	a, b, child               *models.Group
+	a, b, child                *models.Group
 	inA, inB, inChild, noOwner *models.Resource
 }
 

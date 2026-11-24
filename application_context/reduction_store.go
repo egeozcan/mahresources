@@ -35,6 +35,9 @@ import (
 type reductionStore struct {
 	db    *gorm.DB
 	scope reductionScope
+	// settingsProbe caches, per Reduction, what the D12 migration read of a legacy
+	// plan's settings, so they are parsed once and not once per Cluster.
+	settingsProbe map[uint]legacySettingsProbe
 }
 
 // reductionMemberCap is the most members one Cluster loads or shows (design D6).

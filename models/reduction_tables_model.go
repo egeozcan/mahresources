@@ -35,8 +35,8 @@ type ReductionClusterRow struct {
 	Checked      bool   `gorm:"not null;default:false;index:idx_rc_state,priority:5"`
 	Reviewed     bool   `gorm:"not null;default:false"`
 	Oversized    bool   `gorm:"not null;default:false"`
-	DecidedBy    string `gorm:"size:40;not null;default:''"`
-	Margin       string `gorm:"size:200;not null;default:''"`
+	DecidedBy    string `gorm:"type:text;not null;default:''"`
+	Margin       string `gorm:"type:text;not null;default:''"`
 	Undecided    bool   `gorm:"not null;default:false"`
 	KeepsSmaller bool   `gorm:"not null;default:false"`
 
@@ -44,9 +44,9 @@ type ReductionClusterRow struct {
 	ReadOnly bool `gorm:"not null;default:false"`
 	// Lossy is the list of field names a Loser holds and the Winner lacks.
 	Lossy       types.JSON `gorm:"type:json"`
-	StaleReason string     `gorm:"size:200;not null;default:''"`
+	StaleReason string     `gorm:"type:text;not null;default:''"`
 	Merged      bool       `gorm:"not null;default:false"`
-	ClaimID     string     `gorm:"size:64;not null;default:''"`
+	ClaimID     string     `gorm:"type:text;not null;default:''"`
 	AppliedAt   *time.Time
 
 	// Derived columns (deriveClusterColumns, D3). Nothing else writes them except
@@ -94,7 +94,7 @@ type ReductionMemberRow struct {
 
 	InExtent      bool   `gorm:"not null;default:false"`
 	Ejected       bool   `gorm:"not null;default:false"`
-	EjectedReason string `gorm:"size:40;not null;default:''"`
+	EjectedReason string `gorm:"type:text;not null;default:''"`
 	Distance      *int   // near tier; nil for the Winner and for Identical
 
 	// OwnerAtMerge is the Group that owned a merged Loser, 0 for unknown.
@@ -187,24 +187,27 @@ type ReductionMigrationRow struct {
 	Checked      bool       `gorm:"not null;default:false"`
 	Reviewed     bool       `gorm:"not null;default:false"`
 	Oversized    bool       `gorm:"not null;default:false"`
-	DecidedBy    string     `gorm:"size:40;not null;default:''"`
-	Margin       string     `gorm:"size:200;not null;default:''"`
+	DecidedBy    string     `gorm:"type:text;not null;default:''"`
+	Margin       string     `gorm:"type:text;not null;default:''"`
 	Undecided    bool       `gorm:"not null;default:false"`
 	KeepsSmaller bool       `gorm:"not null;default:false"`
 	Lossy        types.JSON `gorm:"type:json"`
-	StaleReason  string     `gorm:"size:200;not null;default:''"`
+	StaleReason  string     `gorm:"type:text;not null;default:''"`
 	Merged       bool       `gorm:"not null;default:false"`
-	ClaimID      string     `gorm:"size:64;not null;default:''"`
+	ClaimID      string     `gorm:"type:text;not null;default:''"`
 	AppliedAt    *time.Time
 
 	ResourceID    uint   `gorm:"not null;default:0"`
 	Hash          string `gorm:"not null;default:''"`
 	InExtent      bool   `gorm:"not null;default:false"`
 	Ejected       bool   `gorm:"not null;default:false"`
-	EjectedReason string `gorm:"size:40;not null;default:''"`
+	EjectedReason string `gorm:"type:text;not null;default:''"`
 	Distance      *int
 	OwnerAtMerge  uint `gorm:"not null;default:0"`
 	Changed       bool `gorm:"not null;default:false"`
+	// Rejected marks a member or extent entry whose id the spool refused (not a
+	// positive id that fits an int64): it is counted and logged, never clamped.
+	Rejected bool `gorm:"not null;default:false"`
 }
 
 func (ReductionMigrationRow) TableName() string { return "reduction_migration_rows" }
@@ -218,6 +221,10 @@ type ReductionMigration struct {
 	WriterToken string `gorm:"size:64;not null;default:''"`
 	LeaseUntil  int64  `gorm:"not null;default:0"`
 	Checkpoint  int64  `gorm:"not null;default:0"`
+	// MemberCheckpoint is the next member_ord to write of the Cluster at Checkpoint,
+	// nonzero only inside a Cluster over the member cap, whose members are written
+	// in fenced chunks of their own.
+	MemberCheckpoint int64 `gorm:"not null;default:0"`
 	// PassClusters and PassMembers are the counts the spool pass read, which
 	// publication compares with what was written.
 	PassClusters int64 `gorm:"not null;default:0"`

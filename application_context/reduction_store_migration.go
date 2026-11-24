@@ -39,43 +39,73 @@ const (
 
 var errReductionMigrationBusy = errors.New("reduction migration is held by another runner")
 
+// Test seams, nil outside a test. migrationAfterResourceLock runs once a chunk holds
+// the Resources it read (their ids), migrationAfterChunk after each committed chunk
+// of an over-cap Cluster, spoolAfterList between listing the Reductions to spool
+// and locking the first.
+var (
+	migrationAfterResourceLock func(locked []uint)
+	migrationAfterChunk        func() error
+	spoolAfterList             func()
+)
+
 // ---- spool ---------------------------------------------------------------------
 
 const spoolColumns = `reduction_id, generation, kind, cluster_ord, member_ord, cluster_key, tier, state, winner_id,
  checked, reviewed, oversized, decided_by, margin, undecided, keeps_smaller, lossy, stale_reason, merged, claim_id,
- applied_at, resource_id, hash, in_extent, ejected, ejected_reason, distance, owner_at_merge, changed`
+ applied_at, resource_id, hash, in_extent, ejected, ejected_reason, distance, owner_at_merge, changed, rejected`
+
+// An id in a legacy document is valid when it is a positive integer that fits an
+// int64. Anything else (beyond int64, negative, fractional, not a number) is
+// spooled as 0 with rejected set, so it is skipped and counted, never clamped or
+// allowed to fail the statement.
+
+// sqliteSpoolID is x (a json_extract or json_each value) when it is a valid id, else 0.
+func sqliteSpoolID(x string) string {
+	return "(CASE WHEN typeof(" + x + ") = 'integer' AND " + x + " > 0 THEN " + x + " ELSE 0 END)"
+}
+
+// pgSpoolID is the same for a jsonb expression. 19 digits compare as text against
+// the largest int64, which is the same order for equal-length digit strings.
+func pgSpoolID(x string) string {
+	t := "((" + x + ") #>> '{}')"
+	return "(CASE WHEN jsonb_typeof(" + x + ") = 'number' AND " + t + " ~ '^[0-9]{1,19}$' THEN " +
+		"(CASE WHEN length(" + t + ") < 19 OR " + t + " <= '9223372036854775807' THEN " + t + "::bigint ELSE 0 END) ELSE 0 END)"
+}
 
 // spoolMemberSelectSQLite parses clusters and members with json_each. A JSON null
 // where an array is expected (an empty apply writes clusters: null) expands to
 // nothing.
-const spoolMemberSelectSQLite = `SELECT r.id, ?, 'member', CAST(c.key AS INTEGER), COALESCE(CAST(m.key AS INTEGER), 0),
+var spoolMemberSelectSQLite = `SELECT r.id, ?, 'member', CAST(c.key AS INTEGER), COALESCE(CAST(m.key AS INTEGER), 0),
  COALESCE(json_extract(c.value, '$.id'), ''), COALESCE(json_extract(c.value, '$.tier'), ''), COALESCE(json_extract(c.value, '$.state'), ''),
- COALESCE(json_extract(c.value, '$.winnerId'), 0),
+ ` + sqliteSpoolID("json_extract(c.value, '$.winnerId')") + `,
  COALESCE(json_extract(c.value, '$.checked'), 0), COALESCE(json_extract(c.value, '$.reviewed'), 0), COALESCE(json_extract(c.value, '$.oversized'), 0),
  COALESCE(json_extract(c.value, '$.decidedBy'), ''), COALESCE(json_extract(c.value, '$.margin'), ''), COALESCE(json_extract(c.value, '$.undecided'), 0),
  COALESCE(json_extract(c.value, '$.keepsSmaller'), 0), json_extract(c.value, '$.lossy'), COALESCE(json_extract(c.value, '$.staleReason'), ''),
  COALESCE(json_extract(c.value, '$.merged'), 0), COALESCE(json_extract(c.value, '$.claimId'), ''), json_extract(c.value, '$.appliedAt'),
- COALESCE(json_extract(m.value, '$.resourceId'), 0), COALESCE(json_extract(m.value, '$.hash'), ''),
+ ` + sqliteSpoolID("json_extract(m.value, '$.resourceId')") + `, COALESCE(json_extract(m.value, '$.hash'), ''),
  COALESCE(json_extract(m.value, '$.inExtent'), 0), COALESCE(json_extract(m.value, '$.ejected'), 0), COALESCE(json_extract(m.value, '$.ejectedReason'), ''),
- json_extract(m.value, '$.distance'),
- COALESCE(json_extract(c.value, '$.loserOwners."' || json_extract(m.value, '$.resourceId') || '"'), 0),
- COALESCE((SELECT 1 FROM json_each(c.value, '$.changedMembers') cm WHERE json_type(c.value, '$.changedMembers') = 'array' AND cm.value = json_extract(m.value, '$.resourceId') LIMIT 1), 0)
+ (CASE WHEN typeof(json_extract(m.value, '$.distance')) = 'integer' AND json_extract(m.value, '$.distance') BETWEEN 0 AND 2147483647 THEN json_extract(m.value, '$.distance') END),
+ ` + sqliteSpoolID(`json_extract(c.value, '$.loserOwners."' || json_extract(m.value, '$.resourceId') || '"')`) + `,
+ COALESCE((SELECT 1 FROM json_each(c.value, '$.changedMembers') cm WHERE json_type(c.value, '$.changedMembers') = 'array' AND cm.value = json_extract(m.value, '$.resourceId') LIMIT 1), 0),
+ (CASE WHEN m.value IS NOT NULL AND ` + sqliteSpoolID("json_extract(m.value, '$.resourceId')") + ` = 0 THEN 1 ELSE 0 END)
  FROM resource_reductions r
  JOIN json_each(CASE WHEN json_type(r.plan, '$.clusters') = 'array' THEN json_extract(r.plan, '$.clusters') ELSE '[]' END) c
  LEFT JOIN json_each(c.value, '$.members') m ON json_type(c.value, '$.members') = 'array' AND m.type = 'object'
  WHERE r.id = ?`
 
-const spoolMemberSelectPG = `SELECT r.id, ?, 'member', (c.ord - 1)::bigint, COALESCE((m.ord - 1)::bigint, 0),
- COALESCE(c.v->>'id', ''), COALESCE(c.v->>'tier', ''), COALESCE(c.v->>'state', ''), COALESCE((c.v->>'winnerId')::bigint, 0),
+var spoolMemberSelectPG = `SELECT r.id, ?, 'member', (c.ord - 1)::bigint, COALESCE((m.ord - 1)::bigint, 0),
+ COALESCE(c.v->>'id', ''), COALESCE(c.v->>'tier', ''), COALESCE(c.v->>'state', ''), ` + pgSpoolID("c.v->'winnerId'") + `,
  COALESCE((c.v->>'checked')::boolean, false), COALESCE((c.v->>'reviewed')::boolean, false), COALESCE((c.v->>'oversized')::boolean, false),
  COALESCE(c.v->>'decidedBy', ''), COALESCE(c.v->>'margin', ''), COALESCE((c.v->>'undecided')::boolean, false),
  COALESCE((c.v->>'keepsSmaller')::boolean, false), c.v->'lossy', COALESCE(c.v->>'staleReason', ''),
  COALESCE((c.v->>'merged')::boolean, false), COALESCE(c.v->>'claimId', ''), (c.v->>'appliedAt')::timestamptz,
- COALESCE((m.v->>'resourceId')::bigint, 0), COALESCE(m.v->>'hash', ''),
+ ` + pgSpoolID("m.v->'resourceId'") + `, COALESCE(m.v->>'hash', ''),
  COALESCE((m.v->>'inExtent')::boolean, false), COALESCE((m.v->>'ejected')::boolean, false), COALESCE(m.v->>'ejectedReason', ''),
- (m.v->>'distance')::bigint,
- COALESCE((c.v->'loserOwners'->>(m.v->>'resourceId'))::bigint, 0),
- COALESCE(CASE WHEN jsonb_typeof(c.v->'changedMembers') = 'array' THEN (c.v->'changedMembers') @> to_jsonb((m.v->>'resourceId')::bigint) END, false)
+ (CASE WHEN jsonb_typeof(m.v->'distance') = 'number' AND (m.v->>'distance') ~ '^[0-9]{1,9}$' THEN (m.v->>'distance')::bigint END),
+ ` + pgSpoolID("c.v->'loserOwners'->(m.v->>'resourceId')") + `,
+ COALESCE(CASE WHEN jsonb_typeof(c.v->'changedMembers') = 'array' THEN (c.v->'changedMembers') @> (m.v->'resourceId') END, false),
+ (m.v IS NOT NULL AND ` + pgSpoolID("m.v->'resourceId'") + ` = 0)
  FROM resource_reductions r
  CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(r.plan::jsonb->'clusters') = 'array' THEN r.plan::jsonb->'clusters' ELSE '[]'::jsonb END) WITH ORDINALITY AS c(v, ord)
  LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(c.v->'members') = 'array' THEN c.v->'members' ELSE '[]'::jsonb END) WITH ORDINALITY AS m(v, ord) ON jsonb_typeof(m.v) = 'object'
@@ -83,38 +113,42 @@ const spoolMemberSelectPG = `SELECT r.id, ?, 'member', (c.ord - 1)::bigint, COAL
 
 // listSpoolSelect expands one id list of the legacy documents into spool rows of
 // the given kind: the list's own ordinal is member_ord and the value is the
-// resource_id (extent kinds) or cluster_key (apply_cluster).
+// resource_id (extent kinds, 0 and rejected when it is not a valid id) or
+// cluster_key (apply_cluster).
 func listSpoolSelect(postgres bool, kind, document, path string) string {
 	valueCol := "0"
 	keyCol := "''"
+	rejected := "false"
 	if kind == "apply_cluster" {
 		keyCol = "e.value"
 		if postgres {
 			keyCol = "e.v #>> '{}'"
 		}
 	} else {
-		valueCol = "CAST(e.value AS INTEGER)"
+		valueCol = sqliteSpoolID("e.value")
+		rejected = "(" + valueCol + " = 0)"
 		if postgres {
-			valueCol = "(e.v #>> '{}')::bigint"
+			valueCol = pgSpoolID("e.v")
+			rejected = "(" + valueCol + " = 0)"
 		}
 	}
 	if postgres {
 		jsonPath := "r." + document + "::jsonb" + path
-		return fmt.Sprintf(`SELECT r.id, ?, '%s', 0, (e.ord - 1)::bigint, %s, '', '', 0, false, false, false, '', '', false, false, NULL, '', false, '', NULL, %s, '', false, false, '', NULL, 0, false
+		return fmt.Sprintf(`SELECT r.id, ?, '%s', 0, (e.ord - 1)::bigint, %s, '', '', 0, false, false, false, '', '', false, false, NULL, '', false, '', NULL, %s, '', false, false, '', NULL, 0, false, %s
  FROM resource_reductions r
  CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(%s) = 'array' THEN %s ELSE '[]'::jsonb END) WITH ORDINALITY AS e(v, ord)
- WHERE r.id = ?`, kind, keyCol, valueCol, jsonPath, jsonPath)
+ WHERE r.id = ?`, kind, keyCol, valueCol, rejected, jsonPath, jsonPath)
 	}
 	sqlitePath := "$" + strings.ReplaceAll(strings.ReplaceAll(path, "->", "."), "'", "")
-	return fmt.Sprintf(`SELECT r.id, ?, '%s', 0, CAST(e.key AS INTEGER), %s, '', '', 0, 0, 0, 0, '', '', 0, 0, NULL, '', 0, '', NULL, %s, '', 0, 0, '', NULL, 0, 0
+	return fmt.Sprintf(`SELECT r.id, ?, '%s', 0, CAST(e.key AS INTEGER), %s, '', '', 0, 0, 0, 0, '', '', 0, 0, NULL, '', 0, '', NULL, %s, '', 0, 0, '', NULL, 0, 0, %s
  FROM resource_reductions r
  JOIN json_each(CASE WHEN json_type(r.%s, '%s') = 'array' THEN json_extract(r.%s, '%s') ELSE '[]' END) e
- WHERE r.id = ?`, kind, keyCol, valueCol, document, sqlitePath, document, sqlitePath)
+ WHERE r.id = ?`, kind, keyCol, valueCol, rejected, document, sqlitePath, document, sqlitePath)
 }
 
 // spoolReduction parses one legacy Reduction into the spool and returns the
 // counts of clusters and members the pass read. One statement per document.
-func (s *reductionStore) spoolReduction(tx *gorm.DB, id uint, generation string) (clusters, members int64, err error) {
+func (s *reductionStore) spoolReduction(tx *gorm.DB, id uint, generation string) (clusters, members, rejected int64, err error) {
 	pg := tx.Dialector.Name() == "postgres"
 	member := spoolMemberSelectSQLite
 	if pg {
@@ -131,16 +165,19 @@ func (s *reductionStore) spoolReduction(tx *gorm.DB, id uint, generation string)
 	}
 	for _, sel := range statements {
 		if err := tx.Exec("INSERT INTO reduction_migration_rows ("+spoolColumns+") "+sel, generation, id).Error; err != nil {
-			return 0, 0, fmt.Errorf("spool reduction %d: %w", id, err)
+			return 0, 0, 0, fmt.Errorf("spool reduction %d: %w", id, err)
 		}
 	}
 	if err := tx.Raw(`SELECT COUNT(DISTINCT cluster_ord) FROM reduction_migration_rows WHERE reduction_id = ? AND generation = ? AND kind = 'member'`, id, generation).Scan(&clusters).Error; err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	if err := tx.Raw(`SELECT COUNT(*) FROM reduction_migration_rows WHERE reduction_id = ? AND generation = ? AND kind = 'member' AND resource_id > 0`, id, generation).Scan(&members).Error; err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
-	return clusters, members, nil
+	if err := tx.Raw(`SELECT COUNT(*) FROM reduction_migration_rows WHERE reduction_id = ? AND generation = ? AND rejected = ?`, id, generation, true).Scan(&rejected).Error; err != nil {
+		return 0, 0, 0, err
+	}
+	return clusters, members, rejected, nil
 }
 
 // SpoolReductionMigrations is the first step: every plan_schema = 0 Reduction
@@ -153,9 +190,20 @@ func (ctx *MahresourcesContext) SpoolReductionMigrations() error {
 		(SELECT 1 FROM reduction_migrations m WHERE m.reduction_id = resource_reductions.id) ORDER BY id`).Scan(&ids).Error; err != nil {
 		return err
 	}
+	if spoolAfterList != nil {
+		spoolAfterList()
+	}
+	// One Reduction the database cannot parse fails alone; it keeps its legacy
+	// plan and the others are still spooled.
+	var firstErr error
 	for _, id := range ids {
+		var rejected int64
 		err := s.db.Transaction(func(tx *gorm.DB) error {
 			if err := lockReductionRowNarrow(tx, id); err != nil {
+				return err
+			}
+			// Another instance may have published it since the list was read.
+			if legacy, err := reductionStillLegacy(tx, id); err != nil || !legacy {
 				return err
 			}
 			var exists int64
@@ -163,18 +211,38 @@ func (ctx *MahresourcesContext) SpoolReductionMigrations() error {
 				return err
 			}
 			generation := uuid.NewString()
-			clusters, members, err := s.spoolReduction(tx, id, generation)
+			clusters, members, rej, err := s.spoolReduction(tx, id, generation)
 			if err != nil {
 				return err
 			}
+			rejected = rej
 			return tx.Create(&models.ReductionMigration{ReductionID: id, Generation: generation,
 				PassClusters: clusters, PassMembers: members}).Error
 		})
 		if err != nil {
-			return err
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			ctx.Logger().Warning(models.LogActionSystem, "", nil, "", fmt.Sprintf("reduction %d spool failed, its legacy plan is kept: %v", id, err), nil)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if rejected > 0 {
+			ctx.Logger().Warning(models.LogActionSystem, "", nil, "", fmt.Sprintf("reduction %d migration skipped %d ids that are not positive integers within int64", id, rejected), nil)
 		}
 	}
-	return nil
+	return firstErr
+}
+
+// reductionStillLegacy reads plan_schema under the row lock the caller holds.
+func reductionStillLegacy(tx *gorm.DB, id uint) (bool, error) {
+	var schema []int
+	if err := tx.Raw("SELECT plan_schema FROM resource_reductions WHERE id = ?", id).Scan(&schema).Error; err != nil {
+		return false, err
+	}
+	return len(schema) == 1 && schema[0] == 0, nil
 }
 
 // lockReductionRowNarrow takes the Reduction row's lock on Postgres without
@@ -201,15 +269,12 @@ func lockReductionRowNarrow(tx *gorm.DB, id uint) error {
 // Safe to run again: a published Reduction is skipped, a half-done one resumes
 // from its checkpoint.
 func (ctx *MahresourcesContext) MigrateReductionPlans() error {
-	if err := ctx.SpoolReductionMigrations(); err != nil {
-		return err
-	}
+	firstErr := ctx.SpoolReductionMigrations()
 	s := ctx.reductionStore()
 	var ids []uint
 	if err := s.db.Raw(`SELECT reduction_id FROM reduction_migrations ORDER BY reduction_id`).Scan(&ids).Error; err != nil {
 		return err
 	}
-	var firstErr error
 	for _, id := range ids {
 		if err := s.migrateReduction(id); err != nil && !errors.Is(err, errReductionMigrationBusy) {
 			ctx.Logger().Warning(models.LogActionSystem, "", nil, "", fmt.Sprintf("reduction %d migration: %v", id, err), nil)
@@ -229,6 +294,11 @@ func (s *reductionStore) takeOverMigration(id uint) (*models.ReductionMigration,
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := lockReductionRowNarrow(tx, id); err != nil {
 			return err
+		}
+		if legacy, err := reductionStillLegacy(tx, id); err != nil {
+			return err
+		} else if !legacy {
+			return gorm.ErrRecordNotFound
 		}
 		now := time.Now()
 		res := tx.Exec(`UPDATE reduction_migrations SET writer_token = ?, lease_until = ? WHERE reduction_id = ? AND (lease_until < ? OR writer_token = '')`,
@@ -260,6 +330,13 @@ func (s *reductionStore) fenceMigration(tx *gorm.DB, mig *models.ReductionMigrat
 		return errReductionMigrationBusy
 	}
 	return nil
+}
+
+// legacySettingsProbe is whether a legacy plan recorded no settings and the Winner
+// Rule to derive keeps-smaller from when it did not.
+type legacySettingsProbe struct {
+	none bool
+	rule []string
 }
 
 type spoolHead struct {
@@ -325,19 +402,17 @@ func (s *reductionStore) migrateCluster(mig *models.ReductionMigration, head spo
 			row.ClaimID = ""
 		}
 	}
-	overCap := head.N > int64(reductionMemberCap)
+	if head.N > int64(reductionMemberCap) {
+		return s.migrateOverCapCluster(mig, head, &row)
+	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		if err := s.fenceMigration(tx, mig); err != nil {
 			return err
 		}
-		if overCap {
-			if err := s.writeOverCapCluster(tx, mig, head, &row); err != nil {
-				return err
-			}
-		} else if err := s.writeSmallCluster(tx, mig, head, &row); err != nil {
+		if err := s.writeSmallCluster(tx, mig, head, &row); err != nil {
 			return err
 		}
-		return tx.Exec(`UPDATE reduction_migrations SET checkpoint = ? WHERE reduction_id = ? AND writer_token = ?`,
+		return tx.Exec(`UPDATE reduction_migrations SET checkpoint = ?, member_checkpoint = 0 WHERE reduction_id = ? AND writer_token = ?`,
 			head.ClusterOrd+1, mig.ReductionID, mig.WriterToken).Error
 	})
 }
@@ -362,12 +437,20 @@ func (s *reductionStore) writeSmallCluster(tx *gorm.DB, mig *models.ReductionMig
 	}
 	facts := map[uint]fact{}
 	if len(ids) > 0 {
+		// Share-locked in ascending id (Postgres), so a delete either committed
+		// before this read (gone) or waits for these rows to commit, when the
+		// deletion hook sees them (D4): gone is never stale.
 		var found []fact
-		if err := tx.Raw(`SELECT id, file_size, width, height FROM resources WHERE id IN ?`, ids).Scan(&found).Error; err != nil {
+		if err := tx.Raw(`SELECT id, file_size, width, height FROM resources WHERE id IN ? ORDER BY id`+shareLock(tx), ids).Scan(&found).Error; err != nil {
 			return err
 		}
+		locked := make([]uint, 0, len(found))
 		for _, f := range found {
 			facts[f.ID] = f
+			locked = append(locked, f.ID)
+		}
+		if migrationAfterResourceLock != nil {
+			migrationAfterResourceLock(locked)
 		}
 	}
 	c := &storedCluster{Row: *row}
@@ -420,8 +503,12 @@ func spool0(rows []spoolRow) spoolRow {
 
 // legacyHasNoSettings reports whether the legacy plan recorded no settings, and
 // the Winner Rule to derive keeps-smaller from, reading only those two small
-// values out of the document in SQL.
+// values out of the document in SQL. The answer is read once per Reduction: a plan
+// with 100,000 small Clusters does not re-parse its settings for each.
 func (s *reductionStore) legacyHasNoSettings(tx *gorm.DB, id uint) (bool, []string, error) {
+	if p, ok := s.settingsProbe[id]; ok {
+		return p.none, p.rule, nil
+	}
 	pg := tx.Dialector.Name() == "postgres"
 	expr := "json_type(plan, '$.settings')"
 	if pg {
@@ -434,17 +521,35 @@ func (s *reductionStore) legacyHasNoSettings(tx *gorm.DB, id uint) (bool, []stri
 	if err := tx.Raw("SELECT "+expr+" AS t, winner_rule FROM resource_reductions WHERE id = ?", id).Scan(&row).Error; err != nil {
 		return false, nil, err
 	}
-	if row.T != nil && *row.T == "object" {
-		return false, nil, nil
+	probe := legacySettingsProbe{none: row.T == nil || *row.T != "object"}
+	if probe.none {
+		probe.rule = DecodeWinnerRule(row.WinnerRule)
 	}
-	return true, DecodeWinnerRule(row.WinnerRule), nil
+	if s.settingsProbe == nil {
+		s.settingsProbe = map[uint]legacySettingsProbe{}
+	}
+	s.settingsProbe[id] = probe
+	return probe.none, probe.rule, nil
 }
 
-// writeOverCapCluster writes a legacy Cluster over the member cap without
-// hydrating it: its members are copied from the spool in chunks by an INSERT ...
-// SELECT, its aggregates come from SQL. One that is not applied and merged
-// becomes a read-only stale Cluster ("too large: compute again").
-func (s *reductionStore) writeOverCapCluster(tx *gorm.DB, mig *models.ReductionMigration, head spoolHead, row *models.ReductionClusterRow) error {
+// shareLock is the locking suffix of a read whose rows must not be deleted until
+// the transaction commits. SQLite's writer lock already serializes against deletes.
+func shareLock(tx *gorm.DB) string {
+	if tx.Dialector.Name() == "postgres" {
+		return " FOR SHARE"
+	}
+	return ""
+}
+
+// migrateOverCapCluster writes a legacy Cluster over the member cap without
+// hydrating it, in fenced transactions of one chunk each: the Cluster row with the
+// first, then reductionRowChunk members per transaction by keyset on member_ord,
+// each committing the (cluster_ord, member_ord) checkpoint it reached, so an
+// interruption resumes inside the Cluster and no transaction holds SQLite's writer
+// lock across the whole of it. The aggregates come from SQL after the last chunk.
+// One that is not applied and merged becomes a read-only stale Cluster ("too
+// large: compute again").
+func (s *reductionStore) migrateOverCapCluster(mig *models.ReductionMigration, head spoolHead, row *models.ReductionClusterRow) error {
 	history := row.State == models.ReductionClusterApplied && row.Merged
 	row.ReadOnly = true
 	if !history {
@@ -453,25 +558,84 @@ func (s *reductionStore) writeOverCapCluster(tx *gorm.DB, mig *models.ReductionM
 		row.Checked = false
 		row.ClaimID = ""
 	}
-	if err := tx.Create(row).Error; err != nil {
-		return err
+	if int64(head.ClusterOrd) != mig.Checkpoint {
+		mig.MemberCheckpoint = 0
 	}
-	for from := 0; ; from += reductionRowChunk {
-		res := tx.Exec(`INSERT INTO reduction_members (cluster_id, reduction_id, generation, resource_id, position, hash, file_size, in_extent, ejected, ejected_reason, distance, owner_at_merge, gone, changed)
-			SELECT ?, s.reduction_id, s.generation, s.resource_id, s.member_ord, s.hash, COALESCE(r.file_size, 0), s.in_extent, s.ejected, s.ejected_reason, s.distance, s.owner_at_merge,
-			 (r.id IS NULL), s.changed
-			FROM reduction_migration_rows s LEFT JOIN resources r ON r.id = s.resource_id
-			WHERE s.reduction_id = ? AND s.generation = ? AND s.kind = 'member' AND s.cluster_ord = ? AND s.resource_id > 0
-			ORDER BY s.member_ord LIMIT ? OFFSET ?`,
-			row.ID, mig.ReductionID, mig.Generation, head.ClusterOrd, reductionRowChunk, from)
-		if res.Error != nil {
-			return res.Error
+	const spoolCluster = `s.reduction_id = ? AND s.generation = ? AND s.kind = 'member' AND s.cluster_ord = ? AND s.resource_id > 0`
+	for {
+		finished := false
+		next := mig.MemberCheckpoint
+		err := s.db.Transaction(func(tx *gorm.DB) error {
+			if err := s.fenceMigration(tx, mig); err != nil {
+				return err
+			}
+			var existing []uint
+			if err := tx.Raw(`SELECT id FROM reduction_clusters WHERE reduction_id = ? AND generation = ? AND "key" = ?`,
+				mig.ReductionID, mig.Generation, row.Key).Scan(&existing).Error; err != nil {
+				return err
+			}
+			if len(existing) == 0 {
+				row.ID = 0
+				if err := tx.Create(row).Error; err != nil {
+					return err
+				}
+			} else {
+				row.ID = existing[0]
+			}
+			var hi int64
+			if err := tx.Raw(`SELECT COALESCE(MAX(member_ord), -1) FROM (SELECT s.member_ord FROM reduction_migration_rows s WHERE `+spoolCluster+`
+				AND s.member_ord >= ? ORDER BY s.member_ord LIMIT ?) chunk`,
+				mig.ReductionID, mig.Generation, head.ClusterOrd, mig.MemberCheckpoint, reductionRowChunk).Scan(&hi).Error; err != nil {
+				return err
+			}
+			if hi < 0 {
+				finished = true
+				if err := s.finishOverCapCluster(tx, row); err != nil {
+					return err
+				}
+				return tx.Exec(`UPDATE reduction_migrations SET checkpoint = ?, member_checkpoint = 0 WHERE reduction_id = ? AND writer_token = ?`,
+					head.ClusterOrd+1, mig.ReductionID, mig.WriterToken).Error
+			}
+			rangeArgs := []any{mig.ReductionID, mig.Generation, head.ClusterOrd, mig.MemberCheckpoint, hi}
+			var locked []uint
+			if err := tx.Raw(`SELECT r.id FROM resources r WHERE r.id IN (SELECT s.resource_id FROM reduction_migration_rows s WHERE `+spoolCluster+`
+				AND s.member_ord >= ? AND s.member_ord <= ?) ORDER BY r.id`+shareLock(tx), rangeArgs...).Scan(&locked).Error; err != nil {
+				return err
+			}
+			if migrationAfterResourceLock != nil {
+				migrationAfterResourceLock(locked)
+			}
+			if err := tx.Exec(`INSERT INTO reduction_members (cluster_id, reduction_id, generation, resource_id, position, hash, file_size, in_extent, ejected, ejected_reason, distance, owner_at_merge, gone, changed)
+				SELECT ?, s.reduction_id, s.generation, s.resource_id, s.member_ord, s.hash, COALESCE(r.file_size, 0), s.in_extent, s.ejected, s.ejected_reason, s.distance, s.owner_at_merge,
+				 (r.id IS NULL), s.changed
+				FROM reduction_migration_rows s LEFT JOIN resources r ON r.id = s.resource_id
+				WHERE `+spoolCluster+` AND s.member_ord >= ? AND s.member_ord <= ?
+				ORDER BY s.member_ord`, append([]any{row.ID}, rangeArgs...)...).Error; err != nil {
+				return err
+			}
+			next = hi + 1
+			return tx.Exec(`UPDATE reduction_migrations SET member_checkpoint = ? WHERE reduction_id = ? AND writer_token = ?`,
+				next, mig.ReductionID, mig.WriterToken).Error
+		})
+		if err != nil {
+			return err
 		}
-		if res.RowsAffected < reductionRowChunk {
-			break
+		if finished {
+			mig.MemberCheckpoint = 0
+			return nil
+		}
+		mig.MemberCheckpoint = next
+		if migrationAfterChunk != nil {
+			if err := migrationAfterChunk(); err != nil {
+				return err
+			}
 		}
 	}
-	// Aggregates over the member rows, never a hydrated Cluster.
+}
+
+// finishOverCapCluster derives an over-cap Cluster's columns with SQL aggregates
+// over its member rows, never a hydrated Cluster.
+func (s *reductionStore) finishOverCapCluster(tx *gorm.DB, row *models.ReductionClusterRow) error {
 	var agg struct {
 		N, Losers, Gone int
 		Size            int64
@@ -484,7 +648,7 @@ func (s *reductionStore) writeOverCapCluster(tx *gorm.DB, mig *models.ReductionM
 	fingerprint := ""
 	return tx.Model(&models.ReductionClusterRow{}).Where("id = ?", row.ID).Updates(map[string]any{
 		"member_count": agg.N, "loser_count": agg.Losers, "gone_members": agg.Gone, "total_size": agg.Size,
-		"fingerprint": fingerprint, "needs_attention": row.Oversized || row.KeepsSmaller,
+		"fingerprint": fingerprint, "needs_attention": lossyFieldCount(row.Lossy) > 0 || row.Oversized || row.KeepsSmaller,
 	}).Error
 }
 
@@ -502,8 +666,11 @@ func (s *reductionStore) publishMigration(mig *models.ReductionMigration) error 
 		if err := s.fenceMigration(tx, mig); err != nil {
 			return err
 		}
+		// The member rows are counted, not the sum of the counts the Clusters claim: a
+		// missing member row must stop publication, which nulls the legacy plan.
 		var written struct{ Clusters, Members int64 }
-		if err := tx.Raw(`SELECT COUNT(*) AS clusters, COALESCE(SUM(member_count), 0) AS members FROM reduction_clusters WHERE reduction_id = ? AND generation = ?`, id, mig.Generation).Scan(&written).Error; err != nil {
+		if err := tx.Raw(`SELECT (SELECT COUNT(*) FROM reduction_clusters WHERE reduction_id = ? AND generation = ?) AS clusters,
+			(SELECT COUNT(*) FROM reduction_members WHERE reduction_id = ? AND generation = ?) AS members`, id, mig.Generation, id, mig.Generation).Scan(&written).Error; err != nil {
 			return err
 		}
 		var pass models.ReductionMigration
@@ -521,14 +688,14 @@ func (s *reductionStore) publishMigration(mig *models.ReductionMigration) error 
 		}
 		if pg {
 			err := tx.Raw(`SELECT plan::jsonb->'coverage' AS coverage, plan::jsonb->'settings' AS settings,
-				(plan::jsonb->'lastApply') - 'clusterIds' AS last_apply,
+				CASE WHEN jsonb_typeof(plan::jsonb->'lastApply') = 'object' THEN (plan::jsonb->'lastApply') - 'clusterIds' END AS last_apply,
 				COALESCE((extent::jsonb->>'all')::boolean, false) AS "all", status FROM resource_reductions WHERE id = ?`, id).Scan(&docs).Error
 			if err != nil {
 				return err
 			}
 		} else {
 			err := tx.Raw(`SELECT json_extract(plan, '$.coverage') AS coverage, json_extract(plan, '$.settings') AS settings,
-				json_remove(json_extract(plan, '$.lastApply'), '$.clusterIds') AS last_apply,
+				CASE WHEN json_type(plan, '$.lastApply') = 'object' THEN json_remove(json_extract(plan, '$.lastApply'), '$.clusterIds') END AS last_apply,
 				COALESCE(json_extract(extent, '$.all'), 0) AS "all", status FROM resource_reductions WHERE id = ?`, id).Scan(&docs).Error
 			if err != nil {
 				return err
@@ -580,10 +747,10 @@ func nullJSON(b []byte) any {
 func (s *reductionStore) moveSpooledLists(mig *models.ReductionMigration) error {
 	steps := []struct{ kind, sql string }{
 		{"extent_resource", `INSERT INTO reduction_extent_resources (reduction_id, resource_id)
-			SELECT reduction_id, resource_id FROM reduction_migration_rows WHERE reduction_id = ? AND generation = ? AND kind = 'extent_resource' AND member_ord >= ? AND member_ord < ?
+			SELECT reduction_id, resource_id FROM reduction_migration_rows WHERE reduction_id = ? AND generation = ? AND kind = 'extent_resource' AND resource_id > 0 AND member_ord >= ? AND member_ord < ?
 			ON CONFLICT DO NOTHING`},
 		{"extent_group", `INSERT INTO reduction_extent_groups (reduction_id, group_id)
-			SELECT reduction_id, resource_id FROM reduction_migration_rows WHERE reduction_id = ? AND generation = ? AND kind = 'extent_group' AND member_ord >= ? AND member_ord < ?
+			SELECT reduction_id, resource_id FROM reduction_migration_rows WHERE reduction_id = ? AND generation = ? AND kind = 'extent_group' AND resource_id > 0 AND member_ord >= ? AND member_ord < ?
 			ON CONFLICT DO NOTHING`},
 		{"apply_cluster", `UPDATE reduction_clusters SET outcome_batch = '` + migrationBatchPrefix + mig.Generation + `'
 			WHERE reduction_id = ? AND generation = ? AND "key" IN
@@ -617,11 +784,14 @@ func (s *reductionStore) moveSpooledLists(mig *models.ReductionMigration) error 
 
 // deleteSpool removes a finished generation's spool rows in chunks.
 func (s *reductionStore) deleteSpool(id uint, generation string) error {
+	// Branch before executing: on Postgres a failed statement aborts the caller's
+	// transaction, so the other dialect's row address must never be tried first.
+	statement := `DELETE FROM reduction_migration_rows WHERE rowid IN (SELECT rowid FROM reduction_migration_rows WHERE reduction_id = ? AND generation = ? LIMIT ?)`
+	if s.db.Dialector.Name() == "postgres" {
+		statement = `DELETE FROM reduction_migration_rows WHERE ctid IN (SELECT ctid FROM reduction_migration_rows WHERE reduction_id = ? AND generation = ? LIMIT ?)`
+	}
 	for {
-		res := s.db.Exec(`DELETE FROM reduction_migration_rows WHERE rowid IN (SELECT rowid FROM reduction_migration_rows WHERE reduction_id = ? AND generation = ? LIMIT ?)`, id, generation, reductionRowChunk)
-		if s.db.Dialector.Name() == "postgres" {
-			res = s.db.Exec(`DELETE FROM reduction_migration_rows WHERE ctid IN (SELECT ctid FROM reduction_migration_rows WHERE reduction_id = ? AND generation = ? LIMIT ?)`, id, generation, reductionRowChunk)
-		}
+		res := s.db.Exec(statement, id, generation, reductionRowChunk)
 		if res.Error != nil {
 			return res.Error
 		}
