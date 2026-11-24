@@ -45,6 +45,13 @@ func testReductionListJSONCarriesProgressAndUpgrading(t *testing.T, tc *TestCont
 	require.NoError(t, json.Unmarshal(body.Progress[strconv.Itoa(int(legacy.ID))], &legacyProgress))
 	assert.True(t, legacyProgress.Upgrading, "a plan_schema 0 row is reported as being upgraded")
 	assert.Zero(t, legacyProgress.Clusters, "and has no counts")
+	var legacyKeys, currentKeys map[string]any
+	require.NoError(t, json.Unmarshal(body.Progress[strconv.Itoa(int(legacy.ID))], &legacyKeys))
+	assert.Equal(t, map[string]any{"upgrading": true}, legacyKeys, "an upgrading row carries no count fields at all, as the route's description says")
+	require.NoError(t, json.Unmarshal(body.Progress[strconv.Itoa(int(current.ID))], &currentKeys))
+	for _, key := range []string{"clusters", "open", "approved", "skipped", "stale", "applied", "merging", "upgrading"} {
+		assert.Contains(t, currentKeys, key, "a current row keeps every count, zero or not")
+	}
 
 	require.Contains(t, body.Progress, strconv.Itoa(int(current.ID)))
 	require.NoError(t, json.Unmarshal(body.Progress[strconv.Itoa(int(current.ID))], &currentProgress))

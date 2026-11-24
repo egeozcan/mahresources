@@ -1,6 +1,7 @@
 package contracts
 
 import (
+	"encoding/json"
 	"time"
 
 	"mahresources/models"
@@ -330,6 +331,16 @@ type ReductionProgress struct {
 	// background migration has not moved to tables yet: it has no counts, and the
 	// list renders it as being upgraded instead of failing the page.
 	Upgrading bool `json:"upgrading"`
+}
+
+// MarshalJSON writes an upgrading Reduction as {"upgrading":true} and nothing else: it
+// has no counts, and a row of zeros would read as an empty plan.
+func (p ReductionProgress) MarshalJSON() ([]byte, error) {
+	if p.Upgrading {
+		return []byte(`{"upgrading":true}`), nil
+	}
+	type plain ReductionProgress
+	return json.Marshal(plain(p))
 }
 
 // ReductionNamedRef is an entity's id and name.
