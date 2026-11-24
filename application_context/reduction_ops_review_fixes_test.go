@@ -521,3 +521,35 @@ func testOpsWithheldBeatsExpiredLease(t *testing.T, ctx *MahresourcesContext) {
 func TestOpsWithheldBeatsExpiredLeaseSQLite(t *testing.T) {
 	testOpsWithheldBeatsExpiredLease(t, withSettings(newReductionSQLiteContext(t)))
 }
+
+// The lease may already be over when stale recording starts: the opening fence must
+// not answer "superseded" for a Cluster the caller may not see.
+func testOpsWithheldBeatsLeaseExpiredAtOpening(t *testing.T, ctx *MahresourcesContext) {
+	mine := &models.Group{Name: "mine"}
+	other := &models.Group{Name: "other"}
+	require.NoError(t, ctx.db.Create(mine).Error)
+	require.NoError(t, ctx.db.Create(other).Error)
+	account := accountPrincipal(t, ctx, "u", models.RoleUser, &mine.ID)
+	p := ctx.WithPrincipal(account)
+
+	r := newPlanReduction(t, ctx.db)
+	a := makeResource(t, ctx.db, "oa", opsRes{Hash: "h", Owner: &mine.ID})
+	b := makeResource(t, ctx.db, "ob", opsRes{Hash: "h", Owner: &other.ID})
+	insertOps(t, ctx, r, "o", models.ReductionTierIdentical, a, opsMember(a, "h"), opsMember(b, "h"))
+	r = startBatch(t, ctx, r, "b1", -time.Hour)
+	stamp(t, ctx, "b1", "o")
+
+	require.Equal(t, staleHidden, p.storeRecordStale(r.ID, "b1", "o", rowOf(t, ctx, "o").Fingerprint, staleReasonHashChanged, nil),
+		"a withheld Cluster is hidden even when the lease was over before stale recording began")
+	require.Equal(t, models.ReductionClusterOpen, rowOf(t, ctx, "o").State)
+	// A Cluster the caller can see, with the same dead lease, is still superseded.
+	c := makeResource(t, ctx.db, "oc", opsRes{Hash: "g", Owner: &mine.ID})
+	d := makeResource(t, ctx.db, "od", opsRes{Hash: "g", Owner: &mine.ID})
+	insertOps(t, ctx, r, "v", models.ReductionTierIdentical, c, opsMember(c, "g"), opsMember(d, "g"))
+	stamp(t, ctx, "b1", "v")
+	require.Equal(t, staleSuperseded, p.storeRecordStale(r.ID, "b1", "v", rowOf(t, ctx, "v").Fingerprint, staleReasonHashChanged, nil))
+}
+
+func TestOpsWithheldBeatsLeaseExpiredAtOpeningSQLite(t *testing.T) {
+	testOpsWithheldBeatsLeaseExpiredAtOpening(t, withSettings(newReductionSQLiteContext(t)))
+}

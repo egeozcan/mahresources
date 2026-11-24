@@ -419,7 +419,10 @@ func (ctx *MahresourcesContext) storeRecordStale(reductionID uint, batch, key, f
 	err := retryOnLockContention(reductionCASRetries, func() error {
 		outcome = staleSuperseded
 		return store.db.Transaction(func(tx *gorm.DB) error {
-			generation, err := fenceBatch(tx, reductionID, batch, true)
+			// The opening fence proves the batch's ownership and generation but not the
+			// lease: the lease is checked below, after visibility, so a lease that was
+			// already over before this started does not hide a withheld Cluster.
+			generation, err := fenceBatch(tx, reductionID, batch, false)
 			if err != nil {
 				return err
 			}

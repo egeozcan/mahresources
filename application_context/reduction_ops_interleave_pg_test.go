@@ -319,3 +319,7 @@ func TestStoreApplyAccountChangeStopsTheLoopPG(t *testing.T) {
 func TestOpsWithheldBeatsExpiredLeasePG(t *testing.T) {
 	testOpsWithheldBeatsExpiredLease(t, newOpsPGContext(t))
 }
+
+func TestOpsWithheldBeatsLeaseExpiredAtOpeningPG(t *testing.T) {
+	testOpsWithheldBeatsLeaseExpiredAtOpening(t, newOpsPGContext(t))
+}
