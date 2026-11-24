@@ -51,6 +51,25 @@ func (s *reductionStore) with() (string, []any) {
 
 const subtreeIDs = "(SELECT id FROM scope_tree)"
 
+// groupInScope reports whether the Group is visible to the principal: always for an
+// unconfined one, never for one with no scope Group, and for a confined one when it
+// is in the subtree. The subtree is the one-bind CTE; the scoped GORM read expands
+// it into one bind per descendant, which a large subtree overflows.
+func (s *reductionStore) groupInScope(id uint) (bool, error) {
+	switch s.scope.mode {
+	case scopeDeny:
+		return false, nil
+	case scopeSubtree:
+		prefix, args := s.with()
+		var n int64
+		if err := s.db.Raw(prefix+`SELECT COUNT(*) FROM groups WHERE id = ? AND id IN `+subtreeIDs, append(args, id)...).Scan(&n).Error; err != nil {
+			return false, err
+		}
+		return n > 0, nil
+	}
+	return true, nil
+}
+
 // memberInScope is true when the member's Resource exists and its owner is in
 // the principal's subtree. Two-valued: a NULL owner or a missing Resource is
 // false, never unknown.

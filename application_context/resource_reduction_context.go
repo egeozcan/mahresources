@@ -72,7 +72,8 @@ func (ctx *MahresourcesContext) CreateOrExtendResourceReduction(creator *query_m
 func (ctx *MahresourcesContext) createOrExtendResourceReductionOnce(creator *query_models.ResourceReductionCreator, ownerUserID *uint, ownerRestricted bool) (*models.ResourceReduction, error) {
 	resourceIDs := dedupeUints(creator.ResourceIds)
 	groupIDs := dedupeUints(creator.GroupIds)
-	if len(resourceIDs) > reductionSelectionCap || len(groupIDs) > reductionSelectionCap {
+	// One cap on the ids the request names, Resources and Groups together.
+	if len(resourceIDs)+len(groupIDs) > reductionSelectionCap {
 		return nil, ErrReductionSelectionTooLarge
 	}
 	if creator.ID == 0 && len(resourceIDs) == 0 && len(groupIDs) == 0 && !creator.All && creator.OwnerId == 0 {
@@ -187,7 +188,11 @@ func (ctx *MahresourcesContext) withSelectionTransaction(fn func(txCtx *Mahresou
 // there). The root is checked first; the Resource insert applies the principal's
 // scope itself. The request as a whole stays within reductionSelectionCap.
 func (ctx *MahresourcesContext) addOwnedResourcesToExtent(store *reductionStore, row *models.ResourceReduction, ownerID uint, includeDescendants bool) (int, error) {
-	if !ctx.GroupVisible(ownerID) {
+	visible, err := store.groupInScope(ownerID)
+	if err != nil {
+		return 0, err
+	}
+	if !visible {
 		return 0, ErrReductionGroupNotVisible
 	}
 	// The subtree is joined inside the statements that insert, never listed in Go:

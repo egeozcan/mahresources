@@ -4,6 +4,14 @@ package application_context
 
 import "testing"
 
+func TestReductionOwnerSelectionInAHugeScopedSubtreePG(t *testing.T) {
+	testReductionOwnerSelectionInAHugeScopedSubtree(t, newReductionPGContext(t))
+}
+
+func TestReductionSelectionCapCountsBothListsPG(t *testing.T) {
+	testReductionSelectionCapCountsBothLists(t, newReductionPGContext(t))
+}
+
 func TestReductionStaleReasonIsBoundedPG(t *testing.T) {
 	testReductionStaleReasonIsBounded(t, newReductionPGContext(t))
 }
