@@ -782,6 +782,18 @@ func shareLock(tx *gorm.DB) string {
 // large: compute again").
 func (s *reductionStore) migrateOverCapCluster(mig *models.ReductionMigration, head spoolHead, row *models.ReductionClusterRow) error {
 	history := row.State == models.ReductionClusterApplied && row.Merged
+	// A plan stored before settings were recorded has no keeps-smaller flag; it is
+	// derived from the members' pixels after the last chunk, as the small path does
+	// from a hydrated Cluster, for a Cluster that was not applied.
+	deriveKeepsSmaller := false
+	if row.State != models.ReductionClusterApplied {
+		none, rule, err := s.legacyHasNoSettings(s.db, mig.ReductionID)
+		if err != nil {
+			return err
+		}
+		suppressed := row.DecidedBy != models.ManualCriterion && len(rule) > 0 && rule[0] == models.WinnerCriterionPixelsAsc
+		deriveKeepsSmaller = none && !suppressed
+	}
 	row.ReadOnly = true
 	if !history {
 		row.State = models.ReductionClusterStale
@@ -800,6 +812,25 @@ func (s *reductionStore) migrateOverCapCluster(mig *models.ReductionMigration, h
 			if err := s.fenceMigration(tx, mig); err != nil {
 				return err
 			}
+			var hi int64
+			if err := tx.Raw(`SELECT COALESCE(MAX(member_ord), -1) FROM (SELECT s.member_ord FROM reduction_migration_rows s WHERE `+spoolCluster+`
+				AND s.member_ord >= ? ORDER BY s.member_ord LIMIT ?) chunk`,
+				mig.ReductionID, mig.Generation, head.ClusterOrd, mig.MemberCheckpoint, reductionRowChunk).Scan(&hi).Error; err != nil {
+				return err
+			}
+			rangeArgs := []any{mig.ReductionID, mig.Generation, head.ClusterOrd, mig.MemberCheckpoint, hi}
+			// Lock order (D3): the member Resources first, the Cluster row after, as
+			// writeSmallCluster and a Resource delete's hook take them.
+			if hi >= 0 {
+				var locked []uint
+				if err := tx.Raw(`SELECT r.id FROM resources r WHERE r.id IN (SELECT s.resource_id FROM reduction_migration_rows s WHERE `+spoolCluster+`
+				AND s.member_ord >= ? AND s.member_ord <= ?) ORDER BY r.id`+shareLock(tx), rangeArgs...).Scan(&locked).Error; err != nil {
+					return err
+				}
+				if migrationAfterResourceLock != nil {
+					migrationAfterResourceLock(locked)
+				}
+			}
 			var existing []uint
 			if err := tx.Raw(`SELECT id FROM reduction_clusters WHERE reduction_id = ? AND generation = ? AND "key" = ?`,
 				mig.ReductionID, mig.Generation, row.Key).Scan(&existing).Error; err != nil {
@@ -813,28 +844,13 @@ func (s *reductionStore) migrateOverCapCluster(mig *models.ReductionMigration, h
 			} else {
 				row.ID = existing[0]
 			}
-			var hi int64
-			if err := tx.Raw(`SELECT COALESCE(MAX(member_ord), -1) FROM (SELECT s.member_ord FROM reduction_migration_rows s WHERE `+spoolCluster+`
-				AND s.member_ord >= ? ORDER BY s.member_ord LIMIT ?) chunk`,
-				mig.ReductionID, mig.Generation, head.ClusterOrd, mig.MemberCheckpoint, reductionRowChunk).Scan(&hi).Error; err != nil {
-				return err
-			}
 			if hi < 0 {
 				finished = true
-				if err := s.finishOverCapCluster(tx, row); err != nil {
+				if err := s.finishOverCapCluster(tx, row, deriveKeepsSmaller); err != nil {
 					return err
 				}
 				return tx.Exec(`UPDATE reduction_migrations SET checkpoint = ?, member_checkpoint = 0 WHERE reduction_id = ? AND writer_token = ?`,
 					head.ClusterOrd+1, mig.ReductionID, mig.WriterToken).Error
-			}
-			rangeArgs := []any{mig.ReductionID, mig.Generation, head.ClusterOrd, mig.MemberCheckpoint, hi}
-			var locked []uint
-			if err := tx.Raw(`SELECT r.id FROM resources r WHERE r.id IN (SELECT s.resource_id FROM reduction_migration_rows s WHERE `+spoolCluster+`
-				AND s.member_ord >= ? AND s.member_ord <= ?) ORDER BY r.id`+shareLock(tx), rangeArgs...).Scan(&locked).Error; err != nil {
-				return err
-			}
-			if migrationAfterResourceLock != nil {
-				migrationAfterResourceLock(locked)
 			}
 			if err := tx.Exec(`INSERT INTO reduction_members (cluster_id, reduction_id, generation, resource_id, position, hash, file_size, in_extent, ejected, ejected_reason, distance, owner_at_merge, gone, changed)
 				SELECT ?, s.reduction_id, s.generation, s.resource_id, s.member_ord, s.hash, COALESCE(r.file_size, 0), s.in_extent, s.ejected, s.ejected_reason, s.distance, s.owner_at_merge,
@@ -866,7 +882,7 @@ func (s *reductionStore) migrateOverCapCluster(mig *models.ReductionMigration, h
 
 // finishOverCapCluster derives an over-cap Cluster's columns with SQL aggregates
 // over its member rows, never a hydrated Cluster.
-func (s *reductionStore) finishOverCapCluster(tx *gorm.DB, row *models.ReductionClusterRow) error {
+func (s *reductionStore) finishOverCapCluster(tx *gorm.DB, row *models.ReductionClusterRow, deriveKeepsSmaller bool) error {
 	// The Cluster row is locked before the aggregate is read, so a deletion hook
 	// that marks members gone (it locks the Cluster first) either committed before
 	// the read, which then counts it, or waits until this transaction has written:
@@ -890,10 +906,29 @@ func (s *reductionStore) finishOverCapCluster(tx *gorm.DB, row *models.Reduction
 	if migrationAfterAggregate != nil {
 		migrationAfterAggregate()
 	}
+	if deriveKeepsSmaller {
+		// The Winner is a non-ejected, existing member with pixels, and some other
+		// such member has more. Pixels are multiplied as REAL (SQLite) or numeric
+		// (Postgres), so two 4-billion sides cannot overflow.
+		px := func(a string) string { return "(CAST(" + a + ".width AS REAL) * " + a + ".height)" }
+		if tx.Dialector.Name() == "postgres" {
+			px = func(a string) string { return "(" + a + ".width::numeric * " + a + ".height::numeric)" }
+		}
+		var n int64
+		if err := tx.Raw(`SELECT COUNT(*) FROM reduction_members mw JOIN resources w ON w.id = mw.resource_id
+			WHERE mw.cluster_id = ? AND mw.resource_id = ? AND mw.ejected = ? AND `+px("w")+` > 0
+			AND EXISTS (SELECT 1 FROM reduction_members m JOIN resources r ON r.id = m.resource_id
+				WHERE m.cluster_id = mw.cluster_id AND m.ejected = ? AND m.resource_id <> mw.resource_id AND `+px("r")+` > `+px("w")+`)`,
+			row.ID, row.WinnerID, false, false).Scan(&n).Error; err != nil {
+			return err
+		}
+		row.KeepsSmaller = n > 0
+	}
 	fingerprint := ""
 	return tx.Model(&models.ReductionClusterRow{}).Where("id = ?", row.ID).Updates(map[string]any{
 		"member_count": agg.N, "loser_count": agg.Losers, "gone_members": agg.Gone, "total_size": agg.Size,
-		"fingerprint": fingerprint, "needs_attention": lossyFieldCount(row.Lossy) > 0 || row.Oversized || row.KeepsSmaller,
+		"fingerprint": fingerprint, "keeps_smaller": row.KeepsSmaller,
+		"needs_attention": lossyFieldCount(row.Lossy) > 0 || row.Oversized || row.KeepsSmaller,
 	}).Error
 }
 
