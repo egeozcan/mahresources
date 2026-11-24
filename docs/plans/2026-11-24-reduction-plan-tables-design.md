@@ -109,7 +109,7 @@ guard test, run against rows whose legacy columns hold a multi-megabyte plan, as
 non-migration query returns `plan` or `extent`; the job-migration loaders
 (`job_migration_reductions.go`, `job_reduction_adapter.go`) use `reductionColumns` too.
 
-No table has a foreign key to `resources`. All six new tables are classified in
+No table has a foreign key to `resources`. All seven new tables (with the migration spool, D12) are classified in
 `models/saved_sql_tables.go` as not readable by saved SQL.
 
 ## D2. Store boundary, authorization, scope
