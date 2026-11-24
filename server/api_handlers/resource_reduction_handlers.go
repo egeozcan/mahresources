@@ -159,7 +159,7 @@ func GetResourceReductionMembersHandler(ctx ResourceReductionContext) func(http.
 		}
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(map[string]any{
-			"members": page.Members,
+			"members": membersWithExtent(page.Members),
 			"after":   page.After,
 		})
 	}
@@ -318,6 +318,22 @@ func actingUserID(p *auth.Principal) *uint {
 	}
 	id := p.UserID
 	return &id
+}
+
+// memberWithExtent is a members-page entry that always carries inExtent. The stored
+// member omits a false inExtent from its JSON, so a copy outside the selection would
+// read as one inside; the page needs the false to withhold "Include again" from it.
+type memberWithExtent struct {
+	contracts.ReductionMemberView
+	InExtent bool `json:"inExtent"`
+}
+
+func membersWithExtent(members []contracts.ReductionMemberView) []memberWithExtent {
+	out := make([]memberWithExtent, len(members))
+	for i, m := range members {
+		out[i] = memberWithExtent{ReductionMemberView: m, InExtent: m.ReductionMember != nil && m.ReductionMember.InExtent}
+	}
+	return out
 }
 
 func reductionURL(id uint) string {

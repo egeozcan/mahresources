@@ -86,7 +86,8 @@ function humanSize(bytes) {
  * the same test ids, roles and names as reductionMember.tpl; the server-rendered
  * card stays the reference, and a refresh replaces these with it.
  */
-function buildMemberNode(store, clusterId, member, { fixedKeep = false, readOnly = false, stale = false, winnerChanged = false, winnerId = '' } = {}) {
+function buildMemberNode(store, clusterId, member, { fixedKeep = false, readOnly = false, stale = false, winnerChanged = false, winnerId = '', kept = null } = {}) {
+  const view = { kept };
   const resource = member.Resource;
   if (!resource) {
     // Focusable (tabindex -1) so paging in a page that starts with one can still land on it.
@@ -170,12 +171,33 @@ function buildMemberNode(store, clusterId, member, { fixedKeep = false, readOnly
   ]));
 
   const facts = el('ul', { class: 'reduction-facts', 'aria-label': `Details of ${resource.Name}` });
-  const addFact = (text) => facts.append(el('li', { text }));
-  if (resource.Width) addFact(`${resource.Width}×${resource.Height}`);
-  addFact(humanSize(resource.FileSize));
-  addFact(resource.ContentType);
+  // The same cues as the server-rendered card: a value that differs from the kept copy is
+  // bold, led by a not-equal sign, and named for a screen reader.
+  const compareTo = !isWinner && view.kept ? view.kept : null;
+  const addFact = (text, differs = false) => {
+    if (!differs) {
+      facts.append(el('li', { text }));
+      return;
+    }
+    facts.append(el('li', { class: 'reduction-fact--differs' }, [
+      el('span', { 'aria-hidden': 'true', text: '\u2260 ' }),
+      el('strong', { text }),
+      el('span', { class: 'sr-only', text: ' (differs from the kept copy)' }),
+    ]));
+  };
+  if (resource.Width) {
+    addFact(`${resource.Width}\u00d7${resource.Height}`, !!compareTo && (String(resource.Width) !== compareTo.width || String(resource.Height) !== compareTo.height));
+  }
+  addFact(humanSize(resource.FileSize), !!compareTo && String(resource.FileSize) !== compareTo.size);
+  addFact(resource.ContentType, !!compareTo && resource.ContentType !== compareTo.type);
+  const added = String(resource.CreatedAt || '').slice(0, 10);
+  if (added) addFact(`Added ${added}`, !!compareTo && !!compareTo.added && added !== compareTo.added);
   const count = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
-  addFact(`${count(member.TagCount || 0, 'tag')}, ${count(member.NoteCount || 0, 'note')}, ${count(member.GroupCount || 0, 'group')}`);
+  const tags = member.TagCount || 0;
+  const notes = member.NoteCount || 0;
+  const groups = member.GroupCount || 0;
+  addFact(`${count(tags, 'tag')}, ${count(notes, 'note')}, ${count(groups, 'group')}`,
+    !!compareTo && (String(tags) !== compareTo.tags || String(notes) !== compareTo.notes || String(groups) !== compareTo.groups));
   node.append(facts);
 
   // A Cluster that takes no decisions (read-only history) gets no controls, and a stale
@@ -215,6 +237,19 @@ function buildMemberNode(store, clusterId, member, { fixedKeep = false, readOnly
   }
   node.append(actions);
   return node;
+}
+
+/**
+ * The kept copy's facts, as the server-rendered card carries them on its member, for the
+ * comparison cues a paged copy shows. Null when the card has no kept copy to compare with.
+ */
+function keptFacts(card) {
+  const d = card.querySelector('[data-testid="reduction-member"][data-winner="true"]')?.dataset;
+  if (!d || d.keptWidth === undefined) return null;
+  return {
+    width: d.keptWidth, height: d.keptHeight, size: d.keptSize, type: d.keptType, added: d.keptAdded,
+    tags: d.keptTags, notes: d.keptNotes, groups: d.keptGroups,
+  };
 }
 
 function cardFocus() {
@@ -1117,6 +1152,7 @@ export function registerReductionReviewStore(Alpine) {
           stale: card.dataset.clusterState === 'stale',
           winnerChanged: card.dataset.clusterWinnerChanged === 'true',
           winnerId: card.querySelector('[data-testid="reduction-member"][data-winner="true"]')?.dataset.resourceId || '',
+          kept: keptFacts(card),
         };
         const added = [];
         for (const member of page.members || []) {

@@ -22,7 +22,7 @@
      key="{{ member.ResourceID }}"
      data-testid="reduction-member"
      data-resource-id="{{ member.ResourceID }}"
-     {% if member.IsWinner %}data-winner="true"{% endif %}
+     {% if member.IsWinner %}data-winner="true" data-kept-width="{{ member.Resource.Width }}" data-kept-height="{{ member.Resource.Height }}" data-kept-size="{{ member.Resource.FileSize }}" data-kept-type="{{ member.Resource.ContentType }}" data-kept-added="{{ member.Resource.CreatedAt|date:"2006-01-02" }}" data-kept-tags="{{ member.TagCount }}" data-kept-notes="{{ member.NoteCount }}" data-kept-groups="{{ member.GroupCount }}"{% endif %}
      {% if member.Ejected %}data-ejected="true"{% endif %}>
     <p class="reduction-roles">
         {% if member.IsWinner %}

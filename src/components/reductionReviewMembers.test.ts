@@ -312,3 +312,41 @@ describe('a members response that outlives a refresh', () => {
     expect(url.searchParams.get('winner')).toBe('1');
   });
 });
+
+describe('a paged copy carries the same cues as a rendered one', () => {
+  const keptAttrs = 'data-winner="true" data-kept-width="400" data-kept-height="400" data-kept-size="1000" data-kept-type="image/jpeg" data-kept-added="2024-01-02" data-kept-tags="1" data-kept-notes="0" data-kept-groups="0"';
+
+  async function pagedNode(extra: object, resource: object) {
+    document.body.innerHTML = cardHtml().replace('data-resource-id="1"', `data-resource-id="1" ${keptAttrs}`);
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members: [{ ...member(2), Resource: { ID: 2, Name: 'r2', ...resource }, IsLoser: true, ...extra }] });
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+    return document.querySelector<HTMLElement>('[data-resource-id="2"]')!;
+  }
+
+  test('shows when the copy was added, and marks what differs from the kept copy', async () => {
+    const node = await pagedNode({}, { Width: 200, Height: 200, FileSize: 500, ContentType: 'image/png', CreatedAt: '2025-03-04T10:00:00+01:00' });
+    const facts = [...node.querySelectorAll('.reduction-facts li')];
+    const added = facts.find((li) => li.textContent!.includes('Added'))!;
+    expect(added.textContent).toContain('Added 2025-03-04');
+    expect(added.classList.contains('reduction-fact--differs')).toBe(true);
+    expect(added.textContent).toContain('differs from the kept copy');
+    expect(facts.filter((li) => li.classList.contains('reduction-fact--differs')).length).toBeGreaterThanOrEqual(4);
+  });
+
+  test('leaves a fact that matches the kept copy unmarked', async () => {
+    const node = await pagedNode({}, { Width: 400, Height: 400, FileSize: 1000, ContentType: 'image/jpeg', CreatedAt: '2024-01-02T09:00:00+01:00' });
+    const differing = [...node.querySelectorAll('.reduction-facts li.reduction-fact--differs')];
+    expect(differing.length).toBe(1);
+    expect(differing[0].textContent).toContain('0 tags');
+  });
+
+  test('an ejected copy outside the selection gets no Include again', async () => {
+    const node = await pagedNode({ ejected: true, inExtent: false }, { Width: 1, Height: 1, FileSize: 1, ContentType: 'image/png', CreatedAt: '2024-01-02T09:00:00+01:00' });
+    expect(node.querySelector('[data-testid="member-restore"]')).toBeNull();
+    expect(node.textContent).toContain('Outside the selection');
+  });
+});
