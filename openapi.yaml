@@ -12091,7 +12091,7 @@ paths:
                 - reductions
     /v1/reductions:
         get:
-            description: Returns the Resource Reductions the caller may see. Administrators see every one; every other principal sees only the ones it created.
+            description: 'Returns the Resource Reductions the caller may see. Administrators see every one; every other principal sees only the ones it created. The body is {reductions, count, page, progress}: progress maps each listed Reduction id to its Cluster counts, and a Reduction whose plan the background migration has not yet moved to tables has progress.upgrading true and no counts.'
             operationId: listResourceReductions
             parameters:
                 - description: Substring match over the Reduction's name.

@@ -105,12 +105,11 @@ func GetResourceReductionListHandler(ctx ResourceReductionContext) func(http.Res
 		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * reductionPageSize
 
-		reductions, err := ctx.GetResourceReductions(int(offset), reductionPageSize, &query)
-		if err != nil {
-			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
-			return
-		}
-		count, err := ctx.GetResourceReductionCount(&query)
+		// Rows, count and each row's progress from one snapshot, as the HTML list reads
+		// them: a Reduction that finishes between separate reads cannot be on the page
+		// and missing from the count. A Reduction still holding the legacy plan comes
+		// back with progress.upgrading set and no counts.
+		reductions, count, progress, err := ctx.ListResourceReductions(int(offset), reductionPageSize, &query)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
@@ -121,6 +120,7 @@ func GetResourceReductionListHandler(ctx ResourceReductionContext) func(http.Res
 			"reductions": reductions,
 			"count":      count,
 			"page":       page,
+			"progress":   progress,
 		})
 	}
 }

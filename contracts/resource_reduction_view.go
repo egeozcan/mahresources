@@ -316,20 +316,20 @@ type ReductionBulkResult struct {
 // stored figure would keep counting Clusters they can no longer see.
 type ReductionProgress struct {
 	// Clusters is every visible Cluster, whatever its state.
-	Clusters int
+	Clusters int `json:"clusters"`
 	// Open is the Clusters still awaiting a decision or an apply, Approved the part
 	// of them that is approved. Skipped, Stale and Applied are the other states.
-	Open     int
-	Approved int
-	Skipped  int
-	Stale    int
+	Open     int `json:"open"`
+	Approved int `json:"approved"`
+	Skipped  int `json:"skipped"`
+	Stale    int `json:"stale"`
 	// Applied is confirmed merges only; Merging is claimed and not yet confirmed.
-	Applied int
-	Merging int
+	Applied int `json:"applied"`
+	Merging int `json:"merging"`
 	// Upgrading is true for a Reduction whose plan is still the legacy document the
 	// background migration has not moved to tables yet: it has no counts, and the
 	// list renders it as being upgraded instead of failing the page.
-	Upgrading bool
+	Upgrading bool `json:"upgrading"`
 }
 
 // ReductionNamedRef is an entity's id and name.

@@ -3160,7 +3160,7 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		Path:        "/v1/reductions",
 		OperationID: "listResourceReductions",
 		Summary:     "List Resource Reductions",
-		Description: "Returns the Resource Reductions the caller may see. Administrators see every one; every other principal sees only the ones it created.",
+		Description: "Returns the Resource Reductions the caller may see. Administrators see every one; every other principal sees only the ones it created. The body is {reductions, count, page, progress}: progress maps each listed Reduction id to its Cluster counts, and a Reduction whose plan the background migration has not yet moved to tables has progress.upgrading true and no counts.",
 		Tags:        []string{"reductions"},
 		// Spelled out rather than derived from ResourceReductionQuery, which also
 		// carries the two owner fields — those are the visibility decision and are
