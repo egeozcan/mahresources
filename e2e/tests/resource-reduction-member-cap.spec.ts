@@ -7,10 +7,11 @@ import type { APIRequestContext } from '@playwright/test';
  * "being upgraded" refusal (design docs/plans/2026-11-24-reduction-plan-tables-design.md
  * D6, D8, D10, D15).
  *
- * A Cluster past 200 members renders its first 200 and a "Show more members"
- * button that reads the rest from GET /v1/reduction/members. The apply report
- * speaks from the response's own counts and names a refused Cluster by the
- * winnerName the response carries instead of fetching each Resource.
+ * A Cluster stores at most 200 copies: 203 identical files make a Cluster of 200
+ * with the other 3 left out, and the card says so. (Paging a Cluster the page cut at
+ * its member budget, "Show more members", is in resource-reduction-member-paging.spec.ts.)
+ * The apply report speaks from the response's own counts and names a refused
+ * Cluster by the winnerName the response carries instead of fetching each Resource.
  */
 const MEMBER_CAP = 200;
 
@@ -71,7 +72,7 @@ async function makePair(request: APIRequestContext, baseURL: string, apiClient: 
 }
 
 test.describe('Resource Reduction member cap and apply report', () => {
-  test('a Cluster past the card cap shows the first 200 copies and loads the rest on request', async ({ page, apiClient, request, baseURL, checkA11y }) => {
+  test('203 identical files make a Cluster of 200 copies and the card says 3 were left out', async ({ page, apiClient, request, baseURL, checkA11y }) => {
     test.setTimeout(240_000);
     const label = `RR cap ${Date.now()}`;
     const ids = await makeBigIdenticalCluster(request, baseURL!, apiClient, label, MEMBER_CAP + 3);
@@ -79,26 +80,13 @@ test.describe('Resource Reduction member cap and apply report', () => {
 
     await page.goto(`/reduction?id=${id}`);
     const card = page.getByTestId('reduction-cluster').first();
-    await expect(card.getByRole('heading', { level: 3 })).toContainText(`${MEMBER_CAP + 3} copies`);
+    await expect(card.getByRole('heading', { level: 3 })).toContainText(`${MEMBER_CAP} copies`);
     await expect(card.getByTestId('reduction-member')).toHaveCount(MEMBER_CAP);
-    await expect(card.getByTestId('cluster-shown-count')).toContainText(`Showing ${MEMBER_CAP} of ${MEMBER_CAP + 3} copies`);
-
-    const more = card.getByTestId('cluster-more-members');
-    await expect(more).toBeVisible();
-    await checkA11y();
-    await expect(more).toBeEnabled();
-    await more.click();
-
-    await expect(card.getByTestId('reduction-member')).toHaveCount(MEMBER_CAP + 3);
+    await expect(card.getByTestId('cluster-truncated')).toHaveText(
+      `Showing ${MEMBER_CAP} copies; 3 more were left out. Apply this Cluster, then compute again for the rest.`,
+    );
+    // Within the page's budget, so every stored copy is on the card and there is nothing to page.
     await expect(card.getByTestId('cluster-more-members')).toHaveCount(0);
-    // The reviewer's place moves to the first copy that was added, and a polite announcement says how many.
-    await expect(card.getByTestId('reduction-member').nth(MEMBER_CAP)).toBeFocused();
-    await expect(page.locator('[aria-live="polite"]').filter({ hasText: 'Showed 3 more copies' })).toHaveCount(1);
-    // An appended copy has its own name, role and preview, like a server-rendered one.
-    const added = card.getByTestId('reduction-member').nth(MEMBER_CAP);
-    await expect(added.getByTestId('member-role')).toHaveText('Remove');
-    await expect(added.getByRole('button', { name: /^Preview / })).toBeVisible();
-    await expect(added.getByTestId('member-promote')).toBeVisible();
     await checkA11y();
   });
 

@@ -3,6 +3,7 @@ package application_context
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -35,13 +36,28 @@ const (
 	reductionDisplayTextBytes = 1024
 	// reductionSmallCluster is the size up to which a Cluster always renders in full.
 	reductionSmallCluster = 12
-	// reductionPageMemberBudget is the members the Clusters over reductionSmallCluster
-	// of one page share. One past the budget shows its Winner and a members cursor.
-	reductionPageMemberBudget = 2000
+	// reductionDefaultPageMemberBudget is the default of reductionPageMemberBudget.
+	reductionDefaultPageMemberBudget = 2000
 	// reductionNoGeneration is the generation a Reduction with no landed plan reads
 	// at: none, so nothing matches.
 	reductionNoGeneration = "none:no-plan-landed"
 )
+
+// reductionPageMemberBudget is the members the Clusters over reductionSmallCluster of one
+// page share. One past the budget shows its Winner and a members cursor. The environment
+// variable REDUCTION_PAGE_MEMBER_BUDGET sets it: it exists so the browser tests can reach
+// a Cluster cut at the budget without uploading two thousand files, and a deployment has
+// no reason to set it.
+var reductionPageMemberBudget = pageMemberBudgetFromEnv(os.Getenv("REDUCTION_PAGE_MEMBER_BUDGET"))
+
+// pageMemberBudgetFromEnv is the budget a REDUCTION_PAGE_MEMBER_BUDGET value names; anything
+// that is not a positive number leaves the default.
+func pageMemberBudgetFromEnv(raw string) int {
+	if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+		return n
+	}
+	return reductionDefaultPageMemberBudget
+}
 
 // reductionGenerationOf is the generation a Reduction's plan is read at.
 func reductionGenerationOf(r *models.ResourceReduction) string {

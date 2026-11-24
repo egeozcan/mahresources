@@ -118,12 +118,20 @@
             <button type="button" data-testid="cluster-approve" class="reduction-btn reduction-approve"
                     aria-pressed="{% if cluster.Checked %}true{% else %}false{% endif %}"
                     :aria-keyshortcuts="$store.reductionReview.shortcutsOn ? 'A' : null"
+                    {% if cluster.Oversized and cluster.MoreMembers %}:aria-describedby="$store.reductionReview.isReviewable('{{ cluster.ID }}', true, true) ? null : 'cluster-{{ cluster.ID }}-approve-hint'"{% endif %}
                     disabled
-                    :disabled="$store.reductionReview.busy || !$store.reductionReview.isExpanded('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %})"
+                    :disabled="$store.reductionReview.busy || !$store.reductionReview.isReviewable('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %}, {% if cluster.MoreMembers %}true{% else %}false{% endif %})"
                     @click="$store.reductionReview.toggleApproval('{{ cluster.ID }}', {% if cluster.Oversized %}true{% else %}false{% endif %}, $event)">
                 {# The visible text is the name in both states (WCAG 2.5.3); the state is aria-pressed, shown as a check and a filled button. #}
                 <span class="reduction-approve-check" aria-hidden="true">&#10003;</span>Approve
             </button>
+            {% if cluster.Oversized and cluster.MoreMembers %}
+            {# Shown once the Cluster is expanded and until every copy is on the page; the button names it with aria-describedby. #}
+            <p class="reduction-nothing" id="cluster-{{ cluster.ID }}-approve-hint" data-testid="cluster-approve-needs-members"
+               x-show="$store.reductionReview.isExpanded('{{ cluster.ID }}', true) && !$store.reductionReview.isReviewable('{{ cluster.ID }}', true, true)">
+                Approving needs all {{ cluster.MemberCount }} copies on screen: use Show more members until every copy is listed.
+            </p>
+            {% endif %}
             {% endif %}
             <button type="button" data-testid="cluster-skip" class="reduction-btn"
                     :aria-keyshortcuts="$store.reductionReview.shortcutsOn ? 'S' : null"
@@ -176,7 +184,7 @@
         <button type="button" data-testid="cluster-expand" class="reduction-btn"
                 :aria-keyshortcuts="$store.reductionReview.shortcutsOn ? 'X' : null"
                 @click="$store.reductionReview.expand('{{ cluster.ID }}')"
-                aria-controls="cluster-{{ cluster.ID }}-members">Show {{ cluster.Members|length }} copies</button>
+                aria-controls="cluster-{{ cluster.ID }}-members">{% if cluster.MoreMembers %}Show copies{% else %}Show {{ cluster.Members|length }} copies{% endif %}</button>
     </p>
     {% endif %}
 

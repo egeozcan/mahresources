@@ -86,10 +86,11 @@ function humanSize(bytes) {
  * the same test ids, roles and names as reductionMember.tpl; the server-rendered
  * card stays the reference, and a refresh replaces these with it.
  */
-function buildMemberNode(store, clusterId, member, fixedKeep) {
+function buildMemberNode(store, clusterId, member, { fixedKeep = false, readOnly = false, stale = false } = {}) {
   const resource = member.Resource;
   if (!resource) {
-    return el('div', { class: 'reduction-member reduction-member--gone', 'data-testid': 'reduction-member-withheld' }, [
+    // Focusable (tabindex -1) so paging in a page that starts with one can still land on it.
+    return el('div', { class: 'reduction-member reduction-member--gone', tabindex: '-1', 'data-testid': 'reduction-member-withheld' }, [
       el('p', { class: 'text-xs text-stone-600 max-w-[10rem]', text: 'Resource unavailable.' }),
     ]);
   }
@@ -159,6 +160,9 @@ function buildMemberNode(store, clusterId, member, fixedKeep) {
   addFact(`${count(member.TagCount || 0, 'tag')}, ${count(member.NoteCount || 0, 'note')}, ${count(member.GroupCount || 0, 'group')}`);
   node.append(facts);
 
+  // A Cluster that takes no decisions (read-only history) gets no controls, and a stale
+  // one only "Don't remove", as the server-rendered card does: the server refuses the rest.
+  if (readOnly) return node;
   const actions = el('div', { class: 'reduction-member-actions' });
   const button = (testid, label, run) => {
     const b = el('button', { type: 'button', 'data-testid': testid, class: 'reduction-btn reduction-btn--small' }, [
@@ -168,7 +172,9 @@ function buildMemberNode(store, clusterId, member, fixedKeep) {
     b.addEventListener('click', run);
     return b;
   };
-  if (!isWinner && !ejected) {
+  if (stale) {
+    if (!isWinner && !ejected) actions.append(button('member-eject', "Don't remove", () => store.act(clusterId, 'eject', rid)));
+  } else if (!isWinner && !ejected) {
     const keep = button('member-promote', 'Keep this instead', () => store.act(clusterId, 'promote', rid));
     if (fixedKeep) {
       keep.disabled = true;
@@ -288,6 +294,10 @@ export function registerReductionReviewStore(Alpine) {
     // approval. Keyed by cluster id; nothing is remembered across a reload,
     // deliberately: the gesture is meant to be made each time.
     expanded: {},
+    // Clusters whose every copy is on the page, by "Show more members" having loaded the
+    // rest. An oversized Cluster cut at the page's member budget renders only its kept
+    // copy until then, and cannot be approved on that.
+    allMembersShown: {},
 
     /** The apply bar is on screen (the Open tab, with something to apply or review). */
     get barShown() {
@@ -411,6 +421,20 @@ export function registerReductionReviewStore(Alpine) {
       return !oversized || this.expanded[clusterId] === true;
     },
 
+    /**
+     * Whether a Cluster may be approved: expanded, and (for an oversized one whose page
+     * cut its copies, `incomplete`) every copy rendered, so the approval is never of
+     * removals the reviewer was not shown.
+     */
+    isReviewable(clusterId, oversized, incomplete) {
+      return this.isExpanded(clusterId, oversized) && (!oversized || !incomplete || this.allMembersShown[clusterId] === true);
+    },
+
+    /** A refresh re-renders the Clusters from the server and drops the copies paging appended. */
+    forgetShownMembers() {
+      this.allMembersShown = {};
+    },
+
     expand(clusterId) {
       this.expanded[clusterId] = true;
       window.mahAnnounce?.('Cluster expanded.');
@@ -427,9 +451,16 @@ export function registerReductionReviewStore(Alpine) {
     toggleApproval(clusterId, oversized, event) {
       if (this.busy) return;
       const pressed = event?.currentTarget?.getAttribute('aria-pressed') === 'true';
-      return this.act(clusterId, pressed ? 'uncheck' : 'check', 0, {
-        acknowledgeOversized: oversized && this.expanded[clusterId] === true,
-      });
+      const extra = { acknowledgeOversized: oversized && this.expanded[clusterId] === true };
+      if (extra.acknowledgeOversized) {
+        // How many copies this page has rendered, which the server holds against the
+        // Cluster's own count: the acknowledgement is of what was on screen.
+        const card = [...document.querySelectorAll(CARD)].find((c) => c.dataset.clusterId === clusterId);
+        extra.membersSeen = card
+          ? card.querySelectorAll('.reduction-cluster-members [data-testid="reduction-member"], .reduction-cluster-members [data-testid="reduction-member-withheld"]').length
+          : 0;
+      }
+      return this.act(clusterId, pressed ? 'uncheck' : 'check', 0, extra);
     },
 
     async act(clusterId, action, resourceId = 0, extra = {}) {
@@ -1006,6 +1037,12 @@ export function registerReductionReviewStore(Alpine) {
       const list = card?.querySelector('.reduction-cluster-members');
       if (!list) return;
       this.loadingMembers = true;
+      // Focus belongs to the reviewer: it moves to the new copies only if it is still on
+      // the trigger (or was dropped to the page by disabling it), not if they tabbed elsewhere.
+      const focusUnmoved = () => {
+        const active = document.activeElement;
+        return !active || active === document.body || active === button;
+      };
       button.setAttribute('aria-disabled', 'true');
       button.disabled = true;
       this.error = '';
@@ -1020,11 +1057,15 @@ export function registerReductionReviewStore(Alpine) {
         if (!response.ok) throw new Error(await window.errorMessageFromResponse(response));
         const page = await response.json();
         const present = new Set([...list.querySelectorAll('[data-testid="reduction-member"]')].map((m) => m.dataset.resourceId));
-        const fixedKeep = card.dataset.clusterFixedKeep === 'true';
+        const view = {
+          fixedKeep: card.dataset.clusterFixedKeep === 'true',
+          readOnly: !!card.querySelector('[data-cluster-read-only="true"]'),
+          stale: card.dataset.clusterState === 'stale',
+        };
         const added = [];
         for (const member of page.members || []) {
           if (present.has(String(member.resourceId))) continue;
-          const node = buildMemberNode(this, clusterId, member, fixedKeep);
+          const node = buildMemberNode(this, clusterId, member, view);
           list.append(node);
           added.push(node);
         }
@@ -1038,17 +1079,21 @@ export function registerReductionReviewStore(Alpine) {
           button.dataset.membersAfter = next;
           button.removeAttribute('aria-disabled');
           button.disabled = false;
-          (added[0] || button).focus();
+          if (focusUnmoved()) (added[0] || button).focus();
         } else {
+          const unmoved = focusUnmoved();
           button.closest('[data-testid="cluster-more-members-wrap"]')?.remove();
-          added[0]?.focus();
+          this.allMembersShown = { ...this.allMembersShown, [clusterId]: true };
+          // The trigger is gone: the first copy added, else whatever focusable the added
+          // copies carry, else the Cluster itself, so focus never falls to the page.
+          if (unmoved) (added.find((n) => n.hasAttribute('tabindex')) || card).focus();
         }
       } catch (err) {
         this.error = err.message;
         this._announceError(`Could not load more copies: ${err.message}`);
         button.removeAttribute('aria-disabled');
         button.disabled = false;
-        button.focus();
+        if (focusUnmoved()) button.focus();
       } finally {
         this.loadingMembers = false;
       }
@@ -1154,6 +1199,8 @@ export function registerReductionReviewStore(Alpine) {
       // The version travels in the page too, so a refresh from any other cause
       // leaves this store agreeing with what was rendered.
       this._readState(refreshed);
+      // The morph dropped any copies "Show more members" had appended.
+      this.forgetShownMembers();
 
       // The footer pagination, which the base layout renders and the review
       // action just made stale. Three transitions are possible: morph the new
