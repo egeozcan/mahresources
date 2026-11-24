@@ -131,7 +131,7 @@ func testManifestFiredHookDoesNotReplayAfterStall(t *testing.T, ctx *Mahresource
 			return
 		}
 		rival = true
-		time.Sleep(1300 * time.Millisecond) // the second hook outlasts the claim
+		time.Sleep(2200 * time.Millisecond) // the second hook outlasts the claim
 		ctx.drainManifestOp("stall", true)  // a competing claimer arrives
 	}
 	t.Cleanup(func() { manifestAfterHookGap = nil })
@@ -160,7 +160,7 @@ func testManifestExpiredDrainDoesNotMarkSuccessorsFilesDone(t *testing.T, ctx *M
 			return
 		}
 		stolen = true
-		time.Sleep(1300 * time.Millisecond)
+		time.Sleep(2200 * time.Millisecond)
 		require.NoError(t, ctx.db.Exec("UPDATE resource_cleanup_manifest SET claimed_by = 'successor', claimed_until = ? WHERE op = 'succ'",
 			time.Now().Add(time.Hour).Unix()).Error)
 	}
