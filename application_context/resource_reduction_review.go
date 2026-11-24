@@ -134,44 +134,7 @@ func (ctx *MahresourcesContext) getReductionReview(id uint, ownerUserID *uint, o
 	// count entirely. It cannot be applied, and counting it would tell them "there
 	// is one more Cluster, with two Resources in it" about Clusters the page
 	// otherwise refuses to describe.
-	figures := reviewFigures{}
-	var eligible []*models.ReductionCluster
-	for _, cluster := range plan.Clusters {
-		if cluster.State != models.ReductionClusterOpen {
-			continue
-		}
-		// One rule for every count, filter and apply: a Cluster that reaches a
-		// Resource the caller may not see, an ejected member included, is withheld.
-		// An ejected member is untouched by a merge but still part of what the
-		// Cluster says about the library, and the tabs and bulk approval already
-		// leave such a Cluster out.
-		if clusterWithheld(cluster, visible) {
-			continue
-		}
-		if cluster.Tier == models.ReductionTierIdentical {
-			figures.bulk.IdenticalOpen++
-			if !clusterApproved(cluster) && !clusterNeedsAttention(cluster) && len(cluster.LoserIDs()) > 0 {
-				figures.bulk.IdenticalApprovable++
-			}
-		}
-		if !clusterApproved(cluster) {
-			continue
-		}
-		eligible = append(eligible, cluster)
-		figures.checked++
-		figures.checkedLosers += len(cluster.LoserIDs())
-		tier := &figures.apply.Identical
-		if cluster.Tier == models.ReductionTierNear {
-			tier = &figures.apply.Near
-		}
-		tier.Clusters++
-		tier.Losers += len(cluster.LoserIDs())
-		if cluster.KeepsSmaller {
-			figures.apply.KeepsSmaller++
-		}
-	}
-	figures.apply.Identical.KeepAsVersion = reduction.KeepAsVersionIdentical
-	figures.apply.Near.KeepAsVersion = reduction.KeepAsVersionNear
+	figures, eligible := reviewFiguresOf(reduction, plan.Clusters, visible)
 
 	// Deliberately no walk of the Extent here. Resolving it is one recursive CTE
 	// per selected Group, which is cheap; *counting* what it reaches is not, and a
@@ -246,6 +209,52 @@ func (ctx *MahresourcesContext) getReductionReview(id uint, ownerUserID *uint, o
 		SettingsChanged:     reductionSettingsChanged(reduction, plan.Settings),
 		LastApply:           ctx.scopeLastApply(describeLastApply(plan.LastApply), plan.LastApply, plan.Clusters, visible),
 	}, nil
+}
+
+// reviewFiguresOf is the one pass over a plan that the review's counts come from:
+// the checked totals, what an apply would do per tier, and the bulk buttons'
+// targets, over the open Clusters the caller may fully see. It returns the
+// approved Clusters the apply token is over.
+func reviewFiguresOf(reduction *models.ResourceReduction, clusters []*models.ReductionCluster, visible map[uint]bool) (reviewFigures, []*models.ReductionCluster) {
+	figures := reviewFigures{}
+	var eligible []*models.ReductionCluster
+	for _, cluster := range clusters {
+		if cluster.State != models.ReductionClusterOpen {
+			continue
+		}
+		// One rule for every count, filter and apply: a Cluster that reaches a
+		// Resource the caller may not see, an ejected member included, is withheld.
+		// An ejected member is untouched by a merge but still part of what the
+		// Cluster says about the library, and the tabs and bulk approval already
+		// leave such a Cluster out.
+		if clusterWithheld(cluster, visible) {
+			continue
+		}
+		if cluster.Tier == models.ReductionTierIdentical {
+			figures.bulk.IdenticalOpen++
+			if !clusterApproved(cluster) && !clusterNeedsAttention(cluster) && len(cluster.LoserIDs()) > 0 {
+				figures.bulk.IdenticalApprovable++
+			}
+		}
+		if !clusterApproved(cluster) {
+			continue
+		}
+		eligible = append(eligible, cluster)
+		figures.checked++
+		figures.checkedLosers += len(cluster.LoserIDs())
+		tier := &figures.apply.Identical
+		if cluster.Tier == models.ReductionTierNear {
+			tier = &figures.apply.Near
+		}
+		tier.Clusters++
+		tier.Losers += len(cluster.LoserIDs())
+		if cluster.KeepsSmaller {
+			figures.apply.KeepsSmaller++
+		}
+	}
+	figures.apply.Identical.KeepAsVersion = reduction.KeepAsVersionIdentical
+	figures.apply.Near.KeepAsVersion = reduction.KeepAsVersionNear
+	return figures, eligible
 }
 
 type reductionSelection struct {

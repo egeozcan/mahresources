@@ -64,3 +64,7 @@ func TestReductionTwentyThousandGroupSubtreePG(t *testing.T) {
 func TestSeedKeysOrderAsBytesDoPG(t *testing.T) {
 	testSeedKeysOrderAsBytesDo(t, newReductionPGContext(t))
 }
+
+func TestReductionStoreMatchesOraclePG(t *testing.T) {
+	testReductionStoreMatchesOracle(t, newReductionPGContext, []int64{1, 2, 3, 4})
+}
