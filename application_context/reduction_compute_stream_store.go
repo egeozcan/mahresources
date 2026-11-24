@@ -321,10 +321,16 @@ func (run *reductionStream) coverage() (models.ReductionCoverage, error) {
 // an applied-and-merged one, except that read-only history reserves only the
 // members a reviewer ejected (an explicit "don't remove" must not return in an
 // auto-checked Cluster). col is the Resource id expression.
+//
+// LIMIT 1 OFFSET 0 is a fence, not a bound: it stops Postgres from flattening the
+// NOT EXISTS into a join, which it plans as a merge or hash anti join that reads the
+// generation's members and Clusters whole, once per statement, however few rows
+// the statement returns. Fenced, each candidate row costs one index probe.
 func (run *reductionStream) available(col string) (string, []any) {
 	return `NOT EXISTS (SELECT 1 FROM reduction_members am JOIN reduction_clusters ac ON ac.id = am.cluster_id
 		WHERE am.reduction_id = ? AND am.generation = ? AND am.resource_id = ` + col + `
-		AND ((ac.state = 'applied' AND NOT ac.merged) OR (ac.state <> 'applied' AND (NOT ac.read_only OR am.ejected))))`,
+		AND ((ac.state = 'applied' AND NOT ac.merged) OR (ac.state <> 'applied' AND (NOT ac.read_only OR am.ejected)))
+		LIMIT 1 OFFSET 0)`,
 		[]any{run.r.ID, run.generation}
 }
 

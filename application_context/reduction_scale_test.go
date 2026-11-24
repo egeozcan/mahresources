@@ -693,7 +693,7 @@ func scaleBulkApprove(t *testing.T, ctx *MahresourcesContext, clusters int) {
 		require.NoError(t, err)
 		result = out
 	})
-	t.Logf("SCALE bulk approve result: %+v; the one transaction above is the whole writer-lock hold on SQLite", result)
+	t.Logf("SCALE bulk approve result: %+v; the one transaction above is the whole SQLite writer-lock hold (on Postgres, the row-lock hold)", result)
 	requireUnder(t, res, requestHeapLimitMB, "bulk approve allIdentical")
 	rec.requireWithinChunk(t, "bulk approve")
 	var checked int64
@@ -720,7 +720,7 @@ func scaleBulkApprove(t *testing.T, ctx *MahresourcesContext, clusters int) {
 	})
 	require.Equal(t, p.identical(), stamped)
 	require.NotEmpty(t, token)
-	t.Logf("SCALE apply stamp: %d Clusters, %d Losers; the stamp's wall time above is the whole writer-lock hold on SQLite", stamped, losers)
+	t.Logf("SCALE apply stamp: %d Clusters, %d Losers; the stamp's wall time above is the whole SQLite writer-lock hold (on Postgres, the row-lock hold)", stamped, losers)
 	rec.requireWithinChunk(t, "apply stamp")
 }
 
