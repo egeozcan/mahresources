@@ -1,8 +1,11 @@
 # Resource Reduction plan as tables: bounded memory at any library size
 
-Status: design v14. Review history: v1 pi 9 P0 / 4 P1, architect 3 / 18; v2 pi 9 / 7, architect 1 /
+Status: design v15 (closed for implementation). Review history: v1 pi 9 P0 / 4 P1, architect 3 / 18; v2 pi 9 / 7, architect 1 /
 12; v3 pi 9 / 2, architect 1 / 7; v4 pi 0 / 11, architect 0 / 5; v5 pi 0 / 9, architect 0 / 2; v6 pi 0 / 11, architect 0 / 1; v7 pi 0 / 10, architect 0 / 1; v8 pi 0 / 6, architect 0 / 3;
-v9 pi 0 / 7, architect 0 / 1; v10 pi 0 / 3, architect 0 / 0; v11 architect 0 / 1 (pi's run failed on a network error); v12 pi 0 / 4, architect 0 / 1. The
+v9 pi 0 / 7, architect 0 / 1; v10 pi 0 / 3, architect 0 / 0; v11 architect 0 / 1 (pi's run failed on a network error); v12 pi 0 / 4, architect 0 / 1; v13 pi 0 / 6, architect 0 / 1, all
+applied in v15. No P0 since v3. The design loop closes here: round 13's findings were all local
+precision points, each now stated below and carried into the implementation as a test; the
+implementation is reviewed by pi batch by batch. The
 tables at the end are named by the round whose findings they map (v3 to v12). Supersedes
 ADR 0003's "one row carries the plan" for the Cluster list.
 
@@ -132,7 +135,7 @@ does not stall; a failed build is retried while compute admission stays closed, 
 are still being built") until both indexes read valid, so a migrator table
 rebuild cannot silently drop it. D14 measures the pair writer's added index cost.
 
-No table has a foreign key to `resources`. All nine new tables (with the migration spool and `reduction_migrations`, D12, and the deletion staging table, D9) are classified in
+No table has a foreign key to `resources`. All ten new tables (with the migration spool and `reduction_migrations`, D12, and the deletion staging and cleanup manifest tables, D9) are classified in
 `models/saved_sql_tables.go` as not readable by saved SQL.
 
 ## D2. Store boundary, authorization, scope
@@ -186,7 +189,7 @@ No table has a foreign key to `resources`. All nine new tables (with the migrati
 | override (promote, eject, restore, skip, reopen, check, uncheck) | On a full Near star (D5), promote is refused and Restore never makes the seed a Loser. CAS; load the Cluster and its members (≤ 200, narrow); share-lock its member Resources (ascending, as today); lock the Cluster row; existing Go logic; write. Refused on `read_only` Clusters. Promote, restore and apply-time pair checks probe the stored pair between the Winner and each named member (indexed, `FOR SHARE` inside the merge transaction), never every pair of the Winner. Restore re-reads the restored member's existence and sets `gone` |
 | bulk by ids | ≤ 500 ids. CAS; share-lock the targets' member Resources in global id order, streamed in chunks of 500 by keyset over a join (no ids held beyond a chunk; a no-op on SQLite, whose writer lock already excludes writers); then classification for the named keys (unknown or withheld → not found, then not open → not open, today's order), so visibility is decided after ownership is locked; today's per-Cluster rules (counted, `Changed`, `NeedsReview`, `expectedCount` where today checks it); lock the Cluster rows in id order, mark them `bulk_op = :op`; write only `bulk_op = :op` rows; clear the mark |
 | bulk allIdentical (check, uncheck) | CAS; share-lock the member Resources of the **structural candidate superset** (every open Identical Cluster of the generation, before any visibility test, so a Cluster that becomes visible later is already locked) the same way (chunked, global id order); after the locks, the exact target set is materialized by marking the Clusters `bulk_op = :op` in `id > ?` keyset chunks with the predicate (each marking, counting and writing chunk is a keyset, EXPLAIN-asserted); the counts are read over the marked set and compared with `expectedCount`; the update touches only `bulk_op = :op` rows; the mark is cleared. Counted and written sets are therefore the same set |
-| claim, demote, release, confirm-in-merge-tx, record-stale | today's steps on one Cluster row; `claim_id` in the `WHERE`; InTx sets `merged`, each Loser's `owner_at_merge`, `outcome_batch`. Release and reconcile recount `gone` for the Cluster's members (≤ 200) before reopening it |
+| claim, demote, release, confirm-in-merge-tx, record-stale | today's steps on one Cluster row, except that demote and reopen clear `claim_id` (today demotion leaves it set, which the new stamp would refuse; the migration normalizes inactive claims the same way); `claim_id` in the `WHERE`; InTx sets `merged`, each Loser's `owner_at_merge`, `outcome_batch`. Release and reconcile recount `gone` for the Cluster's members (≤ 200) before reopening it |
 | reconcile stranded claims | keyset over `state='applied' AND NOT merged`, one transaction per 50, in id order |
 | settle-only | takes its own fence (`settle_op`, `settle_lease_until`), mutually exclusive with an apply and a compute; never writes `last_apply`, so earlier apply evidence survives; bumps `version` only in a chunk that actually reconciles a claim (a settle that finds only claims hidden from the caller changes nothing) |
 | `gone` recount (D4, release, reconcile) | a D3 writer: share-lock the members' Resources (ascending), lock the Cluster rows (ascending id), then read existence, update members and derive `gone_members` in the same transaction |
@@ -204,7 +207,8 @@ Bookkeeping after a merge stays best-effort and logged, as today.
 - `beginReductionCompute` (its CAS) sets `compute_generation = <uuid>` and a **pending** reservation
   deadline (the job may wait for a queue slot); the active `compute_lease_until` starts when a worker
   admits the job, under the generation fence. It
-  refuses while an apply is running or `plan_schema = 0`. The running-apply check moves here, so
+  refuses while an apply or a settle is running (live `apply_lease_until` or `settle_lease_until`;
+  the settle side refuses while computing) or `plan_schema = 0`. The running-apply check moves here, so
   queued and replayed starts are refused too. The job-id swap never touches the generation.
 - **Fence.** Every staging transaction starts with a write that proves the compute still owns the
   Reduction: `UPDATE resource_reductions SET id = id WHERE id = ? AND status = 'computing' AND
@@ -353,7 +357,8 @@ Bookkeeping after a merge stays best-effort and logged, as today.
   Classification is decided at insertion: a Group change committing later is caught by apply's
   revalidation, which now re-checks Extent membership of every Loser as part of the claim (≤ 200
   ids, live SQL predicate), refusing the Cluster as stale ("left the selection"); the same live check is repeated in the merge
-  precondition after the participant locks. Holding Group-link rows locked through commit is not
+  precondition after the participant locks. The visible selected roots are resolved once per batch;
+  each claim probes only its ≤ 200 member ids against them (measured in D14). Holding Group-link rows locked through commit is not
   done: a Group change racing a merge is the pre-existing class recorded in `docs/todo.md` (today's
   apply does not check Extent membership at all).
 
@@ -468,8 +473,11 @@ databases order a set of keys by `(key_prefix, sort_key)` exactly as `bytes.Comp
   A test asserts no cascading child remains before each parent delete (GORM row counts do not
   include native cascades); `BulkDeleteResources` requests are capped at 10,000 ids (D15), audit log
   rows stay **inside** the deleting transaction, as today (`resource_bulk_context.go:146, 827`),
-  inserted per chunk; only file cleanup and after-hooks run after commit, emitted per chunk rather than
-  collected for the whole request; hook and log payloads carry ids and bounded names only.
+  inserted per chunk; only file cleanup and after-hooks run after commit. Their inputs (each deleted
+  Resource's paths, hash and storage location) are written to a cleanup manifest table in the deleting
+  transaction (request-capped, chunked inserts), kept through commit and drained in chunks afterwards,
+  so nothing collected for the whole request is held in Go and the staged ids can be purged before
+  commit; hook and log payloads carry ids and bounded names only.
 - Eject, restore, release and reconcile re-derive `gone_members`; restore and release re-read
   existence for the members they bring back.
 - Safety net: apply's revalidation refuses a Cluster with a gone member, as today.
@@ -503,6 +511,10 @@ databases order a set of keys by `(key_prefix, sort_key)` exactly as `bytes.Comp
   rolls back if it expired. A parked worker whose batch expired
   or was replaced therefore cannot delete anything. Locked revalidation and confirmation inside the
   merge transaction are unchanged.
+- **After expiry, only bookkeeping.** Once the batch lease has expired, nothing destructive runs,
+  but the batch's own finish record and the release of its own claims still may, while the same
+  batch, generation and claim id match (today's bounded finish, `resource_reduction_apply.go:294`),
+  so committed merges are never hidden by an expired lease.
 - **Every outcome write is fenced.** Claim, stale (`recordStaleLocked`), demote, release and confirm
   all require, under the Reduction row lock, the live batch (`last_apply` batch id and an unexpired
   lease checked with a post-lock clock) and the pinned generation, so an expired worker cannot mark a
@@ -541,12 +553,13 @@ landing; a parked apply worker past its lease cannot merge.
   `plan_schema = 0` Reductions answer 503 and refuse edits and computes until migrated. Drafts are
   migrated too (their selections move to the tables; there is no plan to move).
 - A migration run's generation, writer token, lease and checkpoint live only in its
-  `reduction_migrations` row (one runner per Reduction, across instances); the sweep, the deletion
+  `reduction_migrations` row (fenced chunks lock the Reduction row, then this row, in that order) (one runner per Reduction, across instances); the sweep, the deletion
   hook (a migrating generation is the one named there) and publication all read that row. Deleting a
   Reduction deletes its `reduction_migrations` row in the same small transaction; the startup sweep
   removes `reduction_migrations` and spool rows whose Reduction is gone.
 - **Spool, then process.** One `INSERT … SELECT` per Reduction parses the plan once, server-side,
-  into a spool table `reduction_migration_rows(run, cluster_ord, member_ord, …)`: the nesting is
+  into a spool table `reduction_migration_rows(reduction_id, generation, cluster_ord, member_ord, …)`,
+  indexed `(reduction_id, generation, cluster_ord, member_ord)`: the nesting is
   inside the statement (`jsonb_array_elements(plan->'clusters') WITH ORDINALITY` laterally joined to
   `jsonb_array_elements(c->'members') WITH ORDINALITY` on Postgres (`types.JSON` is `jsonb` there),
   `jsonb_each` for the `loserOwners` object joined by Resource id;
@@ -575,7 +588,10 @@ landing; a parked apply worker past its lease cannot merge.
   stranded claim that reconciliation would reopen) becomes `read_only` stale ("too large: compute
   again"): never actionable, never reopened, reserving only its ejected members (D4), so the next
   compute rebuilds the rest within the cap. An applied-and-merged one is kept as history.
-- **Publication**, one transaction (the spool rows are then deleted in chunks): a fenced write first, then require the `reduction_migrations` row
+- **Publication**, one transaction (the spool rows are then deleted in chunks): lock order is the
+  Reduction row first (a narrow `FOR UPDATE` on Postgres), then the `reduction_migrations` row, the
+  same order `DeleteResourceReduction` uses, so publication and deletion cannot deadlock; then a fenced
+  write, then require the `reduction_migrations` row
   still names this run's generation and writer token and the migrated Cluster and member counts equal the counts the pass read; set
   `plan_generation`, `plan_schema = 1`, coverage, settings, `last_apply`, and delete
   the `reduction_migrations` row. Version is not compared (edits are refused while `plan_schema = 0`).
@@ -607,8 +623,11 @@ landing; a parked apply worker past its lease cannot merge.
   and appended to the Winner in SQL once per merge: the locked Losers' snapshots are aggregated into one
   object keyed `resource_<id>` (today's shape, `resource_bulk_context.go:1185`; `json_group_object` /
   `jsonb_object_agg`) and merged into the existing `backups` object in one `UPDATE` (SQLite
-  `json_patch` with `{"backups": {...}}`, which merges keys; Postgres `jsonb_set(meta, '{backups}',
-  COALESCE(meta->'backups', '{}') || new)`), so earlier snapshots are kept; the statement count and
+  `json_patch` with `{"backups": {...}}`, which merges keys; Postgres `jsonb_set(COALESCE(NULLIF(meta,
+  'null'::jsonb), '{}'), '{backups}', COALESCE(NULLIF(meta->'backups', 'null'::jsonb), '{}') || new)`,
+  keeping today's guards verbatim, `resource_bulk_context.go:1218-1227`; the existing Loser-meta-into-
+  Winner statements stay as they are), so earlier snapshots are kept; Winners with NULL, JSON `null`,
+  non-object `meta` and `backups: null` are in the successive-merge test on both databases; the statement count and
   successive merges are tested on both databases
   (Postgres `jsonb_set`, SQLite `json_patch`, which creates
   `$.backups` when absent, as the code does today). Neither the Winner's nor a Loser's backup
@@ -690,11 +709,13 @@ landing; a parked apply worker past its lease cannot merge.
 
 ## D14b. Request size
 
-Every Reduction route and the bulk Resource delete route get a route-specific body byte limit
+Every Reduction route, the bulk Resource delete route and the direct merge route
+(`/v1/resources/merge`, which feeds the same merge with a caller's Loser list) get a route-specific body byte limit
 (`http.MaxBytesReader`) applied **before** decoding and before the CSRF middleware parses the form
 (`server/csrf.go:89`; tested with an oversized cookie-authenticated form) (the global JSON limit is
 off, `main.go:214`);
-element caps (500, 10,000) are checked after a bounded decode.
+element caps (500, 10,000) are checked after a bounded decode, and the shared merge entry point
+refuses more than `MaxClusterMembers - 1` Losers whatever its caller.
 
 ## D15. Visible changes (docs-site, openapi)
 
@@ -927,3 +948,17 @@ Also in this change: the review card layout fix for long Resource names and fail
 | advisory lock connection and wait (pi P2, arch 4) | D1 |
 | apply-time "left the selection" not in D15 (arch 3) | D15 |
 | table naming (arch 5) | header |
+
+## v13 findings, where addressed (v15)
+
+| Finding | Section |
+|---|---|
+| migration publication vs Reduction delete lock order (pi) | D12 |
+| backups append drops today's null guards (pi, arch 1) | D13 |
+| demoted claim keeps `claim_id`; stamp refuses it (pi) | D3 |
+| expired lease hides committed work (pi) | D10 bookkeeping after expiry |
+| cleanup loses its inputs (pi) | D9 cleanup manifest |
+| direct merge route uncapped (pi) | D14b |
+| spool key columns (arch 2) | D12 |
+| settle fence vs compute (arch 3) | D4 |
+| per-claim Extent probe cost (arch 4) | D5 |
