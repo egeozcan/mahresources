@@ -3,6 +3,8 @@ package server
 import (
 	"net/http"
 	"strings"
+
+	"mahresources/server/api_handlers"
 )
 
 // Route-specific request body limits (design D14b). They are applied before any
@@ -39,7 +41,7 @@ func routeBodyLimit(path string) int64 {
 func withRouteBodyLimit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if limit := routeBodyLimit(r.URL.Path); limit > 0 && r.Body != nil && r.Method != http.MethodGet {
-			r.Body = http.MaxBytesReader(w, r.Body, limit)
+			r.Body = api_handlers.BoundedBody{ReadCloser: http.MaxBytesReader(w, r.Body, limit)}
 		}
 		next.ServeHTTP(w, r)
 	})

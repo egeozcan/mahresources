@@ -2,6 +2,7 @@ package api_handlers
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"reflect"
 	"strings"
@@ -66,6 +67,10 @@ func tryFillStructValuesFromRequestWithLimit(dst any, w http.ResponseWriter, req
 	return tryFillStructValuesFromRequest(dst, request)
 }
 
+// BoundedBody is a request body that was capped at a route's limit. A JSON decode of it
+// reads to the end of the body, so bytes after the value count against the cap too.
+type BoundedBody struct{ io.ReadCloser }
+
 func tryFillStructValuesFromRequest(dst any, request *http.Request) error {
 	contentTypeHeader := request.Header.Get("Content-type")
 
@@ -73,7 +78,18 @@ func tryFillStructValuesFromRequest(dst any, request *http.Request) error {
 		// KAN-22: No JSON body size limit is by design. Mahresources is a personal information
 		// management application designed to run on private/internal networks with no authentication
 		// layer. All users are trusted, and large JSON payloads are expected for bulk operations.
-		return json.NewDecoder(request.Body).Decode(dst) // KAN-22: no size limit by design — internal network app, all users trusted
+		if err := json.NewDecoder(request.Body).Decode(dst); err != nil { // KAN-22: no size limit by design — internal network app, all users trusted
+			return err
+		}
+		// The decoder stops at the end of the value. On a route with a limit, whatever
+		// follows must fit the limit too, or a valid value plus megabytes of whitespace
+		// commits past it; reading on reports the cap.
+		if _, bounded := request.Body.(BoundedBody); bounded {
+			if _, err := io.Copy(io.Discard, request.Body); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
 	if strings.HasPrefix(contentTypeHeader, constants.UrlEncodedForm) {
