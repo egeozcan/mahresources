@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -139,7 +140,6 @@ func testDeletePathsClearChildrenInChunks(t *testing.T, ctx *MahresourcesContext
 
 	var mu sync.Mutex
 	var maxChild int64
-	var leftBehind int64
 	const raw = "test:child_delete_rows"
 	const before = "test:children_before_parent"
 	require.NoError(t, ctx.db.Callback().Raw().After("gorm:raw").Register(raw, func(tx *gorm.DB) {
@@ -152,31 +152,7 @@ func testDeletePathsClearChildrenInChunks(t *testing.T, ctx *MahresourcesContext
 			mu.Unlock()
 		}
 	}))
-	require.NoError(t, ctx.db.Callback().Delete().Before("gorm:delete").Register(before, func(tx *gorm.DB) {
-		if tx.Statement.Table != "resources" {
-			return
-		}
-		ids, _ := tx.Statement.Vars, 0
-		var flat []uint
-		for _, v := range ids {
-			switch x := v.(type) {
-			case uint:
-				flat = append(flat, x)
-			case []uint:
-				flat = append(flat, x...)
-			}
-		}
-		var n int64
-		for _, c := range resourceCascadeChildren {
-			var k int64
-			if err := tx.Session(&gorm.Session{NewDB: true}).Raw(fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s IN ?", c.Table, c.Column), flat).Scan(&k).Error; err == nil {
-				n += k
-			}
-		}
-		mu.Lock()
-		leftBehind += n
-		mu.Unlock()
-	}))
+	probe := installChildrenBeforeParentProbe(t, ctx.db, before)
 	t.Cleanup(func() {
 		_ = ctx.db.Callback().Raw().Remove(raw)
 		_ = ctx.db.Callback().Delete().Remove(before)
@@ -203,9 +179,96 @@ func testDeletePathsClearChildrenInChunks(t *testing.T, ctx *MahresourcesContext
 	assert.Zero(t, childCount(t, ctx.db, a.ID, b.ID, c.ID, e.ID), "no child survives")
 	mu.Lock()
 	defer mu.Unlock()
+	leftBehind := probe.leftBehind()
 	assert.Zero(t, leftBehind, "no cascading child was left for the parent delete to cascade")
 	assert.LessOrEqual(t, maxChild, int64(deleteChunkRows), "no child delete statement removed more than a chunk")
 	assert.Greater(t, maxChild, int64(0))
+	assert.Positive(t, probe.deletes, "the probe saw no parent delete")
+	assert.Empty(t, probe.errs, "the probe could not count children")
+}
+
+// childrenBeforeParentProbe counts, for every DELETE of resources rows, the cascading
+// children still present when the parent delete runs, for the ids that delete names.
+type childrenBeforeParentProbe struct {
+	mu      sync.Mutex
+	left    int64
+	deletes int
+	errs    []error
+}
+
+func (p *childrenBeforeParentProbe) leftBehind() int64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.left
+}
+
+// resourceDeleteIDs is the ids a resources delete names, read from its WHERE clause
+// (GORM builds the SQL and its binds only inside gorm:delete, after this callback).
+func resourceDeleteIDs(tx *gorm.DB) []uint {
+	var ids []uint
+	where, ok := tx.Statement.Clauses["WHERE"].Expression.(clause.Where)
+	if !ok {
+		return nil
+	}
+	for _, e := range where.Exprs {
+		ex, ok := e.(clause.Expr)
+		if !ok {
+			continue
+		}
+		for _, v := range ex.Vars {
+			switch x := v.(type) {
+			case uint:
+				ids = append(ids, x)
+			case []uint:
+				ids = append(ids, x...)
+			}
+		}
+	}
+	return ids
+}
+
+func installChildrenBeforeParentProbe(t *testing.T, db *gorm.DB, name string) *childrenBeforeParentProbe {
+	t.Helper()
+	p := &childrenBeforeParentProbe{}
+	require.NoError(t, db.Callback().Delete().Before("gorm:delete").Register(name, func(tx *gorm.DB) {
+		if tx.Statement.Table != "resources" {
+			return
+		}
+		ids := resourceDeleteIDs(tx)
+		var n int64
+		var errs []error
+		for _, c := range resourceCascadeChildren {
+			var k int64
+			if err := tx.Session(&gorm.Session{NewDB: true}).Raw(fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s IN ?", c.Table, c.Column), ids).Scan(&k).Error; err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			n += k
+		}
+		p.mu.Lock()
+		p.left += n
+		p.deletes++
+		p.errs = append(p.errs, errs...)
+		if len(ids) == 0 {
+			p.errs = append(p.errs, fmt.Errorf("a resources delete named no ids the probe could read"))
+		}
+		p.mu.Unlock()
+	}))
+	t.Cleanup(func() { _ = db.Callback().Delete().Remove(name) })
+	return p
+}
+
+// The probe must see a child that is still there: deleting a parent that has one,
+// directly, is counted. Without this the "no child left" assertion could pass because
+// it reads nothing.
+func TestChildrenBeforeParentProbeSeesALeftBehindChild(t *testing.T) {
+	ctx := newReductionSQLiteContext(t)
+	probe := installChildrenBeforeParentProbe(t, ctx.db, "test:probe_control")
+	r := deleteFixture(t, ctx, "ctl", 3, 2)
+	require.NoError(t, ctx.db.Exec("PRAGMA foreign_keys = OFF").Error)
+	require.NoError(t, ctx.db.Where("id IN ?", []uint{r.ID}).Delete(&models.Resource{}).Error)
+	assert.Greater(t, probe.leftBehind(), int64(0), "the probe did not see the children left for the cascade")
+	assert.Empty(t, probe.errs)
 }
 
 func TestDeletePathsClearChildrenInChunksSQLite(t *testing.T) {
