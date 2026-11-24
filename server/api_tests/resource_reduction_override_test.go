@@ -26,7 +26,7 @@ func override(t *testing.T, tc *TestContext, reductionID uint, clusterID, action
 		ResourceID: resourceID,
 	}, owner, restricted)
 	require.NoError(t, err)
-	plan, err := application_context.DecodeReductionPlan(updated.Plan)
+	plan, err := tc.AppCtx.PlanForTest(updated.ID)
 	require.NoError(t, err)
 	return plan
 }

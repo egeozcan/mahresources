@@ -54,7 +54,7 @@ func awaitReduction(t *testing.T, tc *TestContext, id uint) models.ResourceReduc
 		require.NoError(t, err)
 		if red.Status != models.ReductionStatusComputing {
 			require.Equal(t, models.ReductionStatusReady, red.Status, "clustering failed: %s", red.ComputeError)
-			plan, err := application_context.DecodeReductionPlan(red.Plan)
+			plan, err := tc.AppCtx.PlanForTest(red.ID)
 			require.NoError(t, err)
 			return plan
 		}
@@ -404,18 +404,23 @@ func TestAComputeThatLostItsRowIsRefusedRatherThanRebased(t *testing.T) {
 
 	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
 	require.NoError(t, err)
-	stalePlan, err := application_context.DecodeReductionPlan(current.Plan)
+	stalePlan, err := tc.AppCtx.PlanForTest(current.ID)
 	require.NoError(t, err)
 
-	// Something widens the Extent while the run is notionally still going.
+	// A compute begins (its request bumps the version), and the plan it computed
+	// from the version before is landed against it: refused, not rebased.
+	jobID, err := tc.AppCtx.BeginComputeForTest(red.ID, current.Version)
+	require.NoError(t, err)
+
+	// Widening the Extent while it runs is refused outright now.
 	c := addWithHash(t, tc, "c.txt", "c body", "shared-hash")
 	_, err = tc.AppCtx.CreateOrExtendResourceReduction(&query_models.ResourceReductionCreator{
 		ID:          red.ID,
 		ResourceIds: []uint{c.ID},
 	}, owner, restricted)
-	require.NoError(t, err)
+	assert.Error(t, err, "settings and Extent edits are refused while computing")
 
-	err = tc.AppCtx.StoreReductionPlanForTest(red.ID, current.ComputeJobID, current.Version, stalePlan)
+	err = tc.AppCtx.StoreReductionPlanForTest(red.ID, jobID, current.Version, stalePlan)
 	assert.ErrorIs(t, err, application_context.ErrReductionStaleCompute)
 }
 

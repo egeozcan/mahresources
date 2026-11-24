@@ -52,7 +52,7 @@ func TestCreateResourceReductionFromResources(t *testing.T) {
 	assert.False(t, red.KeepAsVersionIdentical, "a byte-identical Loser has nothing to preserve")
 	assert.True(t, red.KeepAsVersionNear, "a Near-Identical Loser holds pixels worth a way back to")
 
-	extent, err := application_context.DecodeReductionExtent(red.Extent)
+	extent, err := tc.AppCtx.ExtentForTest(red.ID)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []uint{a.ID, b.ID}, extent.ResourceIDs)
 	assert.Empty(t, extent.GroupIDs)
@@ -76,7 +76,7 @@ func TestCreateResourceReductionFromGroups(t *testing.T) {
 	}, owner, restricted)
 	require.NoError(t, err)
 
-	extent, err := application_context.DecodeReductionExtent(red.Extent)
+	extent, err := tc.AppCtx.ExtentForTest(red.ID)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []uint{group.ID}, extent.GroupIDs)
 	assert.Empty(t, extent.ResourceIDs)
@@ -102,7 +102,7 @@ func TestAddingASelectionWidensTheExtent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, red.ID, widened.ID, "widening does not make a second Reduction")
 
-	extent, err := application_context.DecodeReductionExtent(widened.Extent)
+	extent, err := tc.AppCtx.ExtentForTest(widened.ID)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []uint{a.ID, b.ID, c.ID}, extent.ResourceIDs)
 	assert.Greater(t, widened.Version, red.Version, "a widened Extent moves the version")

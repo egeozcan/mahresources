@@ -5,7 +5,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"mahresources/application_context"
 	"mahresources/models"
 	"mahresources/models/query_models"
 )
@@ -41,7 +40,7 @@ func TestResourceReductionOwnedSelection(t *testing.T) {
 	ctx := scopedTo(t, tc, root.ID)
 	red, err := ctx.CreateOrExtendResourceReduction(&query_models.ResourceReductionCreator{OwnerId: root.ID}, nil, false)
 	require.NoError(t, err)
-	extent, err := application_context.DecodeReductionExtent(red.Extent)
+	extent, err := tc.AppCtx.ExtentForTest(red.ID)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, direct, extent.ResourceIDs)
 	assert.Empty(t, extent.GroupIDs)
@@ -53,7 +52,7 @@ func TestResourceReductionOwnedSelection(t *testing.T) {
 	}, nil, false)
 	require.NoError(t, err)
 	assert.Equal(t, red.ID, widened.ID)
-	extent, err = application_context.DecodeReductionExtent(widened.Extent)
+	extent, err = tc.AppCtx.ExtentForTest(widened.ID)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, append(direct, descendants...), extent.ResourceIDs)
 	assert.Empty(t, extent.GroupIDs)
@@ -81,7 +80,7 @@ func TestResourceReductionOwnedSelectionEmptyParent(t *testing.T) {
 		OwnerId: root.ID, IncludeDescendants: true,
 	}, nil, false)
 	require.NoError(t, err)
-	extent, err := application_context.DecodeReductionExtent(red.Extent)
+	extent, err := tc.AppCtx.ExtentForTest(red.ID)
 	require.NoError(t, err)
 	assert.Equal(t, []uint{r.ID}, extent.ResourceIDs)
 }

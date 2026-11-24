@@ -79,6 +79,7 @@ func setupPostgresTestEnvWith(t *testing.T, mutate func(*application_context.Mah
 		&models.ImageHash{},
 		&models.ResourceSimilarity{},
 		&models.ResourceReduction{}, &models.ReductionClusterRow{}, &models.ReductionMemberRow{}, &models.ReductionDeletedID{}, &models.ResourceCleanupManifest{}, &models.ReductionMigration{},
+		&models.ReductionExtentResource{}, &models.ReductionExtentGroup{}, &models.ReductionExtentRow{}, &models.ReductionSeed{}, &models.ReductionMigrationRow{},
 		&models.User{},
 		&models.SavedSearch{}, &models.UserSetting{},
 		&models.Session{},
@@ -107,6 +108,9 @@ func setupPostgresTestEnvWith(t *testing.T, mutate func(*application_context.Mah
 
 	if err := models.EnsureSupplementalIndexes(db); err != nil {
 		t.Fatalf("Failed to create supplemental indexes: %v", err)
+	}
+	if err := models.EnsureSimilarityDistanceIndexes(db); err != nil {
+		t.Fatalf("Failed to create similarity distance indexes: %v", err)
 	}
 	seed.AddInitialData(db)
 
