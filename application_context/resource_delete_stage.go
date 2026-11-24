@@ -62,15 +62,33 @@ var resourceCascadeChildren = []struct{ Table, Column string }{
 // deleteChunkRows is the most rows one child-delete statement removes.
 var deleteChunkRows = 500
 
+// runBetween calls each renewal a caller passed to a long cleanup loop. The merge
+// passes its lease renewal, so a Loser with a million children cannot outlast the
+// lease it is judged by; every other caller passes none.
+func runBetween(between []func() error) error {
+	for _, f := range between {
+		if f == nil {
+			continue
+		}
+		if err := f(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // deleteChildChunks deletes every row of table whose column names one of ids, in
 // statements of at most deleteChunkRows rows, until none is left.
-func deleteChildChunks(db *gorm.DB, table, column string, ids []uint) error {
+func deleteChildChunks(db *gorm.DB, table, column string, ids []uint, between ...func() error) error {
 	rowRef := "rowid"
 	if db.Dialector.Name() == "postgres" {
 		rowRef = "ctid"
 	}
 	stmt := fmt.Sprintf("DELETE FROM %s WHERE %s IN (SELECT %s FROM %s WHERE %s IN ? LIMIT %d)", table, rowRef, rowRef, table, column, deleteChunkRows)
 	for {
+		if err := runBetween(between); err != nil {
+			return err
+		}
 		res := db.Exec(stmt, ids)
 		if res.Error != nil {
 			return res.Error
@@ -88,21 +106,21 @@ func deleteChildChunks(db *gorm.DB, table, column string, ids []uint) error {
 // Resource's after-commit inputs are written to resource_cleanup_manifest under
 // op for drainResourceDeleteManifest. logSeries says whether an auto-deleted empty
 // Series is logged.
-func (ctx *MahresourcesContext) deleteResourcesDBOnly(rows []models.Resource, op string, manifest, logSeries bool) error {
+func (ctx *MahresourcesContext) deleteResourcesDBOnly(rows []models.Resource, op string, manifest, logSeries bool, between ...func() error) error {
 	sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
 	for start := 0; start < len(rows); start += deleteStageChunk {
 		end := start + deleteStageChunk
 		if end > len(rows) {
 			end = len(rows)
 		}
-		if err := ctx.deleteResourceChunk(rows[start:end], op, manifest, logSeries); err != nil {
+		if err := ctx.deleteResourceChunk(rows[start:end], op, manifest, logSeries, between...); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (ctx *MahresourcesContext) deleteResourceChunk(rows []models.Resource, op string, manifest, logSeries bool) error {
+func (ctx *MahresourcesContext) deleteResourceChunk(rows []models.Resource, op string, manifest, logSeries bool, between ...func() error) error {
 	db := ctx.db
 	ids := make([]uint, 0, len(rows))
 	for i := range rows {
@@ -134,7 +152,7 @@ func (ctx *MahresourcesContext) deleteResourceChunk(rows []models.Resource, op s
 		return err
 	}
 	for _, child := range resourceCascadeChildren {
-		if err := deleteChildChunks(db, child.Table, child.Column, ids); err != nil {
+		if err := deleteChildChunks(db, child.Table, child.Column, ids, between...); err != nil {
 			return err
 		}
 	}
@@ -178,11 +196,11 @@ func (ctx *MahresourcesContext) deleteResourceChunk(rows []models.Resource, op s
 // finishResourceDeletion is the tail of every deleting transaction, in the order
 // the design fixes: walk the affected Reduction Clusters, scrub the note blocks
 // (both read the staged ids), then delete the staged ids.
-func finishResourceDeletion(db *gorm.DB, op string) error {
-	if err := reductionDeletionHook(db, op); err != nil {
+func finishResourceDeletion(db *gorm.DB, op string, between ...func() error) error {
+	if err := reductionDeletionHook(db, op, between...); err != nil {
 		return err
 	}
-	if err := scrubDeletedResourcesFromBlocks(db, op); err != nil {
+	if err := scrubDeletedResourcesFromBlocks(db, op, between...); err != nil {
 		return err
 	}
 	return purgeDeletedIDs(db, op)

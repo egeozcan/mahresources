@@ -104,7 +104,7 @@ func opLiteral(op string) string {
 // so a SQLite block that repeats a key this scrub reads (resourceIds, calendars, a
 // calendar's source or its source's resourceId) is scrubbed by the Go version, that
 // one block at a time. Postgres's jsonb has dropped repeated keys on write.
-func scrubDeletedResourcesFromBlocks(db *gorm.DB, op string) error {
+func scrubDeletedResourcesFromBlocks(db *gorm.DB, op string, between ...func() error) error {
 	var s blockScrubSQL
 	switch db.Dialector.Name() {
 	case "postgres":
@@ -114,6 +114,9 @@ func scrubDeletedResourcesFromBlocks(db *gorm.DB, op string) error {
 	}
 	var last uint
 	for {
+		if err := runBetween(between); err != nil {
+			return err
+		}
 		var blocks []struct {
 			ID  uint
 			Dup int
@@ -422,11 +425,14 @@ var reductionHookStep = 500
 // matching member rows are updated by primary-key page, then gone_members is
 // recomputed. It never deletes the staged ids and is idempotent. No Reduction row
 // is touched and no version bumps.
-func reductionDeletionHook(db *gorm.DB, op string) error {
+func reductionDeletionHook(db *gorm.DB, op string, between ...func() error) error {
 	live := `(EXISTS (SELECT 1 FROM resource_reductions r WHERE r.id = m.reduction_id AND (r.plan_generation = m.generation OR r.compute_generation = m.generation))` +
 		` OR EXISTS (SELECT 1 FROM reduction_migrations g WHERE g.reduction_id = m.reduction_id AND g.generation = m.generation))`
 	var last uint
 	for {
+		if err := runBetween(between); err != nil {
+			return err
+		}
 		var clusterIDs []uint
 		if err := db.Raw(
 			`SELECT DISTINCT m.cluster_id FROM reduction_members m JOIN reduction_deleted_ids d ON d.op = ? AND d.resource_id = m.resource_id`+

@@ -1104,10 +1104,10 @@ func (ctx *MahresourcesContext) MergeResourcesLocking(winnerId uint, loserIds []
 			return err
 		}
 		deleteOp = newDeleteOp()
-		if err := transactionCtx.deleteResourcesDBOnly(resourceRowsFromLocked(participants, loserIds), deleteOp, true, false); err != nil {
+		if err := transactionCtx.deleteResourcesDBOnly(resourceRowsFromLocked(participants, loserIds), deleteOp, true, false, renew); err != nil {
 			return err
 		}
-		if err := finishResourceDeletion(tx, deleteOp); err != nil {
+		if err := finishResourceDeletion(tx, deleteOp, renew); err != nil {
 			return err
 		}
 
