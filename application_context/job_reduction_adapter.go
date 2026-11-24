@@ -331,6 +331,19 @@ func (a *reductionComputeAdapter) start(ctx context.Context, execution jobs.Exec
 	if err != nil {
 		return nil, err
 	}
+	if reductionStartAfterClaimHook != nil {
+		reductionStartAfterClaimHook(execution)
+	}
+	// A cancel recorded after the check above and before this claim has no queue
+	// entry to stop and nothing else to read it, so the intent is asked once more
+	// under the claim. The claim is released as a failed run, the way a cancelled
+	// compute leaves a row, and the Job ends cancelled.
+	if a.ctx.executionCancelled(execution) {
+		if writeErr := a.ctx.storeFailCompute(reduction.ID, nonce, generation, errReductionStartCancelled); writeErr != nil {
+			return nil, writeErr
+		}
+		return nil, errReductionStartCancelled
+	}
 	legacyID, err := a.ctx.jobHandleFor(execution.JobID, ReductionComputeHandleNamespace)
 	if err != nil {
 		return nil, err
@@ -338,13 +351,28 @@ func (a *reductionComputeAdapter) start(ctx context.Context, execution jobs.Exec
 	if legacyID == "" {
 		legacyID = download_queue.NewJobID()
 	}
-	return a.ctx.startReductionComputeQueueJob(
+	entry, err := a.ctx.startReductionComputeQueueJob(
 		reduction.ID, nonce, generation, legacyID,
 		jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
 		a.ctx.jobOwnerFor(execution.JobID),
 		reduction.CreatedByUserId,
 	)
+	if err != nil {
+		return nil, err
+	}
+	// A cancel recorded between the read above and the entry's existence found no
+	// entry to stop. The intent is durable before this read and the entry exists
+	// before it, so either that cancel reached the entry or this read sees the
+	// intent; the entry's context is cancelled before the run can land.
+	if a.ctx.executionCancelled(execution) {
+		_ = a.ctx.downloadManager.Cancel(entry.ID)
+	}
+	return entry, nil
 }
+
+// reductionStartAfterClaimHook runs once a start holds its claim and before it
+// submits the queue entry. Only a test sets it, to record a cancel in that window.
+var reductionStartAfterClaimHook func(execution jobs.Execution)
 
 // reductionStartRefusal is a start that must end the Job blocked with a reason.
 type reductionStartRefusal struct{ reason string }
@@ -396,7 +424,9 @@ func (a *reductionComputeAdapter) awaitUpgrade(ctx context.Context, execution jo
 			return reduction, nil
 		}
 		if !time.Now().Before(deadline) {
-			return nil, fmt.Errorf("the Resource Reduction's plan was not moved to the new format by the migration within %s; try the compute again once the migration has finished", reductionUpgradeMaxWait)
+			// The migration is slow, not the compute wrong: the Job is held, not failed
+			// (design D12), and its Resume runs it once the plan is published.
+			return nil, &reductionStartRefusal{reason: "migration-pending"}
 		}
 		select {
 		case <-ctx.Done():
