@@ -857,6 +857,7 @@ func (ctx *MahresourcesContext) MergeResourcesLocking(winnerId uint, loserIds []
 		return fmt.Errorf("%w: %d losers named, at most %d", ErrTooManyResources, len(loserIds), reductionMemberCap-1)
 	}
 
+	namedLosers := make(map[uint]bool, len(loserIds))
 	for i, id := range loserIds {
 		if id == 0 {
 			return fmt.Errorf("loser number %v has 0 id", i+1)
@@ -865,6 +866,11 @@ func (ctx *MahresourcesContext) MergeResourcesLocking(winnerId uint, loserIds []
 		if id == winnerId {
 			return errors.New("winner cannot be one of the losers")
 		}
+		// One delete, one version: a repeated Loser would be versioned twice.
+		if namedLosers[id] {
+			return fmt.Errorf("loser %d is named more than once", id)
+		}
+		namedLosers[id] = true
 	}
 
 	// Two-phase approach: DB operations in transaction, file I/O after commit.
