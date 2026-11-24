@@ -60,3 +60,7 @@ func TestReductionConfinedShapesNeverShowTheTwinPG(t *testing.T) {
 func TestReductionTwentyThousandGroupSubtreePG(t *testing.T) {
 	testReductionTwentyThousandGroupSubtree(t, newReductionPGContext(t))
 }
+
+func TestSeedKeysOrderAsBytesDoPG(t *testing.T) {
+	testSeedKeysOrderAsBytesDo(t, newReductionPGContext(t))
+}
