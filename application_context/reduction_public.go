@@ -62,7 +62,7 @@ func (ctx *MahresourcesContext) GetReductionClusterMembersChecked(id uint, owner
 	}
 	var page *contracts.ReductionMembersPage
 	err = ctx.withReadSnapshot(func(snap *MahresourcesContext) error {
-		reduction, err := snap.loadReductionForUpdate(id, ownerUserID, ownerRestricted)
+		reduction, err := snap.loadReductionForStoreRead(id, ownerUserID, ownerRestricted)
 		if err != nil {
 			return err
 		}

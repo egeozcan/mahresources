@@ -108,3 +108,34 @@ func testStoreLargestLoserIsExactPastInt64(t *testing.T, ctx *MahresourcesContex
 func TestStoreLargestLoserIsExactPastInt64SQLite(t *testing.T) {
 	testStoreLargestLoserIsExactPastInt64(t, newReductionSQLiteContext(t))
 }
+
+// A Reduction name stored at its full length must not cross into Go on a members request:
+// the row is read with the name cut in SQL, as the review read does.
+func testStoreMembersRequestReadsTheBoundedName(t *testing.T, ctx *MahresourcesContext) {
+	r := tableReduction(t, ctx)
+	ids := sequentialIDs(1, 3)
+	require.NoError(t, ctx.reductionStore().insertCluster(r, "gen", &storedCluster{
+		Row: models.ReductionClusterRow{Key: "k", Tier: "identical", State: "open", WinnerID: ids[0]}, Members: memberRows(ids...)}))
+	require.NoError(t, ctx.db.Model(&models.ResourceReduction{}).Where("id = ?", r.ID).Update("name", strings.Repeat("€", 367)).Error)
+
+	capture := &rowsCapture{}
+	spy := *ctx
+	spy.db = ctx.db.Session(&gorm.Session{Logger: capture})
+	_, err := spy.GetReductionClusterMembers(r.ID, nil, false, "k", "")
+	require.NoError(t, err)
+
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	saw := false
+	for _, sql := range capture.sqls {
+		if strings.Contains(sql, "resource_reductions") && strings.Contains(sql, "SELECT") {
+			saw = true
+			assert.Contains(t, strings.ToLower(sql), "substr(", "the name is cut in SQL: %s", sql)
+		}
+	}
+	assert.True(t, saw)
+}
+
+func TestStoreMembersRequestReadsTheBoundedNameSQLite(t *testing.T) {
+	testStoreMembersRequestReadsTheBoundedName(t, newReductionSQLiteContext(t))
+}

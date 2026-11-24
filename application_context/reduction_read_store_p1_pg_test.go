@@ -15,3 +15,7 @@ func TestStoreMemberPageSeeksOnTheWholeKeyPG(t *testing.T) {
 func TestStoreLargestLoserIsExactPastInt64PG(t *testing.T) {
 	testStoreLargestLoserIsExactPastInt64(t, newReductionPGContext(t))
 }
+
+func TestStoreMembersRequestReadsTheBoundedNamePG(t *testing.T) {
+	testStoreMembersRequestReadsTheBoundedName(t, newReductionPGContext(t))
+}
