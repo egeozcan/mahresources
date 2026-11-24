@@ -85,3 +85,26 @@ func testStoreMemberPageSeeksOnTheWholeKey(t *testing.T, ctx *MahresourcesContex
 func TestStoreMemberPageSeeksOnTheWholeKeySQLite(t *testing.T) {
 	testStoreMemberPageSeeksOnTheWholeKey(t, newReductionSQLiteContext(t))
 }
+
+// "Keep the larger copy" must name the larger of two copies whose pixel counts differ by
+// one even when both exceed 2^63: the comparison is exact, not a REAL's rounding.
+func testStoreLargestLoserIsExactPastInt64(t *testing.T, ctx *MahresourcesContext) {
+	kept := &models.Resource{Name: "kept", Hash: "h", Width: 10, Height: 10}
+	a := &models.Resource{Name: "a", Hash: "h", Width: 3_999_999_999, Height: 4_000_000_001}
+	b := &models.Resource{Name: "b", Hash: "h", Width: 4_000_000_000, Height: 4_000_000_000}
+	for _, res := range []*models.Resource{kept, a, b} {
+		require.NoError(t, ctx.db.Create(res).Error)
+	}
+	r := tableReduction(t, ctx)
+	require.NoError(t, ctx.reductionStore().insertCluster(r, "gen", &storedCluster{
+		Row: models.ReductionClusterRow{Key: "k", Tier: "near", State: "open", WinnerID: kept.ID, KeepsSmaller: true}, Members: memberRows(kept.ID, a.ID, b.ID)}))
+
+	review, _, err := ctx.storeGetReductionReview(r.ID, nil, false, 1, nil)
+	require.NoError(t, err)
+	require.Len(t, review.Clusters, 1)
+	assert.Equal(t, b.ID, review.Clusters[0].LargestMemberID, "4,000,000,000 x 4,000,000,000 is one pixel more than 3,999,999,999 x 4,000,000,001")
+}
+
+func TestStoreLargestLoserIsExactPastInt64SQLite(t *testing.T) {
+	testStoreLargestLoserIsExactPastInt64(t, newReductionSQLiteContext(t))
+}

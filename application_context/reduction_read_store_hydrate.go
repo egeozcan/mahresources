@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"fmt"
+	"math/bits"
 	"strconv"
 	"strings"
 	"time"
@@ -230,19 +231,30 @@ func (s *reductionStore) largestLoser(clusterID, winnerID uint) (*models.Resourc
 	} else if s.scope.mode == scopeDeny {
 		return nil, nil
 	}
+	// The Cluster's Losers, bounded by the member cap, in member order. The pixel counts
+	// are compared here in 128-bit integers: in SQL a product past 2^63 becomes a REAL on
+	// SQLite, and two different products can round to the same one.
 	var rows []struct {
 		ID            uint
 		Width, Height uint
 	}
 	if err := s.db.Raw(prefix+`SELECT r.id AS id, r.width AS width, r.height AS height FROM reduction_members m JOIN resources r ON r.id = m.resource_id
-		WHERE m.cluster_id = ? AND NOT m.ejected AND m.resource_id <> ?`+visible+` ORDER BY CAST(r.width AS NUMERIC) * CAST(r.height AS NUMERIC) DESC, m."position", m.id LIMIT 1`,
-		append(append([]any{}, args...), clusterID, winnerID)...).Scan(&rows).Error; err != nil {
+		WHERE m.cluster_id = ? AND NOT m.ejected AND m.resource_id <> ?`+visible+` ORDER BY m."position", m.id LIMIT ?`,
+		append(append([]any{}, args...), clusterID, winnerID, models.MaxClusterMembers)...).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	return &models.Resource{ID: rows[0].ID, Width: rows[0].Width, Height: rows[0].Height}, nil
+	best := 0
+	bestHi, bestLo := bits.Mul64(uint64(rows[0].Width), uint64(rows[0].Height))
+	for i := 1; i < len(rows); i++ {
+		hi, lo := bits.Mul64(uint64(rows[i].Width), uint64(rows[i].Height))
+		if hi > bestHi || (hi == bestHi && lo > bestLo) {
+			best, bestHi, bestLo = i, hi, lo
+		}
+	}
+	return &models.Resource{ID: rows[best].ID, Width: rows[best].Width, Height: rows[best].Height}, nil
 }
 
 // clusterOfRow is the JSON plan's view of a Cluster row, with the unscoped reading

@@ -123,7 +123,11 @@ func testStoreReadOnlyKeepsSmallerDoesNotScan(t *testing.T, ctx *MahresourcesCon
 	capture.mu.Lock()
 	defer capture.mu.Unlock()
 	for _, sql := range capture.sqls {
-		assert.NotContains(t, strings.ToLower(sql), "order by r.width", sql)
+		lower := strings.ToLower(sql)
+		// No member-order query of any shape: the largest-loser lookup joins the members to
+		// their Resources and orders them, whatever it orders by.
+		assert.False(t, strings.Contains(lower, "reduction_members m") && strings.Contains(lower, "join resources"), sql)
+		assert.NotContains(t, lower, "order by r.width", sql)
 	}
 }
 

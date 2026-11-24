@@ -11,3 +11,7 @@ func TestStoreArrivalsDoNotReadRelationshipHistoryPG(t *testing.T) {
 func TestStoreMemberPageSeeksOnTheWholeKeyPG(t *testing.T) {
 	testStoreMemberPageSeeksOnTheWholeKey(t, newReductionPGContext(t))
 }
+
+func TestStoreLargestLoserIsExactPastInt64PG(t *testing.T) {
+	testStoreLargestLoserIsExactPastInt64(t, newReductionPGContext(t))
+}
