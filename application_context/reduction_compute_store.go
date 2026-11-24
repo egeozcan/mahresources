@@ -785,6 +785,11 @@ func (ctx *MahresourcesContext) storeDeleteReduction(r *models.ResourceReduction
 	if err != nil {
 		return err
 	}
+	// A legacy Reduction deleted after its spool was written and before it was
+	// published leaves spool rows no surviving parent points at; they go in chunks.
+	if err := s.deleteSpoolWhere(r.ID, "1 = ?", 1); err != nil {
+		return err
+	}
 	for _, table := range []string{"reduction_members", "reduction_clusters"} {
 		for {
 			var ids []uint

@@ -486,6 +486,25 @@ func (ctx *MahresourcesContext) SweepOrphanReductionSpool() error {
 			}
 		}
 		if len(ids) < migrationScanChunk {
+			break
+		}
+		after = ids[len(ids)-1]
+	}
+	// Spool rows whose Reduction no longer exists (it was deleted between its spool
+	// and its publication) have no surviving parent for the pass above to find.
+	after = 0
+	for {
+		var ids []uint
+		if err := s.db.Raw(`SELECT DISTINCT m.reduction_id FROM reduction_migration_rows m WHERE m.reduction_id > ?
+			AND NOT EXISTS (SELECT 1 FROM resource_reductions r WHERE r.id = m.reduction_id) ORDER BY m.reduction_id LIMIT ?`, after, migrationScanChunk).Scan(&ids).Error; err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := s.deleteSpoolWhere(id, `NOT EXISTS (SELECT 1 FROM resource_reductions r WHERE r.id = ?)`, id); err != nil {
+				return err
+			}
+		}
+		if len(ids) < migrationScanChunk {
 			return nil
 		}
 		after = ids[len(ids)-1]
