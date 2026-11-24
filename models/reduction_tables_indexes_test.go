@@ -22,7 +22,7 @@ func TestReductionTableIndexesHaveTheDesignColumns(t *testing.T) {
 	want := map[string]string{
 		"idx_rc_batch":    "reduction_id, generation, apply_batch, position, id",
 		"idx_rc_bulk":     "reduction_id, generation, bulk_op, id",
-		"idx_rseed_order": "reduction_id, generation, key_prefix",
+		"idx_rseed_rank": "reduction_id, generation, key_prefix, tie_rank, resource_id",
 	}
 	for name, cols := range want {
 		var got []string
