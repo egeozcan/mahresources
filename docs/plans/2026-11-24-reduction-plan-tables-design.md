@@ -108,8 +108,7 @@ statement and no crash window; the one creator sets 1 explicitly on new rows; th
 only writer of 0 → 1; a test kills startup right after AutoMigrate and asserts every row reads 0),
 `extent_all bool` (the whole-library flag, moved out of the Extent JSON; widening ORs it in the same
 CAS, as today),
-`settle_op` (nullable) and `settle_lease_until` (settle-only's own fence, D3), `plan_generation` (nullable: never landed), `compute_generation` (nullable), the migration's generation
-(nullable), `compute_lease_until` and `apply_lease_until` (int64 Unix nanoseconds, so lease checks
+`settle_op` (nullable) and `settle_lease_until` (settle-only's own fence, D3), `plan_generation` (nullable: never landed), `compute_generation` (nullable), `compute_lease_until` and `apply_lease_until` (int64 Unix nanoseconds, so lease checks
 never compare text timestamps on SQLite), `coverage`, `plan_settings`, `last_apply` (json). New and
 legacy JSON columns are tagged `json:"-"`. `Plan` and the legacy Extent id lists leave
 `models.ResourceReduction`; a `legacyReduction` model used only by the migration reads them.
@@ -248,8 +247,8 @@ Bookkeeping after a merge stays best-effort and logged, as today.
   by `compute_generation` while computing, the migration spool only by its `reduction_migrations` row, the
   deleted-id staging rows by nothing once their transaction ends; so a crash right after landing or
   publication leaves staging rows the next sweep removes (tested); a running
-  compute or migration's generation is protected by its column while set, and `compute_generation` /
-  the migration's generation are cleared only when that run ends (landing, failure, expiry handling).
+  compute's generation is protected by its column while set (cleared only when that run ends:
+  landing, failure, expiry handling), a migration's by its `reduction_migrations` row while it exists.
   The apply pins `plan_generation`, which is protected anyway. Runs after landing, at compute start
   and at startup. Deleting a Reduction deletes its row in one small transaction, then its children
   by `reduction_id` in chunks after commit; the startup sweep also removes rows whose Reduction no
@@ -578,8 +577,8 @@ landing; a parked apply worker past its lease cannot merge.
   compute rebuilds the rest within the cap. An applied-and-merged one is kept as history.
 - **Publication**, one transaction (the spool rows are then deleted in chunks): a fenced write first, then require the `reduction_migrations` row
   still names this run's generation and writer token and the migrated Cluster and member counts equal the counts the pass read; set
-  `plan_generation`, `plan_schema = 1`, coverage, settings, `last_apply`, clear
-  the migration's generation. Version is not compared (edits are refused while `plan_schema = 0`).
+  `plan_generation`, `plan_schema = 1`, coverage, settings, `last_apply`, and delete
+  the `reduction_migrations` row. Version is not compared (edits are refused while `plan_schema = 0`).
   The same transaction sets the legacy `plan` and `extent` columns to NULL: on SQLite (no TOAST)
   every later fence, lease renewal and CAS rewrites the whole row, so a multi-megabyte blob must not
   stay on it (rollback is restoring the backup either way).
