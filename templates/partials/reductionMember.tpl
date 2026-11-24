@@ -1,14 +1,15 @@
 {# One copy in a Cluster. Included twice by reductionCluster.tpl, the kept copy first. #}
 {# A member with no Resource behind it is one of two things, and they read very        #}
-{# differently. On an applied Cluster it is a copy this Reduction just merged away.     #}
+{# differently. On an applied Cluster it is a copy this Reduction just merged away (or,#}
+{# for its kept copy, one deleted elsewhere), and its id is printed so paging dedupes.  #}
 {# Anywhere else it is a Resource outside what this reviewer may see, rendered as a     #}
 {# placeholder and nothing else (no id, no role, no distance, no controls), because     #}
 {# printing any of those answers "what is over there?" for somebody whose whole         #}
 {# confinement is that they may not ask.                                                #}
 {% if not member.Resource %}
-<div class="reduction-member reduction-member--gone" data-testid="reduction-member-withheld"{% if cluster.State == "stale" %} data-gone-resource-id="{{ member.ResourceID }}"{% endif %}>
+<div class="reduction-member reduction-member--gone" data-testid="reduction-member-withheld"{% if cluster.State == "stale" or cluster.Merged %} data-gone-resource-id="{{ member.ResourceID }}"{% endif %}>
     <p class="text-xs text-stone-600 max-w-[10rem]">
-        {% if cluster.Merged %}Merged and removed.{% elif cluster.State == "stale" %}Removed elsewhere.{% else %}Resource unavailable.{% endif %}
+        {% if cluster.Merged and not member.IsWinner %}Merged and removed.{% elif cluster.State == "stale" or cluster.Merged %}Removed elsewhere.{% else %}Resource unavailable.{% endif %}
     </p>
     {# A copy that is gone is left out of a stale Cluster the same way as one that is not: this reopens the rest for review. #}
     {% if cluster.State == "stale" and cluster.StaleReason != "too large: compute again" and not member.IsWinner and not member.Ejected and not cluster.WinnerChanged %}

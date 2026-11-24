@@ -401,6 +401,24 @@ describe('appended copies of an applied Cluster', () => {
     expect(document.querySelector('[data-testid="reduction-member-withheld"]')!.textContent).toContain('Merged and removed.');
   });
 
+  test('a deleted Winner of an applied Cluster says it was removed elsewhere, not merged away', async () => {
+    document.body.innerHTML = appliedCard(true);
+    await page([{ ...member(2, null), IsWinner: true }]);
+    const gone = document.querySelector('[data-testid="reduction-member-withheld"]')!;
+    expect(gone.textContent).toContain('Removed elsewhere.');
+    expect(gone.textContent).not.toContain('Merged and removed.');
+  });
+
+  test('a placeholder of an applied Cluster carries its id, so a later page does not add it twice', async () => {
+    document.body.innerHTML = appliedCard(true).replace(
+      '<div class="reduction-cluster-members">',
+      '<div class="reduction-cluster-members"><div class="reduction-member reduction-member--gone" data-testid="reduction-member-withheld" data-gone-resource-id="2"><p>Removed elsewhere.</p></div>');
+    await page([{ ...member(2, null), IsWinner: true }, member(3, null)]);
+    const placeholders = document.querySelectorAll('[data-testid="reduction-member-withheld"]');
+    expect(placeholders).toHaveLength(2);
+    expect([...placeholders].map((p) => p.getAttribute('data-gone-resource-id'))).toEqual(['2', '3']);
+  });
+
   test('an unconfirmed apply keeps the unavailable wording', async () => {
     document.body.innerHTML = appliedCard(false);
     await page([member(2, null)]);

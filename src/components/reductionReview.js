@@ -92,9 +92,11 @@ function buildMemberNode(store, clusterId, member, { fixedKeep = false, readOnly
   if (!resource) {
     // Focusable (tabindex -1) so paging in a page that starts with one can still land on it.
     // A deleted copy's id marks its placeholder so a later page does not add it twice. A
-    // Cluster that is not stale shows an unseen copy, whose id stays unprinted.
-    const gone = el('div', { class: 'reduction-member reduction-member--gone', tabindex: '-1', 'data-testid': 'reduction-member-withheld', ...(stale ? { 'data-gone-resource-id': member.resourceId } : {}) }, [
-      el('p', { class: 'text-xs text-stone-600 max-w-[10rem]', text: merged ? 'Merged and removed.' : stale ? 'Removed elsewhere.' : 'Resource unavailable.' }),
+    // Cluster that is neither stale nor applied shows an unseen copy, whose id stays
+    // unprinted. On an applied Cluster only a Loser was merged away: its Winner is
+    // gone because something else deleted it.
+    const gone = el('div', { class: 'reduction-member reduction-member--gone', tabindex: '-1', 'data-testid': 'reduction-member-withheld', ...(stale || merged ? { 'data-gone-resource-id': member.resourceId } : {}) }, [
+      el('p', { class: 'text-xs text-stone-600 max-w-[10rem]', text: merged && !member.IsWinner ? 'Merged and removed.' : stale || merged ? 'Removed elsewhere.' : 'Resource unavailable.' }),
     ]);
     // A copy that is gone from a stale Cluster is left out like any other: this reopens
     // the rest for review (the server-rendered card offers the same).
