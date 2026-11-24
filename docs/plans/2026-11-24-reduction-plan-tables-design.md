@@ -1,8 +1,8 @@
 # Resource Reduction plan as tables: bounded memory at any library size
 
-Status: design v8. Review history: v1 pi 9 P0 / 4 P1, architect 3 / 18; v2 pi 9 / 7, architect 1 /
-12; v3 pi 9 / 2, architect 1 / 7; v4 pi 0 / 11, architect 0 / 5; v5 pi 0 / 9, architect 0 / 2; v6 pi 0 / 11, architect 0 / 1; v7 pi 0 / 10, architect 0 / 1. The
-tables at the end map the v3 to v7 findings to their fixes. Supersedes
+Status: design v9. Review history: v1 pi 9 P0 / 4 P1, architect 3 / 18; v2 pi 9 / 7, architect 1 /
+12; v3 pi 9 / 2, architect 1 / 7; v4 pi 0 / 11, architect 0 / 5; v5 pi 0 / 9, architect 0 / 2; v6 pi 0 / 11, architect 0 / 1; v7 pi 0 / 10, architect 0 / 1; v8 pi 0 / 6, architect 0 / 3.
+The tables at the end map the v3 to v8 findings to their fixes. Supersedes
 ADR 0003's "one row carries the plan" for the Cluster list.
 
 ## Problem
@@ -72,7 +72,8 @@ reduction_clusters
   apply_batch varchar(64) ''; approved_winner bigint 0; approved_seq int 0    -- D10
   outcome_batch varchar(64) ''          -- D10, replaces LastApply.ClusterIDs
   bulk_op varchar(64) ''                -- D3, marks the exact counted target set of one bulk write
-  seed_resource_id bigint 0             -- D5, the seed of a Near Cluster (its Winner for good when the star is full)
+  seed_resource_id bigint 0             -- D5, the seed of a Near Cluster built by this code (0 for Identical and migrated)
+  fixed_seed bool false                 -- D5, set at compute when the insider query reached its cap; never set by the migration
   unique (reduction_id, generation, key)
   index (reduction_id, generation, position)
   index (reduction_id, generation, state, tier, checked)
@@ -80,6 +81,7 @@ reduction_clusters
   index (reduction_id, generation, total_size desc, key)
   index (reduction_id, generation, apply_batch, position)
   index (reduction_id, generation, outcome_batch)
+  index (reduction_id, generation, bulk_op, id)
 
 reduction_members
   id bigint pk; cluster_id; reduction_id; generation; resource_id; position int
@@ -113,6 +115,11 @@ legacy JSON columns are tagged `json:"-"`. `Plan` and the legacy Extent id lists
 guard test, run against rows whose legacy columns hold a multi-megabyte plan, asserts that no
 non-migration query returns `plan` or `extent`; the job-migration loaders
 (`job_migration_reductions.go`, `job_reduction_adapter.go`) use `reductionColumns` too.
+
+`resource_similarities` gets two expression indexes on the effective distance the read path already
+uses, `(resource_id1, COALESCE(p_distance, hamming_distance), resource_id2)` and the mirror on
+`resource_id2`, created by an explicit statement (AutoMigrate cannot), `CONCURRENTLY` and off the
+request pool on Postgres, followed by `ANALYZE`. No pair writer changes and nothing is backfilled.
 
 No table has a foreign key to `resources`. All eight new tables (with the migration spool, D12, and the deletion staging table, D9) are classified in
 `models/saved_sql_tables.go` as not readable by saved SQL.
@@ -224,9 +231,11 @@ Bookkeeping after a merge stays best-effort and logged, as today.
   (distinct generations per Reduction), then each is deleted by `id > ?` keyset in chunks of 500, so
   live rows are never rescanned. NULL-safe, guarded per statement: delete rows `x` where `NOT EXISTS (SELECT 1
   FROM resource_reductions r WHERE r.id = x.reduction_id AND (x.generation = r.plan_generation OR
-  x.generation = r.compute_generation OR x.generation = r.migration_generation))`; the migration spool
-  (keyed by `reduction_id, generation`) and the extent, seed and deleted-id staging tables are swept
-  the same way; a running
+  x.generation = r.compute_generation OR x.generation = r.migration_generation))` for Clusters and
+  members. Staging tables are protected more narrowly: `reduction_extent` and `reduction_seeds` only
+  by `compute_generation` while computing, the migration spool only by `migration_generation`, the
+  deleted-id staging rows by nothing once their transaction ends; so a crash right after landing or
+  publication leaves staging rows the next sweep removes (tested); a running
   compute or migration's generation is protected by its column while set, and `compute_generation` /
   `migration_generation` are cleared only when that run ends (landing, failure, expiry handling).
   The apply pins `plan_generation`, which is protected anyway. Runs after landing, at compute start
@@ -276,26 +285,34 @@ Bookkeeping after a merge stays best-effort and logged, as today.
   counts the rest.
 - **Narrow Winner Rule loads**: `has_description` is computed in SQL as a boolean (`trim` with the
   full `unicode.IsSpace` set as trim characters, exact, both databases), so no description enters Go.
-  Name and content type load `substr(col, 1, 4096)`; the Winner Rule compares them on those 4,096
-  bytes (Postgres cannot index a longer `name` anyway). A documented deviation only for names
+  Name and content type load their first 4,096 **bytes** (`substr(CAST(col AS BLOB), 1, 4096)` on
+  SQLite, `substring(convert_to(col, 'UTF8') for 4096)` on Postgres); the Winner Rule and the D7 key
+  compare exactly those bytes (Postgres cannot index a longer `name` anyway). A documented deviation only for names
   sharing their first 4,096 bytes.
 - **Near tier seeds.** For each staged chunk of hashed, paired, available Resources, Go loads the
   Winner Rule's columns (narrow) and association counts (one grouped query per chunk), computes the
   sort key (D7) and inserts `(key_prefix, sort_key, resource_id)`. The loop reads seeds in keyset
   order on `(key_prefix, sort_key)` in chunks of 500, served by the prefix index (Postgres sorts ties
   of a prefix incrementally; prefixes collide only for strings sharing 500+ bytes).
-- **Near neighbours.** Two bounded queries per seed, each: both pair directions unioned (a
-  neighbour reached twice keeps the closer distance), the read threshold and aHash guard
-  (`mrql.SimilarPairPredicate`), joined to `image_hashes`, the subtree and availability (an anti-join
-  inside the query), ordered by `(distance, id)`. Insiders: `LIMIT 200` (at most 199 kept; a 200th
-  row only sets `truncated`). Outsiders: `LIMIT 200`, and the Winner Rule picks the best of those in
-  Go (today it picks among all outsiders; ADR 0002's amendment records "among the 200 nearest").
-- **Full stars.** A Near Cluster whose insiders reach 199 is *full*, whether or not anything was
-  left out. A full star admits no outsider, and its seed is its Winner for good: promote is refused
-  with "this Cluster is at the size limit; its kept copy is fixed", Restore never makes the seed a
-  Loser, and eligibility refuses a full star whose Winner is not its seed. The rule keys on member
-  count, which every viewer already sees, so it discloses nothing about copies a scoped viewer
-  cannot see; the `truncated` flag itself is shown only to unscoped viewers (D8). The seed is the
+- **Near neighbours.** One ordered pass per seed: each pair direction is read on its expression
+  index (D1) in `COALESCE(p_distance, hamming_distance), other id` order with the read threshold, the
+  aHash guard (`mrql.SimilarPairPredicate`), `image_hashes`, the subtree and availability (an
+  anti-join) in the same statement, `LIMIT 400`; Go merges the two directions (a neighbour reached
+  twice keeps the closer distance) and classifies rows by `in_extent`, keeping the nearest 199
+  insiders (a 200th sets `truncated`) and up to the 200 nearest outsiders, among which the Winner Rule
+  picks one in Go (today it picks among all outsiders; ADR 0002's amendment records "among the 200
+  nearest"). If the classification needs more rows, the pass continues by keyset on `(distance, id)`.
+- **Full stars.** A Near Cluster whose insider query reached 199 neighbours is *full*, whether or not
+  anything was left out; the compute records it as `fixed_seed` (never inferred from a member count:
+  198 insiders, the seed and a winning outsider also make 200 rows and are not full; migrated Clusters
+  have no recorded seed and are never full). A full star admits no outsider, and its seed is its
+  Winner for good: promote is refused with "this Cluster is at the size limit; its kept copy is
+  fixed", Restore never makes the seed a Loser, and eligibility, the apply stamp and the claim refuse
+  `fixed_seed AND winner_id <> seed_resource_id`; `fixed_seed` is in the fingerprint. Whether a star
+  is full depends only on its own visible insider count, which every viewer already sees, so it
+  discloses nothing about copies a scoped viewer cannot see; the `truncated` flag itself is shown
+  only to unscoped viewers (D8). Tests: 198 + seed + outsider Winner is approvable and promotable; 199
+  neighbours with nothing left out is full; a scoped viewer sees the same. The seed is the
   only stored match the left-out neighbours are known to have, so it is never what a capped Cluster
   deletes. Below 199 insiders, an outsider that beats them all joins in addition (never displacing
   an insider), as today.
@@ -375,6 +392,12 @@ databases order a set of keys by `(key_prefix, sort_key)` exactly as `bytes.Comp
   per Reduction), `settleableClaims`, LastApply counts (D10), and the page query (filter in SQL;
   `ORDER BY member_count DESC | total_size DESC | position`, then `key`; `LIMIT/OFFSET`; the page's
   members and Resources hydrated with the narrow projection).
+- **Bounded display text.** Every text field that crosses into Go on the review, list, `.json` and
+  apply-outcome paths (names, original names, content types) is cut to 1,024 bytes in SQL, with the
+  full value kept in a `title` only when it is under that bound; descriptions are never loaded there.
+- **Winner and member paging.** The Cluster's Winner is loaded on its own (it may not be among the
+  first 200 members after a promotion); members are hydrated by keyset `(position, id)`, 200 at a time,
+  with a "next members" cursor for over-cap history.
 - Pagination: `GeneratePagination` builds only the displayed window and its ellipses (it
   preallocates one entry per page today, `template_entities/pagination.go:44`).
 
@@ -394,6 +417,11 @@ databases order a set of keys by `(key_prefix, sort_key)` exactly as `bytes.Comp
   deleted ids (the loops are restructured to delete in chunks); a guard test fails on a Resource
   delete outside them. Idempotent; no Reduction row, no version bump. An applied Cluster's own
   Losers get `gone = true` but its effective state is `applied`, never stale.
+- **Delete paths bounded.** Each Resource's own child cleanup on delete (similarity pairs,
+  association rows, versions, block references) runs in keyset chunks of 500 rather than one
+  statement per kind; `BulkDeleteResources` requests are capped at 10,000 ids (D15), and its
+  post-commit effects (plugin hooks, audit log entries) are emitted per chunk rather than collected
+  for the whole request; hook and log payloads carry ids and bounded names only.
 - Eject, restore, release and reconcile re-derive `gone_members`; restore and release re-read
   existence for the members they bring back.
 - Safety net: apply's revalidation refuses a Cluster with a gone member, as today.
@@ -525,17 +553,29 @@ landing; a parked apply worker past its lease cannot merge.
 - Loser versions move with one set-based `UPDATE` per chunk; the note-block scrub reads blocks by
   keyset. Every per-Loser child operation the merge performs (association transfers, similarity-pair
   deletes, cascades) runs in keyset chunks of 500, so a Loser with millions of associations or pairs
-  is merged by bounded statements. The backup snapshot of a Loser is built entirely in SQL with today's field names (Postgres
-  `jsonb_build_object` / `to_jsonb(r) - 'meta' - …` plus `meta - 'backups'`; SQLite `json_object` plus
-  `json_remove(meta, '$.backups')`), so no Loser column, description included, enters Go; a test
-  compares the decoded snapshot with today's on both databases.
+  is merged by bounded statements. The backup snapshot of a Loser is built entirely in SQL from an **explicit column-to-Go-name list**
+  matching today's `json.Marshal(models.Resource)` output: Go field names, `null` for relation fields,
+  RFC3339Nano times, `true`/`false` booleans, `meta` minus `backups` and `own_meta` embedded as JSON
+  (`json(…)` on SQLite so they are not double-quoted; `jsonb_build_object` on Postgres, never
+  `to_jsonb(r)`). No Loser column, description included, enters Go. A guard test reflects over
+  `models.Resource` so a new field fails until it is mapped, and the decoded-snapshot comparison with
+  today's includes value types, on both databases. SQLite `json_patch` drops null members, as it does
+  today. Version comments and other persisted values the merge composes from names are built in SQL
+  the same way.
 - The deletion hook (D9) runs once per merge, after the Losers are deleted and **before** `InTx`; the
   claimed Cluster is included in the hook's ascending lock set, and `InTx` writes it under that lock,
   so the merge never locks Cluster rows out of order (two-Cluster test, ids 5 and 10, Postgres).
-- The note-block scrub rewrites references in SQL: candidate blocks are found by id (a `LIKE`
-  pre-filter on the id text), and each block's id arrays are rewritten with `json_each` /
-  `json_group_array` (SQLite) or `jsonb_array_elements` / `jsonb_agg` (Postgres) in one statement per
-  block, so no block document, however many Resources a gallery references, is decoded in Go.
+- The note-block scrub rewrites references in SQL, with today's semantics
+  (`scrubResourcesFromBlockContent`, `block_ref_cleanup.go`): gallery id arrays and calendar
+  `calendars[].source.resourceId` entries, ids given as numbers or as strings (escaped or not).
+  Blocks are scanned by keyset `id > ?`, 500 per statement, of the gallery and calendar types; the
+  UPDATE's `WHERE` is an exact, type-guarded JSON membership test (`json_each` / `json_array_elements`
+  with the value compared as an integer after the same coercion today's `toUint` applies, a JSON `null`
+  or non-array skipped), so only blocks that reference a removed id are written. Arrays are rebuilt in
+  their original order (`ORDER BY` the element ordinal) and an emptied array stays `[]`
+  (`COALESCE(…, '[]')`); unrelated fields are untouched. The merge renews its lease per chunk. A
+  differential test runs today's Go scrub and the SQL scrub over generated blocks on both databases
+  and requires identical documents.
 - Out of scope, recorded in `docs/todo.md`: the Winner's backup history itself grows with every
   merge into it, in the database. This change keeps it out of Go on every Reduction path; other
   pages that load a Resource's `meta` (its detail page) are unchanged.
@@ -572,7 +612,8 @@ landing; a parked apply worker past its lease cannot merge.
 
 Member cap and its card text; compute and apply leases (a large compute no longer fails at one
 hour; a 24 h ceiling); settings and Extent edits refused while computing; apply response counts and
-capped lists; bulk-by-ids cap of 500 and explicit-id cap of 10,000 per request; 503 and "being
+capped lists; bulk-by-ids cap of 500, explicit-id cap of 10,000 and bulk Resource delete cap of 10,000 per
+request; names over 1,024 bytes shown cut on Reduction pages; 503 and "being
 upgraded" during the migration; legacy over-cap Clusters become read-only; withheld Clusters no
 longer appear as stubs; Near truncation reads "at least 200"; size sort uses compute-time sizes;
 the token is opaque and changes definition.
@@ -720,3 +761,18 @@ Also in this change: the review card layout fix for long Resource names and fail
 | outsider rule stated three ways (arch 4) | D5 rewritten |
 | `bulk_op` and Group staging access paths (arch 5) | D3 keyset, D5 keyset over matching Resources |
 | derived-column ownership (arch 6) | D3 |
+
+## v8 findings, where addressed
+
+| Finding | Section |
+|---|---|
+| "full" keyed on member count; legacy 200-member Clusters (pi, arch 2) | D1 `fixed_seed`, D5 |
+| crash after publication strands staging rows (pi) | D4 per-table sweep protection |
+| block scrub prefilter, calendar sources, order, `null`, unbounded writes (pi, arch 1) | D13 |
+| unbounded display text on review, outcomes and merge payloads (pi) | D8 bounded display text, D13 |
+| delete paths: child cleanup, bulk payloads (pi) | D9 delete paths bounded, D15 |
+| first 200 members can omit the Winner (pi) | D8 Winner loaded on its own, member cursor |
+| neighbour queries cannot use an index (arch 3) | D1 expression indexes, D5 one ordered pass |
+| snapshot parity (arch 4) | D13 explicit column list, reflection guard |
+| `bulk_op` index (arch 5) | D1 |
+| `substr` counts characters (arch 6) | D5 bytes |
