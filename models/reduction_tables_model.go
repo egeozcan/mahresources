@@ -108,12 +108,12 @@ func (r *ReductionClusterRow) BeforeSave(*gorm.DB) error {
 
 // ReductionMemberRow is one Resource in a Cluster.
 type ReductionMemberRow struct {
-	ID          uint   `gorm:"primaryKey"`
-	ClusterID   uint   `gorm:"not null;default:0;index:idx_rm_cluster,priority:1"`
+	ID          uint   `gorm:"primaryKey;index:idx_rm_page,priority:3"`
+	ClusterID   uint   `gorm:"not null;default:0;index:idx_rm_page,priority:1"`
 	ReductionID uint   `gorm:"not null;default:0;index:idx_rm_resource,priority:1"`
 	Generation  string `gorm:"size:64;not null;default:'';index:idx_rm_resource,priority:2"`
 	ResourceID  uint   `gorm:"not null;default:0;index:idx_rm_resource,priority:3;index:idx_rm_resource_only"`
-	Position    int    `gorm:"not null;default:0;index:idx_rm_cluster,priority:2"`
+	Position    int    `gorm:"not null;default:0;index:idx_rm_page,priority:2"`
 
 	Hash string `gorm:"not null;default:''"`
 	// FileSize is the Resource's size at compute, so a Cluster's total derives from its members.

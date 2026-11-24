@@ -48,7 +48,7 @@ func parseReductionMemberCursor(s string) (reductionMemberCursor, error) {
 // (position, id) order.
 func (s *reductionStore) memberPage(clusterID uint, after reductionMemberCursor, limit int) ([]models.ReductionMemberRow, error) {
 	var rows []models.ReductionMemberRow
-	err := s.db.Where(`cluster_id = ? AND ("position" > ? OR ("position" = ? AND id > ?))`, clusterID, after.Position, after.Position, after.ID).
+	err := s.db.Where(`cluster_id = ? AND ("position", id) > (?, ?)`, clusterID, after.Position, after.ID).
 		Order(`"position", id`).Limit(limit).Find(&rows).Error
 	return rows, err
 }
