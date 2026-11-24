@@ -3,7 +3,9 @@
 package application_context
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -38,6 +40,41 @@ func TestRelatedGroupStagingProbesPerResourcePG(t *testing.T) {
 }
 func TestHolderCursorIsServedByTheHashIDIndexPG(t *testing.T) {
 	testHolderCursorIsServedByTheHashIDIndex(t, newOpsPGContext(t))
+}
+
+func TestOrphanSweepContinuesFromTheLastDeletedKeyPG(t *testing.T) {
+	testOrphanSweepContinuesFromTheLastDeletedKey(t, newOpsPGContext(t))
+}
+func TestSpoolHonoursACancelledRunnerPG(t *testing.T) {
+	testSpoolHonoursACancelledRunner(t, newOpsPGContext(t))
+}
+
+// A spool waiting for a Reduction's row lock ends when the runner is cancelled.
+func TestSpoolWaitingForTheRowLockEndsOnCancelPG(t *testing.T) {
+	ctx := newOpsPGContext(t)
+	red := legacyRow(t, ctx, models.ReductionStatusReady)
+	blocker := ctx.db.Begin()
+	require.NoError(t, blocker.Error)
+	t.Cleanup(func() { _ = blocker.Rollback().Error })
+	require.NoError(t, blocker.Exec(`SELECT id FROM resource_reductions WHERE id = ? FOR UPDATE`, red.ID).Error)
+
+	stop, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- ctx.spoolReductionMigrationsUntil(stop) }()
+	require.Eventually(t, func() bool {
+		var waiting int
+		require.NoError(t, ctx.db.Raw(`SELECT COUNT(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()`).Scan(&waiting).Error)
+		return waiting > 0
+	}, 20*time.Second, 50*time.Millisecond, "the spool never blocked on the held Reduction row")
+	cancel()
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the cancelled spool stayed blocked behind the held row")
+	}
+	require.EqualValues(t, 0, planRows(t, ctx, "reduction_migrations", "reduction_id = ?", red.ID))
 }
 
 // The real Postgres failure: a lock_timeout (55P03) on a member's Resource row held

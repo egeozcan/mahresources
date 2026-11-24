@@ -842,17 +842,22 @@ func (s *reductionStore) sweepTable(table, keyCol string, guard func(x string) s
 // key) pairs: deleting by key alone would take the same key out of every orphaned
 // Reduction in one statement, however many that is.
 func (s *reductionStore) sweepOrphans(table, keyCol string) error {
+	// Each read continues after the last key of the one before, so the live rows in
+	// front of the orphans are walked once, not once per chunk.
+	afterReduction, afterKey := uint(0), uint(0)
 	for {
 		var pairs []struct {
 			ReductionID uint
 			Key         uint
 		}
-		if err := s.db.Raw(`SELECT x.reduction_id AS reduction_id, x.`+keyCol+` AS "key" FROM `+table+` x WHERE NOT EXISTS (SELECT 1 FROM resource_reductions r WHERE r.id = x.reduction_id) ORDER BY x.reduction_id, x.`+keyCol+` LIMIT ?`, reductionRowChunk).Scan(&pairs).Error; err != nil {
+		if err := s.db.Raw(`SELECT x.reduction_id AS reduction_id, x.`+keyCol+` AS "key" FROM `+table+` x WHERE (x.reduction_id, x.`+keyCol+`) > (?, ?) AND NOT EXISTS (SELECT 1 FROM resource_reductions r WHERE r.id = x.reduction_id) ORDER BY x.reduction_id, x.`+keyCol+` LIMIT ?`,
+			afterReduction, afterKey, reductionRowChunk).Scan(&pairs).Error; err != nil {
 			return err
 		}
 		if len(pairs) == 0 {
 			return nil
 		}
+		afterReduction, afterKey = pairs[len(pairs)-1].ReductionID, pairs[len(pairs)-1].Key
 		tuples := make([][]any, len(pairs))
 		for i, p := range pairs {
 			tuples[i] = []any{p.ReductionID, p.Key}

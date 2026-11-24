@@ -253,7 +253,14 @@ func (s *reductionStore) spoolReduction(tx *gorm.DB, id uint, generation string)
 // without a migration row is spooled in its own transaction, which also creates
 // its reduction_migrations row. Run it at startup before serving (design D12).
 func (ctx *MahresourcesContext) SpoolReductionMigrations() error {
-	s := ctx.reductionStore()
+	return ctx.spoolReductionMigrationsUntil(context.Background())
+}
+
+// spoolReductionMigrationsUntil is SpoolReductionMigrations that stops when stop is
+// done: its statements carry the context (so a wait for a Reduction's row lock ends
+// with it), and it is checked before each Reduction and again once the lock is held.
+func (ctx *MahresourcesContext) spoolReductionMigrationsUntil(stop context.Context) error {
+	s := ctx.reductionStore().boundTo(stop)
 	// One Reduction the database cannot parse fails alone; it keeps its legacy
 	// plan and the others are still spooled. Candidates are read by id keyset in
 	// chunks, so a library with very many Reductions never holds them all.
@@ -271,6 +278,9 @@ func (ctx *MahresourcesContext) SpoolReductionMigrations() error {
 		}
 		first = false
 		for _, id := range ids {
+			if err := stop.Err(); err != nil {
+				return err
+			}
 			if err := ctx.spoolOneReduction(s, id); err != nil && firstErr == nil {
 				firstErr = err
 			}
@@ -289,6 +299,10 @@ func (ctx *MahresourcesContext) spoolOneReduction(s *reductionStore, id uint) er
 	var rejected int64
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := lockReductionRowNarrow(tx, id); err != nil {
+			return err
+		}
+		// A cancel that arrived while this waited for the row spools nothing.
+		if err := s.cancelled(); err != nil {
 			return err
 		}
 		// Another instance may have published it since the list was read.
@@ -311,6 +325,9 @@ func (ctx *MahresourcesContext) spoolOneReduction(s *reductionStore, id uint) er
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
+		}
+		if cancelled := s.cancelled(); cancelled != nil {
+			return cancelled
 		}
 		ctx.Logger().Warning(models.LogActionSystem, "", nil, "", fmt.Sprintf("reduction %d spool failed, its legacy plan is kept: %v", id, err), nil)
 		return err
@@ -393,7 +410,10 @@ func (ctx *MahresourcesContext) migrateReductionPlansUntil(stop context.Context,
 	}
 	var firstErr error
 	if spool {
-		firstErr = ctx.SpoolReductionMigrations()
+		firstErr = ctx.spoolReductionMigrationsUntil(stop)
+		if err := stop.Err(); err != nil {
+			return err
+		}
 	}
 	s := ctx.reductionStore().boundTo(stop)
 	after := uint(0)

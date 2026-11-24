@@ -3,6 +3,7 @@ package application_context
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -259,6 +260,71 @@ func testHolderCursorIsServedByTheHashIDIndex(t *testing.T, ctx *MahresourcesCon
 
 func TestHolderCursorIsServedByTheHashIDIndexSQLite(t *testing.T) {
 	testHolderCursorIsServedByTheHashIDIndex(t, newScaleSQLiteContext(t))
+}
+
+// The orphan sweep continues each chunk after the last key it deleted: the live
+// rows in front of the orphans, and the orphans already gone, are not read again.
+func testOrphanSweepContinuesFromTheLastDeletedKey(t *testing.T, ctx *MahresourcesContext) {
+	r := applyReduction(t, ctx)
+	const orphan = 99999
+	for i := 1; i <= 3; i++ {
+		require.NoError(t, ctx.db.Exec(`INSERT INTO reduction_extent_resources (reduction_id, resource_id) VALUES (?, ?)`, r.ID, i).Error)
+	}
+	require.NoError(t, ctx.db.Exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1300)
+		INSERT INTO reduction_extent_resources (reduction_id, resource_id) SELECT ?, i FROM n`, orphan).Error)
+
+	var selects [][]any
+	name := "r5:orphan-sweep"
+	record := func(tx *gorm.DB) {
+		if strings.Contains(tx.Statement.SQL.String(), "SELECT x.reduction_id AS reduction_id") {
+			selects = append(selects, append([]any(nil), tx.Statement.Vars...))
+		}
+	}
+	require.NoError(t, ctx.db.Callback().Query().After("gorm:query").Register(name, record))
+	require.NoError(t, ctx.db.Callback().Row().After("gorm:row").Register(name, record))
+	t.Cleanup(func() {
+		_ = ctx.db.Callback().Query().Remove(name)
+		_ = ctx.db.Callback().Row().Remove(name)
+	})
+
+	require.NoError(t, ctx.reductionStore().sweepOrphans("reduction_extent_resources", "resource_id"))
+	require.EqualValues(t, 0, planRows(t, ctx, "reduction_extent_resources", "reduction_id = ?", orphan))
+	require.EqualValues(t, 3, planRows(t, ctx, "reduction_extent_resources", "reduction_id = ?", r.ID), "live rows stay")
+	require.GreaterOrEqual(t, len(selects), 3)
+	flat := func(vars []any) string { return fmt.Sprint(vars...) }
+	for i, vars := range selects[1:] {
+		if i == len(selects)-2 {
+			continue // the last read finds nothing, wherever it starts
+		}
+		require.Contains(t, flat(vars), fmt.Sprint(orphan), "read %d starts after the last deleted key", i+1)
+	}
+}
+
+// A runner cancelled after it listed the legacy Reductions spools none of them: the
+// spool honours the runner's context as the migration step does.
+func testSpoolHonoursACancelledRunner(t *testing.T, ctx *MahresourcesContext) {
+	red := legacyRow(t, ctx, models.ReductionStatusReady)
+	sqlDB, err := ctx.db.DB()
+	require.NoError(t, err)
+	keep, err := sqlDB.Conn(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = keep.Close() })
+
+	stop, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	spoolAfterList = cancel
+	t.Cleanup(func() { spoolAfterList = nil })
+
+	require.Error(t, ctx.migrateReductionPlansUntil(stop, true))
+	require.EqualValues(t, 0, planRows(t, ctx, "reduction_migrations", "reduction_id = ?", red.ID), "a cancelled runner spooled a Reduction")
+}
+
+func TestSpoolHonoursACancelledRunnerSQLite(t *testing.T) {
+	testSpoolHonoursACancelledRunner(t, newCutoverContext(t))
+}
+
+func TestOrphanSweepContinuesFromTheLastDeletedKeySQLite(t *testing.T) {
+	testOrphanSweepContinuesFromTheLastDeletedKey(t, withSettings(newReductionSQLiteContext(t)))
 }
 
 func TestEjectedSurvivorOfAMergedClusterStaysOutSQLite(t *testing.T) {
