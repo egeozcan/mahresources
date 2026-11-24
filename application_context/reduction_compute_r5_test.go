@@ -1,9 +1,11 @@
 package application_context
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
@@ -321,6 +323,128 @@ func testSpoolHonoursACancelledRunner(t *testing.T, ctx *MahresourcesContext) {
 
 func TestSpoolHonoursACancelledRunnerSQLite(t *testing.T) {
 	testSpoolHonoursACancelledRunner(t, newCutoverContext(t))
+}
+
+// explainForced is the plan of a captured statement with the planner's alternatives
+// to an index turned off (Postgres) so a small fixture shows the index's shape.
+func explainForced(t *testing.T, ctx *MahresourcesContext, stmt capturedStatement) string {
+	t.Helper()
+	var lines []string
+	if isPG(ctx) {
+		require.NoError(t, ctx.db.Transaction(func(tx *gorm.DB) error {
+			for _, off := range []string{"enable_seqscan", "enable_sort", "enable_bitmapscan"} {
+				if err := tx.Exec(`SET LOCAL ` + off + ` = off`).Error; err != nil {
+					return err
+				}
+			}
+			return tx.Raw("EXPLAIN "+stmt.SQL, stmt.Vars...).Scan(&lines).Error
+		}))
+	} else {
+		var rows []struct{ Detail string }
+		require.NoError(t, ctx.db.Raw("EXPLAIN QUERY PLAN "+stmt.SQL, stmt.Vars...).Scan(&rows).Error)
+		for _, row := range rows {
+			lines = append(lines, row.Detail)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// Seeds whose names share their first 512 bytes tie on the indexed prefix. They are
+// ranked once, and every page then walks (key_prefix, tie_rank, resource_id) off the
+// index in exactly the order of their full keys, with no sort. Scale: 2,000 tied
+// seeds stand for the 100,000 of the finding (factor 50); the cost that matters, a
+// sort of the whole tied group per page, grows with the group, so the plan assertion
+// is the proof at any size.
+func testTiedSeedsArePagedOffTheIndexInKeyOrder(t *testing.T, ctx *MahresourcesContext) {
+	r := mkStreamReduction(t, ctx, streamSel{All: true})
+	cur := loadReductionRow(t, ctx.db, r.ID)
+	_, gen, err := ctx.beginReductionComputeStore(cur.ID, cur.Version)
+	require.NoError(t, err)
+	require.NoError(t, ctx.storeAdmitComputeLease(cur.ID, gen))
+	run := &reductionStream{ctx: ctx, s: ctx.reductionStore(), r: cur, generation: gen, jobCtx: context.Background()}
+
+	const tied = 2000
+	var seeds []models.ReductionSeed
+	next := uint(1)
+	add := func(key []byte) {
+		seeds = append(seeds, models.ReductionSeed{ReductionID: cur.ID, Generation: gen, ResourceID: next, KeyPrefix: winnerKeyPrefix(key), SortKey: key})
+		next++
+	}
+	long := func(fill byte, tail int) []byte {
+		key := bytes.Repeat([]byte{fill}, 600)
+		return append(key, byte(tail>>8), byte(tail))
+	}
+	for i := 0; i < tied; i++ {
+		add(long('a', tied-i)) // key order is the reverse of id order
+	}
+	for i := 0; i < 40; i++ {
+		add(long('b', 40-i))
+	}
+	for i := 0; i < 300; i++ {
+		add([]byte{'a' - 1, byte(i >> 8), byte(i)}) // alone in their prefix, ahead of the tied group
+		add([]byte{'c', byte(i >> 8), byte(i)})     // and behind it
+	}
+	require.NoError(t, ctx.db.CreateInBatches(seeds, reductionRowChunk).Error)
+
+	require.NoError(t, run.rankTiedSeeds())
+
+	want := append([]models.ReductionSeed(nil), seeds...)
+	sort.Slice(want, func(i, j int) bool { return bytes.Compare(want[i].SortKey, want[j].SortKey) < 0 })
+	var got []uint
+	var cursor *seedCursor
+	pages := 0
+	for {
+		page, err := run.seedPage(cursor)
+		require.NoError(t, err)
+		if len(page) == 0 {
+			break
+		}
+		pages++
+		for _, s := range page {
+			got = append(got, s.ResourceID)
+		}
+		last := page[len(page)-1]
+		cursor = &seedCursor{KeyPrefix: last.KeyPrefix, TieRank: last.TieRank, ResourceID: last.ResourceID}
+	}
+	require.Len(t, got, len(want))
+	for i := range want {
+		require.Equal(t, want[i].ResourceID, got[i], "seed %d is in key order", i)
+	}
+	require.Equal(t, (len(want)+computeChunk-1)/computeChunk, pages, "one statement per chunk")
+
+	// the plan of a page past the first
+	rec := installScaleRecorder(t, ctx)
+	rec.capture("seed-page", `FROM reduction_seeds WHERE reduction_id = \? AND generation = \? AND \(key_prefix, tie_rank, resource_id\) >`, "")
+	_, err = run.seedPage(cursor0(got, want, run))
+	require.NoError(t, err)
+	rec.mu.Lock()
+	stmt, ok := rec.captured["seed-page"]
+	rec.mu.Unlock()
+	require.True(t, ok)
+	plan := explainForced(t, ctx, stmt)
+	t.Logf("seed page plan:\n%s", plan)
+	require.Contains(t, plan, "idx_rseed_rank")
+	for _, bad := range []string{"TEMP B-TREE", "Sort", "Seq Scan", "SCAN reduction_seeds"} {
+		require.NotContains(t, plan, bad)
+	}
+	if !isPG(ctx) {
+		// What the statement did before: ordering ties by sort_key meant a sort.
+		old := capturedStatement{SQL: `SELECT resource_id, key_prefix, sort_key FROM reduction_seeds WHERE reduction_id = ? AND generation = ? AND (key_prefix > ? OR (key_prefix = ? AND sort_key > ?)) ORDER BY key_prefix, sort_key LIMIT ?`,
+			Vars: []any{cur.ID, gen, []byte("a"), []byte("a"), []byte("a"), 500}}
+		require.Contains(t, explainForced(t, ctx, old), "TEMP B-TREE")
+	}
+}
+
+// cursor0 is a cursor at the end of the tied group's first page, so the captured
+// statement is one that has a tied prefix to continue.
+func cursor0(got []uint, want []models.ReductionSeed, run *reductionStream) *seedCursor {
+	page, _ := run.seedPage(nil)
+	last := page[len(page)-1]
+	return &seedCursor{KeyPrefix: last.KeyPrefix, TieRank: last.TieRank, ResourceID: last.ResourceID}
+}
+
+func TestTiedSeedsArePagedOffTheIndexInKeyOrderSQLite(t *testing.T) {
+	testTiedSeedsArePagedOffTheIndexInKeyOrder(t, newScaleSQLiteContext(t))
 }
 
 func TestOrphanSweepContinuesFromTheLastDeletedKeySQLite(t *testing.T) {

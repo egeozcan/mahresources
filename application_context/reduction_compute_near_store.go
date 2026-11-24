@@ -28,30 +28,22 @@ func (run *reductionStream) nearTier() error {
 	if err != nil || total == 0 {
 		return err
 	}
+	if err := run.rankTiedSeeds(); err != nil {
+		return err
+	}
 	// Read only now: a library with nothing to match never needs the similarity settings.
 	run.threshold = run.ctx.similarityThreshold()
 	_, run.aThreshold = run.ctx.similarityThresholds()
 	var (
-		lastPrefix, lastKey []byte
-		started             bool
-		done                int64
+		cursor *seedCursor
+		done   int64
 	)
 	for {
 		if err := run.jobCtx.Err(); err != nil {
 			return err
 		}
-		sql := `SELECT resource_id, key_prefix, sort_key FROM reduction_seeds WHERE reduction_id = ? AND generation = ?`
-		args := []any{run.r.ID, run.generation}
-		if started {
-			sql += ` AND (key_prefix > ? OR (key_prefix = ? AND sort_key > ?))`
-			args = append(args, lastPrefix, lastPrefix, lastKey)
-		}
-		var seeds []struct {
-			ResourceID uint
-			KeyPrefix  []byte
-			SortKey    []byte
-		}
-		if err := run.s.db.Raw(sql+` ORDER BY key_prefix, sort_key LIMIT ?`, append(args, computeChunk)...).Scan(&seeds).Error; err != nil {
+		seeds, err := run.seedPage(cursor)
+		if err != nil {
 			return err
 		}
 		if len(seeds) == 0 {
@@ -73,7 +65,88 @@ func (run *reductionStream) nearTier() error {
 			run.report(done, total)
 		}
 		last := seeds[len(seeds)-1]
-		lastPrefix, lastKey, started = last.KeyPrefix, last.SortKey, true
+		cursor = &seedCursor{KeyPrefix: last.KeyPrefix, TieRank: last.TieRank, ResourceID: last.ResourceID}
+	}
+}
+
+// seedRow is one staged seed as the star pass reads it.
+type seedRow struct {
+	ResourceID uint
+	KeyPrefix  []byte
+	TieRank    int64
+}
+
+// seedCursor is the keyset position in the seed order: (key_prefix, tie_rank,
+// resource_id), the columns of idx_rseed_rank in order.
+type seedCursor struct {
+	KeyPrefix  []byte
+	TieRank    int64
+	ResourceID uint
+}
+
+// seedPage reads the next computeChunk seeds after the cursor, in Winner Rule order,
+// straight off idx_rseed_rank: no sort sits between the index and the LIMIT, however
+// many seeds share a key prefix.
+func (run *reductionStream) seedPage(after *seedCursor) ([]seedRow, error) {
+	sql := `SELECT resource_id, key_prefix, tie_rank FROM reduction_seeds WHERE reduction_id = ? AND generation = ?`
+	args := []any{run.r.ID, run.generation}
+	if after != nil {
+		sql += ` AND (key_prefix, tie_rank, resource_id) > ( ?, ?, ?)`
+		args = append(args, after.KeyPrefix, after.TieRank, after.ResourceID)
+	}
+	var seeds []seedRow
+	err := run.s.db.Raw(sql+` ORDER BY key_prefix, tie_rank, resource_id LIMIT ?`, append(args, computeChunk)...).Scan(&seeds).Error
+	return seeds, err
+}
+
+// rankTiedSeeds gives the seeds that share a key prefix (two keys equal in their
+// first 512 bytes, names alike up to there) a tie_rank: their position in sort_key
+// order among those that share it. A seed with a prefix of its own keeps rank 0.
+// The star pass then walks (key_prefix, tie_rank, resource_id), which the index
+// serves, where ordering ties by sort_key would sort the whole tied group again for
+// every page.
+//
+// Bound: one statement per tied prefix, found by index-ordered groups 500 at a time.
+// A statement ranks its group in the database (one window sort) and writes one row
+// per seed of that group, so a group of G seeds is one statement of G rows, the one
+// place a statement exceeds a chunk. A group needs G Resources whose Winner Rule
+// keys agree on 512 bytes (identical criteria and a name that long in common), which
+// is unusual, and G is at most the Extent.
+func (run *reductionStream) rankTiedSeeds() error {
+	var after []byte
+	for {
+		if err := run.jobCtx.Err(); err != nil {
+			return err
+		}
+		sql := `SELECT key_prefix FROM reduction_seeds WHERE reduction_id = ? AND generation = ?`
+		args := []any{run.r.ID, run.generation}
+		if after != nil {
+			sql += ` AND key_prefix > ?`
+			args = append(args, after)
+		}
+		var groups []struct{ KeyPrefix []byte }
+		if err := run.s.db.Raw(sql+` GROUP BY key_prefix HAVING COUNT(*) > 1 ORDER BY key_prefix LIMIT ?`, append(args, reductionRowChunk)...).Scan(&groups).Error; err != nil {
+			return err
+		}
+		for _, g := range groups {
+			if err := run.jobCtx.Err(); err != nil {
+				return err
+			}
+			err := run.s.fenced(run.r.ID, run.generation, func(tx *gorm.DB) error {
+				return tx.Exec(`UPDATE reduction_seeds SET tie_rank = ranked.rn
+					FROM (SELECT resource_id, ROW_NUMBER() OVER (ORDER BY sort_key, resource_id) AS rn FROM reduction_seeds
+						WHERE reduction_id = ? AND generation = ? AND key_prefix = ?) ranked
+					WHERE reduction_seeds.reduction_id = ? AND reduction_seeds.generation = ? AND reduction_seeds.resource_id = ranked.resource_id`,
+					run.r.ID, run.generation, g.KeyPrefix, run.r.ID, run.generation).Error
+			})
+			if err != nil {
+				return err
+			}
+		}
+		if len(groups) < reductionRowChunk {
+			return nil
+		}
+		after = groups[len(groups)-1].KeyPrefix
 	}
 }
 

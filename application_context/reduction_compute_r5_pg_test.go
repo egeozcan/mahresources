@@ -42,6 +42,9 @@ func TestHolderCursorIsServedByTheHashIDIndexPG(t *testing.T) {
 	testHolderCursorIsServedByTheHashIDIndex(t, newOpsPGContext(t))
 }
 
+func TestTiedSeedsArePagedOffTheIndexInKeyOrderPG(t *testing.T) {
+	testTiedSeedsArePagedOffTheIndexInKeyOrder(t, newOpsPGContext(t))
+}
 func TestOrphanSweepContinuesFromTheLastDeletedKeyPG(t *testing.T) {
 	testOrphanSweepContinuesFromTheLastDeletedKey(t, newOpsPGContext(t))
 }

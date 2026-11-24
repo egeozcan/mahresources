@@ -162,13 +162,17 @@ func (ReductionExtentRow) TableName() string { return "reduction_extent" }
 
 // ReductionSeed is a Near-tier seed candidate staged for one compute generation,
 // ordered by the Winner Rule's byte key. KeyPrefix is the first 512 bytes of
-// SortKey (a Postgres btree row must stay under about 2.7 KB).
+// SortKey (a Postgres btree row must stay under about 2.7 KB). TieRank orders the
+// seeds that share a KeyPrefix: their position by SortKey among them (0 for a seed
+// with a prefix of its own), so (KeyPrefix, TieRank, ResourceID) is the whole seed
+// order and idx_rseed_rank serves it without a sort.
 type ReductionSeed struct {
-	ReductionID uint   `gorm:"primaryKey;autoIncrement:false;index:idx_rseed_order,priority:1"`
-	Generation  string `gorm:"primaryKey;size:64;index:idx_rseed_order,priority:2"`
-	ResourceID  uint   `gorm:"primaryKey;autoIncrement:false"`
-	KeyPrefix   []byte `gorm:"not null;index:idx_rseed_order,priority:3"`
+	ReductionID uint   `gorm:"primaryKey;autoIncrement:false;index:idx_rseed_rank,priority:1"`
+	Generation  string `gorm:"primaryKey;size:64;index:idx_rseed_rank,priority:2"`
+	ResourceID  uint   `gorm:"primaryKey;autoIncrement:false;index:idx_rseed_rank,priority:5"`
+	KeyPrefix   []byte `gorm:"not null;index:idx_rseed_rank,priority:3"`
 	SortKey     []byte `gorm:"not null"`
+	TieRank     int64  `gorm:"not null;default:0;index:idx_rseed_rank,priority:4"`
 }
 
 func (ReductionSeed) TableName() string { return "reduction_seeds" }
