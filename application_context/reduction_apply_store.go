@@ -377,6 +377,13 @@ func applyBatchClaimFence(run *applyRun) claimFence {
 // applyReadChunk is how many stamped Clusters one loop read returns.
 const applyReadChunk = 50
 
+// applyPageSQL is one page of the apply loop: the batch's Clusters after the
+// (position, id) cursor. The row-value seek lets idx_rc_batch (reduction_id,
+// generation, apply_batch, position, id) serve both the range and the order, so a
+// page reads fifty index entries however many Clusters remain; an OR spelling of
+// the same predicate sorts the whole remaining suffix on SQLite.
+const applyPageSQL = `SELECT id, "key", position FROM reduction_clusters WHERE reduction_id = ? AND generation = ? AND apply_batch = ? AND (position, id) > (?, ?) ORDER BY position, id LIMIT ?`
+
 // storeApplyLoop walks the stamped Clusters in plan order, fifty keys per read, and
 // applies each. It stops when the context ends, or when the batch no longer owns the
 // Reduction (an expired or replaced lease): nothing new starts then.
@@ -390,8 +397,8 @@ func (ctx *MahresourcesContext) storeApplyLoop(r *models.ResourceReduction, run 
 			Key      string
 			Position int64
 		}
-		if err := store.db.Raw(`SELECT id, "key", position FROM reduction_clusters WHERE reduction_id = ? AND generation = ? AND apply_batch = ? AND (position > ? OR (position = ? AND id > ?)) ORDER BY position, id LIMIT ?`,
-			run.reductionID, run.generation, run.batch, lastPos, lastPos, lastID, applyReadChunk).Scan(&rows).Error; err != nil {
+		if err := store.db.Raw(applyPageSQL,
+			run.reductionID, run.generation, run.batch, lastPos, lastID, applyReadChunk).Scan(&rows).Error; err != nil {
 			out.result.Errors++
 			return
 		}
