@@ -142,6 +142,7 @@ import './webcomponents/meta-shortcode.ts';
 import './webcomponents/deferredShortcodes.js';
 import './webcomponents/reloadShortcode.js';
 import './webcomponents/autorefreshShortcode.js';
+import './webcomponents/calendarShortcode.js';
 import './schema-editor/schema-editor.ts';
 
 // Expose utility functions globally for templates that use them

@@ -324,6 +324,14 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 				// Share pages run no queries: comment, not the raw text.
 				replacement = shortcodeComment("similar unavailable in this context")
 			}
+		case sc.Name == "calendar":
+			if executor != nil {
+				replacement = RenderCalendarShortcode(reqCtx, sc, ctx, executor)
+			} else {
+				// Same as [mrql]: every count comes from the executor, so a
+				// context without one (share pages) leaves a comment.
+				replacement = shortcodeComment("calendar unavailable in this context")
+			}
 		case sc.Name == "link":
 			replacement = RenderLinkShortcode(reqCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "partial":

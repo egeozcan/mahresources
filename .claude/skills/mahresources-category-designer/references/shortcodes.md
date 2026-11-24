@@ -239,6 +239,26 @@ Resources only: on a group or note it renders an error marker, so use `[using ty
 [using type="resource" id-path="cover"][similar label="Lookalikes of the cover"][/using]
 ```
 
+### `[calendar]`
+
+One month as a grid (Monday first) of the entities an MRQL filter matches, placed by a date field. Each non-empty day shows its count as a link to that day's list on `/mrql`, up to 3 linked titles, and "+k more" past that; the caption names the month and total. Prev/Next buttons swap the month in place (display pages, cards, lightbox, deferred bodies; not share pages, the live preview or list headers). Attributes: `mrql` (required; a filter naming exactly one type through a top-level `type = …`, with no `GROUP BY`, `ORDER BY`, `LIMIT`, `OFFSET`, `SCOPE` or `$params`), `date` (`created` default, `updated`, or `meta.<path>`), `month` (`current` default or `YYYY-MM`), `scope` (as `[mrql]`; default the entity's group).
+
+A Meta date counts only when it is a string starting `YYYY-MM-DD` (a schema `format: date` value or an RFC3339 date-time, which is what `[datetime]` writes); its day is the date as written. Numbers, booleans and other strings are ignored everywhere. A day is a date on the server's local clock. One page-query budget unit for a month of up to 100 entities (titles and counts from one query); two above that, and then counts only, with a note. Read as the viewer, so a confined user sees only their subtree. Put it in `CustomSidebar` or `CustomHeader`, not a per-card slot, where each card runs its own queries. Inline only; not allowed inside a `[reload]` face.
+
+```
+[calendar mrql='type = "note"' date="meta.due"]
+[calendar mrql='type = "resource"' date="created" month="2026-03" scope="global"]
+```
+
+Event category example: a group category whose `MetaSchema` has `"date": {"type": "string", "format": "date"}`, and whose parent group's sidebar shows its events:
+
+```html
+<section aria-labelledby="events-h">
+  <h2 id="events-h" class="text-sm font-semibold">Events</h2>
+  [calendar mrql='type = "group" AND category = "Event"' date="meta.date" scope="entity"]
+</section>
+```
+
 ## Built-in Plugin Shortcodes
 
 Only three built-in plugins currently ship shortcodes:

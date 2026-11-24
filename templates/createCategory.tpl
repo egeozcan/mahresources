@@ -299,6 +299,18 @@
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[using type="resource" id-path="cover"][similar label="Lookalikes of the cover"][/using]</code></pre>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[calendar]</code>
+                        &mdash; one month as a grid (Monday first) of the entities an MRQL filter matches, placed by a date field: each day's count, a link to that day's list and up to 3 linked titles, with Prev/Next buttons that change the month in place. One page-query budget unit (two for a month of more than 100), so prefer CustomSidebar or CustomHeader to a per-card slot.
+                        <br><span class="text-stone-400 ml-4">
+                            <b class="text-stone-500">mrql</b>="filter with one type = …" (required)
+                            &middot; <b class="text-stone-500">date</b>="created|updated|meta.path" (created)
+                            &middot; <b class="text-stone-500">month</b>="current|YYYY-MM"
+                            &middot; <b class="text-stone-500">scope</b>="global|parent|root|ID"
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[calendar mrql='type = "note"' date="meta.due"]
+[calendar mrql='type = "group"' date="meta.date" scope="global" month="2026-03"]</code></pre>
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[reload]</code>
                         &mdash; a button that re-renders content in place, without navigating. It refreshes the innermost [lazy], [details] or [autorefresh] block around it, or the whole custom-content slot when it sits outside both. Self-closing renders a circular-arrow icon; wrap a body to use that as the button face instead.
                         <br><span class="text-stone-400 ml-4">

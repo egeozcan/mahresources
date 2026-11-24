@@ -140,7 +140,7 @@ func KnownFromBuiltins() KnownShortcodes {
 var conditionalOperators = []string{"eq", "neq", "gt", "lt", "gte", "lte", "in", "contains", "matches", "empty", "not-empty"}
 
 // builtinBaseNames is used for near-miss detection of misspelled shortcodes.
-var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "similar", "inspect", "adjacent", "comment"}
+var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "similar", "calendar", "inspect", "adjacent", "comment"}
 
 // looseBracketPattern finds bracket expressions that lead with an identifier,
 // used to detect shortcode-looking brackets that did not parse as real
@@ -440,6 +440,8 @@ func lintText(input string, opts LintOptions) []LintIssue {
 				add(tk.start, tk.end, SeverityError,
 					"[similar] cannot be used inside a [reload] button face")
 			}
+		case "calendar":
+			lintCalendar(tk, reloadSpans, add)
 		case "reload":
 			// A <button> may not contain another button. The renderer refuses the
 			// whole thing rather than emit invalid interactive nesting, so say so
@@ -598,6 +600,11 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			case "using":
 				start, end := attrOffsetW(w, tk, "query")
 				check(tk.attrs["query"], MRQLCheckOptions{Params: sharedParams, Limit: 1}, start, end, "query")
+			case "calendar":
+				start, end := attrOffsetW(w, tk, "mrql")
+				for _, q := range calendarLintQueries(tk.attrs) {
+					check(q.query, q.opts, start, end, "mrql")
+				}
 			case "conditional":
 				forEachConditionalQuery(tk.attrs, func(attr, suffix string) {
 					start, end := attrOffsetW(w, tk, attr)

@@ -39,7 +39,7 @@ type DocExample struct {
 
 // BuiltinDoc documents one built-in shortcode (meta, datetime, pills,
 // property, mrql, conditional, link, each, item, partial, lazy, details,
-// reload, using, inspect, adjacent, similar, comment).
+// reload, using, inspect, adjacent, similar, calendar, comment).
 type BuiltinDoc struct {
 	Name        string          `json:"name"`
 	Syntax      string          `json:"syntax"`
@@ -366,6 +366,22 @@ func BuiltinDocs() []BuiltinDoc {
 				{Title: "Lookalikes of this resource", Code: `[similar]`},
 				{Title: "Only near-certain duplicates", Code: `[similar max-distance="2" limit="12" size="sm" label="Possible duplicates"]`},
 				{Title: "A group's cover image", Code: `[using type="resource" id-path="cover"][similar label="Lookalikes of the cover"][/using]`, Notes: "The strip belongs to the cover resource; a cover the viewer cannot see renders nothing."},
+			},
+		},
+		{
+			Name:        "calendar",
+			Syntax:      `[calendar mrql='type = "note"' date="meta.due"]`,
+			Description: "One month as an accessible grid, Monday first, of the entities an MRQL filter matches, placed by a date field. Each day shows its count, links to the day's full list on the MRQL page, and lists up to 3 linked titles followed by a \"+k more\" link. Prev/Next buttons swap the month in place on display pages, cards, the lightbox and deferred bodies; share pages, the live preview and list headers show the month without them. A month of up to 100 entities costs one query of the page query budget and its titles and counts come from the same rows; a denser month costs two and shows counts only, with a note. A day is a date on the server's local clock; a Meta date counts only when it is a string starting YYYY-MM-DD (a JSON-Schema date or an RFC3339 date-time), and its day is the date as written. Counts are read as the viewer, so a group-confined user only sees their subtree. Put it in CustomSidebar or CustomHeader rather than a per-card slot, where every card runs its own queries.",
+			IsBlock:     BlockNo,
+			Attrs: []DocAttr{
+				{Name: "mrql", Type: "string", Required: true, Description: "An MRQL filter naming exactly one entity type through a top-level type = …. No GROUP BY, ORDER BY, LIMIT, OFFSET, SCOPE or $parameters: the calendar adds its own month range and order."},
+				{Name: "date", Type: "string", Default: "created", Description: "The date field that places an entity on a day: created, updated, or meta.<path> (letters, digits and underscores, dot-separated)."},
+				{Name: "month", Type: "string", Default: "current", Description: "current (the server's current month) or YYYY-MM, year 1000 to 9999."},
+				{Name: "scope", Type: "string", Description: "Group scope, as on [mrql]: global, parent, root or a group ID. Unset, or any other value, is the entity's own group."},
+			},
+			Examples: []DocExample{
+				{Title: "Notes by due date", Code: `[calendar mrql='type = "note"' date="meta.due"]`, Notes: "Notes whose meta.due is not a YYYY-MM-DD string are left out."},
+				{Title: "Uploads in one month, everywhere", Code: `[calendar mrql='type = "resource"' date="created" month="2026-03" scope="global"]`},
 			},
 		},
 		{

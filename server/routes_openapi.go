@@ -2592,7 +2592,8 @@ Response: {"issues": [{"start", "end", "severity" ("error"|"warning"|"info"),
 		Summary:     "Render a deferred [lazy]/[details] block, an [autorefresh] block or a [reload] region",
 		Description: `Renders a template body on demand — invoked by the frontend when a [lazy] block
 scrolls into view, a [details] disclosure is first opened, a [reload] button is
-activated, or an inline editor saves while an [autorefresh] block is on the page.
+activated, an inline editor saves while an [autorefresh] block is on the page,
+or a [calendar] month changes.
 
 Request body fields:
   - token (string, required) — the sealed token emitted during the display-page

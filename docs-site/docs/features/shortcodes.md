@@ -15,7 +15,7 @@ Shortcodes are bracket-delimited expressions embedded in the custom template slo
 
 The parser recognizes these patterns:
 
-- **Built-in inline:** `[meta ...]`, `[datetime ...]`, `[pills ...]`, `[property ...]`, `[item ...]`, `[partial ...]`
+- **Built-in inline:** `[meta ...]`, `[datetime ...]`, `[pills ...]`, `[property ...]`, `[item ...]`, `[partial ...]`, `[calendar ...]`
 - **Built-in block:** `[conditional ...]...[/conditional]`, `[each ...]...[/each]`, `[lazy]...[/lazy]`, `[details ...]...[/details]`, `[autorefresh ...]...[/autorefresh]`, `[using ...]...[/using]`, `[comment]...[/comment]`
 - **Built-in inline or block:** `[mrql ...]` or `[mrql ...]...[/mrql]`, `[link ...]` or `[link ...]...[/link]`, `[reload ...]` or `[reload ...]...[/reload]`
 - **Plugin:** `[plugin:plugin-name:shortcode-name ...]`, inline or as a block closed by `[/plugin:plugin-name:shortcode-name]`
@@ -56,6 +56,7 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 | `[using]` | Block | Render the body with another group, resource or note as the entity |
 | `[adjacent]` | Inline | Previous/next links to the entity's siblings or Series |
 | `[similar]` | Inline | Thumbnails of perceptually similar resources, with tier, distance and a compare link |
+| `[calendar]` | Inline | Month grid of entities by a date field, with titles, day links and month navigation |
 | `[inspect]` | Inline | Live preview only: list the Meta paths, fields and `[each]` element paths available at that point |
 | `[comment]` | Block | Remove a section on the server so it never runs or renders |
 
@@ -1347,6 +1348,94 @@ The lightbox renders `CustomLightbox` (or, when that is empty, `CustomSidebar`) 
 `[similar]` cannot be used inside a `[reload]` button face.
 
 `similar` is now a reserved shortcode name: text written as `[similar …]` in an existing template renders the strip (or an error marker on a group or note) instead of showing as text.
+
+## `[calendar]` -- Month grid of dated entities
+
+`[calendar]` shows one month as a grid of the entities an MRQL filter matches, placed on days by a date field. Use it for event, journal, task and deadline categories: a group sidebar that shows the month's notes by due date, or a daily-log calendar.
+
+```
+[calendar mrql='type = "note"' date="meta.due"]
+[calendar mrql='type = "resource"' date="created" month="2026-03" scope="global"]
+[calendar mrql='type = "note" AND noteType = "Task"' date="meta.due" scope="parent"]
+```
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `mrql` | Yes | | An MRQL **filter**, naming exactly one entity type through a top-level `type = …` (`type = "note" OR type = "group"` names none). It cannot carry `GROUP BY`, `ORDER BY`, `LIMIT`, `OFFSET`, `SCOPE` or `$parameters`: the calendar adds its own month range, order and limits. |
+| `date` | No | `created` | The field that places an entity on a day: `created`, `updated`, or `meta.<path>` (letters, digits and underscores, dot-separated, such as `meta.event.start`). |
+| `month` | No | `current` | `current`, the server's current month, or `YYYY-MM` with a year from 1000 to 9999. |
+| `scope` | No | the entity's group | As on [`[mrql]`](#mrql----inline-query-results): `global`, `parent`, `root` or a group ID. Any other value, `entity` included, is the entity's own group. |
+
+`[calendar]` is inline only; a `[/calendar]` closer is a lint error. An invalid attribute renders an error marker, and the linter reports the same message. The linter also checks the two queries the calendar runs.
+
+### What a month shows
+
+- The week starts on Monday. Days of the neighbouring months are empty cells.
+- Each day with entities shows its count as a link to that day's list on the MRQL page, and up to 3 linked titles. A day with more has a "+k more" link to the same list. The day link carries the same filter, date range and scope as the grid, so it lists exactly what the cell counted.
+- The caption names the month and the total, such as "March 2026 (12 items)".
+- Today's cell is highlighted and marked `aria-current="date"`.
+
+**Items mode and counts mode.** A month of up to 100 entities is listed in one query, and its titles and counts come from the same rows. A month with more than 100 runs a second, per-day count query and shows counts only, with the note "Showing counts only: more than 100 items this month." That count query returns at most 1000 distinct date values, earliest first; past that the grid adds "Counts may be incomplete".
+
+### Meta dates
+
+A Meta value counts only when it is a JSON string that starts `YYYY-MM-DD`: a JSON-Schema `format: date` value such as `"2026-03-04"`, or an RFC3339 date-time such as `"2026-03-04T23:30:00-05:00"`, which is how `[datetime]` stores one. Its day is the date **as written**, the first ten characters, whatever zone the time carries. Numbers, booleans and other strings are not counted, not listed and not in the day links. Each query carries the guard `meta.<path> ~ "????-??-??*"` for this.
+
+### Which day an entity is on
+
+A day is a calendar date on the server's local clock, the clock `START_OF_MONTH()` and `[datetime]` use. `month="current"` and the today highlight read it too.
+
+- **SQLite, `created`/`updated`.** Timestamps are stored with the server's offset, and the month and day ranges compare them as stored, so an entity is on its local date.
+- **PostgreSQL, `created`/`updated`.** A date literal is read at midnight in the database session's `TimeZone`. Set the database `TimeZone` to the server's zone (both default to UTC in the container setup) or days are shifted by the difference.
+- **Meta.** The date as written; no zone applies.
+- **The one deviation.** In counts mode only, SQLite's per-day bucket normalises timestamps to UTC. On a SQLite server not running in UTC, a dense month's counts can put an entity within the UTC offset of midnight on the neighbouring day, and one on the first or last day of the month can drop out of both months' counts. Its day link still lists it under its local date. Items mode has no deviation.
+
+### Month navigation
+
+Prev and Next buttons swap the month in place, without a page load, through the same endpoint `[lazy]` and `[reload]` use. Focus stays on the button that was pressed, and the new month is announced. The buttons carry a sealed copy of the shortcode with the adjacent month, so the filter cannot be changed from the browser.
+
+- They render on display pages, cards, the lightbox and deferred bodies. Share pages, the live template preview and list headers show the authored month without them.
+- There is no Prev at 1000-01 and no Next at 9999-12.
+- A `[reload]` around a calendar, or a `[lazy]` it sits in, re-renders the authored month, not the one navigated to.
+
+### Output
+
+```html
+<calendar-shortcode class="calendar-shortcode" role="group" aria-labelledby="cal-…-cap" data-prev-token="…" data-next-token="…">
+  <div class="calendar-shortcode-nav">
+    <button type="button" data-calendar-nav="prev">‹ <span class="sr-only">Previous month, </span>February 2026</button>
+    <button type="button" data-calendar-nav="next"><span class="sr-only">Next month, </span>April 2026 ›</button>
+  </div>
+  <table class="calendar-shortcode-grid">
+    <caption id="cal-…-cap">March 2026 <span class="calendar-shortcode-total">(12 items)</span></caption>
+    …
+    <td class="calendar-shortcode-cell">
+      <a class="calendar-shortcode-daylink" href="/mrql?q=…">…4…5…</a>
+      <ul class="calendar-shortcode-items"><li><a href="/note?id=12">Dentist</a></li>…</ul>
+      <a class="calendar-shortcode-more" href="/mrql?q=…">+2 more<span class="sr-only"> items on March 4</span></a>
+    </td>
+    …
+  </table>
+</calendar-shortcode>
+```
+
+- The group is named by the table caption, so the buttons and the grid are announced together. Column headers are full weekday names for assistive technology.
+- A day link reads "March 4, 5 items"; an empty day reads "March 5, no items" and is not a link. The visible number is part of each name.
+- Long titles are clipped on screen and read in full. Titles are always HTML-escaped.
+
+### Scoping and cost
+
+- Counts and titles are read as the viewer. A group-confined user or guest only sees entities inside their subtree, whatever `scope` says, and the day and title links open pages that are scoped the same way. A navigation token replayed for an entity outside the viewer's subtree is refused.
+- An entity with no owning group and the default scope matches nothing: the grid is empty and has no links.
+- Each render costs one unit of the [per-page query budget](#per-page-query-budget), or two in counts mode. An identical calendar on the same page is free. Each Prev/Next click costs one or two queries on its own request.
+- Put calendars in `CustomSidebar` or `CustomHeader`. In a per-card slot (`CustomMRQLResult`, `CustomAvatar`, `CustomCell`) with the entity's scope, every card runs its own queries: a list of 150 cards exhausts the default budget, and the remaining cards render the budget error. A fixed `scope` lets identical calendars share one result.
+- Both queries are a month-range predicate. `created`/`updated` use the timestamp indexes. For a `meta.*` date on a large library, an [indexed metadata key](./meta-schemas.md#indexed-metadata-keys) on that path serves the range; the date-shape guard is checked on the rows it returns.
+
+`[calendar]` cannot be used inside a `[reload]` button face. On share pages it renders `<!-- mr:calendar unavailable in this context -->`.
+
+`calendar` is now a reserved shortcode name: text written as `[calendar …]` in an existing template renders the calendar (or an error marker) instead of showing as text.
 
 ## `[comment]` -- Comment out a section
 

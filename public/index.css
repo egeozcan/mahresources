@@ -4235,6 +4235,131 @@ autorefresh-shortcode.deferred-reloading > * {
   }
 }
 
+/* [calendar] month grid. It takes the slot's text colour, so it reads on the
+   white page and on the lightbox's dark panel alike; lines are that colour at
+   low alpha, and the focus ring and today's outline are amber-700 (#b45309),
+   which stays above 3:1 on white (5.0:1) and on stone-900 (3.5:1). */
+calendar-shortcode {
+  display: block;
+  margin: 0.5rem 0;
+  font-size: 0.75rem;
+  line-height: 1.25;
+}
+.calendar-shortcode-nav {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+.calendar-shortcode-navbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-height: 1.5rem;
+  padding: 0 0.375rem;
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-radius: 0.25rem;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.calendar-shortcode-navbtn:hover {
+  border-color: currentColor;
+}
+.calendar-shortcode-grid {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+.calendar-shortcode-grid caption {
+  text-align: left;
+  font-weight: 600;
+  padding-bottom: 0.25rem;
+}
+.calendar-shortcode-total {
+  font-weight: 400;
+}
+.calendar-shortcode-grid th {
+  font-weight: 500;
+  text-align: left;
+  padding: 0 0.125rem 0.125rem;
+}
+.calendar-shortcode-grid td {
+  vertical-align: top;
+  height: 3rem;
+  padding: 0.125rem;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  overflow: hidden;
+}
+.calendar-shortcode-grid td.calendar-shortcode-pad {
+  border-color: transparent;
+}
+.calendar-shortcode-grid td.calendar-shortcode-today {
+  outline: 2px solid #b45309;
+  outline-offset: -2px;
+}
+.calendar-shortcode-day {
+  font-weight: 600;
+}
+.calendar-shortcode-count {
+  display: inline-block;
+  margin-left: 0.25rem;
+  padding: 0 0.25rem;
+  border-radius: 0.25rem;
+  background: color-mix(in srgb, currentColor 15%, transparent);
+}
+/* Every link and button is at least 24px tall (WCAG 2.2 SC 2.5.8). */
+.calendar-shortcode-daylink {
+  display: inline-block;
+  min-width: 1.5rem;
+  min-height: 1.5rem;
+  line-height: 1.5rem;
+  color: inherit;
+  text-decoration: none;
+  border-radius: 0.25rem;
+}
+.calendar-shortcode-daylink:hover .calendar-shortcode-day {
+  text-decoration: underline;
+}
+.calendar-shortcode-items {
+  margin: 0.125rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.calendar-shortcode-items a {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.calendar-shortcode-more {
+  display: inline-block;
+}
+.calendar-shortcode-items a,
+.calendar-shortcode-more {
+  min-height: 1.5rem;
+  line-height: 1.5rem;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  border-radius: 0.125rem;
+}
+.calendar-shortcode-navbtn:focus-visible,
+.calendar-shortcode-daylink:focus-visible,
+.calendar-shortcode-items a:focus-visible,
+.calendar-shortcode-more:focus-visible {
+  outline: 2px solid #b45309;
+  outline-offset: 1px;
+}
+.calendar-shortcode-note {
+  margin-top: 0.25rem;
+  font-style: italic;
+}
+calendar-shortcode.deferred-reloading {
+  cursor: progress;
+}
+
 /* ── WS5 finding 48: small "remove" icon buttons ─────────────────────────────
    The "×" buttons were 9.6x24 (block-editor to-do items) and 8.4x20 (reference
    chips, table columns and rows, entity-picker chips, lightbox tag pills) —
