@@ -159,7 +159,11 @@ func (s *reductionStore) shareLockMembersOf(r *models.ResourceReduction, generat
 // markClusters locks the Cluster rows among ids (ascending) and marks the ones
 // that still satisfy the predicate that makes them a target, returning how many it
 // marked. The predicate is evaluated by the marking statement itself, after the
-// locks, so a deletion that committed in between is not marked.
+// locks, so a deletion that committed in between is not marked, and so is
+// visibility: the share locks on the members' Resources hold off an owner move, but
+// not a re-parent of a Group, which can take a Cluster out of the principal's
+// subtree after it was selected. A Cluster withheld by the time of this statement
+// is not marked.
 func (s *reductionStore) markClusters(ids []uint, op string) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
@@ -167,7 +171,9 @@ func (s *reductionStore) markClusters(ids []uint, op string) (int64, error) {
 	if err := s.lockClusterRows(ids); err != nil {
 		return 0, err
 	}
-	res := s.db.Exec(`UPDATE reduction_clusters SET bulk_op = ? WHERE id IN ? AND state = 'open' AND gone_members = 0 AND NOT read_only`, op, ids)
+	prefix, args := s.with()
+	res := s.db.Exec(prefix+`UPDATE reduction_clusters SET bulk_op = ? WHERE id IN ? AND state = 'open' AND gone_members = 0 AND NOT read_only AND NOT `+s.withheld("reduction_clusters"),
+		append(args, op, ids)...)
 	return res.RowsAffected, res.Error
 }
 
@@ -189,6 +195,32 @@ func (s *reductionStore) markNamed(r *models.ResourceReduction, generation, op s
 		return err
 	}
 	afterLocks()
+	ids, err := s.classifyNamed(r, generation, named)
+	if err != nil {
+		return err
+	}
+	marked, err := s.markClusters(ids, op)
+	if err != nil {
+		return err
+	}
+	if int(marked) != len(ids) {
+		// One stopped being a target between the classification and the marking
+		// statement. With the locks now held, classify again to say which way: a
+		// Cluster that left the principal's subtree is not found, a deletion that
+		// landed makes it not open.
+		if _, err := s.classifyNamed(r, generation, named); err != nil {
+			return err
+		}
+		return ErrReductionClusterNotOpen
+	}
+	return nil
+}
+
+// classifyNamed resolves the keys of a bulk-by-ids request to Cluster ids, in
+// today's order: an unknown or withheld key refuses the request as not found before
+// any Cluster's state is looked at, then a Cluster that is not open refuses it as
+// not open.
+func (s *reductionStore) classifyNamed(r *models.ResourceReduction, generation string, named []string) ([]uint, error) {
 	prefix, where, args := s.base(r, generation)
 	var rows []struct {
 		ID          uint
@@ -199,28 +231,19 @@ func (s *reductionStore) markNamed(r *models.ResourceReduction, generation, op s
 	}
 	if err := s.db.Raw(prefix+`SELECT c.id, c."key", c.state, c.gone_members, c.read_only FROM reduction_clusters c WHERE `+where+` AND c."key" IN ?`,
 		append(args, named)...).Scan(&rows).Error; err != nil {
-		return err
+		return nil, err
 	}
 	if len(rows) != len(named) {
-		return ErrReductionClusterNotFound
+		return nil, ErrReductionClusterNotFound
 	}
 	ids := make([]uint, 0, len(rows))
 	for _, row := range rows {
 		if row.State != models.ReductionClusterOpen || row.GoneMembers > 0 || row.ReadOnly {
-			return ErrReductionClusterNotOpen
+			return nil, ErrReductionClusterNotOpen
 		}
 		ids = append(ids, row.ID)
 	}
-	marked, err := s.markClusters(ids, op)
-	if err != nil {
-		return err
-	}
-	if int(marked) != len(ids) {
-		// One stopped being open between the classification and the lock (a
-		// deletion landed): the request named a Cluster that is not open.
-		return ErrReductionClusterNotOpen
-	}
-	return nil
+	return ids, nil
 }
 
 // markAllIdentical marks every open Identical Cluster the principal may fully see.

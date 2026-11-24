@@ -235,7 +235,7 @@ func testStoreApplyStamp(t *testing.T, ctx *MahresourcesContext) {
 	require.NoError(t, ctx.db.Create(mine).Error)
 	pairAt(t, ctx, r, "outside", 50, nil)
 
-	scoped := ctx.WithPrincipal(&auth.Principal{Role: models.RoleUser, UserID: 5, ScopeGroupID: &mine.ID})
+	scoped := ctx.WithPrincipal(accountPrincipal(t, ctx, "scoped", models.RoleUser, &mine.ID))
 	run, err := scoped.storeClaimApplyBatch(r, applyRequest(r))
 	require.NoError(t, err)
 	var stamped int64

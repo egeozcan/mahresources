@@ -32,6 +32,9 @@ const reductionApplyOutcomeCap = 200
 // reconcileChunk is how many stranded claims one reconciliation transaction settles.
 const reconcileChunk = 50
 
+// reconcileKeysetSQL walks the claims a crashed batch may have stranded, by id.
+const reconcileKeysetSQL = `SELECT id FROM reduction_clusters WHERE reduction_id = ? AND generation = ? AND state = 'applied' AND NOT merged AND id > ? ORDER BY id LIMIT ?`
+
 // applyRecord is what the store reads of the Reduction's last_apply document: the
 // batch that owns the Reduction and the plan generation it pinned.
 type applyRecord struct {
@@ -40,9 +43,38 @@ type applyRecord struct {
 }
 
 // bumpReductionVersion moves the version once a Cluster write has landed, as every
-// plan write moves it today.
+// plan write moves it today, except under a running compute. A compute lands only
+// at the version it began at, and the one write that can meet a compute is
+// bookkeeping a worker does after its apply lease expired (the lease is what keeps
+// a compute from beginning while an apply is live): that write must not make the
+// compute's landing stale. The compute replaces the plan, so the version it guards
+// is the one the compute will move itself.
 func bumpReductionVersion(tx *gorm.DB, id uint) error {
-	return tx.Exec(`UPDATE resource_reductions SET version = version + 1, updated_at = ? WHERE id = ?`, time.Now(), id).Error
+	return tx.Exec(`UPDATE resource_reductions SET version = version + 1, updated_at = ? WHERE id = ? AND status <> 'computing'`, time.Now(), id).Error
+}
+
+// leaseLiveNow reports whether the apply lease still runs, against a clock read
+// now. The caller holds the Reduction row, so the lease cannot move under it; it
+// calls this after taking the Resource and Cluster locks, because a wait for one
+// of those can outlast the lease the opening fence judged.
+func leaseLiveNow(tx *gorm.DB, reductionID uint) (bool, error) {
+	var lease int64
+	if err := tx.Raw(`SELECT apply_lease_until FROM resource_reductions WHERE id = ?`, reductionID).Scan(&lease).Error; err != nil {
+		return false, err
+	}
+	return lease > leaseNow().UnixNano(), nil
+}
+
+// requireLeaseLive is leaseLiveNow as the error a writer returns.
+func requireLeaseLive(tx *gorm.DB, reductionID uint) error {
+	live, err := leaseLiveNow(tx, reductionID)
+	if err != nil {
+		return err
+	}
+	if !live {
+		return ErrReductionLeaseLost
+	}
+	return nil
 }
 
 // fenceBatch locks the Reduction row and proves the batch still owns it: the
@@ -111,8 +143,18 @@ func (ctx *MahresourcesContext) storeClaimCluster(reductionID uint, batch, key s
 			if err != nil {
 				return err
 			}
+			// The account is re-read in every write: an admin may have narrowed it
+			// since the request bound its scope.
+			if err := ctx.accountStillBound(tx); err != nil {
+				return err
+			}
 			st := store.in(tx)
 			c, err := st.lockedCluster(&models.ResourceReduction{ID: reductionID}, generation, key)
+			// The fence's clock was read before the member locks; the wait for them
+			// may have outlasted the lease.
+			if leaseErr := requireLeaseLive(tx, reductionID); leaseErr != nil {
+				return leaseErr
+			}
 			switch {
 			case errors.Is(err, gorm.ErrRecordNotFound):
 				return nil
@@ -152,29 +194,110 @@ func (ctx *MahresourcesContext) storeClaimCluster(reductionID uint, batch, key s
 	return claimed, gate, nil
 }
 
+// demoteOutcome is how storeDemote ended.
+type demoteOutcome int
+
+const (
+	// demoteSuperseded: nothing was written (the claim was settled by someone else,
+	// or the batch no longer owns the Reduction).
+	demoteSuperseded demoteOutcome = iota
+	// demoteRecorded: the Cluster is stale, with the reason and the changed members.
+	demoteRecorded
+	// demoteReleased: the apply lease had expired, so the claim was given back
+	// instead. Recording an outcome is an apply's act, and an expired apply has none
+	// to record; the Cluster goes back to open and approved, to be judged afresh.
+	demoteReleased
+	// demoteHidden: the caller's account changed since the request began. The claim
+	// was released and nothing about the Cluster may be reported.
+	demoteHidden
+)
+
 // storeDemoteToStale takes back a claim whose merge was refused: the only writer
 // that may move a Cluster off applied. It clears the claim id (a demoted claim
 // left set would be refused by the next stamp) and records which members changed.
 // It reports whether the demotion landed; a claim someone else settled, or a batch
-// that no longer owns the Reduction, is not one. Bookkeeping: allowed after the
-// lease expired, while the batch, generation and claim id match.
+// that no longer owns the Reduction, is not one.
 func (ctx *MahresourcesContext) storeDemoteToStale(reductionID uint, batch, key, claimID, reason string, changed []uint) bool {
-	return ctx.settleOwnClaim(reductionID, batch, key, claimID, false, func(st *reductionStore, c *storedCluster) error {
-		c.Row.State = models.ReductionClusterStale
-		c.Row.StaleReason = reason
-		c.Row.AppliedAt = nil
-		c.Row.Checked = false
-		c.Row.ClaimID = ""
-		c.Row.OutcomeBatch = batch
-		flagged := map[uint]bool{}
-		for _, id := range changed {
-			flagged[id] = true
-		}
-		for i := range c.Members {
-			c.Members[i].Changed = flagged[c.Members[i].ResourceID]
-		}
-		return nil
+	return ctx.storeDemote(reductionID, batch, key, claimID, reason, changed) == demoteRecorded
+}
+
+// storeDemote is storeDemoteToStale with the way it ended. Releasing the batch's
+// own claim is the one write D10 allows after the lease expired, together with the
+// finish record; a stale outcome is not, so a demote that finds the lease expired
+// (judged after the locks) releases instead of recording. The same goes for an
+// account that no longer holds what the request was bound with.
+func (ctx *MahresourcesContext) storeDemote(reductionID uint, batch, key, claimID, reason string, changed []uint) demoteOutcome {
+	store := ctx.reductionStore()
+	outcome := demoteSuperseded
+	err := retryOnLockContention(reductionCASRetries, func() error {
+		outcome = demoteSuperseded
+		return store.db.Transaction(func(tx *gorm.DB) error {
+			outcome = demoteSuperseded
+			generation, err := fenceBatch(tx, reductionID, batch, false)
+			if err != nil {
+				return err
+			}
+			st := store.in(tx)
+			c, err := st.lockedClusterUnfiltered(reductionID, generation, key, true)
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if claimID == "" || c.Row.State != models.ReductionClusterApplied || c.Row.Merged || c.Row.ClaimID != claimID {
+				return nil
+			}
+			live, err := leaseLiveNow(tx, reductionID)
+			if err != nil {
+				return err
+			}
+			hidden := false
+			if err := ctx.accountStillBound(tx); err != nil {
+				if !errors.Is(err, errAccountChanged) {
+					return err
+				}
+				hidden = true
+			}
+			before := copyMembers(c.Members)
+			switch {
+			case hidden || !live:
+				if err := st.reopenClaim(c); err != nil {
+					return err
+				}
+				outcome = demoteReleased
+				if hidden {
+					outcome = demoteHidden
+				}
+			default:
+				c.Row.State = models.ReductionClusterStale
+				c.Row.StaleReason = reason
+				c.Row.AppliedAt = nil
+				c.Row.Checked = false
+				c.Row.ClaimID = ""
+				c.Row.OutcomeBatch = batch
+				flagged := map[uint]bool{}
+				for _, id := range changed {
+					flagged[id] = true
+				}
+				for i := range c.Members {
+					c.Members[i].Changed = flagged[c.Members[i].ResourceID]
+				}
+				outcome = demoteRecorded
+			}
+			if err := st.writeCluster(c, before); err != nil {
+				return err
+			}
+			return bumpReductionVersion(tx, reductionID)
+		})
 	})
+	if err != nil {
+		if !errors.Is(err, ErrReductionLeaseLost) {
+			ctx.logReductionWriteFailure(reductionID, key, err)
+		}
+		return demoteSuperseded
+	}
+	return outcome
 }
 
 // storeReleaseClaim gives back this attempt's claim: the Cluster returns to open
@@ -183,20 +306,27 @@ func (ctx *MahresourcesContext) storeDemoteToStale(reductionID uint, batch, key,
 // a deletion that landed while it was claimed is not lost to the reopened row.
 func (ctx *MahresourcesContext) storeReleaseClaim(reductionID uint, batch, key, claimID string) bool {
 	return ctx.settleOwnClaim(reductionID, batch, key, claimID, true, func(st *reductionStore, c *storedCluster) error {
-		if err := st.recountGone(c); err != nil {
-			return err
-		}
-		c.Row.State = models.ReductionClusterOpen
-		c.Row.Checked = true
-		c.Row.AppliedAt = nil
-		c.Row.ClaimID = ""
-		return nil
+		return st.reopenClaim(c)
 	})
 }
 
-// settleOwnClaim is the shape demote and release share: the bookkeeping fence, the
-// locks, a re-read that must still be this claim (applied, not merged, same claim
-// id), the change, the write. It returns whether it wrote. A failure is logged,
+// reopenClaim returns a claimed Cluster to open and approved, exactly as it was
+// approved, after recounting which members still exist. The caller holds the
+// members' Resources and the Cluster row.
+func (s *reductionStore) reopenClaim(c *storedCluster) error {
+	if err := s.recountGone(c); err != nil {
+		return err
+	}
+	c.Row.State = models.ReductionClusterOpen
+	c.Row.Checked = true
+	c.Row.AppliedAt = nil
+	c.Row.ClaimID = ""
+	return nil
+}
+
+// settleOwnClaim is the shape release shares with the writers that settle a claim:
+// the bookkeeping fence, the locks, a re-read that must still be this claim
+// (applied, not merged, same claim id), the change, the write. It returns whether it wrote. A failure is logged,
 // not returned, as every bookkeeping write after a merge is.
 func (ctx *MahresourcesContext) settleOwnClaim(reductionID uint, batch, key, claimID string, resources bool, change func(*reductionStore, *storedCluster) error) bool {
 	store := ctx.reductionStore()
@@ -293,8 +423,14 @@ func (ctx *MahresourcesContext) storeRecordStale(reductionID uint, batch, key, f
 			if err != nil {
 				return err
 			}
+			if err := ctx.accountStillBound(tx); err != nil {
+				return err
+			}
 			st := store.in(tx)
 			c, err := st.lockedCluster(&models.ResourceReduction{ID: reductionID}, generation, key)
+			if leaseErr := requireLeaseLive(tx, reductionID); leaseErr != nil {
+				return leaseErr
+			}
 			switch {
 			case errors.Is(err, gorm.ErrRecordNotFound):
 				return nil
@@ -333,13 +469,17 @@ func (ctx *MahresourcesContext) storeRecordStale(reductionID uint, batch, key, f
 			return nil
 		})
 	})
-	if err != nil {
-		if !errors.Is(err, ErrReductionLeaseLost) {
-			ctx.logReductionWriteFailure(reductionID, key, err)
-		}
+	switch {
+	case err == nil:
+		return outcome
+	case errors.Is(err, ErrReductionLeaseLost), errors.Is(err, ErrReductionNotFound):
 		return staleSuperseded
+	case errors.Is(err, errAccountChanged):
+		// The caller no longer holds the visibility this was judged under.
+		return staleHidden
 	}
-	return outcome
+	ctx.logReductionWriteFailure(reductionID, key, err)
+	return staleFailed
 }
 
 // ---- reconcile stranded claims ----------------------------------------------------
@@ -386,6 +526,9 @@ func (ctx *MahresourcesContext) storeReconcileClaimsFor(reductionID uint, fence 
 				if err != nil {
 					return err
 				}
+				if err := ctx.accountStillBound(tx); err != nil {
+					return err
+				}
 				var reconciled int
 				chunkStale, last, seen, reconciled, err = store.in(tx).reconcileChunk(reductionID, generation, after)
 				if err != nil {
@@ -420,17 +563,16 @@ func (ctx *MahresourcesContext) storeReconcileClaimsFor(reductionID uint, fence 
 // highest id seen, reconciled counts the Clusters it changed.
 func (s *reductionStore) reconcileChunk(reductionID uint, generation string, after uint) (stale []contracts.ReductionApplyOutcome, last uint, seen, reconciled int, err error) {
 	var ids []uint
-	if err = s.db.Raw(`SELECT id FROM reduction_clusters WHERE reduction_id = ? AND generation = ? AND state = 'applied' AND NOT merged AND id > ? ORDER BY id LIMIT ?`,
+	if err = s.db.Raw(reconcileKeysetSQL,
 		reductionID, generation, after, reconcileChunk).Scan(&ids).Error; err != nil || len(ids) == 0 {
 		return nil, 0, 0, 0, err
 	}
 	seen, last = len(ids), ids[len(ids)-1]
 
-	var resourceIDs []uint
-	if err = s.db.Raw(`SELECT DISTINCT resource_id FROM reduction_members WHERE cluster_id IN ?`, ids).Scan(&resourceIDs).Error; err != nil {
-		return nil, 0, 0, 0, err
-	}
-	if err = s.shareLockResources(resourceIDs); err != nil {
+	// The members' Resources, share-locked ascending in keyset chunks of at most
+	// reductionRowChunk ids: 50 Clusters may name 10,000 members, and none of them
+	// is read in one statement.
+	if err = s.shareLockMembersOf(&models.ResourceReduction{ID: reductionID}, generation, `c.id IN ?`, ids); err != nil {
 		return nil, 0, 0, 0, err
 	}
 	if err = s.lockClusterRows(ids); err != nil {
@@ -495,6 +637,9 @@ func (ctx *MahresourcesContext) storeSettleClaims(r *models.ResourceReduction, r
 			if err := lockReductionRowTx(tx, r.ID); err != nil {
 				return err
 			}
+			if err := ctx.accountStillBound(tx); err != nil {
+				return err
+			}
 			fresh, err := reloadReduction(tx, r.ID)
 			if err != nil {
 				return err
@@ -504,6 +649,11 @@ func (ctx *MahresourcesContext) storeSettleClaims(r *models.ResourceReduction, r
 			case EffectiveReductionStatus(fresh) == models.ReductionStatusComputing || fresh.PlanSchema == 0:
 				return ErrReductionBusy
 			case request.Version != fresh.Version || r.Version != fresh.Version:
+				return ErrReductionConflict
+			case !sameOwner(r.CreatedByUserId, fresh.CreatedByUserId):
+				// The owner-qualified compare-and-set every decision runs: a pointer
+				// loaded before the owner was deleted (created_by_user_id nulled, no
+				// version bump) no longer authorizes writing.
 				return ErrReductionConflict
 			case fresh.ApplyLeaseUntil > now.UnixNano(), fresh.SettleOp != nil && fresh.SettleLeaseUntil > now.UnixNano():
 				return ErrReductionConflict
@@ -525,6 +675,14 @@ func (ctx *MahresourcesContext) storeSettleClaims(r *models.ResourceReduction, r
 		return nil, err
 	}
 	return &contracts.ReductionApplyResult{}, nil
+}
+
+// sameOwner compares two Reductions' owners, a missing one only equal to a missing one.
+func sameOwner(a, b *uint) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 // settleFence is settle-only's own fence for each chunk: under the Reduction row

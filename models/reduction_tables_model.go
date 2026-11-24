@@ -19,9 +19,9 @@ import (
 
 // ReductionClusterRow is one Cluster of one generation of a Reduction's plan.
 type ReductionClusterRow struct {
-	ID          uint   `gorm:"primaryKey;index:idx_rc_batch,priority:5;index:idx_rc_bulk,priority:4"`
-	ReductionID uint   `gorm:"not null;default:0;uniqueIndex:ux_reduction_clusters_key,priority:1;index:idx_rc_position,priority:1;index:idx_rc_state,priority:1;index:idx_rc_members,priority:1;index:idx_rc_size,priority:1;index:idx_rc_batch,priority:1;index:idx_rc_outcome,priority:1;index:idx_rc_bulk,priority:1"`
-	Generation  string `gorm:"size:64;not null;default:'';uniqueIndex:ux_reduction_clusters_key,priority:2;index:idx_rc_position,priority:2;index:idx_rc_state,priority:2;index:idx_rc_members,priority:2;index:idx_rc_size,priority:2;index:idx_rc_batch,priority:2;index:idx_rc_outcome,priority:2;index:idx_rc_bulk,priority:2"`
+	ID          uint   `gorm:"primaryKey;index:idx_rc_batch,priority:5;index:idx_rc_bulk,priority:4;index:idx_rc_claims,priority:5"`
+	ReductionID uint   `gorm:"not null;default:0;uniqueIndex:ux_reduction_clusters_key,priority:1;index:idx_rc_position,priority:1;index:idx_rc_state,priority:1;index:idx_rc_members,priority:1;index:idx_rc_size,priority:1;index:idx_rc_batch,priority:1;index:idx_rc_outcome,priority:1;index:idx_rc_bulk,priority:1;index:idx_rc_claims,priority:1"`
+	Generation  string `gorm:"size:64;not null;default:'';uniqueIndex:ux_reduction_clusters_key,priority:2;index:idx_rc_position,priority:2;index:idx_rc_state,priority:2;index:idx_rc_members,priority:2;index:idx_rc_size,priority:2;index:idx_rc_batch,priority:2;index:idx_rc_outcome,priority:2;index:idx_rc_bulk,priority:2;index:idx_rc_claims,priority:2"`
 	// Key is the Cluster's address in the API and the DOM. On Postgres it is
 	// COLLATE "C" (EnsureReductionKeyCollation), so SQL order is Go's byte order.
 	Key string `gorm:"column:key;size:64;not null;default:'';uniqueIndex:ux_reduction_clusters_key,priority:3;index:idx_rc_members,priority:4;index:idx_rc_size,priority:4"`
@@ -30,7 +30,7 @@ type ReductionClusterRow struct {
 	Position int64 `gorm:"not null;default:0;index:idx_rc_position,priority:3;index:idx_rc_batch,priority:4"`
 
 	Tier         string `gorm:"size:20;not null;default:'';index:idx_rc_state,priority:4"`
-	State        string `gorm:"size:20;not null;default:'';index:idx_rc_state,priority:3"`
+	State        string `gorm:"size:20;not null;default:'';index:idx_rc_state,priority:3;index:idx_rc_claims,priority:3"`
 	WinnerID     uint   `gorm:"not null;default:0"`
 	Checked      bool   `gorm:"not null;default:false;index:idx_rc_state,priority:5"`
 	Reviewed     bool   `gorm:"not null;default:false"`
@@ -45,7 +45,7 @@ type ReductionClusterRow struct {
 	// Lossy is the list of field names a Loser holds and the Winner lacks.
 	Lossy       types.JSON `gorm:"type:json"`
 	StaleReason string     `gorm:"type:text;not null;default:''"`
-	Merged      bool       `gorm:"not null;default:false"`
+	Merged      bool       `gorm:"not null;default:false;index:idx_rc_claims,priority:4"`
 	ClaimID     string     `gorm:"type:text;not null;default:''"`
 	AppliedAt   *time.Time
 

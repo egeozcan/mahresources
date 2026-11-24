@@ -666,17 +666,27 @@ func (s *reductionStore) sweepTable(table, keyCol string, guard func(x string) s
 	}
 }
 
-// sweepOrphans removes selection rows whose Reduction no longer exists.
+// sweepOrphans removes selection rows whose Reduction no longer exists. The key
+// column is unique only within a Reduction, so a chunk is named by (reduction id,
+// key) pairs: deleting by key alone would take the same key out of every orphaned
+// Reduction in one statement, however many that is.
 func (s *reductionStore) sweepOrphans(table, keyCol string) error {
 	for {
-		var ids []uint
-		if err := s.db.Raw(`SELECT x.`+keyCol+` FROM `+table+` x WHERE NOT EXISTS (SELECT 1 FROM resource_reductions r WHERE r.id = x.reduction_id) LIMIT ?`, reductionRowChunk).Scan(&ids).Error; err != nil {
+		var pairs []struct {
+			ReductionID uint
+			Key         uint
+		}
+		if err := s.db.Raw(`SELECT x.reduction_id AS reduction_id, x.`+keyCol+` AS "key" FROM `+table+` x WHERE NOT EXISTS (SELECT 1 FROM resource_reductions r WHERE r.id = x.reduction_id) ORDER BY x.reduction_id, x.`+keyCol+` LIMIT ?`, reductionRowChunk).Scan(&pairs).Error; err != nil {
 			return err
 		}
-		if len(ids) == 0 {
+		if len(pairs) == 0 {
 			return nil
 		}
-		if err := s.db.Exec(`DELETE FROM `+table+` WHERE `+keyCol+` IN ? AND NOT EXISTS (SELECT 1 FROM resource_reductions r WHERE r.id = `+table+`.reduction_id)`, ids).Error; err != nil {
+		tuples := make([][]any, len(pairs))
+		for i, p := range pairs {
+			tuples[i] = []any{p.ReductionID, p.Key}
+		}
+		if err := s.db.Exec(`DELETE FROM `+table+` WHERE (reduction_id, `+keyCol+`) IN ? AND NOT EXISTS (SELECT 1 FROM resource_reductions r WHERE r.id = `+table+`.reduction_id)`, tuples).Error; err != nil {
 			return err
 		}
 	}

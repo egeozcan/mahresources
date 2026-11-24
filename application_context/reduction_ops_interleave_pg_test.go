@@ -3,6 +3,8 @@
 package application_context
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +14,40 @@ import (
 	"mahresources/auth"
 	"mahresources/models"
 )
+
+// requireShareLocked proves the parked transaction really holds a lock on the
+// Resource: another transaction cannot take it for update without waiting. A test
+// that only watched for a delay could pass with no contention at all.
+func requireShareLocked(t *testing.T, db *gorm.DB, resourceID uint) {
+	t.Helper()
+	err := db.Transaction(func(tx *gorm.DB) error {
+		return tx.Exec(`SELECT id FROM resources WHERE id = ? FOR UPDATE NOWAIT`, resourceID).Error
+	})
+	require.Error(t, err, "the parked writer holds no lock on the Resource")
+	require.Contains(t, err.Error(), "55P03", "the failure is a lock conflict")
+}
+
+// requireWaitsOnLock waits until a backend running a statement that starts with
+// prefix is blocked on a lock, and fails if done reports the statement finished
+// first: the competing writer really waited.
+func requireWaitsOnLock(t *testing.T, db *gorm.DB, prefix string, done <-chan error) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-done:
+			t.Fatalf("%s finished instead of waiting on the lock (err %v)", prefix, err)
+		default:
+		}
+		var n int64
+		require.NoError(t, db.Raw(`SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE ?`, prefix+"%").Scan(&n).Error)
+		if n > 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("no backend running %q was ever blocked on a lock", prefix)
+}
 
 // park runs the writer's transaction until it holds its locks, then holds it there
 // until release is closed. The hook is process-wide, so the tests using it do not
@@ -50,6 +86,7 @@ func TestOpsDeleteVsBulkApprovePG(t *testing.T) {
 		approved <- err
 	}()
 	<-parked
+	requireShareLocked(t, ctx.db, b)
 
 	deleted := make(chan error, 1)
 	go func() {
@@ -67,11 +104,7 @@ func TestOpsDeleteVsBulkApprovePG(t *testing.T) {
 				WHERE id IN (SELECT cluster_id FROM reduction_members WHERE resource_id = ?)`, b).Error
 		})
 	}()
-	select {
-	case err := <-deleted:
-		t.Fatalf("the delete did not wait for the approval's share lock (err %v)", err)
-	case <-time.After(400 * time.Millisecond):
-	}
+	requireWaitsOnLock(t, ctx.db, "DELETE FROM resources", deleted)
 	close(release)
 	require.NoError(t, <-approved)
 	require.NoError(t, <-deleted)
@@ -106,15 +139,12 @@ func TestOpsOwnerMoveVsScopedBulkApprovePG(t *testing.T) {
 		approved <- err
 	}()
 	<-parked
+	requireShareLocked(t, ctx.db, b)
 	moved := make(chan error, 1)
 	go func() {
 		moved <- ctx.db.Exec(`UPDATE resources SET owner_id = ? WHERE id = ?`, other.ID, b).Error
 	}()
-	select {
-	case err := <-moved:
-		t.Fatalf("the owner move did not wait for the approval (err %v)", err)
-	case <-time.After(400 * time.Millisecond):
-	}
+	requireWaitsOnLock(t, ctx.db, "UPDATE resources SET owner_id", moved)
 	close(release)
 	require.NoError(t, <-approved, "visibility was decided with the members locked, so the count the button showed still held")
 	require.NoError(t, <-moved)
@@ -160,4 +190,123 @@ func TestOpsClaimVsOverrideEjectPG(t *testing.T) {
 	require.ErrorIs(t, err, ErrReductionClusterSettled, "once claimed, an override refuses: the ids about to be merged are frozen")
 	require.Equal(t, models.ReductionClusterApplied, rowOf(t, ctx, "c1").State)
 	assertDerivedColumnsConsistent(t, ctx.db, r.ID)
+}
+
+// A Group re-parent is not blocked by the Resource share locks: it can take a
+// Cluster out of the principal's subtree after the bulk write selected it. The
+// marking statement judges visibility itself, so the approval is refused instead of
+// landing on a Cluster the principal can no longer see.
+func TestOpsReparentVsScopedBulkMarkPG(t *testing.T) {
+	for _, byIDs := range []bool{true, false} {
+		ctx := newOpsPGContext(t)
+		mine := &models.Group{Name: "mine"}
+		require.NoError(t, ctx.db.Create(mine).Error)
+		sub := &models.Group{Name: "sub", OwnerId: &mine.ID}
+		require.NoError(t, ctx.db.Create(sub).Error)
+		r := newPlanReduction(t, ctx.db)
+		a := makeResource(t, ctx.db, "a", opsRes{Hash: "h", Owner: &sub.ID})
+		b := makeResource(t, ctx.db, "b", opsRes{Hash: "h", Owner: &sub.ID})
+		insertOps(t, ctx, r, "c1", models.ReductionTierIdentical, a, opsMember(a, "h"), opsMember(b, "h"))
+		require.NoError(t, ctx.db.Exec(`UPDATE reduction_clusters SET checked = false WHERE "key" = 'c1'`).Error)
+		p := ctx.WithPrincipal(accountPrincipal(t, ctx, "u", models.RoleUser, &mine.ID))
+
+		parked, release := park(t)
+		done := make(chan error, 1)
+		go func() {
+			var err error
+			if byIDs {
+				_, err = p.storeBulkOverride(r, bulk(r, ReductionActionCheck, []string{"c1"}, false, nil))
+			} else {
+				_, err = p.storeBulkOverride(r, bulk(r, ReductionActionCheck, nil, true, uintPtr(1)))
+			}
+			done <- err
+		}()
+		<-parked
+		require.NoError(t, ctx.db.Exec(`UPDATE groups SET owner_id = NULL WHERE id = ?`, sub.ID).Error, "a re-parent is not held off by the share locks")
+		close(release)
+		err := <-done
+		if byIDs {
+			require.ErrorIs(t, err, ErrReductionClusterNotFound, "the Cluster is withheld by the time it is marked")
+		} else {
+			require.ErrorIs(t, err, ErrReductionCountMismatch, "the count the button showed no longer holds")
+		}
+		require.False(t, rowOf(t, ctx, "c1").Checked, "nothing was approved")
+		requireNoBulkMarks(t, ctx, r)
+	}
+}
+
+// Reconciliation share-locks the members of 50 Clusters in keyset chunks: no single
+// statement returns more than reductionRowChunk of them.
+func TestOpsReconcileMemberReadIsBoundedPG(t *testing.T) {
+	ctx := newOpsPGContext(t)
+	r := newPlanReduction(t, ctx.db)
+	const clusters, perCluster = 50, 20 // 1,000 members
+	for i := 0; i < clusters; i++ {
+		key := fmt.Sprintf("c%02d", i)
+		first := makeResource(t, ctx.db, key+"-0", opsRes{Hash: "h"})
+		members := []models.ReductionMemberRow{opsMember(first, "h")}
+		for j := 1; j < perCluster; j++ {
+			members = append(members, opsMember(makeResource(t, ctx.db, fmt.Sprintf("%s-%d", key, j), opsRes{Hash: "h"}), "h"))
+		}
+		insertOps(t, ctx, r, key, models.ReductionTierIdentical, first, members...)
+		strand(t, ctx, key, false)
+	}
+	r = startBatch(t, ctx, r, "b1", time.Hour)
+
+	// A raw scan runs the Row chain; the statement's last bind is its LIMIT.
+	var widest int64
+	reads := 0
+	const name = "capture-member-reads"
+	require.NoError(t, ctx.db.Callback().Row().After("gorm:row").Register(name, func(d *gorm.DB) {
+		sql := d.Statement.SQL.String()
+		if strings.Contains(sql, "reduction_members") && strings.Contains(sql, "GROUP BY") {
+			reads++
+			if limit, ok := d.Statement.Vars[len(d.Statement.Vars)-1].(int); ok && int64(limit) > widest {
+				widest = int64(limit)
+			}
+		}
+	}))
+	t.Cleanup(func() { _ = ctx.db.Callback().Row().Remove(name) })
+
+	_, _, err := ctx.storeReconcileClaims(r.ID, batchClaimFence(r.ID, "b1"))
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, reads, 2, "1,000 members take more than one chunk")
+	require.LessOrEqual(t, widest, int64(reductionRowChunk), "no member read returns more than a chunk")
+	var open int64
+	require.NoError(t, ctx.db.Model(&models.ReductionClusterRow{}).Where("reduction_id = ? AND state = 'open'", r.ID).Count(&open).Error)
+	require.EqualValues(t, clusters, open)
+}
+
+func TestOpsAccountNarrowedMidRequestPG(t *testing.T) {
+	testOpsAccountNarrowedMidRequest(t, newOpsPGContext(t))
+}
+func TestOpsSettleOwnerNulledSinceLoadPG(t *testing.T) {
+	testOpsSettleOwnerNulledSinceLoad(t, newOpsPGContext(t))
+}
+func TestStoreApplyEvidenceForEveryOutcomeKindPG(t *testing.T) {
+	testStoreApplyEvidenceForEveryOutcomeKind(t, newOpsPGContext(t))
+}
+func TestOpsLeaseRecheckedAfterLocksPG(t *testing.T) {
+	testOpsLeaseRecheckedAfterLocks(t, newOpsPGContext(t))
+}
+func TestOpsBulkMarkRechecksVisibilityPG(t *testing.T) {
+	testOpsBulkMarkRechecksVisibility(t, newOpsPGContext(t))
+}
+func TestOpsDemoteNeedsLiveLeasePG(t *testing.T) { testOpsDemoteNeedsLiveLease(t, newOpsPGContext(t)) }
+func TestStoreApplyFailedStaleWriteIsAnErrorPG(t *testing.T) {
+	testStoreApplyFailedStaleWriteIsAnError(t, newOpsPGContext(t))
+}
+func TestOpsReconcileHasAnIndexPG(t *testing.T) { testOpsReconcileHasAnIndex(t, newOpsPGContext(t)) }
+func TestStoreApplyBookkeepingDoesNotBreakAComputePG(t *testing.T) {
+	testStoreApplyBookkeepingDoesNotBreakACompute(t, newOpsPGContext(t))
+}
+func TestSweepOrphansDeletesBoundedChunksPG(t *testing.T) {
+	testSweepOrphansDeletesBoundedChunks(t, newOpsPGContext(t))
+}
+func TestMergeRenewsBetweenWorkUnitsPG(t *testing.T) {
+	testMergeRenewsBetweenWorkUnits(t, newOpsPGContext(t))
+}
+func TestStoreMergeRenewHookPG(t *testing.T) { testStoreMergeRenewHook(t, newOpsPGContext(t)) }
+func TestStoreApplyReconcileErrorDoesNotFinishPG(t *testing.T) {
+	testStoreApplyReconcileErrorDoesNotFinish(t, newOpsPGContext(t))
 }

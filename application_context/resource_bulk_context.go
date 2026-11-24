@@ -836,6 +836,10 @@ type MergeHooks struct {
 	BeforeLocks  func(txCtx *MahresourcesContext) error
 	Precondition MergePrecondition
 	InTx         func(txCtx *MahresourcesContext) error
+	// Renew runs between the merge's work units, inside its transaction, so a merge
+	// longer than the caller's lease keeps the lease it is judged by. An error
+	// stops the merge and rolls it back.
+	Renew func(txCtx *MahresourcesContext) error
 }
 
 // ErrMergeParticipantUnavailable is the lock pass finding a participant missing or,
@@ -887,6 +891,14 @@ func (ctx *MahresourcesContext) MergeResourcesLocking(winnerId uint, loserIds []
 		tx := transactionCtx.db
 		// What an attempt stages is acted on only if that attempt commits.
 		deleteOp = ""
+		// The caller's lease renewal, between work units: a merge of many Losers may
+		// outlast the window it started with.
+		renew := func() error {
+			if hooks.Renew == nil {
+				return nil
+			}
+			return hooks.Renew(transactionCtx)
+		}
 
 		// On SQLite the transaction's first statement is a no-op write, which takes the
 		// writer lock before anything is read. The merge reads its participants and then
@@ -958,7 +970,10 @@ func (ctx *MahresourcesContext) MergeResourcesLocking(winnerId uint, loserIds []
 		// Transfer associations in keyset chunks of 500: a Loser with millions of
 		// them is merged by bounded statements.
 		for _, a := range [][2]string{{"resource_tags", "tag_id"}, {"resource_notes", "note_id"}, {"groups_related_resources", "group_id"}} {
-			if err := transferAssociation(tx, a[0], a[1], winnerId, loserIds); err != nil {
+			if err := renew(); err != nil {
+				return err
+			}
+			if err := transferAssociation(tx, a[0], a[1], winnerId, loserIds, renew); err != nil {
 				return err
 			}
 		}
@@ -1015,6 +1030,9 @@ func (ctx *MahresourcesContext) MergeResourcesLocking(winnerId uint, loserIds []
 		// order, one set-based UPDATE per chunk of 500.
 		moved := 0
 		for {
+			if err := renew(); err != nil {
+				return err
+			}
 			var versionIDs []uint
 			if err := tx.Model(&models.ResourceVersion{}).
 				Where("resource_id IN ?", loserIds).
@@ -1033,6 +1051,9 @@ func (ctx *MahresourcesContext) MergeResourcesLocking(winnerId uint, loserIds []
 		}
 
 		for _, loser := range losers {
+			if err := renew(); err != nil {
+				return err
+			}
 			// Merge meta, minus the loser's own backups key: that key records merges
 			// the loser itself absorbed, and carrying it across nests backups one
 			// merge deeper each time.
@@ -1069,6 +1090,9 @@ func (ctx *MahresourcesContext) MergeResourcesLocking(winnerId uint, loserIds []
 		// Delete the Losers in chunks, walk the affected Reduction Clusters once, scrub
 		// the note blocks once, drop the staged ids. All before InTx, so a claimed
 		// Cluster InTx writes is locked in the hook's ascending order.
+		if err := renew(); err != nil {
+			return err
+		}
 		deleteOp = newDeleteOp()
 		if err := transactionCtx.deleteResourcesDBOnly(resourceRowsFromLocked(participants, loserIds), deleteOp, true, false); err != nil {
 			return err
@@ -1077,6 +1101,9 @@ func (ctx *MahresourcesContext) MergeResourcesLocking(winnerId uint, loserIds []
 			return err
 		}
 
+		if err := renew(); err != nil {
+			return err
+		}
 		if hooks.InTx != nil {
 			if err := hooks.InTx(transactionCtx); err != nil {
 				return err
@@ -1111,9 +1138,12 @@ func (ctx *MahresourcesContext) MergeResourcesLocking(winnerId uint, loserIds []
 // transferAssociation copies every row of a join table that names a Loser onto the
 // Winner, 500 distinct counterparts at a time in keyset order, skipping the ones the
 // Winner already has.
-func transferAssociation(tx *gorm.DB, table, column string, winnerID uint, loserIDs []uint) error {
+func transferAssociation(tx *gorm.DB, table, column string, winnerID uint, loserIDs []uint, between func() error) error {
 	var after uint
 	for {
+		if err := between(); err != nil {
+			return err
+		}
 		var others []uint
 		if err := tx.Raw(fmt.Sprintf("SELECT DISTINCT %s FROM %s WHERE resource_id IN ? AND %s > ? ORDER BY %s LIMIT ?", column, table, column, column),
 			loserIDs, after, deleteStageChunk).Scan(&others).Error; err != nil {

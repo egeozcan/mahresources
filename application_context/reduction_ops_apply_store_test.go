@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	"mahresources/auth"
 	"mahresources/models"
 	"mahresources/models/query_models"
 )
@@ -271,7 +270,7 @@ func testOpsRecordStale(t *testing.T, ctx *MahresourcesContext) {
 	a := makeResource(t, ctx.db, "ha", opsRes{Hash: "h", Owner: &mine.ID})
 	b := makeResource(t, ctx.db, "hb", opsRes{Hash: "h", Owner: &other.ID})
 	insertOps(t, ctx, r, "hidden", models.ReductionTierIdentical, a, opsMember(a, "h"), opsMember(b, "h"))
-	p := ctx.WithPrincipal(&auth.Principal{Role: models.RoleUser, UserID: 5, ScopeGroupID: &mine.ID})
+	p := ctx.WithPrincipal(accountPrincipal(t, ctx, "scoped", models.RoleUser, &mine.ID))
 	require.Equal(t, staleHidden, p.storeRecordStale(r.ID, "b1", "hidden", rowOf(t, ctx, "hidden").Fingerprint, "r", nil))
 	require.Equal(t, models.ReductionClusterOpen, rowOf(t, ctx, "hidden").State)
 	_, gate, err := p.storeClaimCluster(r.ID, "b1", "hidden")
@@ -352,7 +351,7 @@ func testOpsReconcile(t *testing.T, ctx *MahresourcesContext) {
 	strand(t, ctx, "theirs", false)
 	r2 = startBatch(t, ctx, r2, "b3", time.Hour)
 	before := versionOf(t, ctx, r2)
-	p := ctx.WithPrincipal(&auth.Principal{Role: models.RoleUser, UserID: 5, ScopeGroupID: &mine.ID})
+	p := ctx.WithPrincipal(accountPrincipal(t, ctx, "scoped", models.RoleUser, &mine.ID))
 	_, _, err = p.storeReconcileClaims(r2.ID, batchClaimFence(r2.ID, "b3"))
 	require.NoError(t, err)
 	require.Equal(t, models.ReductionClusterApplied, rowOf(t, ctx, "theirs").State)
@@ -402,7 +401,7 @@ func testOpsSettle(t *testing.T, ctx *MahresourcesContext) {
 	hiddenB := makeResource(t, ctx.db, "hb", opsRes{Hash: "h", Owner: &other.ID})
 	insertOps(t, ctx, r, "hid", models.ReductionTierIdentical, hiddenA, opsMember(hiddenA, "h"), opsMember(hiddenB, "h"))
 	strand(t, ctx, "hid", false)
-	p := ctx.WithPrincipal(&auth.Principal{Role: models.RoleUser, UserID: 5, ScopeGroupID: &other.ID})
+	p := ctx.WithPrincipal(accountPrincipal(t, ctx, "scoped", models.RoleUser, &other.ID))
 	v := versionOf(t, ctx, r)
 	_, err = p.storeSettleClaims(r, req)
 	require.NoError(t, err)

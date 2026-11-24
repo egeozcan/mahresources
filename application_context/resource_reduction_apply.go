@@ -892,6 +892,7 @@ const (
 	staleRecorded   staleWrite = iota // the Cluster is now stale
 	staleSuperseded                   // another decision got there first
 	staleHidden                       // the Cluster left the caller's scope
+	staleFailed                       // the write itself failed: nothing was recorded
 )
 
 // recordStaleLocked records a Cluster as stale the way the merge does its work:

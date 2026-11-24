@@ -91,19 +91,22 @@ func (ctx *MahresourcesContext) storeApplyReduction(r *models.ResourceReduction,
 	}
 	result.StaleCount += settledTotal - len(settled)
 
-	if reconcileErr == nil {
-		ctx.storeApplyLoop(r, run, collector, detached)
-	}
-
 	// On its own bounded context: the ceiling may be what ended the loop, and the
 	// record must still say the batch finished.
 	settle, settleCancel := ctx.settlementContext()
 	defer settleCancel()
-	collector.seal()
-	settle.storeFinishApply(r.ID, run, result)
 	if reconcileErr != nil && !errors.Is(reconcileErr, ErrReductionLeaseLost) {
+		// The batch did not do what it set out to do: it is interrupted, not
+		// finished. The lease is given back so the next apply is not held off for
+		// the rest of its window, and the record keeps no finish time and no counts.
+		settle.storeAbandonApply(r.ID, run)
 		return nil, reconcileErr
 	}
+	if reconcileErr == nil {
+		ctx.storeApplyLoop(r, run, collector, detached)
+	}
+	collector.seal()
+	settle.storeFinishApply(r.ID, run, result)
 	return result, nil
 }
 
@@ -185,6 +188,9 @@ func (ctx *MahresourcesContext) storeClaimApplyBatch(r *models.ResourceReduction
 			}
 			if !ok {
 				return ErrReductionConflict
+			}
+			if err := ctx.accountStillBound(tx); err != nil {
+				return err
 			}
 			fresh, err := reloadReduction(tx, r.ID)
 			if err != nil {
@@ -403,12 +409,35 @@ func (ctx *MahresourcesContext) storeFinishApply(reductionID uint, run *applyRun
 			if err != nil {
 				return err
 			}
-			return tx.Exec(`UPDATE resource_reductions SET last_apply = ?, apply_lease_until = 0, version = version + 1, updated_at = ? WHERE id = ?`,
+			// The version moves unless a compute is running (see bumpReductionVersion).
+			return tx.Exec(`UPDATE resource_reductions SET last_apply = ?, apply_lease_until = 0, version = version + CASE WHEN status = 'computing' THEN 0 ELSE 1 END, updated_at = ? WHERE id = ?`,
 				string(encoded), finished, reductionID).Error
 		})
 	})
 	if err != nil {
 		ctx.logReductionWriteFailure(reductionID, "apply "+run.batch, err)
+	}
+}
+
+// storeAbandonApply gives the lease back without finishing the record: the batch
+// stays unfinished, which the reader shows as interrupted, and the next apply may
+// start at once. Bookkeeping like the finish, so it too is allowed after the lease
+// expired, while the batch and the pinned generation still match.
+func (ctx *MahresourcesContext) storeAbandonApply(reductionID uint, run *applyRun) {
+	store := ctx.reductionStore()
+	err := retryOnLockContention(reductionCASRetries, func() error {
+		return store.db.Transaction(func(tx *gorm.DB) error {
+			if _, err := fenceBatch(tx, reductionID, run.batch, false); err != nil {
+				return err
+			}
+			if err := tx.Exec(`UPDATE resource_reductions SET apply_lease_until = 0 WHERE id = ?`, reductionID).Error; err != nil {
+				return err
+			}
+			return bumpReductionVersion(tx, reductionID)
+		})
+	})
+	if err != nil && !errors.Is(err, ErrReductionLeaseLost) {
+		ctx.logReductionWriteFailure(reductionID, "abandon "+run.batch, err)
 	}
 }
 
@@ -463,6 +492,9 @@ func (ctx *MahresourcesContext) storeApplyOneCluster(r *models.ResourceReduction
 			return clusterApplyOutcome{Changed: true}, false
 		case staleHidden:
 			return clusterApplyOutcome{Omit: true}, false
+		case staleFailed:
+			// Nothing was written, and no reviewer changed anything.
+			return clusterApplyOutcome{Failed: true}, false
 		}
 		return clusterApplyOutcome{Report: report}, false
 	}
@@ -474,6 +506,11 @@ func (ctx *MahresourcesContext) storeApplyOneCluster(r *models.ResourceReduction
 	// ids about to be merged are frozen. What is merged is the snapshot the claim
 	// committed, never the one read above.
 	claimed, gate, err := ctx.storeClaimCluster(run.reductionID, run.batch, key)
+	if errors.Is(err, errAccountChanged) {
+		// The caller lost the visibility this batch was started under: nothing was
+		// claimed, nothing may be reported, and every later Cluster would say the same.
+		return clusterApplyOutcome{Omit: true}, true
+	}
 	if err != nil {
 		return clusterApplyOutcome{Failed: true}, errors.Is(err, ErrReductionLeaseLost)
 	}
@@ -534,10 +571,17 @@ func (ctx *MahresourcesContext) storeApplyOneCluster(r *models.ResourceReduction
 	if errors.As(err, &refusal) {
 		changedIDs = refusal.ids
 	}
-	if !settle.storeDemoteToStale(run.reductionID, run.batch, key, claimed.Row.ClaimID, reason, changedIDs) {
-		return clusterApplyOutcome{Changed: true}, false
+	switch settle.storeDemote(run.reductionID, run.batch, key, claimed.Row.ClaimID, reason, changedIDs) {
+	case demoteRecorded:
+		return clusterApplyOutcome{Report: report}, false
+	case demoteReleased:
+		// The lease ran out: the claim went back to approved, there is no outcome
+		// to record, and the loop stops as it does for any lost lease.
+		return clusterApplyOutcome{Omit: true}, true
+	case demoteHidden:
+		return clusterApplyOutcome{Omit: true}, false
 	}
-	return clusterApplyOutcome{Report: report}, false
+	return clusterApplyOutcome{Changed: true}, false
 }
 
 // ---- revalidation ----------------------------------------------------------------------
@@ -693,9 +737,10 @@ func (s *reductionStore) extentContains(reductionID uint, ids []uint) (map[uint]
 // re-verifies, there, that this batch still owns the Reduction with a live lease
 // judged after the lock, that the pinned generation is still the plan's, and that
 // the claim on the Cluster is still this attempt's; nothing destructive has run. It
-// then renews the lease, so the merge begins with a full window (the merge does not
-// renew between its own work units; that needs the merge itself, which this file
-// does not touch). Precondition, behind the participant locks, repeats the Cluster's
+// then renews the lease, so the merge begins with a full window, and Renew does the
+// same between the merge's own work units (a merge of many Losers may outlast one
+// window; the Reduction row stays locked by this transaction, so the renewal is what
+// InTx's check reads, and an expired lease is never revived). Precondition, behind the participant locks, repeats the Cluster's
 // own validity. InTx reads a fresh clock and checks the lease again, so a worker
 // parked past expiry rolls back instead of deleting; then marks the Cluster merged
 // with its outcome batch and records each Loser's owning Group, in the transaction
@@ -704,6 +749,22 @@ func (ctx *MahresourcesContext) storeMergeHooks(run *applyRun, claimed *storedCl
 	owners := map[uint]uint{}
 	loserIDs := claimed.loserIDs()
 	return MergeHooks{
+		Renew: func(txCtx *MahresourcesContext) error {
+			tx := txCtx.reductionStore().db
+			var lease int64
+			if err := tx.Raw(`SELECT apply_lease_until FROM resource_reductions WHERE id = ?`, run.reductionID).Scan(&lease).Error; err != nil {
+				return err
+			}
+			now := leaseNow()
+			if lease <= now.UnixNano() {
+				// An expired lease is never revived: the merge rolls back whole.
+				return ErrReductionLeaseLost
+			}
+			if time.Duration(lease-now.UnixNano()) > leaseWindow/2 {
+				return nil
+			}
+			return renewApplyLeaseTx(tx, run)
+		},
 		BeforeLocks: func(txCtx *MahresourcesContext) error {
 			tx := txCtx.reductionStore().db
 			if _, err := fenceBatch(tx, run.reductionID, run.batch, true); err != nil {
