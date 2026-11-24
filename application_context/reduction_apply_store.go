@@ -374,6 +374,11 @@ func applyBatchClaimFence(run *applyRun) claimFence {
 	}
 }
 
+// reductionAfterExtentHook runs inside a merge's precondition, right after the
+// Losers' selection membership was read and the supporting rows locked. Only a test
+// sets it.
+var reductionAfterExtentHook func()
+
 // applyReadChunk is how many stamped Clusters one loop read returns.
 const applyReadChunk = 50
 
@@ -735,9 +740,12 @@ func (ctx *MahresourcesContext) storeRevalidate(c *storedCluster, lock bool) (st
 	}
 
 	store := ctx.reductionStore()
-	inside, err := store.extentContains(c.Row.ReductionID, losers)
+	inside, err := store.extentContains(c.Row.ReductionID, losers, lock)
 	if err != nil {
 		return "", nil, err
+	}
+	if lock && reductionAfterExtentHook != nil {
+		reductionAfterExtentHook()
 	}
 	var left []uint
 	for _, id := range losers {
@@ -806,7 +814,7 @@ func (ctx *MahresourcesContext) narrowResources(ids []uint) (map[uint]string, er
 // selected Resource, or one owned by or related to a selected Group or any Group
 // below it. A selected Group the principal may not see selects nothing. One live
 // predicate over the selections tables, never a set held in Go.
-func (s *reductionStore) extentContains(reductionID uint, ids []uint) (map[uint]bool, error) {
+func (s *reductionStore) extentContains(reductionID uint, ids []uint, lock bool) (map[uint]bool, error) {
 	out := make(map[uint]bool, len(ids))
 	if len(ids) == 0 || s.scope.mode == scopeDeny {
 		return out, nil
@@ -831,6 +839,18 @@ func (s *reductionStore) extentContains(reductionID uint, ids []uint) (map[uint]
 		prefix = strings.TrimSpace(prefix) + ", " + ext + " "
 	}
 	for _, chunk := range chunkUints(dedupeUints(ids), idChunk) {
+		if lock && s.postgres() {
+			// The relationship rows a Loser is inside the selection by are held
+			// against an unlink until this transaction ends, in key order so two
+			// merges cannot cross. The owner path needs no row of its own: moving
+			// a Resource updates its row, which the merge already holds. A row
+			// unlinked and committed before this statement is simply not found,
+			// and the read below then says the Loser left the selection.
+			lockArgs := append(append([]any(nil), args...), reductionID, chunk)
+			if err := s.db.Exec(prefix+`SELECT grr.resource_id FROM groups_related_resources grr WHERE grr.resource_id IN ? AND grr.group_id IN (SELECT id FROM ext_tree) ORDER BY grr.resource_id, grr.group_id FOR SHARE OF grr`, lockArgs...).Error; err != nil {
+				return nil, err
+			}
+		}
 		var found []uint
 		query := prefix + `SELECT r.id FROM resources r WHERE r.id IN ? AND (? OR
 			EXISTS (SELECT 1 FROM reduction_extent_resources er WHERE er.reduction_id = ? AND er.resource_id = r.id) OR
