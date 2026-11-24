@@ -85,7 +85,10 @@ func (ctx *MahresourcesContext) storeApplyReduction(r *models.ResourceReduction,
 
 	// Claims an earlier batch stranded are settled first, each chunk fenced by this
 	// batch; a Cluster they reopen was not stamped, so it is not in this batch.
-	settled, settledTotal, reconcileErr := ctx.storeReconcileClaimsFor(r.ID, batchClaimFence(r.ID, run.batch), run.batch)
+	if reductionApplyBeforeReconcileHook != nil {
+		reductionApplyBeforeReconcileHook()
+	}
+	settled, settledTotal, reconcileErr := ctx.storeReconcileClaimsFor(r.ID, applyBatchClaimFence(run), run.batch)
 	for _, o := range settled {
 		collector.addStale(o)
 	}
@@ -95,16 +98,16 @@ func (ctx *MahresourcesContext) storeApplyReduction(r *models.ResourceReduction,
 	// record must still say the batch finished.
 	settle, settleCancel := ctx.settlementContext()
 	defer settleCancel()
-	if reconcileErr != nil && !errors.Is(reconcileErr, ErrReductionLeaseLost) {
+	if reconcileErr != nil {
 		// The batch did not do what it set out to do: it is interrupted, not
-		// finished. The lease is given back so the next apply is not held off for
-		// the rest of its window, and the record keeps no finish time and no counts.
+		// finished (a lost lease included: it must not record a completed run that
+		// applied nothing). The lease is given back so the next apply is not held
+		// off for the rest of its window, and the record keeps no finish time and no
+		// counts.
 		settle.storeAbandonApply(r.ID, run)
 		return nil, reconcileErr
 	}
-	if reconcileErr == nil {
-		ctx.storeApplyLoop(r, run, collector, detached)
-	}
+	ctx.storeApplyLoop(r, run, collector, detached)
 	collector.seal()
 	settle.storeFinishApply(r.ID, run, result)
 	return result, nil
@@ -300,6 +303,35 @@ func (s *reductionStore) batchToken(reductionID uint, generation, batch string) 
 
 // ---- the loop ------------------------------------------------------------------------
 
+// applyLeaseRenewEvery is how often the loop renews the apply lease. A variable
+// so a test can renew at every Cluster; nothing else assigns it.
+var applyLeaseRenewEvery = leaseRenewEvery
+
+// reductionApplyRenewHook runs at the start of each lease renewal and fails it
+// with its error. reductionApplyBeforeReconcileHook runs between the batch's claim
+// and its reconciliation of stranded claims. Only tests set them.
+var (
+	reductionApplyRenewHook           func() error
+	reductionApplyBeforeReconcileHook func()
+)
+
+// applyBatchClaimFence is the fence of an apply batch's reconciliation chunks: the
+// batch must still own a live lease, and each chunk's transaction pushes the lease
+// forward, so a long reconciliation cannot outlast the lease it runs under.
+func applyBatchClaimFence(run *applyRun) claimFence {
+	fence := batchClaimFence(run.reductionID, run.batch)
+	return func(tx *gorm.DB) (string, error) {
+		generation, err := fence(tx)
+		if err != nil {
+			return "", err
+		}
+		if err := renewApplyLeaseTx(tx, run); err != nil {
+			return "", err
+		}
+		return generation, nil
+	}
+}
+
 // applyReadChunk is how many stamped Clusters one loop read returns.
 const applyReadChunk = 50
 
@@ -326,12 +358,21 @@ func (ctx *MahresourcesContext) storeApplyLoop(r *models.ResourceReduction, run 
 			if detached.Err() != nil {
 				return
 			}
-			if time.Since(lastRenew) >= leaseRenewEvery {
+			if time.Since(lastRenew) >= applyLeaseRenewEvery {
 				held, err := ctx.storeRenewApplyLease(run)
-				if err == nil && !held {
+				switch {
+				case err != nil && isLockContentionError(err):
+					// Transient: try again before the next Cluster, the window is long.
+				case err != nil:
+					// The Reduction was deleted, or the database failed: nothing
+					// proves the batch still owns it, so nothing new starts.
+					out.result.Errors++
 					return
+				case !held:
+					return
+				default:
+					lastRenew = time.Now()
 				}
-				lastRenew = time.Now()
 			}
 			outcome, lost := ctx.storeApplyOneCluster(r, run, row.Key)
 			switch {
@@ -361,6 +402,11 @@ func (ctx *MahresourcesContext) storeApplyLoop(r *models.ResourceReduction, run 
 // name this batch, reads the old lease and compares it with a clock read after the
 // lock, and only then writes. An expired lease is never revived.
 func (ctx *MahresourcesContext) storeRenewApplyLease(run *applyRun) (bool, error) {
+	if reductionApplyRenewHook != nil {
+		if err := reductionApplyRenewHook(); err != nil {
+			return false, err
+		}
+	}
 	store := ctx.reductionStore()
 	held := false
 	err := store.db.Transaction(func(tx *gorm.DB) error {

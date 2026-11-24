@@ -29,3 +29,19 @@ func TestStoreApplyCappedResponsePG(t *testing.T) {
 func TestStoreApplyEvidenceHiddenForScopedViewerPG(t *testing.T) {
 	testStoreApplyEvidenceHiddenForScopedViewer(t, newOpsPGContext(t))
 }
+
+func TestStoreApplyLoopStopsOnARenewalErrorPG(t *testing.T) {
+	testStoreApplyLoopStopsOnARenewalError(t, newOpsPGContext(t))
+}
+
+func TestStoreApplyLoopRidesOutRenewalContentionPG(t *testing.T) {
+	testStoreApplyLoopRidesOutRenewalContention(t, newOpsPGContext(t))
+}
+
+func TestStoreReconcileRenewsTheApplyLeasePG(t *testing.T) {
+	testStoreReconcileRenewsTheApplyLease(t, newOpsPGContext(t))
+}
+
+func TestStoreApplyAbandonsWhenReconciliationLosesTheLeasePG(t *testing.T) {
+	testStoreApplyAbandonsWhenReconciliationLosesTheLease(t, newOpsPGContext(t))
+}
