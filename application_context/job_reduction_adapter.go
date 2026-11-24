@@ -286,7 +286,10 @@ func (a *reductionComputeAdapter) start(ctx context.Context, execution jobs.Exec
 	if EffectiveReductionStatus(reduction) == models.ReductionStatusComputing {
 		return nil, ErrReductionBusy
 	}
-	if err := a.ctx.requireSimilarityIndexes(); err != nil {
+	// The Postgres similarity indexes build CONCURRENTLY beside the server, so a
+	// compute queued before they finish waits for them like it waits for the
+	// upgrade; failing at dispatch would end the Job for a condition that passes.
+	if err := a.awaitSimilarityIndexes(ctx); err != nil {
 		return nil, err
 	}
 	nonce, generation, err := a.ctx.beginReductionComputeStoreAs(reduction.ID, reduction.Version, reduction.CreatedByUserId)
@@ -334,6 +337,30 @@ func (a *reductionComputeAdapter) awaitUpgrade(ctx context.Context, reductionID 
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
+		case <-time.After(reductionUpgradePoll):
+		}
+	}
+}
+
+// reductionIndexMaxWait bounds the wait for the similarity distance indexes.
+var reductionIndexMaxWait = 30 * time.Minute
+
+// awaitSimilarityIndexes returns once both similarity distance indexes read valid.
+// Only ErrReductionIndexesBuilding is waited on; the deadline ends the wait with it
+// (wrapped), and a cancelled run stops at once.
+func (a *reductionComputeAdapter) awaitSimilarityIndexes(ctx context.Context) error {
+	deadline := time.Now().Add(reductionIndexMaxWait)
+	for {
+		err := a.ctx.requireSimilarityIndexes()
+		if !errors.Is(err, ErrReductionIndexesBuilding) {
+			return err
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("%w (still building after %s)", err, reductionIndexMaxWait)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-time.After(reductionUpgradePoll):
 		}
 	}

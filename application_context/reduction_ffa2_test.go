@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"mahresources/models"
 )
 
 // (1) On SQLite the periodic runner must never run the spool statement: it writes a
@@ -41,4 +43,33 @@ func TestReductionOnlineRunnerDoesNotSpoolOnSQLite(t *testing.T) {
 		t.Fatal("the runner never finished")
 	}
 	require.Equal(t, 1, planSchemaOf(t, ctx, red.ID))
+}
+
+// (2) A queued compute that meets the similarity indexes still building waits for
+// them like the upgrade wait, bounded, and does not fail terminally.
+func TestQueuedComputeWaitsForSimilarityIndexes(t *testing.T) {
+	ctx := newReductionSQLiteContext(t)
+	require.NoError(t, ctx.db.AutoMigrate(&models.Resource{}, &models.ResourceSimilarity{}))
+	adapter := &reductionComputeAdapter{ctx: ctx, kind: JobKindReductionCompute}
+
+	prevPoll, prevWait := reductionUpgradePoll, reductionIndexMaxWait
+	reductionUpgradePoll, reductionIndexMaxWait = 5*time.Millisecond, 2*time.Second
+	t.Cleanup(func() { reductionUpgradePoll, reductionIndexMaxWait = prevPoll, prevWait })
+
+	go func() {
+		time.Sleep(60 * time.Millisecond)
+		_ = models.EnsureSimilarityDistanceIndexes(ctx.db)
+	}()
+	require.NoError(t, adapter.awaitSimilarityIndexes(context.Background()), "the run proceeds once the indexes are valid")
+
+	// Bounded: indexes that never finish end the wait with the building error.
+	require.NoError(t, ctx.db.Exec(`DROP INDEX idx_sim_r1_eff_dist`).Error)
+	reductionIndexMaxWait = 40 * time.Millisecond
+	err := adapter.awaitSimilarityIndexes(context.Background())
+	require.ErrorIs(t, err, ErrReductionIndexesBuilding)
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	reductionIndexMaxWait = time.Minute
+	require.ErrorIs(t, adapter.awaitSimilarityIndexes(cancelled), context.Canceled)
 }
