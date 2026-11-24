@@ -25,16 +25,21 @@ func TestAMergeRetriedAfterContentionActsOnceForWhatItDeleted(t *testing.T) {
 	loser := makeHookTestResource(t, ctx, "loser")
 
 	var once sync.Once
+	injected := false
 	const name = "test:contention_at_merge_backups_write"
 	require.NoError(t, ctx.db.Callback().Raw().After("gorm:raw").Register(name, func(tx *gorm.DB) {
-		if !strings.Contains(tx.Statement.SQL.String(), "update resources set meta = json_patch") {
+		if !strings.Contains(strings.ToLower(tx.Statement.SQL.String()), "update resources set meta = json_patch") {
 			return
 		}
-		once.Do(func() { _ = tx.AddError(errors.New("database is locked")) })
+		once.Do(func() {
+			injected = true
+			_ = tx.AddError(errors.New("database is locked"))
+		})
 	}))
 	t.Cleanup(func() { _ = ctx.db.Callback().Raw().Remove(name) })
 
 	require.NoError(t, ctx.MergeResources(winner.ID, []uint{loser.ID}, false))
+	require.True(t, injected, "the contention was never injected: the matcher no longer sees the merge's backups write")
 	assert.False(t, resourceExists(t, ctx, loser.ID))
 	assert.Equal(t, 1, hookFires(t, ctx, "after"), "after_resource_delete fired for the rolled-back attempt too")
 }
