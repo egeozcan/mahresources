@@ -896,6 +896,10 @@ export function registerReductionReviewStore(Alpine) {
               } catch {
                 result.lost = true;
               }
+            } else if (response.status === 503 && /json/i.test(response.headers?.get?.('Content-Type') || '')) {
+              // The server itself answered (its refusals are JSON; a gateway's is not):
+              // the Reduction is being upgraded and nothing was applied.
+              throw new Error(UPGRADING_MESSAGE);
             } else if (LOST_STATUSES.has(response.status)) {
               // A gateway gave up on a request the server may still be running.
               result.lost = true;
@@ -1139,7 +1143,7 @@ export function registerReductionReviewStore(Alpine) {
         const after = button.dataset.membersAfter || '';
         if (after) url.searchParams.set('after', after);
         // The server refuses a page for a Reduction or a kept copy that is no longer these.
-        url.searchParams.set('version', String(this.version));
+        url.searchParams.set('version', String(card.dataset.clusterVersion || this.version));
         if (requestedWinner) url.searchParams.set('winner', requestedWinner);
         const response = await fetch(url, { headers: { Accept: 'application/json' }, signal: abort.signal });
         if (superseded()) return;
@@ -1170,7 +1174,10 @@ export function registerReductionReviewStore(Alpine) {
           added.push(node);
         }
         const next = page.after || '';
-        const shown = list.querySelectorAll('[data-testid="reduction-member"]').length;
+        // Placeholders (a copy merged away, removed elsewhere, or unseen) are members
+        // the server counted in "shown" too: leaving them out showed "1 of 340" after
+        // a page of 199 of them.
+        const shown = list.querySelectorAll('[data-testid="reduction-member"], [data-testid="reduction-member-withheld"]').length;
         const total = Number(card.dataset.memberCount) || shown;
         const note = card.querySelector('[data-testid="cluster-shown-count"]');
         if (note) note.textContent = shown >= total ? `Showing all ${total} copies.` : `Showing ${shown} of ${total} copies.`;

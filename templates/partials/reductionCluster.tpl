@@ -48,6 +48,7 @@
          data-cluster-id="{{ cluster.ID }}"
          data-cluster-tier="{{ cluster.Tier }}"
          data-cluster-state="applied"
+         data-cluster-version="{{ raw.Version }}"
          data-cluster-merged="{% if cluster.Merged %}true{% else %}false{% endif %}"
          data-member-count="{% if cluster.MemberCount %}{{ cluster.MemberCount }}{% else %}{{ cluster.Members|length }}{% endif %}"
          aria-labelledby="cluster-{{ cluster.ID }}-heading">
@@ -82,6 +83,7 @@
          data-testid="reduction-cluster"
          data-cluster-id="{{ cluster.ID }}"
          data-cluster-tier="{{ cluster.Tier }}"
+         data-cluster-version="{{ raw.Version }}"
          data-cluster-state="{% if cluster.State == "skipped" %}skipped{% elif cluster.State == "stale" %}stale{% else %}open{% endif %}"
          data-cluster-oversized="{% if cluster.Oversized %}true{% else %}false{% endif %}"
          data-member-count="{% if cluster.MemberCount %}{{ cluster.MemberCount }}{% else %}{{ cluster.Members|length }}{% endif %}"
