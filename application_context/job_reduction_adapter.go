@@ -289,7 +289,7 @@ func (a *reductionComputeAdapter) start(ctx context.Context, execution jobs.Exec
 	if err := a.ctx.requireSimilarityIndexes(); err != nil {
 		return nil, err
 	}
-	nonce, generation, err := a.ctx.beginReductionComputeStore(reduction.ID, reduction.Version)
+	nonce, generation, err := a.ctx.beginReductionComputeStoreAs(reduction.ID, reduction.Version, reduction.CreatedByUserId)
 	if err != nil {
 		return nil, err
 	}
@@ -311,10 +311,15 @@ func (a *reductionComputeAdapter) start(ctx context.Context, execution jobs.Exec
 // the migration has not published.
 var reductionUpgradePoll = 2 * time.Second
 
+// reductionUpgradeMaxWait is how long a deferred compute waits for the migration
+// before it fails with a message saying so.
+var reductionUpgradeMaxWait = 30 * time.Minute
+
 // awaitUpgrade loads the Reduction a queued compute names, waiting while its plan is
-// still the legacy document. The wait ends when the migration publishes, the
+// still the legacy document. The wait ends when the migration publishes, the deadline passes, the
 // Reduction is deleted, or the run is cancelled.
 func (a *reductionComputeAdapter) awaitUpgrade(ctx context.Context, reductionID uint) (*models.ResourceReduction, error) {
+	deadline := time.Now().Add(reductionUpgradeMaxWait)
 	for {
 		reduction, err := a.ctx.loadReductionForUpdate(reductionID, nil, false)
 		if err != nil {
@@ -322,6 +327,9 @@ func (a *reductionComputeAdapter) awaitUpgrade(ctx context.Context, reductionID 
 		}
 		if reduction.PlanSchema != 0 {
 			return reduction, nil
+		}
+		if !time.Now().Before(deadline) {
+			return nil, fmt.Errorf("the Resource Reduction's plan was not moved to the new format by the migration within %s; try the compute again once the migration has finished", reductionUpgradeMaxWait)
 		}
 		select {
 		case <-ctx.Done():

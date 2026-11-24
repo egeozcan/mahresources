@@ -81,7 +81,12 @@ func (ctx *MahresourcesContext) streamReductionPlan(jobCtx context.Context, redu
 		}
 	}
 
-	// An earlier attempt's rows of this generation go first.
+	// Generations nobody owns any more (a failed or crashed compute's) go first, at
+	// compute start as design D4 says; a failure here is logged, not fatal.
+	if err := ctx.sweepReductionGenerations(); err != nil {
+		ctx.logReductionWriteFailure(reductionID, "sweep at compute start", err)
+	}
+	// An earlier attempt's rows of this generation go next.
 	if err := run.s.clearGeneration(reduction.ID, generation); err != nil {
 		return err
 	}

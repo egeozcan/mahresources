@@ -32,18 +32,41 @@ import (
 // legacy JSON plan, and at a version other than the caller's. It returns the nonce
 // the worker later swaps for its job id, and the generation.
 func (ctx *MahresourcesContext) beginReductionComputeStore(reductionID, version uint) (jobNonce, generation string, err error) {
+	return ctx.beginReductionCompute(reductionID, version, nil, false)
+}
+
+// beginReductionComputeStoreAs is the claim a caller that loaded the Reduction makes:
+// the CAS also carries the owner it loaded, so an owner deleted since (created_by_user_id
+// nulled, no version bump) no longer matches (design D2).
+func (ctx *MahresourcesContext) beginReductionComputeStoreAs(reductionID, version uint, owner *uint) (jobNonce, generation string, err error) {
+	return ctx.beginReductionCompute(reductionID, version, owner, true)
+}
+
+// ownerPredicate is the SQL that pins created_by_user_id to the loaded owner, NULL-safe.
+func ownerPredicate(owner *uint) (string, []any) {
+	if owner == nil {
+		return " AND created_by_user_id IS NULL", nil
+	}
+	return " AND created_by_user_id = ?", []any{*owner}
+}
+
+func (ctx *MahresourcesContext) beginReductionCompute(reductionID, version uint, owner *uint, checkOwner bool) (jobNonce, generation string, err error) {
 	s := ctx.reductionStore()
 	now := time.Now()
 	jobNonce = "pending:" + string(types.NewUUIDv7())
 	generation = string(types.NewUUIDv7())
 	err = retryOnLockContention(reductionCASRetries, func() error {
 		return s.db.Transaction(func(tx *gorm.DB) error {
+			ownerSQL, ownerArgs := "", []any(nil)
+			if checkOwner {
+				ownerSQL, ownerArgs = ownerPredicate(owner)
+			}
+			args := append([]any{now, now.Add(ReductionComputeDeadline), jobNonce, generation, now.Add(ReductionComputeDeadline).UnixNano(), now,
+				reductionID, version, now.UnixNano(), now.UnixNano(), now.UnixNano()}, ownerArgs...)
 			res := tx.Exec(`UPDATE resource_reductions SET status = 'computing', computing_started_at = ?, compute_deadline = ?, compute_job_id = ?,
 					compute_error = '', compute_generation = ?, compute_lease_until = ?, version = version + 1, updated_at = ?
 				WHERE id = ? AND version = ? AND plan_schema = 1 AND apply_lease_until <= ? AND settle_lease_until <= ?
-					AND (status <> 'computing' OR compute_lease_until <= ?)`,
-				now, now.Add(ReductionComputeDeadline), jobNonce, generation, now.Add(ReductionComputeDeadline).UnixNano(), now,
-				reductionID, version, now.UnixNano(), now.UnixNano(), now.UnixNano())
+					AND (status <> 'computing' OR compute_lease_until <= ?)`+ownerSQL, args...)
 			if res.Error != nil {
 				return res.Error
 			}
@@ -102,6 +125,20 @@ func (ctx *MahresourcesContext) storeAdmitComputeLease(reductionID uint, generat
 // message, and the generation released so the sweep may remove what it staged. A
 // compute that was superseded (another generation now owns the row) records nothing.
 func (ctx *MahresourcesContext) storeFailCompute(reductionID uint, jobID, generation string, cause error) error {
+	if err := ctx.recordComputeFailure(reductionID, jobID, generation, cause); err != nil {
+		return err
+	}
+	// The generation is released: remove what it staged now rather than leave it for
+	// the next sweep, so repeated failures do not accumulate O(library) rows. The
+	// sweep's guard keeps whatever another compute or the plan owns, and a failure
+	// here only defers the removal to the next compute start.
+	if err := ctx.sweepReductionGenerations(); err != nil {
+		ctx.logReductionWriteFailure(reductionID, "sweep after a failed compute", err)
+	}
+	return nil
+}
+
+func (ctx *MahresourcesContext) recordComputeFailure(reductionID uint, jobID, generation string, cause error) error {
 	s := ctx.reductionStore()
 	return retryOnLockContention(reductionCASRetries, func() error {
 		return s.db.Exec(`UPDATE resource_reductions SET status = 'failed', computing_started_at = NULL, compute_deadline = NULL, compute_error = ?,
@@ -134,13 +171,19 @@ func (ctx *MahresourcesContext) landComputedPlan(r *models.ResourceReduction, jo
 	if err := s.insertFreshClusters(r, generation, fresh); err != nil {
 		return err
 	}
-	return ctx.finishLanding(r, jobID, generation, version, coverage, settings)
+	return ctx.finishLandingOwned(r, jobID, generation, version, coverage, settings, false)
 }
 
 // finishLanding is the landing transaction and the cleanup after it: the
 // generation's staging rows are deleted and stale generations swept.
 func (ctx *MahresourcesContext) finishLanding(r *models.ResourceReduction, jobID, generation string, version uint, coverage models.ReductionCoverage, settings *models.ReductionSettings) error {
-	if err := ctx.landGeneration(r.ID, jobID, generation, version, coverage, settings); err != nil {
+	return ctx.finishLandingOwned(r, jobID, generation, version, coverage, settings, true)
+}
+
+// finishLandingOwned is finishLanding with the owner predicate optional: a caller
+// that holds only the Reduction's id (the test seams) cannot state an owner.
+func (ctx *MahresourcesContext) finishLandingOwned(r *models.ResourceReduction, jobID, generation string, version uint, coverage models.ReductionCoverage, settings *models.ReductionSettings, checkOwner bool) error {
+	if err := ctx.landGenerationOwned(r.ID, r.CreatedByUserId, checkOwner, jobID, generation, version, coverage, settings); err != nil {
 		return err
 	}
 	if err := ctx.reductionStore().clearStaging(r.ID, generation); err != nil {
@@ -154,6 +197,13 @@ func (ctx *MahresourcesContext) finishLanding(r *models.ResourceReduction, jobID
 
 // landGeneration is the landing transaction.
 func (ctx *MahresourcesContext) landGeneration(reductionID uint, jobID, generation string, version uint, coverage models.ReductionCoverage, settings *models.ReductionSettings) error {
+	return ctx.landGenerationOwned(reductionID, nil, false, jobID, generation, version, coverage, settings)
+}
+
+// landGenerationOwned also compares the owner the compute loaded with the row's under
+// the row lock, so an owner deleted mid-compute (nulled, no version bump) no longer
+// authorizes the landing (design D2).
+func (ctx *MahresourcesContext) landGenerationOwned(reductionID uint, owner *uint, checkOwner bool, jobID, generation string, version uint, coverage models.ReductionCoverage, settings *models.ReductionSettings) error {
 	s := ctx.reductionStore()
 	coverageJSON, err := json.Marshal(coverage)
 	if err != nil {
@@ -179,8 +229,9 @@ func (ctx *MahresourcesContext) landGeneration(reductionID uint, jobID, generati
 				ComputeJobID      string
 				Version           uint
 				ComputeLeaseUntil int64
+				CreatedByUserID   *uint `gorm:"column:created_by_user_id"`
 			}
-			if err := tx.Raw(`SELECT status, compute_generation, compute_job_id, version, compute_lease_until FROM resource_reductions WHERE id = ?`, reductionID).Scan(&row).Error; err != nil {
+			if err := tx.Raw(`SELECT status, compute_generation, compute_job_id, version, compute_lease_until, created_by_user_id FROM resource_reductions WHERE id = ?`, reductionID).Scan(&row).Error; err != nil {
 				return err
 			}
 			if row.Status != models.ReductionStatusComputing || row.ComputeGeneration == nil || *row.ComputeGeneration != generation ||
@@ -191,6 +242,9 @@ func (ctx *MahresourcesContext) landGeneration(reductionID uint, jobID, generati
 			// the decisions as they were when the run began.
 			if row.Version != version {
 				return ErrReductionStaleCompute
+			}
+			if checkOwner && !sameOwner(owner, row.CreatedByUserID) {
+				return ErrReductionConflict
 			}
 			if row.ComputeLeaseUntil <= afterLock(now).UnixNano() {
 				return ErrReductionLeaseLost
