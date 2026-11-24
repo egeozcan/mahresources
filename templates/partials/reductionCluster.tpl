@@ -48,6 +48,7 @@
          data-cluster-id="{{ cluster.ID }}"
          data-cluster-tier="{{ cluster.Tier }}"
          data-cluster-state="applied"
+         data-member-count="{% if cluster.MemberCount %}{{ cluster.MemberCount }}{% else %}{{ cluster.Members|length }}{% endif %}"
          aria-labelledby="cluster-{{ cluster.ID }}-heading">
     <h3 class="reduction-cluster-title" id="cluster-{{ cluster.ID }}-heading">
         {% if cluster.Tier == "identical" %}Identical{% else %}Near-Identical{% endif %} &middot; {% if cluster.MemberCount %}{{ cluster.MemberCount }}{% else %}{{ cluster.Members|length }}{% endif %} copies
@@ -57,6 +58,21 @@
         {% if cluster.Winner %}Kept <a class="reduction-link" href="/resource?id={{ cluster.Winner.ID }}">{{ cluster.Winner.Name }}</a>.{% endif %}
         {% if cluster.Merged %}{{ cluster.MergedCount }} cop{% if cluster.MergedCount != 1 %}ies{% else %}y{% endif %} removed{% if cluster.LeftOutCount %}, {{ cluster.LeftOutCount }} left out{% endif %}.{% else %}The apply claimed this Cluster and has not confirmed the merge yet; the other copies still exist.{% endif %}
     </p>
+    {# A record past one card's worth of copies pages the rest the way an open Cluster does. #}
+    {% if cluster.MoreMembers %}
+    <div class="reduction-cluster-members" key="members" id="cluster-{{ cluster.ID }}-members">
+        {% for member in cluster.Members %}{% if member.IsWinner %}{% include "/partials/reductionMember.tpl" %}{% endif %}{% endfor %}
+        {% for member in cluster.Members %}{% if not member.IsWinner %}{% include "/partials/reductionMember.tpl" %}{% endif %}{% endfor %}
+    </div>
+    <div class="px-3 pb-2" key="more-members" data-testid="cluster-more-members-wrap">
+        <p class="text-sm text-stone-700" data-testid="cluster-shown-count" id="cluster-{{ cluster.ID }}-shown">Showing {{ cluster.MembersShown }} of {{ cluster.MemberCount }} copies.</p>
+        <button type="button" class="reduction-btn mt-1" data-testid="cluster-more-members"
+                data-members-after="{{ cluster.MembersAfter }}"
+                aria-controls="cluster-{{ cluster.ID }}-members"
+                aria-describedby="cluster-{{ cluster.ID }}-shown"
+                @click="$store.reductionReview.loadMoreMembers('{{ cluster.ID }}', $event.currentTarget)">Show more members</button>
+    </div>
+    {% endif %}
 </article>
 {% else %}
 <article class="card reduction-cluster{% if cluster.NeedsAttention %} reduction-cluster--attention{% endif %}"

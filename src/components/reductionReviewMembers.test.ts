@@ -189,6 +189,28 @@ describe('appended copies of a stale Cluster', () => {
   });
 });
 
+describe('a deleted kept copy that is already shown as a placeholder', () => {
+  test('a later page does not add a second placeholder for it', async () => {
+    document.body.innerHTML = staleCardWithGoneWinner();
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members: [{ ...member(1, null), IsWinner: true }, member(2, null), member(2, null), member(3)] });
+
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+
+    const placeholders = [...document.querySelectorAll('[data-testid="reduction-member-withheld"]')];
+    expect(placeholders.map((p) => (p as HTMLElement).dataset.goneResourceId).sort()).toEqual(['1', '2']);
+    expect(document.querySelectorAll('[data-testid="reduction-member"]').length).toBe(1);
+  });
+});
+
+function staleCardWithGoneWinner(): string {
+  return cardHtml({ stale: true, rendered: 0 }).replace('<div class="reduction-cluster-members">',
+    '<div class="reduction-cluster-members"><div class="reduction-member--gone" data-testid="reduction-member-withheld" data-gone-resource-id="1" tabindex="-1"></div>');
+}
+
 describe('appended copies of a Near-Identical Cluster', () => {
   test('a loser carries its distance badge and a Compare link to the kept copy', async () => {
     document.body.innerHTML = cardHtml().replace('<div class="reduction-cluster-members">',

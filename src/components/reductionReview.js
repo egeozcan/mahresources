@@ -91,7 +91,9 @@ function buildMemberNode(store, clusterId, member, { fixedKeep = false, readOnly
   const resource = member.Resource;
   if (!resource) {
     // Focusable (tabindex -1) so paging in a page that starts with one can still land on it.
-    const gone = el('div', { class: 'reduction-member reduction-member--gone', tabindex: '-1', 'data-testid': 'reduction-member-withheld' }, [
+    // A deleted copy's id marks its placeholder so a later page does not add it twice. A
+    // Cluster that is not stale shows an unseen copy, whose id stays unprinted.
+    const gone = el('div', { class: 'reduction-member reduction-member--gone', tabindex: '-1', 'data-testid': 'reduction-member-withheld', ...(stale ? { 'data-gone-resource-id': member.resourceId } : {}) }, [
       el('p', { class: 'text-xs text-stone-600 max-w-[10rem]', text: stale ? 'Removed elsewhere.' : 'Resource unavailable.' }),
     ]);
     // A copy that is gone from a stale Cluster is left out like any other: this reopens
@@ -1145,7 +1147,10 @@ export function registerReductionReviewStore(Alpine) {
         if (!response.ok) throw new Error(await window.errorMessageFromResponse(response));
         const page = await response.json();
         if (superseded()) return;
-        const present = new Set([...list.querySelectorAll('[data-testid="reduction-member"]')].map((m) => m.dataset.resourceId));
+        const present = new Set([
+          ...[...list.querySelectorAll('[data-testid="reduction-member"]')].map((m) => m.dataset.resourceId),
+          ...[...list.querySelectorAll('[data-gone-resource-id]')].map((m) => m.dataset.goneResourceId),
+        ]);
         const view = {
           fixedKeep: card.dataset.clusterFixedKeep === 'true',
           readOnly: !!card.querySelector('[data-cluster-read-only="true"]'),
@@ -1157,6 +1162,7 @@ export function registerReductionReviewStore(Alpine) {
         const added = [];
         for (const member of page.members || []) {
           if (present.has(String(member.resourceId))) continue;
+          present.add(String(member.resourceId));
           const node = buildMemberNode(this, clusterId, member, view);
           list.append(node);
           added.push(node);

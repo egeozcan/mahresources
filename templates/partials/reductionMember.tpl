@@ -6,7 +6,7 @@
 {# printing any of those answers "what is over there?" for somebody whose whole         #}
 {# confinement is that they may not ask.                                                #}
 {% if not member.Resource %}
-<div class="reduction-member reduction-member--gone" data-testid="reduction-member-withheld">
+<div class="reduction-member reduction-member--gone" data-testid="reduction-member-withheld"{% if cluster.State == "stale" %} data-gone-resource-id="{{ member.ResourceID }}"{% endif %}>
     <p class="text-xs text-stone-600 max-w-[10rem]">
         {% if cluster.Merged %}Merged and removed.{% elif cluster.State == "stale" %}Removed elsewhere.{% else %}Resource unavailable.{% endif %}
     </p>

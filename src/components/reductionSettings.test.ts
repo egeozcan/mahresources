@@ -20,10 +20,15 @@ describe('nameToSend', () => {
   });
 
   it('sends nothing for a stored name with a newline the input stripped from its value', () => {
+    // The typed value and the default differ only by the stripped line breaks, so the
+    // comparison can say "unchanged" through the normalisation alone.
     const original = 'First line\nSecond line\r\nthird';
-    const shownInInput = 'First lineSecond linethird';
-    expect(nameToSend(shownInInput, shownInInput, original)).toBe('');
-    expect(isNameEdited(shownInInput, shownInInput, original)).toBe(false);
+    const typed = 'First lineSecond linethird';
+    expect(typed).not.toBe(original);
+    expect(nameToSend(typed, original)).toBe('');
+    expect(isNameEdited(typed, original)).toBe(false);
+    expect(isNameEdited(typed, 'a different default', original)).toBe(false);
+    expect(isNameEdited(typed + '!', original)).toBe(true);
   });
 
   it('sends the typed name when the reviewer edited a name that had a newline', () => {

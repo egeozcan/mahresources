@@ -96,6 +96,10 @@ Reductions are listed at `/reductions`, most recently updated first. They never 
 
 While a Reduction made before the plan moved to the current storage is being upgraded in the background, its card reads "Being upgraded to the new storage. Its Clusters appear here when that finishes.", shows no progress bar and has a **Being upgraded** label in place of a button. The review page and the review endpoints answer such a Reduction with `503` ("this Resource Reduction is being upgraded; try again shortly") until the upgrade finishes, which needs no action. A page that was open when this happened shows "This Reduction is being upgraded, try again shortly." instead of refreshing.
 
+:::warning Rolling back after the upgrade
+Once the upgrade publishes a Reduction's plan to the new storage, it clears the old plan and selection from the Reduction record. An older binary cannot read the new storage and cannot recover what was cleared. To roll back to an older version after the upgrade, restore a database backup taken before you upgraded.
+:::
+
 **Find duplicates** and **Try again** start the job from the card. The counts are computed from the plan each time the page renders, over the Clusters you can see.
 
 ## The selection (Extent)
@@ -495,7 +499,7 @@ Every write carries a `version` field: the optimistic-concurrency counter the ca
 | Request | Cap | Over the cap |
 |---------|-----|--------------|
 | `clusterIds` in a bulk approval | 500 Clusters (`reductionBulkIDCap`) | `400` |
-| `resourceIds` or `groupIds` when creating or extending a Reduction | 10,000 each (`reductionSelectionCap`) | `400` |
+| `resourceIds` and `groupIds` together when creating or extending a Reduction | 10,000 in total, Resource ids and Group ids counted together in one request. Creating from a Group's own Resources (`ownerId`) takes at most 10,000 Resources (`reductionSelectionCap`) | `400` |
 | Resource ids in one bulk delete (`POST /v1/resources/delete`) | 10,000 (`MaxBulkDeleteResources`) | `400` |
 
 ### Create: whole library

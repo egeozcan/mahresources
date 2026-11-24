@@ -51,6 +51,13 @@ const (
 // no reason to set it.
 var reductionPageMemberBudget = pageMemberBudgetFromEnv(os.Getenv("REDUCTION_PAGE_MEMBER_BUDGET"))
 
+// SetReductionPageMemberBudgetForTest sets the page member budget and returns the restore.
+func SetReductionPageMemberBudgetForTest(n int) (restore func()) {
+	old := reductionPageMemberBudget
+	reductionPageMemberBudget = n
+	return func() { reductionPageMemberBudget = old }
+}
+
 // pageMemberBudgetFromEnv is the budget a REDUCTION_PAGE_MEMBER_BUDGET value names; anything
 // that is not a positive number leaves the default.
 func pageMemberBudgetFromEnv(raw string) int {

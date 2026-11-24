@@ -19,14 +19,16 @@ func testStoreMemberPageSeeksOnTheWholeKey(t *testing.T, ctx *MahresourcesContex
 	r := tableReduction(t, ctx)
 	store := ctx.reductionStore()
 	ids := sequentialIDs(1, 30)
-	members := memberRows(ids...)
-	for i := range members {
-		members[i].Position = i / 3 // ties on position, broken by id
-	}
 	require.NoError(t, store.insertCluster(r, "gen", &storedCluster{
-		Row: models.ReductionClusterRow{Key: "k", Tier: "identical", State: "open", WinnerID: ids[0]}, Members: members}))
+		Row: models.ReductionClusterRow{Key: "k", Tier: "identical", State: "open", WinnerID: ids[0]}, Members: memberRows(ids...)}))
 	var cluster models.ReductionClusterRow
 	require.NoError(t, ctx.db.Where("reduction_id = ?", r.ID).First(&cluster).Error)
+	// insertCluster numbers the positions itself, so every one is distinct. Ties are made
+	// here, after it: three members to a position, broken by id.
+	require.NoError(t, ctx.db.Exec(`UPDATE reduction_members SET "position" = (resource_id - 1) / 3 WHERE cluster_id = ?`, cluster.ID).Error)
+	var tied int64
+	require.NoError(t, ctx.db.Raw(`SELECT COUNT(*) FROM (SELECT "position" FROM reduction_members WHERE cluster_id = ? GROUP BY "position" HAVING COUNT(*) > 1) t`, cluster.ID).Scan(&tied).Error)
+	require.Equal(t, int64(10), tied, "the fixture has real ties")
 
 	// Walking by 4 returns every member once, in order, across tied positions.
 	var seen []uint
@@ -44,6 +46,23 @@ func testStoreMemberPageSeeksOnTheWholeKey(t *testing.T, ctx *MahresourcesContex
 		after = reductionMemberCursor{Position: last.Position, ID: last.ID}
 	}
 	assert.Equal(t, ids, seen)
+
+	// A cursor on the position alone steps past the rest of a tied position: the same
+	// walk with "position > last" loses members, which is why the key carries the id.
+	var naive []uint
+	pos := -1
+	for {
+		var rows []models.ReductionMemberRow
+		require.NoError(t, ctx.db.Raw(`SELECT * FROM reduction_members WHERE cluster_id = ? AND "position" > ? ORDER BY "position", id LIMIT 4`, cluster.ID, pos).Scan(&rows).Error)
+		if len(rows) == 0 {
+			break
+		}
+		for _, row := range rows {
+			naive = append(naive, row.ResourceID)
+		}
+		pos = rows[len(rows)-1].Position
+	}
+	assert.Less(t, len(naive), len(ids), "a position-only cursor must lose tied members")
 
 	capture := &rowsCapture{}
 	spy := *ctx
