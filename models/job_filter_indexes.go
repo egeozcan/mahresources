@@ -33,13 +33,19 @@ func (p plannedIndex) definitionMatches(def string) bool {
 	if m == nil {
 		return false
 	}
-	return normalizeIndexDefinition(m[1]) == normalizeIndexDefinition(p.columns)
+	// Postgres spells the access method ("USING btree"); SQLite has none. An
+	// index of another method (BRIN, hash) over the same keys cannot serve the
+	// ordered seeks the planned index exists for.
+	if m[1] != "" && !strings.EqualFold(m[1], "btree") {
+		return false
+	}
+	return normalizeIndexDefinition(m[2]) == normalizeIndexDefinition(p.columns)
 }
 
 // indexKeyList captures what sits between the parentheses that open after
 // "ON <table> [USING <method>]" and the last closing one. A trailing WHERE or
 // INCLUDE is then part of the capture, and so never equals the planned columns.
-var indexKeyList = regexp.MustCompile(`(?is)\bon\s+[^\s(]+\s*(?:using\s+\w+\s*)?\((.*)\)\s*$`)
+var indexKeyList = regexp.MustCompile(`(?is)\bon\s+[^\s(]+\s*(?:using\s+(\w+)\s*)?\((.*)\)\s*$`)
 
 // Only a cast on a literal ('x'::text, 0::bigint) is Postgres respelling the
 // same expression. A cast on a column or an expression changes its type, so it

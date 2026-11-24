@@ -60,6 +60,9 @@ func TestPlannedIndexDefinitionRequiresTheExactKeyList(t *testing.T) {
 		{"partial", "CREATE INDEX idx_jobs_state_phase ON public.jobs USING btree (state, phase, accepted_at, id) WHERE (id > 0)", false},
 		{"included column", "CREATE INDEX idx_jobs_state_phase ON public.jobs USING btree (state, phase, accepted_at, id) INCLUDE (name)", false},
 		{"truncated", "CREATE INDEX idx_jobs_state_phase ON public.jobs USING btree (phase, accepted_at, id)", false},
+		{"same keys on a BRIN index", "CREATE INDEX idx_jobs_state_phase ON public.jobs USING brin (state, phase, accepted_at, id)", false},
+		{"same keys on a hash index", "CREATE INDEX idx_jobs_state_phase ON public.jobs USING hash (state, phase, accepted_at, id)", false},
+		{"btree in upper case", "CREATE INDEX idx_jobs_state_phase ON public.jobs USING BTREE (state, phase, accepted_at, id)", true},
 	}
 	for _, c := range cases {
 		if got := index.definitionMatches(c.def); got != c.want {
