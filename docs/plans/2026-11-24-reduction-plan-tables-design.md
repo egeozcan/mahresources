@@ -1,7 +1,8 @@
 # Resource Reduction plan as tables: bounded memory at any library size
 
-Status: design v4. Review history: v1 pi 9 P0 / 4 P1, architect 3 / 18; v2 pi 9 / 7, architect 1 /
-12; v3 pi 9 / 2, architect 1 / 7. The table at the end maps every v3 finding to its fix. Supersedes
+Status: design v5. Review history: v1 pi 9 P0 / 4 P1, architect 3 / 18; v2 pi 9 / 7, architect 1 /
+12; v3 pi 9 / 2, architect 1 / 7; v4 pi 0 / 11, architect 0 / 5. The tables at the end map the v3
+and v4 findings to their fixes. Supersedes
 ADR 0003's "one row carries the plan" for the Cluster list.
 
 ## Problem
@@ -29,10 +30,14 @@ That tier was trimmed in 4f310c83; the rest still grows with the library:
 1. Per-request and per-job **Go memory** is bounded by constants: page size, chunk size (500
    rows), the member cap (200), the request id caps. Never by Resources, Clusters, members, pairs,
    merges or legacy plan size.
-2. **Per-statement work** is bounded: no statement reads, inserts, updates or locks more than a
-   chunk of rows, so neither SQLite's single writer lock nor a lease is held hostage by one
+2. **Per-statement writes and locks** are bounded: no statement inserts, updates or locks more than
+   a chunk of rows, so neither SQLite's single writer lock nor a lease is held hostage by one
    statement. Atomic multi-chunk operations (the apply stamp, bulk allIdentical) run as several
-   chunk statements inside one transaction, in id order.
+   chunk statements inside one transaction, in id order; their total writer-lock hold is measured
+   (D14). Compute-side **reads** are bounded by `LIMIT` on rows examined, not only rows returned
+   (keysets on indexed columns, never `HAVING … LIMIT` over a scan). Review-side aggregates read
+   O(Clusters) narrow indexed rows by design (rule 4), and `OFFSET` paging costs O(offset) index
+   steps (page-number navigation); both are measured, neither allocates.
 3. **No row is loaded with columns it does not need.** Every load of `resource_reductions` and of
    `resources` on these paths names its columns; `meta`, `own_meta`, the legacy `plan` and the
    legacy `extent` never cross the wire outside the migration (D12, D13).
@@ -88,8 +93,12 @@ reduction_seeds            (reduction_id, generation, key_prefix blob(512), sort
                            pk (reduction_id, generation, resource_id); index (reduction_id, generation, key_prefix)
 ```
 
-`resource_reductions` gains: `plan_schema int` (0 = legacy JSON, 1 = tables; default 1 for new rows,
-the migration sets 0 on existing rows when it adds the column and is the only writer of 0 → 1),
+`resource_reductions` gains: `plan_schema int NOT NULL DEFAULT 0` (0 = legacy JSON, 1 = tables;
+AutoMigrate's backfill of the default therefore marks every existing row legacy, with no separate
+statement and no crash window; the one creator sets 1 explicitly on new rows; the migration is the
+only writer of 0 → 1; a test kills startup right after AutoMigrate and asserts every row reads 0),
+`extent_all bool` (the whole-library flag, moved out of the Extent JSON; widening ORs it in the same
+CAS, as today),
 `plan_generation` (nullable: never landed), `compute_generation` (nullable), `migration_generation`
 (nullable), `compute_lease_until` and `apply_lease_until` (int64 Unix nanoseconds, so lease checks
 never compare text timestamps on SQLite), `coverage`, `plan_settings`, `last_apply` (json). New and
@@ -97,7 +106,8 @@ legacy JSON columns are tagged `json:"-"`. `Plan` and the legacy Extent id lists
 `models.ResourceReduction`; a `legacyReduction` model used only by the migration reads them.
 `reductionColumns` is the one projection every ordinary load uses (`Select(reductionColumns)`); a
 guard test, run against rows whose legacy columns hold a multi-megabyte plan, asserts that no
-non-migration query returns `plan` or `extent`.
+non-migration query returns `plan` or `extent`; the job-migration loaders
+(`job_migration_reductions.go`, `job_reduction_adapter.go`) use `reductionColumns` too.
 
 No table has a foreign key to `resources`. All six new tables are classified in
 `models/saved_sql_tables.go` as not readable by saved SQL.
@@ -109,6 +119,9 @@ No table has a foreign key to `resources`. All six new tables are classified in
   the owner predicate as well as the version, so a Reduction whose owner was nulled cannot be
   written through a pointer loaded before. Test: user B naming user A's Reduction and a Cluster key
   across review, `.json`, override, bulk and apply gets the not-found an unknown id gets.
+- The store runs its statements on the **unscoped base handle** and applies scope itself, so the
+  scope callback's flattened allow-list never reaches a store statement (no double scoping, no
+  binds that grow with the subtree).
 - Scoped visibility uses `mrql.SubtreeCTE`, the app's one definition of a subtree (anchored on an
   existing Group, deduplicating cycles), with one bind; admin, unscoped, scoped and deny come from
   `principalForcedScope()`, never re-derived. A differential test compares the store's verdicts
@@ -136,21 +149,25 @@ No table has a foreign key to `resources`. All six new tables are classified in
   loaded Cluster; nothing else writes them. `assertDerivedColumnsConsistent` recomputes them from
   member rows at the end of every store, override, bulk, apply, merge, hook, migration and compute
   test, on both databases.
+- **Re-read after locking.** Every writer re-reads the Cluster row and its members after taking the
+  Cluster row lock and before running its Go logic (≤ 200 narrow rows), so a concurrent deletion
+  hook's `gone` update is never overwritten by a stale copy. Multi-Cluster updates re-check their
+  predicate (`state = 'open' AND gone_members = 0 AND …`) in the locking chunk statement itself.
 - Request and response semantics are unchanged unless D15 lists them.
 
 | Site | Shape |
 |---|---|
 | override (promote, eject, restore, skip, reopen, check, uncheck) | CAS; load the Cluster and its members (≤ 200, narrow); share-lock its member Resources (ascending, as today); lock the Cluster row; existing Go logic; write. Refused on `read_only` Clusters. Promote, restore and apply-time pair checks probe the stored pair between the Winner and each named member (indexed, `FOR SHARE` inside the merge transaction), never every pair of the Winner. Restore re-reads the restored member's existence and sets `gone` |
-| bulk by ids | ≤ 500 ids. CAS; classification read for the named keys (unknown or withheld → not found, then not open → not open, today's order); today's per-Cluster rules (counted, `Changed`, `NeedsReview`, `expectedCount` where today checks it); lock the Cluster rows in id order; write |
-| bulk allIdentical (check, uncheck) | CAS; today's counts in one aggregate, `expectedCount` compared as today; the target Cluster rows locked and updated in id-ordered chunks inside the transaction |
+| bulk by ids | ≤ 500 ids. CAS; share-lock the targets' member Resources in global id order, streamed in chunks of 500 by keyset over a join (no ids held beyond a chunk; a no-op on SQLite, whose writer lock already excludes writers); then classification for the named keys (unknown or withheld → not found, then not open → not open, today's order), so visibility is decided after ownership is locked; today's per-Cluster rules (counted, `Changed`, `NeedsReview`, `expectedCount` where today checks it); lock the Cluster rows in id order; write |
+| bulk allIdentical (check, uncheck) | CAS; share-lock the targets' member Resources the same way (chunked, global id order); today's counts in one aggregate, `expectedCount` compared as today; the target Cluster rows locked and updated in id-ordered chunks inside the transaction, the predicate re-checked in each chunk |
 | claim, demote, release, confirm-in-merge-tx, record-stale | today's steps on one Cluster row; `claim_id` in the `WHERE`; InTx sets `merged`, each Loser's `owner_at_merge`, `outcome_batch`. Release and reconcile recount `gone` for the Cluster's members (≤ 200) before reopening it |
 | reconcile stranded claims | keyset over `state='applied' AND NOT merged`, one transaction per 50, in id order |
 | settings edit, Extent widening | refused with `ErrReductionBusy` while `computing` or while `plan_schema = 0` |
 
-Bulk approval no longer share-locks member Resources (today's `casReductionAndReloadHolding`):
-approving changes a flag and destroys nothing, every Resource lock is retaken and every check
-redone by the apply's claim and the merge precondition, and locking the members of up to the
-whole Reduction would break rule 2 and the parameter limits. Override keeps its locks (≤ 200).
+Bulk approval keeps today's guarantee (`casReductionAndReloadHolding`): visibility is decided with
+the member Resources share-locked, so an owner move cannot slip between the check and the approval.
+The locks are taken in bounded chunks rather than one `IN` list, which keeps rule 2 and the
+parameter limits.
 
 Bookkeeping after a merge stays best-effort and logged, as today.
 
@@ -161,21 +178,29 @@ Bookkeeping after a merge stays best-effort and logged, as today.
   queued and replayed starts are refused too. The job-id swap never touches the generation.
 - **Fence.** Every staging transaction starts with a write that proves the compute still owns the
   Reduction: `UPDATE resource_reductions SET id = id WHERE id = ? AND status = 'computing' AND
-  compute_generation = ? AND compute_lease_until > ?` (now, computed in Go); zero rows means stop.
-  On Postgres this also takes the row lock, so no insert lands after a delete, a supersession or an
-  expiry. Each attempt (in-process retry, replayed job) first deletes its own generation's rows,
+  compute_generation = ?`, then, holding the row, reads `compute_lease_until` back and compares it
+  with a fresh Go clock taken after the lock was acquired (a fence that waited past expiry fails);
+  zero rows or an expired lease means stop. On Postgres the write also takes the row lock, so no
+  insert lands after a delete, a supersession or an expiry. The same post-lock check guards every
+  destructive step of the apply (D10). Each attempt (in-process retry, replayed job) first deletes its own generation's rows,
   chunked and fenced.
 - **Carry-over.** Applied Clusters, and Clusters frozen by stored state (`reviewed`, skipped, stale,
   not `read_only`), are copied into `G` in chunks by source Cluster id: Cluster rows with their
   `position`, then member rows remapped by joining source `(reduction_id, plan_generation, key)` to
   target `(reduction_id, G, key)`. An open unreviewed Cluster with gone members is rebuilt from its
-  survivors, as today; a `read_only` Cluster is carried as history but reserves none of its members.
+  survivors, as today; a `read_only` Cluster is carried as history and reserves only its ejected
+  members (an explicit "don't remove" decision must not return in an auto-checked Cluster).
+- **Copied rows and deletions.** A carried or migrated chunk copies `gone` from its source and could
+  miss a deletion that commits between the read and the commit (the hook cannot see rows not yet
+  committed). After each such chunk commits, its members' `gone` is recounted against `resources`
+  and `gone_members` re-derived: a later deletion is covered by the hook, an earlier one by the
+  recount.
 - **Fresh Clusters** are inserted per chunk as built (`position` after the carried maximum). Member
   rows are inserted together with their `gone` flag read under `FOR SHARE` on the member Resources
   (Postgres; an in-flight delete makes the insert wait, then see it); SQLite's writer lock
   serializes against the delete. After insertion, the deletion hook covers `G`. Keys are computed in
   Go; each fresh chunk checks `key IN (chunk keys)` and probes `key-2`, `key-3`, … by exact lookup
-  for the (rare) collisions with carried applied keys.
+  for the (rare) collisions with any carried key.
 - **Landing**, one transaction: CAS at the version captured at start (refused, not rebased);
   `compute_job_id` still this job; lease unexpired; `plan_generation = compute_generation`,
   coverage, settings, status.
@@ -207,8 +232,11 @@ Bookkeeping after a merge stays best-effort and logged, as today.
   applied-and-merged or `read_only` one. Invariant: every Cluster built from a chunk is inserted
   before the next availability read; inside a chunk, ids claimed so far are held in a set bounded by
   chunk × cap; every seed is re-checked for availability when it is read. Tested with chunk size 1.
-- **Identical tier.** Keyset over repeated hashes of the staged Extent (`hash <> ''`, a twin looked
-  up unscoped only to nominate, `hash > ?`, 500 per chunk; EXPLAIN-asserted). Per hash, holders are
+- **Identical tier.** Keyset over the staged Extent's hashes **by rows**: `SELECT hash … WHERE hash
+  > ? AND hash <> '' ORDER BY hash LIMIT 500` (index-only), extended to the end of the boundary hash
+  value; Go keeps the values that repeat within the chunk, plus those with a twin elsewhere (one
+  indexed `EXISTS` per distinct value, the twin looked up unscoped only to nominate). Rows examined
+  per statement are bounded, whatever the duplicate density; the 2M-unique fixture asserts it. Per hash, holders are
   streamed by `id > ?` in 500s with the narrow projection, `hash` re-checked on the loaded rows (a
   version upload between grouping and load cannot produce a mixed Cluster; injected-interleave
   test), unavailable ones dropped. Two bounded heaps by `models.CompareByWinnerRule`: the best 200
@@ -220,24 +248,29 @@ Bookkeeping after a merge stays best-effort and logged, as today.
   sort key (D7) and inserts `(key_prefix, sort_key, resource_id)`. The loop reads seeds in keyset
   order on `(key_prefix, sort_key)` in chunks of 500, served by the prefix index (Postgres sorts ties
   of a prefix incrementally; prefixes collide only for strings sharing 500+ bytes).
-- **Near neighbours.** One streamed query per seed: both pair directions unioned (a neighbour
-  reached twice keeps the closer distance), the read threshold and aHash guard
+- **Near neighbours.** Two bounded queries per seed, each: both pair directions unioned (a
+  neighbour reached twice keeps the closer distance), the read threshold and aHash guard
   (`mrql.SimilarPairPredicate`), joined to `image_hashes`, the subtree and availability, ordered by
-  `(distance, id)`. Go keeps the first 199 in-Extent neighbours and streams **every** eligible
-  outsider through a heap of one by the Winner Rule (today the Winner Rule, not distance, picks
-  the outsider). If the outsider joins, it takes the furthest insider's place. `truncated` counts
-  eligible neighbours left out.
+  `(distance, id)`. Insiders: `LIMIT 200` (199 kept, the 200th only proves truncation). Outsiders:
+  `LIMIT 200`, and the Winner Rule picks the best of those in Go (today the Winner Rule picks among
+  all outsiders; the ADR 0002 amendment records "among the 200 nearest"). If the outsider joins, it
+  takes the furthest insider's place, **except in a truncated star**, which admits no outsider: an
+  outsider Winner would delete the seed, the only stored match the left-out neighbours have, and
+  they could never be proposed again. `truncated` is a flag with "at least 200" wording, not an
+  exact count. A dense star of N therefore costs O(N) bounded statements in total, never a
+  statement that reads the whole star.
 - **Cluster build** in Go over at most 200 narrow rows, exactly as today, including
   `rejustifyAgainstWinner` (named-pair probes).
 
 ADR 0002 amendment: a seed claims every unclaimed Resource within threshold of itself **up to the
-member cap**; the rest stay unclaimed and are proposed by a later compute after this Cluster is
-applied.
+member cap**, nearest first; the rest stay unclaimed and are proposed by a later compute after this
+Cluster is applied. The out-of-Extent better copy is chosen among the 200 nearest outsiders, and a
+truncated star admits none.
 
 ## D6. Member cap
 
-`MaxClusterMembers = 200`. The card says "Showing 200 of N copies. Apply this Cluster, then compute
-again for the rest." Nothing is merged that was not shown. `Oversized` (Near, > 12) unchanged.
+`MaxClusterMembers = 200`. The card says "Showing 200 copies; there are more. Apply this Cluster,
+then compute again for the rest." (Identical knows the exact count and shows it.) Nothing is merged that was not shown. `Oversized` (Near, > 12) unchanged.
 Every Cluster's hydration is `ORDER BY position LIMIT 200`, so a legacy one over the cap shows "200
 of N". Follow-up, not this change: "Apply and find more".
 
@@ -281,6 +314,9 @@ databases order a set of keys by `(key_prefix, sort_key)` exactly as `bytes.Comp
   - effective state: `stale` (reason "deleted") when `state IN ('open','skipped') AND gone_members >
     0`, else the stored state. Apply, bulk check and claim require stored `state = 'open'`,
     `gone_members = 0`, `NOT read_only`; skipped is never eligible.
+- Withheld Clusters are filtered out in SQL. Today the unfiltered page shows them as redacted stubs
+  holding their page position; they now disappear from the page (listed in D15). Their count is not
+  shown either, which discloses less than a stub did.
 - Uses: tab counts, checked and approved counts, figures, bulk counts, list progress (one `GROUP BY`
   per Reduction), `settleableClaims`, LastApply counts (D10), and the page query (filter in SQL;
   `ORDER BY member_count DESC | total_size DESC | position`, then `key`; `LIMIT/OFFSET`; the page's
@@ -318,8 +354,10 @@ databases order a set of keys by `(key_prefix, sort_key)` exactly as `bytes.Comp
   `apply_lease_until`. Any mismatch rolls the whole stamp back. Stranded claims are reconciled
   afterwards in their own chunked transactions; a Cluster they reopen is not stamped, so it is not
   in this batch.
-- **Loop** by keyset over `apply_batch = :b ORDER BY position` (today's plan order), 50 per read.
-  Renewal of `apply_lease_until` and the finish write are fenced by the batch id in `last_apply`.
+- **Loop** by keyset over `apply_batch = :b ORDER BY position, id` (today's plan order), 50 per
+  read. Renewal of `apply_lease_until`, the finish write and every reconciliation chunk are fenced
+  by the batch id in `last_apply` and a live lease checked with a clock read after the lock (D4), so
+  an expired worker can neither renew nor reopen a successor's claim.
   The per-Cluster claim runs under the Reduction row lock and requires, in its `WHERE` and on the
   row: the current `last_apply` batch is `:b` with a live lease, the pinned generation is still
   `plan_generation`, and on the Cluster `apply_batch = :b`, `state = 'open'`, `gone_members = 0`,
@@ -349,30 +387,35 @@ landing; a parked apply worker past its lease cannot merge.
 
 ## D12. Migration
 
-- On upgrade AutoMigrate adds `plan_schema` with default 1, and a one-time statement sets it to 0 on
-  every pre-existing row. The migration runs in the background after the HTTP server starts;
+- On upgrade AutoMigrate adds `plan_schema` with default 0 (D1), so every pre-existing row is legacy
+  from the moment the column exists. The migration runs in the background after the HTTP server starts;
   `plan_schema = 0` Reductions answer 503 and refuse edits and computes until migrated. Drafts are
   migrated too (their selections move to the tables; there is no plan to move).
 - A migration run takes `migration_generation = <uuid>` and a lease with a fenced CAS (one runner
   per Reduction, across instances); the sweep protects it (D4).
-- **One pass, server-side parse.** One statement per Reduction walks the plan with the nesting
-  inside it (`json_array_elements(plan->'clusters') WITH ORDINALITY` laterally joined to
+- **Spool, then process.** One `INSERT … SELECT` per Reduction parses the plan once, server-side,
+  into a spool table `reduction_migration_rows(run, cluster_ord, member_ord, …)`: the nesting is
+  inside the statement (`json_array_elements(plan->'clusters') WITH ORDINALITY` laterally joined to
   `json_array_elements(c->'members') WITH ORDINALITY` on Postgres, the `json` type needs no cast;
-  nested `json_each` on SQLite), returning one row per member with its Cluster's scalar fields,
-  ordered by cluster then member index, streamed with `Rows`. `changed_members` and `loser_owners`
-  are expanded the same way. Go holds at most one Cluster's members (≤ the cap, or flushed in chunks
-  for an over-cap legacy Cluster). The database parses the document once; process RSS (including
-  SQLite's and the Postgres backend's share) is asserted in D14. A legacy plan above 256 MB is not
-  parsed: the Reduction is migrated with no Clusters and failed with "compute again".
+  nested `json_each` on SQLite), one row per member carrying its Cluster's scalar fields;
+  `changed_members` and `loser_owners` are expanded the same way. This is the one statement that
+  writes more than a chunk; it is one-time, runs before any user can act on the Reduction (503), and
+  never involves Go memory. Processing then reads the spool by keyset `(cluster_ord, member_ord)` in
+  chunks of 500, releasing the read before each fenced write chunk (correct with a one-connection
+  pool; tested). Restartable: a run resumes from the spool's last processed ordinal. Go holds at
+  most one chunk. The database's parse costs memory proportional to the legacy document once; the
+  previous binary shipped the same document to Go on every request, so the host has carried it.
+  No legacy plan is discarded.
 - Clusters and members are written under `migration_generation` in fenced chunks with
   `deriveClusterColumns`; settings-less plans get `keeps_smaller` derived in chunks (deleted
   Resources tolerated as today); `loserOwners` → `owner_at_merge` (absent → 0); `LastApply.ClusterIDs`
   → `outcome_batch` under a synthetic batch id with the record's counts; `gone` initialized from
   existence; Extent ids → their tables.
-- A non-applied legacy Cluster over the cap becomes `read_only` stale ("too large: compute again"):
-  never actionable, never reserving its members, so the next compute rebuilds them within the cap.
-  An applied one is kept as history.
-- **Publication**, one transaction: a fenced write first, then require `migration_generation` is
+- A legacy Cluster over the cap that is not `applied AND merged` (open, skipped, stale, or a
+  stranded claim that reconciliation would reopen) becomes `read_only` stale ("too large: compute
+  again"): never actionable, never reopened, reserving only its ejected members (D4), so the next
+  compute rebuilds the rest within the cap. An applied-and-merged one is kept as history.
+- **Publication**, one transaction (the spool rows are then deleted in chunks): a fenced write first, then require `migration_generation` is
   still this run's and the migrated Cluster and member counts equal the counts the pass read; set
   `plan_generation`, `plan_schema = 1`, coverage, settings, `last_apply`, clear
   `migration_generation`. Version is not compared (edits are refused while `plan_schema = 0`).
@@ -391,14 +434,23 @@ landing; a parked apply worker past its lease cannot merge.
   history enters Go.
 - Apply revalidation, compute candidate loads and review hydration use the narrow projection.
 - Loser versions move with one set-based `UPDATE` per chunk; the note-block scrub reads blocks by
-  keyset.
+  keyset. Every per-Loser child operation the merge performs (association transfers, similarity-pair
+  deletes, cascades) runs in keyset chunks of 500, so a Loser with millions of associations or pairs
+  is merged by bounded statements. Snapshot shape stays restorable: the narrow non-meta columns are
+  marshalled in Go as today, `meta` minus `backups` is spliced in SQL.
+- Out of scope, recorded in `docs/todo.md`: the Winner's backup history itself grows with every
+  merge into it, in the database. This change keeps it out of Go on every Reduction path; other
+  pages that load a Resource's `meta` (its detail page) are unchanged.
 
 ## D14. Proof
 
-- **Fixtures** (both databases): 300k Clusters / 1M members; a 2M-row hash-only library; dense
+- **Fixtures** (both databases): 300k Clusters / 1M members; a 2M-row hash-only library, including
+  2M unique hashes with 5 duplicates at the end; dense
   stars larger than the cap; a 50k-holder hash; a 50k-member legacy Cluster; a 200 MB legacy plan;
   a Winner with 50 MB of backups; a 20k-Group scoped principal; 50 large Reductions on the list.
-- **Assertions**: peak Go heap (`HeapInuse` every 10 ms after a forced GC) under 64 MB per request,
+- **Assertions**: rows examined per compute statement (EXPLAIN row estimates plus `LIMIT` checks),
+  the apply stamp's total writer-lock hold at 300k Clusters on SQLite (stated in the result);
+  peak Go heap (`HeapInuse` every 10 ms after a forced GC) under 64 MB per request,
   128 MB for compute and migration; process RSS for compute and migration; a GORM callback asserting
   no statement returns or writes more than a chunk; the longest single SQLite statement;
   EXPLAIN that the Identical chunk query, the neighbour query and the availability probe use their
@@ -410,8 +462,11 @@ landing; a parked apply worker past its lease cannot merge.
 - **Interleaves** (injected, not raced): sweep vs compute start; sweep vs migration; first compute
   fails; version upload between Identical grouping and load; delete vs bulk approve and delete vs
   apply stamp on one Cluster (Postgres, no deadlock); delete during member insertion; claim lost
-  before the merge commits; lease expiry mid-phase; parked apply worker past its lease; compute
-  retry; owner nulled between load and write; restore of a member deleted while ejected.
+  before the merge commits; lease expiry mid-phase; parked apply worker past its lease; a fence or
+  renewal that waits past expiry; compute retry; owner nulled between load and write; restore of a
+  member deleted while ejected; a deletion between an override's load and its write; a deletion
+  during a carried or migrated chunk; an owner move during bulk approval; a restart right after
+  AutoMigrate; migration with a one-connection pool.
 - **Seams** rewritten as store writers: `OverwritePlanForTest`, `StoreReductionPlanForTest`,
   `ClaimClusterForApplyForTest`, `ReleaseClaimForTest`, the hook seams.
 
@@ -420,14 +475,15 @@ landing; a parked apply worker past its lease cannot merge.
 Member cap and its card text; compute and apply leases (a large compute no longer fails at one
 hour; a 24 h ceiling); settings and Extent edits refused while computing; apply response counts and
 capped lists; bulk-by-ids cap of 500 and explicit-id cap of 10,000 per request; 503 and "being
-upgraded" during the migration; legacy over-cap Clusters become read-only; size sort uses
-compute-time sizes; the token is opaque and changes definition.
+upgraded" during the migration; legacy over-cap Clusters become read-only; withheld Clusters no
+longer appear as stubs; Near truncation reads "at least 200"; size sort uses compute-time sizes;
+the token is opaque and changes definition.
 
 ## D16. Records
 
 ADR 0011 "Reduction Clusters live in tables": supersedes ADR 0003's plan-as-document; amends ADR
-0002 with the member cap rule and the byte-key seed order. `docs/todo.md`: the app-wide scoped
-allow-list (out of scope above).
+0002 with the member cap rule, the outsider rule and the byte-key seed order. `docs/todo.md`: the
+app-wide scoped allow-list and the Winner's growing backup history (both out of scope above).
 
 ## Slices
 
@@ -473,3 +529,29 @@ Also in this change: the review card layout fix for long Resource names and fail
 | SQLite `least()` and text time comparison (arch 14) | D1 lease columns as int64, D11 |
 | collation not applied by AutoMigrate (arch 15) | D1 |
 | final CAS vs version (arch 16) | D12 (edits refused at `plan_schema = 0`, no version compare) |
+
+## v4 findings, where addressed
+
+| Finding | Section |
+|---|---|
+| `plan_schema` crash window (pi, arch P1-1) | D1, D12 (default 0) |
+| `Extent.All` not represented (pi) | D1 `extent_all` |
+| legacy plans discarded; ejected copies released; stranded claims reopened over cap (pi) | D12 (spool, nothing discarded; `read_only` covers every non-merged state), D4 (ejected reserved) |
+| copied rows miss deletes (pi, arch P1-3) | D4 recount after each copied chunk |
+| scope decline (pi P1; arch: reasonable) | kept, with the store on the unscoped base handle (D2, arch P2-1) so it adds no use of the allow-list; the merge's `rescopeTx` is the app-wide mechanism recorded in `docs/todo.md` |
+| bulk approval after an owner move (pi) | D3 (chunked share locks restored, visibility decided after them) |
+| rule 2 vs reads (pi) | rule 2 reworded (writes and locks bounded; compute reads bounded by `LIMIT`; review aggregates O(Clusters), measured) |
+| migration stream holds the connection (pi) | D12 spool |
+| merge fan-out (pi) | D13 (keyset child operations); backup growth recorded as out of scope |
+| lease waits past expiry; reconcile chunks unfenced (pi) | D4 fence, D10 loop |
+| truncated star loses its remainder (pi) | D5 (no outsider in a truncated star) |
+| writers overwrite the hook with a stale copy (arch P1-2) | D3 re-read after locking |
+| Identical keyset reads unbounded (arch P1-4) | D5 by rows |
+| neighbour stream quadratic (arch P1-5) | D5 two `LIMIT 200` queries, truncation as a flag |
+| store double-scoped (arch P2-1) | D2 |
+| withheld stubs vanish (arch P2-2) | D8, D15 |
+| `read_only` carried forever (arch P2-3) | declined: carrying it keeps its ejected members reserved (pi's finding above); it is bounded rows, copied in chunks |
+| backup snapshot shape (arch P2-4) | D13 |
+| `(position, id)` keyset (arch P2-5) | D10 |
+| collision probe on all carried keys (arch P2-6) | D4 |
+| stamp writer-lock hold (arch P2-7) | rule 2, D14 |
