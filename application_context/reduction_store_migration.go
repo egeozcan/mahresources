@@ -105,11 +105,11 @@ var spoolMemberSelectSQLite = `WITH cl AS MATERIALIZED (
  COALESCE(json_extract(c.value, '$.state'), '') AS state,
  ` + sqliteSpoolPathID("c.value", "$.winnerId") + ` AS winner_id,
  COALESCE(json_extract(c.value, '$.checked'), 0) AS checked, COALESCE(json_extract(c.value, '$.reviewed'), 0) AS reviewed,
- COALESCE(json_extract(c.value, '$.oversized'), 0) AS oversized, COALESCE(json_extract(c.value, '$.decidedBy'), '') AS decided_by,
- COALESCE(json_extract(c.value, '$.margin'), '') AS margin, COALESCE(json_extract(c.value, '$.undecided'), 0) AS undecided,
+ COALESCE(json_extract(c.value, '$.oversized'), 0) AS oversized, SUBSTR(COALESCE(json_extract(c.value, '$.decidedBy'), ''), 1, 1024) AS decided_by,
+ SUBSTR(COALESCE(json_extract(c.value, '$.margin'), ''), 1, 1024) AS margin, COALESCE(json_extract(c.value, '$.undecided'), 0) AS undecided,
  COALESCE(json_extract(c.value, '$.keepsSmaller'), 0) AS keeps_smaller, json_extract(c.value, '$.lossy') AS lossy,
- COALESCE(json_extract(c.value, '$.staleReason'), '') AS stale_reason, COALESCE(json_extract(c.value, '$.merged'), 0) AS merged,
- COALESCE(json_extract(c.value, '$.claimId'), '') AS claim_id, json_extract(c.value, '$.appliedAt') AS applied_at,
+ SUBSTR(COALESCE(json_extract(c.value, '$.staleReason'), ''), 1, 1024) AS stale_reason, COALESCE(json_extract(c.value, '$.merged'), 0) AS merged,
+ SUBSTR(COALESCE(json_extract(c.value, '$.claimId'), ''), 1, 1024) AS claim_id, json_extract(c.value, '$.appliedAt') AS applied_at,
  (CASE WHEN json_type(c.value, '$.loserOwners') = 'object' THEN json_extract(c.value, '$.loserOwners') END) AS owners,
  (CASE WHEN json_type(c.value, '$.changedMembers') = 'array' THEN json_extract(c.value, '$.changedMembers') END) AS changed
  FROM resource_reductions r
@@ -148,9 +148,9 @@ var spoolMemberSelectPG = `WITH c AS MATERIALIZED (
  SELECT r.id AS rid, c.ord AS ord, COALESCE(c.v->>'id', '') AS cluster_key, COALESCE(c.v->>'tier', '') AS tier, COALESCE(c.v->>'state', '') AS state,
  ` + pgSpoolID("c.v->'winnerId'") + ` AS winner_id,
  COALESCE((c.v->>'checked')::boolean, false) AS checked, COALESCE((c.v->>'reviewed')::boolean, false) AS reviewed, COALESCE((c.v->>'oversized')::boolean, false) AS oversized,
- COALESCE(c.v->>'decidedBy', '') AS decided_by, COALESCE(c.v->>'margin', '') AS margin, COALESCE((c.v->>'undecided')::boolean, false) AS undecided,
- COALESCE((c.v->>'keepsSmaller')::boolean, false) AS keeps_smaller, c.v->'lossy' AS lossy, COALESCE(c.v->>'staleReason', '') AS stale_reason,
- COALESCE((c.v->>'merged')::boolean, false) AS merged, COALESCE(c.v->>'claimId', '') AS claim_id, (c.v->>'appliedAt')::timestamptz AS applied_at,
+ LEFT(COALESCE(c.v->>'decidedBy', ''), 1024) AS decided_by, LEFT(COALESCE(c.v->>'margin', ''), 1024) AS margin, COALESCE((c.v->>'undecided')::boolean, false) AS undecided,
+ COALESCE((c.v->>'keepsSmaller')::boolean, false) AS keeps_smaller, c.v->'lossy' AS lossy, LEFT(COALESCE(c.v->>'staleReason', ''), 1024) AS stale_reason,
+ COALESCE((c.v->>'merged')::boolean, false) AS merged, LEFT(COALESCE(c.v->>'claimId', ''), 1024) AS claim_id, (c.v->>'appliedAt')::timestamptz AS applied_at,
  (CASE WHEN jsonb_typeof(c.v->'loserOwners') = 'object' THEN c.v->'loserOwners' ELSE '{}'::jsonb END) AS owners,
  (CASE WHEN jsonb_typeof(c.v->'changedMembers') = 'array' THEN c.v->'changedMembers' ELSE '[]'::jsonb END) AS changed,
  (CASE WHEN jsonb_typeof(c.v->'members') = 'array' THEN c.v->'members' ELSE '[]'::jsonb END) AS members
@@ -605,7 +605,7 @@ func clusterRowFromSpool(r *spoolRow, reductionID uint, generation string) model
 		ReductionID: reductionID, Generation: generation, Key: r.ClusterKey, Position: int64(r.ClusterOrd),
 		Tier: r.Tier, State: r.State, WinnerID: r.WinnerID, Checked: r.Checked, Reviewed: r.Reviewed, Oversized: r.Oversized,
 		DecidedBy: r.DecidedBy, Margin: r.Margin, Undecided: r.Undecided, KeepsSmaller: r.KeepsSmaller,
-		StaleReason: r.StaleReason, Merged: r.Merged, ClaimID: r.ClaimID, AppliedAt: r.AppliedAt,
+		StaleReason: models.BoundStaleReason(r.StaleReason), Merged: r.Merged, ClaimID: r.ClaimID, AppliedAt: r.AppliedAt,
 	}
 	if len(r.Lossy) > 0 && string(r.Lossy) != "null" {
 		row.Lossy = r.Lossy
@@ -652,7 +652,10 @@ func (s *reductionStore) migrateCluster(mig *models.ReductionMigration, head spo
 func (s *reductionStore) writeSmallCluster(tx *gorm.DB, mig *models.ReductionMigration, head spoolHead, row *models.ReductionClusterRow) error {
 	var spool []spoolRow
 	if head.N > 0 {
-		if err := tx.Where("reduction_id = ? AND generation = ? AND kind = 'member' AND cluster_ord = ? AND resource_id > 0", mig.ReductionID, mig.Generation, head.ClusterOrd).
+		// Only the member's own columns: the Cluster's scalars were read once, from the
+		// Cluster's first row, and repeating them per member would load them N times.
+		if err := tx.Select("member_ord", "resource_id", "hash", "in_extent", "ejected", "ejected_reason", "distance", "owner_at_merge", "changed").
+			Where("reduction_id = ? AND generation = ? AND kind = 'member' AND cluster_ord = ? AND resource_id > 0", mig.ReductionID, mig.Generation, head.ClusterOrd).
 			Order("member_ord").Find(&spool).Error; err != nil {
 			return err
 		}
@@ -696,7 +699,7 @@ func (s *reductionStore) writeSmallCluster(tx *gorm.DB, mig *models.ReductionMig
 	}
 	// A plan stored before settings were recorded has no keeps-smaller flag; derive it
 	// from the Winner Rule the way the old read did (deleted Resources tolerated).
-	if first := spoolRow(spool0(spool)); first.State != models.ReductionClusterApplied {
+	if row.State != models.ReductionClusterApplied {
 		if has, rule, err := s.legacyHasNoSettings(tx, mig.ReductionID); err != nil {
 			return err
 		} else if has {
@@ -724,13 +727,6 @@ func (s *reductionStore) writeSmallCluster(tx *gorm.DB, mig *models.ReductionMig
 		return nil
 	}
 	return tx.CreateInBatches(c.Members, reductionRowChunk).Error
-}
-
-func spool0(rows []spoolRow) spoolRow {
-	if len(rows) == 0 {
-		return spoolRow{}
-	}
-	return rows[0]
 }
 
 // legacyHasNoSettings reports whether the legacy plan recorded no settings, and
