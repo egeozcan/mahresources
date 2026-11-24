@@ -590,7 +590,7 @@ landing; a parked apply worker past its lease cannot merge.
 - A Reduction `computing` at upgrade is failed with "interrupted by an upgrade; compute again".
   A compute job queued for a `plan_schema = 0` Reduction is **deferred** by the job adapter (retried
   later, not marked blocked) and runs after publication.
-- Spool and resume: the spool is keyed by `(reduction_id, migration_generation)` and kept across a
+- Spool and resume: the spool is keyed by `(reduction_id, generation)` of its `reduction_migrations` row and kept across a
   takeover; each takeover rotates a separate **writer token** on the row, every fenced chunk checks
   it, and the checkpoint (last processed ordinal) is committed in the same transaction as the chunk it
   describes, so a stalled runner can neither write after a takeover nor regress the checkpoint. Any
