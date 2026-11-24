@@ -400,29 +400,74 @@ func (s *reductionStore) enteredSince(r *models.ResourceReduction, since time.Ti
 	if s.scope.mode == scopeSubtree {
 		where += " AND x.owner_id IN " + subtreeIDs
 	}
-	if !r.ExtentAll {
-		anchor := "SELECT g.id FROM groups g WHERE g.id IN (SELECT group_id FROM reduction_extent_groups WHERE reduction_id = ?)"
-		if s.scope.mode == scopeSubtree {
-			anchor += " AND g.id IN " + subtreeIDs
+	if r.ExtentAll {
+		var n int64
+		if err := s.db.Raw(prefix+"SELECT COUNT(*) FROM resources x WHERE "+where, append(args, queryArgs...)...).Scan(&n).Error; err != nil {
+			return 0, err
 		}
-		extTree := "ext_tree(id) AS (" + anchor + " UNION SELECT g.id FROM groups g INNER JOIN ext_tree et ON g.owner_id = et.id)"
-		if prefix == "" {
-			prefix = "WITH RECURSIVE " + extTree + " "
-		} else {
-			prefix = strings.TrimSuffix(prefix, " ") + ", " + extTree + " "
+		return int(n), nil
+	}
+
+	// Walk the arrivals (an indexed range on created_at) in keyset chunks and test each
+	// chunk's Extent membership. One statement over the whole predicate would have SQLite
+	// materialise every relationship row of every selected Group, however old, before
+	// looking at a single arrival.
+	anchor := "SELECT g.id FROM groups g WHERE g.id IN (SELECT group_id FROM reduction_extent_groups WHERE reduction_id = ?)"
+	if s.scope.mode == scopeSubtree {
+		anchor += " AND g.id IN " + subtreeIDs
+	}
+	extTree := "ext_tree(id) AS (" + anchor + " UNION SELECT g.id FROM groups g INNER JOIN ext_tree et ON g.owner_id = et.id)"
+	memberPrefix := "WITH RECURSIVE " + extTree + " "
+	memberArgs := []any{r.ID}
+	if prefix != "" {
+		memberPrefix = strings.TrimSuffix(prefix, " ") + ", " + extTree + " "
+		memberArgs = append(append([]any{}, args...), r.ID)
+	}
+	const member = ` AND (x.id IN (SELECT resource_id FROM reduction_extent_resources WHERE reduction_id = ?)
+		OR x.owner_id IN (SELECT id FROM ext_tree)
+		OR x.id IN (SELECT grr.resource_id FROM groups_related_resources grr WHERE grr.group_id IN (SELECT id FROM ext_tree)))`
+
+	type arrival struct {
+		CreatedAt time.Time
+		ID        uint
+	}
+	total := 0
+	var cursor *arrival
+	for {
+		scan := where
+		scanArgs := append([]any{}, queryArgs...)
+		if cursor != nil {
+			scan += " AND (x.created_at, x.id) > (?, ?)"
+			scanArgs = append(scanArgs, cursor.CreatedAt, cursor.ID)
 		}
-		args = append(args, r.ID)
-		where += ` AND (x.id IN (SELECT resource_id FROM reduction_extent_resources WHERE reduction_id = ?)
-			OR x.owner_id IN (SELECT id FROM ext_tree)
-			OR x.id IN (SELECT grr.resource_id FROM groups_related_resources grr WHERE grr.group_id IN (SELECT id FROM ext_tree)))`
-		queryArgs = append(queryArgs, r.ID)
+		var chunk []arrival
+		if err := s.db.Raw(prefix+"SELECT x.id AS id, x.created_at AS created_at FROM resources x WHERE "+scan+" ORDER BY x.created_at, x.id LIMIT ?",
+			append(append(append([]any{}, args...), scanArgs...), reductionArrivalChunk)...).Scan(&chunk).Error; err != nil {
+			return 0, err
+		}
+		if len(chunk) == 0 {
+			return total, nil
+		}
+		ids := make([]uint, len(chunk))
+		for i, row := range chunk {
+			ids[i] = row.ID
+		}
+		var n int64
+		if err := s.db.Raw(memberPrefix+"SELECT COUNT(*) FROM resources x WHERE x.id IN ?"+member, append(append([]any{}, memberArgs...), ids, r.ID)...).Scan(&n).Error; err != nil {
+			return 0, err
+		}
+		total += int(n)
+		if len(chunk) < reductionArrivalChunk {
+			return total, nil
+		}
+		last := chunk[len(chunk)-1]
+		cursor = &last
 	}
-	var n int64
-	if err := s.db.Raw(prefix+"SELECT COUNT(*) FROM resources x WHERE "+where, append(args, queryArgs...)...).Scan(&n).Error; err != nil {
-		return 0, err
-	}
-	return int(n), nil
 }
+
+// reductionArrivalChunk is how many arrivals one membership test covers. A variable so a
+// test can cross chunk boundaries with a few rows.
+var reductionArrivalChunk = 500
 
 // describeStoredLastApply is the stored apply record as the page shows it. Whether
 // it is running is read from the leases, not a clock on its start: a worker that
