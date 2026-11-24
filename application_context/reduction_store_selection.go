@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"errors"
 	"fmt"
 
 	"gorm.io/gorm"
@@ -23,26 +24,83 @@ const reductionSelectionPreview = 20
 // ErrReductionSelectionTooLarge refuses a selection above the per-request cap.
 var ErrReductionSelectionTooLarge = fmt.Errorf("a selection may name at most %d Resources or Groups at a time", reductionSelectionCap)
 
+// ErrReductionGroupNotVisible refuses a selection naming a Group outside the
+// principal's subtree, the way an invisible owner Group is refused today.
+var ErrReductionGroupNotVisible = errors.New("no such Group")
+
+// selectionAfterPreflight runs inside the "from a Group's Resources" transaction
+// between its preflight count and its inserts. It is nil outside a test, which
+// uses it to land a concurrent insert there.
+var selectionAfterPreflight func(tx *gorm.DB)
+
 // addExtentResources adds explicit Resource ids, ignoring ones already selected.
+// A confined principal selects only Resources whose owner is in its subtree: the
+// others are skipped, as the scoped Resource query skips them on today's create.
 func (s *reductionStore) addExtentResources(r *models.ResourceReduction, ids []uint) error {
 	if len(ids) > reductionSelectionCap {
 		return ErrReductionSelectionTooLarge
 	}
+	ids = dedupeUints(ids)
+	switch s.scope.mode {
+	case scopeDeny:
+		return nil
+	case scopeSubtree:
+		prefix, args := s.with()
+		return s.db.Transaction(func(tx *gorm.DB) error {
+			for from := 0; from < len(ids); from += reductionRowChunk {
+				chunk := ids[from:min(from+reductionRowChunk, len(ids))]
+				if err := tx.Exec(prefix+`INSERT INTO reduction_extent_resources (reduction_id, resource_id)
+					SELECT ?, id FROM resources WHERE id IN ? AND owner_id IN `+subtreeIDs+` ON CONFLICT DO NOTHING`,
+					append(append([]any{}, args...), r.ID, chunk)...).Error; err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
 	rows := make([]models.ReductionExtentResource, 0, len(ids))
-	for _, id := range dedupeUints(ids) {
+	for _, id := range ids {
 		rows = append(rows, models.ReductionExtentResource{ReductionID: r.ID, ResourceID: id})
 	}
 	return s.insertIgnore(rows)
 }
 
-// addExtentGroups adds Group ids, ignoring ones already selected.
+// addExtentGroups adds Group ids, ignoring ones already selected. Every Group a
+// confined principal names must be in its subtree, or the request is refused
+// whole (ErrReductionGroupNotVisible).
 func (s *reductionStore) addExtentGroups(r *models.ResourceReduction, ids []uint) error {
 	if len(ids) > reductionSelectionCap {
 		return ErrReductionSelectionTooLarge
 	}
+	ids = dedupeUints(ids)
 	rows := make([]models.ReductionExtentGroup, 0, len(ids))
-	for _, id := range dedupeUints(ids) {
+	for _, id := range ids {
 		rows = append(rows, models.ReductionExtentGroup{ReductionID: r.ID, GroupID: id})
+	}
+	switch s.scope.mode {
+	case scopeDeny:
+		if len(ids) > 0 {
+			return ErrReductionGroupNotVisible
+		}
+		return nil
+	case scopeSubtree:
+		prefix, args := s.with()
+		return s.db.Transaction(func(tx *gorm.DB) error {
+			var visible int64
+			for from := 0; from < len(ids); from += reductionRowChunk {
+				chunk := ids[from:min(from+reductionRowChunk, len(ids))]
+				var n int64
+				if err := tx.Raw(prefix+`SELECT COUNT(*) FROM groups WHERE id IN ? AND id IN `+subtreeIDs,
+					append(append([]any{}, args...), chunk)...).Scan(&n).Error; err != nil {
+					return err
+				}
+				visible += n
+			}
+			if visible != int64(len(ids)) {
+				return ErrReductionGroupNotVisible
+			}
+			return tx.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(rows, reductionRowChunk).Error
+		})
 	}
 	return s.insertIgnore(rows)
 }
@@ -76,6 +134,9 @@ func (s *reductionStore) addExtentFromGroupResources(r *models.ResourceReduction
 		if count > reductionSelectionCap {
 			return ErrReductionSelectionTooLarge
 		}
+		if selectionAfterPreflight != nil {
+			selectionAfterPreflight(tx)
+		}
 		after := uint(0)
 		for {
 			var hi uint
@@ -99,6 +160,11 @@ func (s *reductionStore) addExtentFromGroupResources(r *models.ResourceReduction
 				return err
 			}
 			total += int(chunk)
+			// The preflight can be stale by now; the cap is judged on what this
+			// transaction has inserted, and refusing rolls all of it back.
+			if total > reductionSelectionCap {
+				return ErrReductionSelectionTooLarge
+			}
 			after = hi
 		}
 	})
@@ -111,17 +177,23 @@ func (s *reductionStore) addExtentFromGroupResources(r *models.ResourceReduction
 // extentPreview is the review's selection preview: how many Resources are
 // selected explicitly, and the first names among those the principal may see.
 func (s *reductionStore) extentPreview(r *models.ResourceReduction) (int64, []string, error) {
-	var n int64
-	if err := s.db.Model(&models.ReductionExtentResource{}).Where("reduction_id = ?", r.ID).Count(&n).Error; err != nil {
-		return 0, nil, err
-	}
 	prefix, args := s.with()
 	visible := ""
+	var n int64
 	switch s.scope.mode {
-	case scopeSubtree:
-		visible = " AND r.owner_id IN " + subtreeIDs
 	case scopeDeny:
-		return n, nil, nil
+		return 0, nil, nil
+	case scopeSubtree:
+		// A Resource moved out of the subtree is neither named nor counted.
+		visible = " AND r.owner_id IN " + subtreeIDs
+		if err := s.db.Raw(prefix+`SELECT COUNT(*) FROM reduction_extent_resources e JOIN resources r ON r.id = e.resource_id
+			WHERE e.reduction_id = ?`+visible, append(append([]any{}, args...), r.ID)...).Scan(&n).Error; err != nil {
+			return 0, nil, err
+		}
+	default:
+		if err := s.db.Model(&models.ReductionExtentResource{}).Where("reduction_id = ?", r.ID).Count(&n).Error; err != nil {
+			return 0, nil, err
+		}
 	}
 	var names []string
 	err := s.db.Raw(prefix+`SELECT r.name FROM reduction_extent_resources e JOIN resources r ON r.id = e.resource_id
