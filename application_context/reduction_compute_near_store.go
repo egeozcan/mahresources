@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"bytes"
 	"fmt"
 
 	"gorm.io/gorm"
@@ -106,47 +107,57 @@ func (run *reductionStream) seedPage(after *seedCursor) ([]seedRow, error) {
 // serves, where ordering ties by sort_key would sort the whole tied group again for
 // every page.
 //
-// Bound: one statement per tied prefix, found by index-ordered groups 500 at a time.
-// A statement ranks its group in the database (one window sort) and writes one row
-// per seed of that group, so a group of G seeds is one statement of G rows, the one
-// place a statement exceeds a chunk. A group needs G Resources whose Winner Rule
-// keys agree on 512 bytes (identical criteria and a name that long in common), which
-// is unusual, and G is at most the Extent.
+// Bound: ties are found while the seeds are walked by keyset in chunks, comparing
+// each seed's key_prefix with the one before it (across a page boundary too), so no
+// discovery statement reads more than one chunk. A tied group is ranked once the
+// walk has passed its last seed, so the ranking never moves a row ahead of the
+// cursor. The ranking statement ranks its group in the database (one window sort)
+// and writes one row per seed of that group, so a group of G seeds is one statement
+// of G rows, the one place a statement exceeds a chunk. A group needs G Resources
+// whose Winner Rule keys agree on 512 bytes (identical criteria and a name that long
+// in common), which is unusual, and G is at most the Extent.
 func (run *reductionStream) rankTiedSeeds() error {
-	var after []byte
+	var (
+		cursor *seedCursor
+		prev   []byte // the key_prefix of the seed before
+		tied   []byte // the open group's prefix, once two seeds in a row shared it
+		isTied bool
+	)
+	flush := func() error {
+		if !isTied {
+			return nil
+		}
+		g := tied
+		isTied, tied = false, nil
+		return run.s.fenced(run.r.ID, run.generation, func(tx *gorm.DB) error {
+			return tx.Exec(`UPDATE reduction_seeds SET tie_rank = ranked.rn
+				FROM (SELECT resource_id, ROW_NUMBER() OVER (ORDER BY sort_key, resource_id) AS rn FROM reduction_seeds
+					WHERE reduction_id = ? AND generation = ? AND key_prefix = ?) ranked
+				WHERE reduction_seeds.reduction_id = ? AND reduction_seeds.generation = ? AND reduction_seeds.resource_id = ranked.resource_id`,
+				run.r.ID, run.generation, g, run.r.ID, run.generation).Error
+		})
+	}
 	for {
 		if err := run.jobCtx.Err(); err != nil {
 			return err
 		}
-		sql := `SELECT key_prefix FROM reduction_seeds WHERE reduction_id = ? AND generation = ?`
-		args := []any{run.r.ID, run.generation}
-		if after != nil {
-			sql += ` AND key_prefix > ?`
-			args = append(args, after)
-		}
-		var groups []struct{ KeyPrefix []byte }
-		if err := run.s.db.Raw(sql+` GROUP BY key_prefix HAVING COUNT(*) > 1 ORDER BY key_prefix LIMIT ?`, append(args, reductionRowChunk)...).Scan(&groups).Error; err != nil {
+		seeds, err := run.seedPage(cursor)
+		if err != nil {
 			return err
 		}
-		for _, g := range groups {
-			if err := run.jobCtx.Err(); err != nil {
+		if len(seeds) == 0 {
+			return flush()
+		}
+		for _, seed := range seeds {
+			if prev != nil && bytes.Equal(prev, seed.KeyPrefix) {
+				isTied, tied = true, seed.KeyPrefix
+			} else if err := flush(); err != nil {
 				return err
 			}
-			err := run.s.fenced(run.r.ID, run.generation, func(tx *gorm.DB) error {
-				return tx.Exec(`UPDATE reduction_seeds SET tie_rank = ranked.rn
-					FROM (SELECT resource_id, ROW_NUMBER() OVER (ORDER BY sort_key, resource_id) AS rn FROM reduction_seeds
-						WHERE reduction_id = ? AND generation = ? AND key_prefix = ?) ranked
-					WHERE reduction_seeds.reduction_id = ? AND reduction_seeds.generation = ? AND reduction_seeds.resource_id = ranked.resource_id`,
-					run.r.ID, run.generation, g.KeyPrefix, run.r.ID, run.generation).Error
-			})
-			if err != nil {
-				return err
-			}
+			prev = seed.KeyPrefix
 		}
-		if len(groups) < reductionRowChunk {
-			return nil
-		}
-		after = groups[len(groups)-1].KeyPrefix
+		last := seeds[len(seeds)-1]
+		cursor = &seedCursor{KeyPrefix: last.KeyPrefix, TieRank: last.TieRank, ResourceID: last.ResourceID}
 	}
 }
 

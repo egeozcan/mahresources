@@ -339,8 +339,11 @@ func (run *reductionStream) coverage() (models.ReductionCoverage, error) {
 // is unavailable when it is a member of a Cluster of this generation that is not
 // an applied-and-merged one, except that read-only history reserves only the
 // members a reviewer ejected (an explicit "don't remove" must not return in an
-// auto-checked Cluster). An ejected member is reserved in every Cluster, an
-// applied-and-merged one included: the survivor of a merge is that decision too.
+// auto-checked Cluster). A member the reviewer ejected is reserved in every
+// Cluster, an applied-and-merged one included: the survivor of a merge is that
+// decision too. An automatic ejection (no pair to the new Winner, an outsider a
+// promotion moved past) is not a decision of anyone's, so its member returns to
+// the pool and the next compute may cluster it again.
 // col is the Resource id expression.
 //
 // LIMIT 1 OFFSET 0 is a fence, not a bound: it stops Postgres from flattening the
@@ -350,7 +353,7 @@ func (run *reductionStream) coverage() (models.ReductionCoverage, error) {
 func (run *reductionStream) available(col string) (string, []any) {
 	return `NOT EXISTS (SELECT 1 FROM reduction_members am JOIN reduction_clusters ac ON ac.id = am.cluster_id
 		WHERE am.reduction_id = ? AND am.generation = ? AND am.resource_id = ` + col + `
-		AND ((ac.state = 'applied' AND NOT ac.merged) OR am.ejected OR (ac.state <> 'applied' AND NOT ac.read_only))
+		AND ((ac.state = 'applied' AND NOT ac.merged) OR (am.ejected AND am.ejected_reason NOT IN ('` + models.EjectReasonNoPairToWinner + `', '` + models.EjectReasonOutsiderDemoted + `')) OR (ac.state <> 'applied' AND NOT ac.read_only))
 		LIMIT 1 OFFSET 0)`,
 		[]any{run.r.ID, run.generation}
 }
@@ -509,6 +512,11 @@ func (run *reductionStream) insertBuilt(build func() (*pendingCluster, error)) e
 			})
 		})
 		if errors.Is(err, errClusterReclassified) {
+			// The rebuild must see the Extent as it is now, not the staged copy the
+			// rejected build read: left alone, every attempt would reject the same way.
+			if rerr := run.refreshStaged(pc.stored); rerr != nil {
+				return rerr
+			}
 			continue
 		}
 		if err != nil {
@@ -530,10 +538,12 @@ func (run *reductionStream) recheck(st *reductionStore, pc *pendingCluster, c *s
 	ids := make([]uint, 0, len(c.Members))
 	for i := range c.Members {
 		l, found := locked[c.Members[i].ResourceID]
-		if !found || (pc.hash != "" && l.Hash != pc.hash) {
+		// The hash the member was built with (the loaded row) must be the one it holds
+		// now: a file replaced after the load would otherwise be stored under its new
+		// hash while the pair (or the Identical grouping) still speaks of the old bytes.
+		if !found || (pc.hash != "" && l.Hash != pc.hash) || l.Hash != c.Members[i].Hash {
 			return errClusterReclassified
 		}
-		c.Members[i].Hash = l.Hash
 		ids = append(ids, c.Members[i].ResourceID)
 	}
 	live, err := st.liveInExtent(run, ids)
@@ -543,6 +553,11 @@ func (run *reductionStream) recheck(st *reductionStore, pc *pendingCluster, c *s
 	for _, m := range c.Members {
 		if live[m.ResourceID] != m.InExtent {
 			return errClusterReclassified
+		}
+	}
+	if c.Row.Tier == models.ReductionTierNear {
+		if err := run.recheckNearPairs(st, c); err != nil {
+			return err
 		}
 	}
 	// An outsider (a member outside the Extent) is accepted by the comparison above
@@ -570,4 +585,89 @@ func storedStreamCluster(cluster *models.ReductionCluster, truncated int, seed u
 	c.Row.SeedResourceID = seed
 	c.Row.FixedSeed = fixedSeed
 	return c
+}
+
+// recheckNearPairs holds a Near Cluster to what justifies it, read under the members'
+// share locks: every member still carries its perceptual hash (a replaced file loses
+// its row before the new one is computed) and every Loser still has its stored pair
+// to the Winner. Either missing means the pair describes bytes the member no longer
+// has, so the Cluster is rebuilt from what exists now.
+func (run *reductionStream) recheckNearPairs(st *reductionStore, c *storedCluster) error {
+	ids := make([]uint, 0, len(c.Members))
+	var losers []uint
+	for _, m := range c.Members {
+		ids = append(ids, m.ResourceID)
+		if !m.Ejected && m.InExtent && m.ResourceID != c.Row.WinnerID {
+			losers = append(losers, m.ResourceID)
+		}
+	}
+	var hashed []uint
+	if err := st.db.Raw(`SELECT resource_id FROM image_hashes WHERE resource_id IN ?`, dedupeUints(ids)).Scan(&hashed).Error; err != nil {
+		return err
+	}
+	if len(hashed) != len(dedupeUints(ids)) {
+		return errClusterReclassified
+	}
+	paired, err := st.pairProbe(c.Row.WinnerID, losers, run.threshold, run.aThreshold, false)
+	if err != nil {
+		return err
+	}
+	for _, id := range losers {
+		if _, ok := paired[id]; !ok {
+			return errClusterReclassified
+		}
+	}
+	return nil
+}
+
+// refreshStaged brings the staged Extent of a rejected Cluster's members in line with
+// the Extent definition as it reads now: a member no longer in it leaves the staged
+// copy, one that is in it and was never staged joins it. The rebuild then reads the
+// membership the insertion will compare against, and a Cluster whose member was
+// unlinked is rebuilt from the members that remain.
+func (run *reductionStream) refreshStaged(c *storedCluster) error {
+	ids := make([]uint, 0, len(c.Members))
+	for _, m := range c.Members {
+		ids = append(ids, m.ResourceID)
+	}
+	ids = dedupeUints(ids)
+	live, err := run.s.liveInExtent(run, ids)
+	if err != nil {
+		return err
+	}
+	var staged []uint
+	if err := run.s.db.Raw(`SELECT resource_id FROM reduction_extent WHERE reduction_id = ? AND generation = ? AND resource_id IN ?`,
+		run.r.ID, run.generation, ids).Scan(&staged).Error; err != nil {
+		return err
+	}
+	isStaged := map[uint]bool{}
+	for _, id := range staged {
+		isStaged[id] = true
+	}
+	var drop, add []uint
+	for _, id := range ids {
+		switch {
+		case isStaged[id] && !live[id]:
+			drop = append(drop, id)
+		case !isStaged[id] && live[id]:
+			add = append(add, id)
+		}
+	}
+	if len(drop) == 0 && len(add) == 0 {
+		return nil
+	}
+	return run.s.fenced(run.r.ID, run.generation, func(tx *gorm.DB) error {
+		if len(drop) > 0 {
+			if err := tx.Exec(`DELETE FROM reduction_extent WHERE reduction_id = ? AND generation = ? AND resource_id IN ?`, run.r.ID, run.generation, drop).Error; err != nil {
+				return err
+			}
+		}
+		if len(add) > 0 {
+			prefix, args := run.s.with()
+			return tx.Exec(prefix+`INSERT INTO reduction_extent (reduction_id, generation, resource_id, hash)
+				SELECT ?, ?, r.id, COALESCE(r.hash, '') FROM resources r WHERE r.id IN ?`+run.visibleOwner("r")+` ON CONFLICT DO NOTHING`,
+				append(args, run.r.ID, run.generation, add)...).Error
+		}
+		return nil
+	})
 }

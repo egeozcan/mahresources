@@ -319,6 +319,15 @@ func (s *reductionStore) clearGeneration(reductionID uint, generation string) er
 // a decision (reviewed, skipped, stale) and read-only history.
 const carryPredicate = `(c.state = 'applied' OR c.read_only OR c.reviewed OR c.state IN ('skipped', 'stale'))`
 
+// carryClusterWindowSQL reads the next window of carried Cluster ids of the plan
+// generation; carryMemberPageSQL pages the members of one window by (cluster,
+// position) on idx_rm_page. Named so a test can EXPLAIN exactly what runs.
+const (
+	carryClusterWindowSQL = `SELECT c.id FROM reduction_clusters c WHERE c.reduction_id = ? AND c.generation = ? AND ` + carryPredicate + ` AND c.id > ? ORDER BY c.id LIMIT ?`
+	carryMemberPageSQL    = `SELECT m.id, m.cluster_id, m.position, m.resource_id FROM reduction_members m
+		WHERE m.cluster_id IN ? AND (m.cluster_id > ? OR (m.cluster_id = ? AND m.position > ?)) ORDER BY m.cluster_id, m.position LIMIT ?`
+)
+
 // columnList is a model's column names but the ones skipped, quoted.
 func columnList(db *gorm.DB, model any, skip ...string) ([]string, error) {
 	stmt := &gorm.Statement{DB: db}
@@ -439,56 +448,69 @@ func (s *reductionStore) carryOver(reductionID uint, generation string) error {
 	// from the Resources, share-locked ascending first (Postgres; SQLite's writer
 	// lock excludes a delete), so a deletion either committed before (seen) or waits
 	// until the rows are committed (and then finds them).
-	afterCluster, afterPosition := uint(0), -1
+	//
+	// The carried Clusters are walked in windows of reductionRowChunk ids, and a
+	// window's members are paged by (cluster, position) over that literal id list: a
+	// member statement seeks idx_rm_page once per window Cluster and never rebuilds
+	// the whole carried set, which a subquery over the Clusters did for every page.
+	windowAfter := uint(0)
 	for {
-		var n int
-		var nextCluster uint
-		var nextPosition int
-		err := s.fenced(reductionID, generation, func(tx *gorm.DB) error {
-			n, nextCluster, nextPosition = 0, afterCluster, afterPosition
-			var chunk []struct {
-				ID         uint
-				ClusterID  uint
-				Position   int
-				ResourceID uint
-			}
-			if err := tx.Raw(`SELECT m.id, m.cluster_id, m.position, m.resource_id FROM reduction_members m
-				WHERE m.cluster_id IN (SELECT c.id FROM reduction_clusters c WHERE c.reduction_id = ? AND c.generation = ? AND `+carryPredicate+`)
-				AND (m.cluster_id > ? OR (m.cluster_id = ? AND m.position > ?)) ORDER BY m.cluster_id, m.position LIMIT ?`,
-				reductionID, source, afterCluster, afterCluster, afterPosition, reductionRowChunk).Scan(&chunk).Error; err != nil {
-				return err
-			}
-			n = len(chunk)
-			if n == 0 {
-				return nil
-			}
-			ids := make([]uint, n)
-			resourceIDs := make([]uint, n)
-			for i, m := range chunk {
-				ids[i], resourceIDs[i] = m.ID, m.ResourceID
-			}
-			nextCluster, nextPosition = chunk[n-1].ClusterID, chunk[n-1].Position
-			if err := s.in(tx).shareLockResources(resourceIDs); err != nil {
-				return err
-			}
-			if carryOverChunkHook != nil {
-				if err := carryOverChunkHook(tx, "members"); err != nil {
-					return err
-				}
-			}
-			return tx.Exec(`INSERT INTO reduction_members (cluster_id, generation, gone, `+strings.Join(memberCols, ", ")+`)
-				SELECT tc.id, ?, NOT EXISTS (SELECT 1 FROM resources r WHERE r.id = m.resource_id), `+strings.Join(prefixed("m", memberCols), ", ")+`
-				FROM reduction_members m
-				JOIN reduction_clusters sc ON sc.id = m.cluster_id
-				JOIN reduction_clusters tc ON tc.reduction_id = sc.reduction_id AND tc.generation = ? AND tc."key" = sc."key"
-				WHERE m.id IN ? ORDER BY m.id`, generation, generation, ids).Error
-		})
-		if err != nil {
+		var window []uint
+		if err := s.db.Raw(carryClusterWindowSQL, reductionID, source, windowAfter, reductionRowChunk).Scan(&window).Error; err != nil {
 			return err
 		}
-		afterCluster, afterPosition = nextCluster, nextPosition
-		if n < reductionRowChunk {
+		if len(window) == 0 {
 			break
+		}
+		windowAfter = window[len(window)-1]
+		afterCluster, afterPosition := uint(0), -1
+		for {
+			var n int
+			var nextCluster uint
+			var nextPosition int
+			err := s.fenced(reductionID, generation, func(tx *gorm.DB) error {
+				n, nextCluster, nextPosition = 0, afterCluster, afterPosition
+				var chunk []struct {
+					ID         uint
+					ClusterID  uint
+					Position   int
+					ResourceID uint
+				}
+				if err := tx.Raw(carryMemberPageSQL, window, afterCluster, afterCluster, afterPosition, reductionRowChunk).Scan(&chunk).Error; err != nil {
+					return err
+				}
+				n = len(chunk)
+				if n == 0 {
+					return nil
+				}
+				ids := make([]uint, n)
+				resourceIDs := make([]uint, n)
+				for i, m := range chunk {
+					ids[i], resourceIDs[i] = m.ID, m.ResourceID
+				}
+				nextCluster, nextPosition = chunk[n-1].ClusterID, chunk[n-1].Position
+				if err := s.in(tx).shareLockResources(resourceIDs); err != nil {
+					return err
+				}
+				if carryOverChunkHook != nil {
+					if err := carryOverChunkHook(tx, "members"); err != nil {
+						return err
+					}
+				}
+				return tx.Exec(`INSERT INTO reduction_members (cluster_id, generation, gone, `+strings.Join(memberCols, ", ")+`)
+					SELECT tc.id, ?, NOT EXISTS (SELECT 1 FROM resources r WHERE r.id = m.resource_id), `+strings.Join(prefixed("m", memberCols), ", ")+`
+					FROM reduction_members m
+					JOIN reduction_clusters sc ON sc.id = m.cluster_id
+					JOIN reduction_clusters tc ON tc.reduction_id = sc.reduction_id AND tc.generation = ? AND tc."key" = sc."key"
+					WHERE m.id IN ? ORDER BY m.id`, generation, generation, ids).Error
+			})
+			if err != nil {
+				return err
+			}
+			afterCluster, afterPosition = nextCluster, nextPosition
+			if n < reductionRowChunk {
+				break
+			}
 		}
 	}
 
@@ -746,6 +768,13 @@ func (ctx *MahresourcesContext) sweepReductionGenerations() error {
 // sweepGenerations is the sweep over this store's handle, so a worker's compute-start
 // sweep can carry the worker's context.
 func (s *reductionStore) sweepGenerations() error {
+	// A compute whose worker died holds its generation for as long as its row says
+	// computing. Its lease has run out, so no worker can still write under it (every
+	// write fences on the lease): it is failed first, which releases the generation
+	// to the sweep below.
+	if err := s.failExpiredComputes(); err != nil {
+		return err
+	}
 	for _, table := range []string{"reduction_members", "reduction_clusters"} {
 		if err := s.sweepTable(table, "id", planGuard, planPairProtected); err != nil {
 			return err
@@ -762,6 +791,25 @@ func (s *reductionStore) sweepGenerations() error {
 		}
 	}
 	return nil
+}
+
+// reductionComputeExpiredMessage is the error a compute is failed with when its
+// lease ran out without the worker finishing or failing it.
+const reductionComputeExpiredMessage = "the clustering run stopped before it finished (its lease expired); recompute to try again"
+
+// failExpiredComputes fails every Reduction whose compute lease has expired: status
+// failed, the generation cleared (so planGuard and stagingGuard no longer protect
+// it), the version bumped. The lease is the same instant beginReductionCompute
+// treats as claimable, and a live worker renews it, so a running compute is never
+// touched. One statement over the rows that qualify, which are few.
+func (s *reductionStore) failExpiredComputes() error {
+	now := time.Now()
+	return retryOnLockContention(reductionCASRetries, func() error {
+		return s.db.Exec(`UPDATE resource_reductions SET status = 'failed', computing_started_at = NULL, compute_deadline = NULL, compute_error = ?,
+				compute_generation = NULL, compute_lease_until = 0, version = version + 1, updated_at = ?
+			WHERE status = 'computing' AND compute_generation IS NOT NULL AND compute_lease_until <= ?`,
+			reductionComputeExpiredMessage, now, now.UnixNano()).Error
+	})
 }
 
 // planPairProtected is planGuard asked once for a whole (reduction, generation) pair

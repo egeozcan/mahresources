@@ -305,7 +305,7 @@ func testStoreSweep(t *testing.T, ctx *MahresourcesContext) {
 	seed(r, "running", "running")
 	seed(r, "migrating", "migrating")
 	seed(r, "stale", "stale")
-	require.NoError(t, ctx.db.Exec("UPDATE resource_reductions SET status = 'computing', compute_generation = 'running' WHERE id = ?", r.ID).Error)
+	require.NoError(t, ctx.db.Exec("UPDATE resource_reductions SET status = 'computing', compute_generation = 'running', compute_lease_until = ? WHERE id = ?", time.Now().Add(time.Hour).UnixNano(), r.ID).Error)
 	require.NoError(t, ctx.db.Create(&models.ReductionMigration{ReductionID: r.ID, Generation: "migrating"}).Error)
 	// a Reduction that never landed a plan (plan_generation NULL) and whose first compute failed
 	first := &models.ResourceReduction{Name: "first", Status: models.ReductionStatusFailed, MatchingMode: models.MatchingModeBothTiers}
