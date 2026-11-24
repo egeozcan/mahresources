@@ -231,6 +231,9 @@ type ReductionApplyOutcome struct {
 	LoserIDs  []uint `json:"loserIds,omitempty"`
 	// Reason is why the Cluster was refused. Empty for one that was applied.
 	Reason string `json:"reason,omitempty"`
+	// WinnerName is the kept Resource's name as the caller may see it, cut to a
+	// bounded length. Empty when the legacy path produced the outcome.
+	WinnerName string `json:"winnerName,omitempty"`
 }
 
 // ReductionApplyResult is the report of one apply.
@@ -248,10 +251,20 @@ type ReductionApplyResult struct {
 	// Errors counts Clusters the batch could not read (a database failure). They are
 	// neither stale nor changed, and are still approved.
 	Errors int `json:"errors"`
+	// AppliedCount, StaleCount and Destroyed are the totals the capped lists above
+	// stop short of: the table-backed apply stops appending to each list at a cap and
+	// says so in More. Zero on the legacy path, whose lists are complete.
+	AppliedCount int  `json:"appliedCount"`
+	StaleCount   int  `json:"staleCount"`
+	Destroyed    int  `json:"destroyed"`
+	More         bool `json:"more"`
 }
 
 // DestroyedCount is how many Resources this apply actually merged away.
 func (r *ReductionApplyResult) DestroyedCount() int {
+	if r.AppliedCount > 0 {
+		return r.Destroyed
+	}
 	total := 0
 	for _, outcome := range r.Applied {
 		total += len(outcome.LoserIDs)

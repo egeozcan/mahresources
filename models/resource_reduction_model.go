@@ -225,6 +225,15 @@ type ReductionLastApply struct {
 	ClusterIDs []string `json:"clusterIds,omitempty"`
 	// RequestID is the client's own id for the apply that wrote this record.
 	RequestID string `json:"requestId,omitempty"`
+	// BatchID, Generation, ExpectedClusters and ExpectedLosers belong to the plan-as-
+	// tables apply (design D10): the server-generated id the batch's stamp and every
+	// outcome carry, the plan generation it pinned, and the counts the request
+	// confirmed. A record written before them has none, and its counts cannot be
+	// checked against any Cluster.
+	BatchID          string `json:"batchId,omitempty"`
+	Generation       string `json:"generation,omitempty"`
+	ExpectedClusters int    `json:"expectedClusters,omitempty"`
+	ExpectedLosers   int    `json:"expectedLosers,omitempty"`
 }
 
 // ReductionCoverage reports how much of the Extent the clustering could actually

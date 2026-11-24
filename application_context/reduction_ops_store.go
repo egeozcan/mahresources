@@ -249,6 +249,7 @@ func clusterColumns(row *models.ReductionClusterRow) map[string]any {
 		"merged": row.Merged, "claim_id": row.ClaimID, "applied_at": row.AppliedAt, "restore_seq": row.RestoreSeq,
 		"member_count": row.MemberCount, "loser_count": row.LoserCount, "needs_attention": row.NeedsAttention,
 		"fingerprint": row.Fingerprint, "total_size": row.TotalSize, "gone_members": row.GoneMembers,
+		"outcome_batch": row.OutcomeBatch,
 	}
 }
 

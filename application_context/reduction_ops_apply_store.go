@@ -62,7 +62,7 @@ func fenceBatch(tx *gorm.DB, reductionID uint, batch string, live bool) (string,
 	if err := tx.Raw(`SELECT plan_generation, last_apply, apply_lease_until FROM resource_reductions WHERE id = ?`, reductionID).Scan(&row).Error; err != nil {
 		return "", err
 	}
-	now := time.Now()
+	now := leaseNow() // read after the row lock, so a wait past expiry shows
 	var rec applyRecord
 	if len(row.LastApply) > 0 && string(row.LastApply) != "null" {
 		if err := json.Unmarshal(row.LastApply, &rec); err != nil {
@@ -165,6 +165,7 @@ func (ctx *MahresourcesContext) storeDemoteToStale(reductionID uint, batch, key,
 		c.Row.AppliedAt = nil
 		c.Row.Checked = false
 		c.Row.ClaimID = ""
+		c.Row.OutcomeBatch = batch
 		flagged := map[uint]bool{}
 		for _, id := range changed {
 			flagged[id] = true
@@ -314,6 +315,7 @@ func (ctx *MahresourcesContext) storeRecordStale(reductionID uint, batch, key, f
 			// frozen, so a recompute leaves it where the reviewer can look at it.
 			row.Checked = false
 			row.Reviewed = true
+			row.OutcomeBatch = batch
 			flagged := map[uint]bool{}
 			for _, id := range changed {
 				flagged[id] = true
@@ -362,7 +364,14 @@ func batchClaimFence(reductionID uint, batch string) claimFence {
 // it is. It returns the Clusters it made stale (capped at reductionApplyOutcomeCap
 // entries) and how many there were.
 func (ctx *MahresourcesContext) storeReconcileClaims(reductionID uint, fence claimFence) ([]contracts.ReductionApplyOutcome, int, error) {
+	return ctx.storeReconcileClaimsFor(reductionID, fence, "")
+}
+
+// storeReconcileClaimsFor is storeReconcileClaims for an apply batch: a claim it
+// makes stale is one of that batch's outcomes, so it carries the batch id.
+func (ctx *MahresourcesContext) storeReconcileClaimsFor(reductionID uint, fence claimFence, outcomeBatch string) ([]contracts.ReductionApplyOutcome, int, error) {
 	store := ctx.reductionStore()
+	store.outcomeBatch = outcomeBatch
 	var stale []contracts.ReductionApplyOutcome
 	total := 0
 	after := uint(0)
@@ -447,6 +456,9 @@ func (s *reductionStore) reconcileChunk(reductionID uint, generation string, aft
 		c.Row.ClaimID = ""
 		if c.Row.GoneMembers > 0 {
 			c.Row.State, c.Row.Checked, c.Row.StaleReason = models.ReductionClusterStale, false, staleReasonDeleted
+			if s.outcomeBatch != "" {
+				c.Row.OutcomeBatch = s.outcomeBatch
+			}
 			stale = append(stale, contracts.ReductionApplyOutcome{
 				ClusterID: c.Row.Key, Tier: c.Row.Tier, WinnerID: c.Row.WinnerID, LoserIDs: c.loserIDs(), Reason: staleReasonDeleted,
 			})
