@@ -1,8 +1,8 @@
 # Resource Reduction plan as tables: bounded memory at any library size
 
-Status: design v9. Review history: v1 pi 9 P0 / 4 P1, architect 3 / 18; v2 pi 9 / 7, architect 1 /
-12; v3 pi 9 / 2, architect 1 / 7; v4 pi 0 / 11, architect 0 / 5; v5 pi 0 / 9, architect 0 / 2; v6 pi 0 / 11, architect 0 / 1; v7 pi 0 / 10, architect 0 / 1; v8 pi 0 / 6, architect 0 / 3.
-The tables at the end map the v3 to v8 findings to their fixes. Supersedes
+Status: design v10. Review history: v1 pi 9 P0 / 4 P1, architect 3 / 18; v2 pi 9 / 7, architect 1 /
+12; v3 pi 9 / 2, architect 1 / 7; v4 pi 0 / 11, architect 0 / 5; v5 pi 0 / 9, architect 0 / 2; v6 pi 0 / 11, architect 0 / 1; v7 pi 0 / 10, architect 0 / 1; v8 pi 0 / 6, architect 0 / 3;
+v9 architect 0 / 1. The tables at the end map the v3 to v9 findings to their fixes. Supersedes
 ADR 0003's "one row carries the plan" for the Cluster list.
 
 ## Problem
@@ -120,6 +120,10 @@ non-migration query returns `plan` or `extent`; the job-migration loaders
 uses, `(resource_id1, COALESCE(p_distance, hamming_distance), resource_id2)` and the mirror on
 `resource_id2`, created by an explicit statement (AutoMigrate cannot), `CONCURRENTLY` and off the
 request pool on Postgres, followed by `ANALYZE`. No pair writer changes and nothing is backfilled.
+On SQLite the build holds the writer lock for one table scan: it is the second named exemption from
+rule 2, runs at startup before the HTTP server accepts requests with progress logged (like the D12
+spool), and is idempotent (`IF NOT EXISTS`), re-run every boot after AutoMigrate so a migrator table
+rebuild cannot silently drop it. D14 measures the pair writer's added index cost.
 
 No table has a foreign key to `resources`. All eight new tables (with the migration spool, D12, and the deletion staging table, D9) are classified in
 `models/saved_sql_tables.go` as not readable by saved SQL.
@@ -311,8 +315,13 @@ Bookkeeping after a merge stays best-effort and logged, as today.
   `fixed_seed AND winner_id <> seed_resource_id`; `fixed_seed` is in the fingerprint. Whether a star
   is full depends only on its own visible insider count, which every viewer already sees, so it
   discloses nothing about copies a scoped viewer cannot see; the `truncated` flag itself is shown
-  only to unscoped viewers (D8). Tests: 198 + seed + outsider Winner is approvable and promotable; 199
-  neighbours with nothing left out is full; a scoped viewer sees the same. The seed is the
+  only to unscoped viewers (D8). The Cluster build forces Winner = seed whenever the insider query hit
+  199 (whatever the reloaded rows' Winner Rule says), and sets `fixed_seed` only then. Any rebuild
+  or carry that changes a Cluster's membership (an open unreviewed Cluster rebuilt from its
+  survivors, D4) sets `fixed_seed = false, seed_resource_id = 0`; the Cluster is unreviewed and
+  re-proposed, so nothing it protected was relied on. Tests: 198 + seed + outsider Winner is
+  approvable and promotable; 199 neighbours with nothing left out is full; a scoped viewer sees the
+  same; the seed deleted from a full star; a rebuild whose Winner Rule picks a non-seed. The seed is the
   only stored match the left-out neighbours are known to have, so it is never what a capped Cluster
   deletes. Below 199 insiders, an outsider that beats them all joins in addition (never displacing
   an insider), as today.
@@ -412,14 +421,16 @@ databases order a set of keys by `(key_prefix, sort_key)` exactly as `bytes.Comp
   (members joined to the staged ids, live, computing or migrating generation) in ascending id, 500
   per step: lock them, set `gone = true` on their matching member rows (paged by primary key),
   re-derive their `gone_members`; the staged ids are then deleted. A bulk delete never restarts the
-  Cluster order, so it cannot lock Cluster 20 before Cluster 10. A Resource present in any number of Clusters is handled in bounded steps. The three implementations today, `DeleteResource`,
-  `BulkDeleteResources` and the merge's `deleteResourceDBOnly`, call it per chunk of up to 500
-  deleted ids (the loops are restructured to delete in chunks); a guard test fails on a Resource
-  delete outside them. Idempotent; no Reduction row, no version bump. An applied Cluster's own
+  Cluster order, so it cannot lock Cluster 20 before Cluster 10. A Resource present in any number of Clusters is handled in bounded steps. The three implementations today, `DeleteResource`, `BulkDeleteResources` and the merge's
+  `deleteResourceDBOnly`, stage their deleted ids per chunk of up to 500; the walk runs once, after
+  the last chunk, in the same transaction (two-chunk test whose ids span Cluster 20 then Cluster 10).
+  A guard test fails on a Resource delete outside them. Idempotent; no Reduction row, no version bump. An applied Cluster's own
   Losers get `gone = true` but its effective state is `applied`, never stale.
 - **Delete paths bounded.** Each Resource's own child cleanup on delete (similarity pairs,
-  association rows, versions, block references) runs in keyset chunks of 500 rather than one
-  statement per kind; `BulkDeleteResources` requests are capped at 10,000 ids (D15), and its
+  association rows, versions, block references) runs in keyset chunks of 500 **before** the Resource
+  row is deleted, so the foreign-key cascades (`OnDelete:CASCADE` on similarity pairs, associations,
+  versions) find nothing left to cascade; a GORM callback test asserts each Resource delete statement
+  cascades at most a chunk; `BulkDeleteResources` requests are capped at 10,000 ids (D15), and its
   post-commit effects (plugin hooks, audit log entries) are emitted per chunk rather than collected
   for the whole request; hook and log payloads carry ids and bounded names only.
 - Eject, restore, release and reconcile re-derive `gone_members`; restore and release re-read
@@ -567,7 +578,12 @@ landing; a parked apply worker past its lease cannot merge.
   so the merge never locks Cluster rows out of order (two-Cluster test, ids 5 and 10, Postgres).
 - The note-block scrub rewrites references in SQL, with today's semantics
   (`scrubResourcesFromBlockContent`, `block_ref_cleanup.go`): gallery id arrays and calendar
-  `calendars[].source.resourceId` entries, ids given as numbers or as strings (escaped or not).
+  `calendars[].source.resourceId` entries. Accepted id shapes are today's `toUint` outcomes,
+  decided per shape: integers, integral and non-integral floats (truncated, as `toUint` does,
+  including exponent forms), decimal strings with a leading `+` or space and trailing garbage
+  (`Sscanf` semantics); the SQL coercion matches each, and the differential test generates every
+  shape. `content` is cast to TEXT on both engines before `json_each` (SQLite 3.45+ would read a BLOB
+  as JSONB) and written back as TEXT.
   Blocks are scanned by keyset `id > ?`, 500 per statement, of the gallery and calendar types; the
   UPDATE's `WHERE` is an exact, type-guarded JSON membership test (`json_each` / `json_array_elements`
   with the value compared as an integer after the same coercion today's `toUint` applies, a JSON `null`
@@ -575,7 +591,7 @@ landing; a parked apply worker past its lease cannot merge.
   their original order (`ORDER BY` the element ordinal) and an emptied array stays `[]`
   (`COALESCE(…, '[]')`); unrelated fields are untouched. The merge renews its lease per chunk. A
   differential test runs today's Go scrub and the SQL scrub over generated blocks on both databases
-  and requires identical documents.
+  and requires documents equal after decoding (key order and HTML escaping differ by design).
 - Out of scope, recorded in `docs/todo.md`: the Winner's backup history itself grows with every
   merge into it, in the database. This change keeps it out of Go on every Reduction path; other
   pages that load a Resource's `meta` (its detail page) are unchanged.
@@ -776,3 +792,13 @@ Also in this change: the review card layout fix for long Resource names and fail
 | snapshot parity (arch 4) | D13 explicit column list, reflection guard |
 | `bulk_op` index (arch 5) | D1 |
 | `substr` counts characters (arch 6) | D5 bytes |
+
+## v9 findings, where addressed
+
+| Finding | Section |
+|---|---|
+| `fixed_seed` lifecycle on rebuild and drift (arch 1) | D5 |
+| expression-index build vs rule 2 on SQLite (arch 2) | D1 (second named exemption, startup, idempotent) |
+| D9 per-chunk sentence contradicts the single walk (arch 3) | D9 |
+| foreign-key cascades (arch 4) | D9 children first |
+| block scrub coercion shapes, BLOB as JSONB, document equality (arch 5) | D13 |
