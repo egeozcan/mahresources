@@ -410,10 +410,11 @@ func (s *reductionStore) applyEligibility(r *models.ResourceReduction, generatio
 }
 
 // settleableClaims counts the Clusters settle-only could release for this
-// principal: claimed and not merged, fully visible, with no live apply owning
-// them. Filters do not enter into it.
+// principal: claimed and not merged, fully visible, with no live apply or settle
+// owning them. Filters do not enter into it.
 func (s *reductionStore) settleableClaims(r *models.ResourceReduction, generation string, now time.Time) (int, error) {
-	if r.ApplyLeaseUntil > now.UnixNano() {
+	// A live apply or a live settle owns the claims; the write path refuses both.
+	if r.ApplyLeaseUntil > now.UnixNano() || (r.SettleOp != nil && r.SettleLeaseUntil > now.UnixNano()) {
 		return 0, nil
 	}
 	prefix, where, args := s.base(r, generation)

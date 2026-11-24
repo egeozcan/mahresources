@@ -381,7 +381,7 @@ func postgresBlockScrub(op string) blockScrubSQL {
 		f := "(" + v + ")::numeric::float8"
 		return "CASE jsonb_typeof(" + v + ")" +
 			" WHEN 'number' THEN (CASE WHEN (" + v + ")::numeric >= 1 AND (" + v + ")::numeric < 1e18 THEN trunc(" + f + ")::bigint END)" +
-			" WHEN 'string' THEN (CASE WHEN length(" + digits + ") BETWEEN 1 AND 18 THEN (" + digits + ")::bigint END)" +
+			" WHEN 'string' THEN (CASE WHEN length(" + digits + ") BETWEEN 1 AND 19 AND (length(" + digits + ") < 19 OR " + digits + " COLLATE \"C\" <= '9223372036854775807') THEN (" + digits + ")::bigint END)" +
 			" END"
 	}
 	match := func(v string) string {

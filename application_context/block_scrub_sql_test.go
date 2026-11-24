@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"math"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -16,7 +17,7 @@ import (
 // toUint decides on its own terms, so the SQL scrub is differentially tested
 // against it shape by shape (design D13).
 func refShapes(rng *rand.Rand, id uint) any {
-	switch rng.Intn(25) {
+	switch rng.Intn(28) {
 	case 0:
 		return id
 	case 1:
@@ -67,6 +68,12 @@ func refShapes(rng *rand.Rand, id uint) any {
 		return "\r" + fmt.Sprintf("%d", id)
 	case 23:
 		return "\u0085" + fmt.Sprintf("%d", id)
+	case 25:
+		return "9223372036854775807" // the largest id a bigint holds: 19 digits
+	case 26:
+		return "9223372036854775808" // one past it: no Resource, and the cast must not raise
+	case 27:
+		return "0009223372036854775807"
 	default:
 		return float64(id)
 	}
@@ -187,6 +194,9 @@ func testSQLScrubMatchesGoScrub(t *testing.T, ctx *MahresourcesContext) {
 			ids = append(ids, id)
 		}
 	}
+	// A Resource whose id has 19 digits: a string naming it must match, as in Go.
+	deleted[math.MaxInt64] = true
+	ids = append(ids, math.MaxInt64)
 
 	type blk struct {
 		id      uint
