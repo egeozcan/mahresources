@@ -840,6 +840,11 @@ type MergeHooks struct {
 	// longer than the caller's lease keeps the lease it is judged by. An error
 	// stops the merge and rolls it back.
 	Renew func(txCtx *MahresourcesContext) error
+	// BeforeDelete runs before each Loser's before-delete plugin hook, outside any
+	// transaction: a Cluster of many Losers with slow hooks may outlast the caller's
+	// lease before the merge transaction begins. An error stops the merge before
+	// anything is destroyed.
+	BeforeDelete func() error
 }
 
 // ErrMergeParticipantUnavailable is the lock pass finding a participant missing or,
@@ -882,6 +887,11 @@ func (ctx *MahresourcesContext) MergeResourcesLocking(winnerId uint, loserIds []
 	// lock-order reason as BulkDeleteResources.
 	var deleteOp string
 	for _, id := range loserIds {
+		if hooks.BeforeDelete != nil {
+			if err := hooks.BeforeDelete(); err != nil {
+				return err
+			}
+		}
 		if err := ctx.prepareResourceDelete(id); err != nil {
 			return err
 		}

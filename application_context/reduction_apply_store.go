@@ -856,6 +856,21 @@ func (ctx *MahresourcesContext) storeMergeHooks(run *applyRun, claimed *storedCl
 	owners := map[uint]uint{}
 	loserIDs := claimed.loserIDs()
 	return MergeHooks{
+		// Fenced like the loop's own renewal: a batch that no longer owns the
+		// Reduction stops before the next veto hook runs, and transient lock
+		// contention is ridden out (the window is long).
+		BeforeDelete: func() error {
+			held, err := ctx.storeRenewApplyLease(run)
+			switch {
+			case err != nil && isLockContentionError(err):
+				return nil
+			case err != nil:
+				return err
+			case !held:
+				return ErrReductionLeaseLost
+			}
+			return nil
+		},
 		Renew: func(txCtx *MahresourcesContext) error {
 			tx := txCtx.reductionStore().db
 			var lease int64

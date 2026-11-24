@@ -440,7 +440,10 @@ func (s *reductionStore) enteredSinceWithin(r *models.ResourceReduction, since t
 		memberPrefix = strings.TrimSuffix(prefix, " ") + ", " + extTree + " "
 		memberArgs = append(append([]any{}, args...), r.ID)
 	}
-	const member = ` AND (x.id IN (SELECT resource_id FROM reduction_extent_resources WHERE reduction_id = ?)
+	// The explicit selection is probed per arrival (EXISTS, correlated on the primary
+	// key), never listed: an IN subquery would be built whole for every chunk, and the
+	// selection can hold a million Resources.
+	const member = ` AND (EXISTS (SELECT 1 FROM reduction_extent_resources er WHERE er.reduction_id = ? AND er.resource_id = x.id)
 		OR x.owner_id IN (SELECT id FROM ext_tree)
 		OR EXISTS (SELECT 1 FROM groups_related_resources grr WHERE grr.resource_id = x.id AND grr.group_id IN (SELECT id FROM ext_tree)))`
 
@@ -547,11 +550,16 @@ func describeStoredLastApply(r *models.ResourceReduction, last *models.Reduction
 	return view
 }
 
+// reductionUnknownTier stands for any tier value no Cluster can hold.
+const reductionUnknownTier = "unknown"
+
 // withDistinctTiers returns the query with its tier filter's values reduced to the
 // distinct ones, and every value no Cluster can hold collapsed to one (it still
 // matches nothing). A request that repeats a value would otherwise bind each copy.
+// The one unknown value is a fixed placeholder, never the request's own text: a NUL
+// byte in a bound parameter fails the Postgres statement.
 func withDistinctTiers(q *query_models.ResourceReductionReviewQuery) *query_models.ResourceReductionReviewQuery {
-	if q == nil || len(q.Tier) < 2 {
+	if q == nil || len(q.Tier) < 1 {
 		return q
 	}
 	seen := map[string]bool{}
@@ -566,7 +574,7 @@ func withDistinctTiers(q *query_models.ResourceReductionReviewQuery) *query_mode
 			}
 		case !unknown:
 			unknown = true
-			tiers = append(tiers, tier)
+			tiers = append(tiers, reductionUnknownTier)
 		}
 	}
 	cp := *q
