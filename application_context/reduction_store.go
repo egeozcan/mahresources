@@ -427,13 +427,13 @@ func (s *reductionStore) settleableClaims(r *models.ResourceReduction, generatio
 // lastApplyCountsVisible reports whether the last apply's counts may be shown:
 // the record names a batch, exactly the counted number of Clusters carry it, and
 // none of them is withheld. A record that counted Clusters but carries no batch
-// (it predates the ids) cannot be checked, so it is not.
+// (it predates the ids) cannot be checked, so it is not. A record that counted
+// none and names no batch has nothing to show or hide; one that names a batch is
+// still checked, since Clusters stamped with it that it did not count are outcomes
+// the numbers leave out.
 func (s *reductionStore) lastApplyCountsVisible(r *models.ResourceReduction, generation, batch string, counted int) (bool, error) {
-	if counted == 0 {
-		return true, nil
-	}
 	if batch == "" {
-		return false, nil
+		return counted == 0, nil
 	}
 	prefix, args := s.with()
 	var row struct {

@@ -26,6 +26,12 @@ import (
 type readTwin struct {
 	oldID, newID uint
 	clusters     []*models.ReductionCluster
+	// lastEvidence is whether the table twin's last-apply record can account for
+	// its counts: no counts, or a batch id that exactly that many Clusters carry
+	// (design D10). Computed from the rows, independently of the reader. The JSON
+	// reader never checks this for a viewer nothing is withheld from, so for one the
+	// table reader differs from it exactly where the evidence is missing.
+	lastEvidence bool
 }
 
 // makeReadTwin writes one random world's plan twice: as a legacy JSON plan on one
@@ -157,10 +163,25 @@ func makeReadTwin(t *testing.T, w *reductionWorld, rng *rand.Rand) *readTwin {
 		updates["apply_lease_until"] = time.Now().Add(time.Hour).UnixNano()
 	}
 	require.NoError(t, ctx.db.Model(&models.ResourceReduction{}).Where("id = ?", newRow.ID).Updates(updates).Error)
-	return &readTwin{oldID: oldRow.ID, newID: newRow.ID, clusters: clusters}
+	evidence := true
+	if hasLast {
+		counted := last.Applied + last.Stale
+		if rec, ok := updates["last_apply"].(string); ok {
+			var parsed struct {
+				BatchID string `json:"batchId"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(rec), &parsed))
+			var stamped int64
+			if parsed.BatchID != "" {
+				require.NoError(t, ctx.db.Raw(`SELECT COUNT(*) FROM reduction_clusters WHERE reduction_id = ? AND outcome_batch = ?`, newRow.ID, parsed.BatchID).Scan(&stamped).Error)
+			}
+			evidence = (parsed.BatchID == "" && counted == 0) || (parsed.BatchID != "" && int(stamped) == counted)
+		}
+	}
+	return &readTwin{oldID: oldRow.ID, newID: newRow.ID, clusters: clusters, lastEvidence: evidence}
 }
 
-func assertSameReview(t *testing.T, label string, want, got *contracts.ReductionReview) {
+func assertSameReview(t *testing.T, label string, want, got *contracts.ReductionReview, twin *readTwin, scoped bool) {
 	t.Helper()
 	assert.Equal(t, want.Status, got.Status, label+" status")
 	assert.Equal(t, want.Coverage, got.Coverage, label+" coverage")
@@ -189,6 +210,16 @@ func assertSameReview(t *testing.T, label string, want, got *contracts.Reduction
 	require.Equal(t, want.LastApply == nil, got.LastApply == nil, label+" last apply presence")
 	if want.LastApply != nil {
 		w, g := *want.LastApply, *got.LastApply
+		if !scoped && !twin.lastEvidence {
+			// Nothing is withheld from this viewer, so the JSON reader shows the counts
+			// as recorded; the table reader shows them only with evidence (D10).
+			assert.False(t, w.CountsHidden, label)
+			assert.True(t, g.CountsHidden, label+" counts without evidence are unavailable to an administrator too")
+			assert.Zero(t, g.Applied+g.Removed+g.Stale, label)
+			w.Applied, w.Removed, w.Stale, w.CountsHidden = 0, 0, 0, true
+		} else if !scoped {
+			assert.False(t, g.CountsHidden, label+" counts with evidence are shown")
+		}
 		assert.WithinDuration(t, w.StartedAt, g.StartedAt, time.Millisecond, label)
 		assert.Equal(t, w.FinishedAt == nil, g.FinishedAt == nil, label)
 		w.StartedAt, g.StartedAt, w.FinishedAt, g.FinishedAt = time.Time{}, time.Time{}, nil, nil
@@ -269,8 +300,28 @@ func assertSameClusterView(t *testing.T, label string, want, got contracts.Reduc
 	}
 }
 
+// eligibleFingerprints are the stored fingerprints of the Clusters an apply may act
+// on for this principal, in key order: open, nothing gone, not read-only history,
+// checked with a copy to remove, unclaimed, and fully visible. The first conditions
+// are applied here in Go to plain rows; only visibility uses the store's predicate.
+func eligibleFingerprints(t *testing.T, pctx *MahresourcesContext, reductionID uint) []string {
+	t.Helper()
+	store := pctx.reductionStore()
+	prefix, args := store.with()
+	var rows []models.ReductionClusterRow
+	require.NoError(t, store.db.Raw(prefix+`SELECT c.* FROM reduction_clusters c WHERE c.reduction_id = ? AND c.generation = 'gen' AND NOT `+store.withheld("c")+` ORDER BY c."key"`,
+		append(args, reductionID)...).Scan(&rows).Error)
+	var out []string
+	for _, row := range rows {
+		if row.State == models.ReductionClusterOpen && row.GoneMembers == 0 && !row.ReadOnly && row.Checked && row.LoserCount > 0 && row.ClaimID == "" {
+			out = append(out, row.Fingerprint)
+		}
+	}
+	return out
+}
+
 func testReductionReadStoreMatchesJSONReader(t *testing.T, newCtx func(*testing.T) *MahresourcesContext, seeds []int64) {
-	compared, scopedCompared, withLast, withDims := 0, 0, 0, 0
+	compared, scopedCompared, withLast, withDims, nonEmptyTokens := 0, 0, 0, 0, 0
 	for _, seed := range seeds {
 		rng := rand.New(rand.NewSource(seed))
 		ctx := newCtx(t)
@@ -294,7 +345,16 @@ func testReductionReadStoreMatchesJSONReader(t *testing.T, newCtx func(*testing.
 				require.NoError(t, err, label)
 				got, _, err := pctx.storeGetReductionReview(twin.newID, nil, false, page, q)
 				require.NoError(t, err, label)
-				assertSameReview(t, label, want, got)
+				assertSameReview(t, label, want, got, twin, pctx.isScopedPrincipal())
+				// The apply token is the digest of the eligible Clusters' stored
+				// fingerprints in key order, read here by a plain SELECT and
+				// filtered in Go, so a token that ignored the eligible set fails.
+				fps := eligibleFingerprints(t, pctx, twin.newID)
+				assert.Equal(t, applyTokenOf(fps), got.ApplyToken, label+" apply token")
+				if len(fps) > 0 {
+					nonEmptyTokens++
+					assert.NotEqual(t, applyTokenOf(nil), got.ApplyToken, label+" a nonempty eligible set digests to something")
+				}
 				compared += len(want.Clusters)
 				if ctx.WithPrincipal(p).isScopedPrincipal() {
 					scopedCompared += len(want.Clusters)
@@ -328,6 +388,7 @@ func testReductionReadStoreMatchesJSONReader(t *testing.T, newCtx func(*testing.
 	require.Greater(t, scopedCompared, 2*len(seeds), "Cluster views compared for a scoped principal")
 	require.Greater(t, withLast, len(seeds))
 	require.Greater(t, withDims, 0, "keeps-smaller dimensions compared")
+	require.Greater(t, nonEmptyTokens, 0, "an apply token over a nonempty eligible set compared")
 	t.Logf("compared %d Cluster views (%d scoped), %d last-apply records, %d keeps-smaller", compared, scopedCompared, withLast, withDims)
 }
 

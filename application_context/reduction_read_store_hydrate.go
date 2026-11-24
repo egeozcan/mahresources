@@ -36,12 +36,12 @@ func parseReductionMemberCursor(s string) (reductionMemberCursor, error) {
 		return startOfMembers(), nil
 	}
 	pos, id, ok := strings.Cut(s, ".")
-	p, err1 := strconv.Atoi(pos)
-	i, err2 := strconv.ParseUint(id, 10, 32)
+	p, err1 := strconv.ParseInt(pos, 10, 64)
+	i, err2 := strconv.ParseUint(id, 10, 64)
 	if !ok || err1 != nil || err2 != nil || p < 0 {
 		return startOfMembers(), fmt.Errorf("not a member cursor: %q", s)
 	}
-	return reductionMemberCursor{Position: p, ID: uint(i)}, nil
+	return reductionMemberCursor{Position: int(p), ID: uint(i)}, nil
 }
 
 // memberPage reads up to limit members of a Cluster after the cursor, in
@@ -81,22 +81,75 @@ func (s *reductionStore) winnerMember(clusterID, winnerID uint) (*models.Reducti
 	return &rows[0], nil
 }
 
-// ejectedCounts counts the ejected members of the named Clusters.
-func (s *reductionStore) ejectedCounts(clusterIDs []uint) (map[uint]int, error) {
-	out := map[uint]int{}
-	for _, chunk := range chunkUints(clusterIDs, idChunk) {
-		var rows []struct {
-			ClusterID uint
-			N         int64
-		}
-		if err := s.db.Raw(`SELECT cluster_id, COALESCE(SUM(CASE WHEN ejected THEN 1 ELSE 0 END), 0) AS n FROM reduction_members WHERE cluster_id IN ? GROUP BY cluster_id`, chunk).Scan(&rows).Error; err != nil {
-			return nil, err
-		}
-		for _, row := range rows {
-			out[row.ClusterID] = int(row.N)
+// associationKinds counts each Resource's tags, notes and related Groups, the
+// numbers a review card shows. Notes and Groups count only those inside the
+// principal's subtree, which one subtree CTE decides per statement, bound once and
+// read live (the request's flattened allow-list can be stale, and can exceed a
+// driver's bind limit). Tags carry no owner and are global by design.
+func (s *reductionStore) associationKinds(ids []uint) (map[uint]resourceAssociationCounts, error) {
+	counts := map[uint]resourceAssociationCounts{}
+	if s.scope.mode == scopeDeny || len(ids) == 0 {
+		return counts, nil
+	}
+	prefix, args := s.with()
+	noteVisible, groupVisible := "", ""
+	if s.scope.mode == scopeSubtree {
+		noteVisible = " AND n.owner_id IN " + subtreeIDs
+		groupVisible = " AND g.id IN " + subtreeIDs
+	}
+	sources := []struct {
+		sql string
+		add func(c *resourceAssociationCounts, n int)
+	}{
+		{"SELECT t.resource_id AS resource_id, COUNT(*) AS total FROM resource_tags t WHERE t.resource_id IN ? GROUP BY t.resource_id",
+			func(c *resourceAssociationCounts, n int) { c.Tags += n }},
+		{prefix + "SELECT rn.resource_id AS resource_id, COUNT(*) AS total FROM resource_notes rn JOIN notes n ON n.id = rn.note_id WHERE rn.resource_id IN ?" + noteVisible + " GROUP BY rn.resource_id",
+			func(c *resourceAssociationCounts, n int) { c.Notes += n }},
+		{prefix + "SELECT grr.resource_id AS resource_id, COUNT(*) AS total FROM groups_related_resources grr JOIN groups g ON g.id = grr.group_id WHERE grr.resource_id IN ?" + groupVisible + " GROUP BY grr.resource_id",
+			func(c *resourceAssociationCounts, n int) { c.Groups += n }},
+	}
+	for i, source := range sources {
+		for _, chunk := range chunkUints(dedupeUints(ids), idChunk) {
+			// The tag count has no CTE; the other two bind it first, then the chunk.
+			stmtArgs := []any{chunk}
+			if i > 0 {
+				stmtArgs = append(append([]any{}, args...), chunk)
+			}
+			var rows []struct {
+				ResourceID uint
+				Total      int
+			}
+			if err := s.db.Raw(source.sql, stmtArgs...).Scan(&rows).Error; err != nil {
+				return nil, err
+			}
+			for _, row := range rows {
+				c := counts[row.ResourceID]
+				source.add(&c, row.Total)
+				counts[row.ResourceID] = c
+			}
 		}
 	}
-	return out, nil
+	return counts, nil
+}
+
+// storedEjectedCount is the ejected members of a Cluster whose members are not all
+// loaded, from the stored columns instead of a scan of its rows: member_count
+// counts every member, loser_count the non-ejected ones that are not the Winner, so
+// the ejected non-Winners are the rest less the Winner's own row. The Winner's row
+// is always among the loaded members (hydration fetches it), and says whether it is
+// itself ejected.
+func storedEjectedCount(row *models.ReductionClusterRow, loaded []models.ReductionMemberRow) int {
+	ejected := row.MemberCount - row.LoserCount
+	for i := range loaded {
+		if loaded[i].ResourceID == row.WinnerID {
+			ejected-- // the Winner's row is not an ejected non-Winner...
+			if loaded[i].Ejected {
+				ejected++ // ...unless it is marked ejected itself
+			}
+			break
+		}
+	}
+	return max(ejected, 0)
 }
 
 // narrowResourceRow is the review's Resource projection: no meta, own_meta or
@@ -319,21 +372,10 @@ func (ctx *MahresourcesContext) hydrateReviewPage(store *reductionStore, r *mode
 	if err != nil {
 		return nil, nil, err
 	}
-	associations, err := ctx.countResourceAssociationKinds(resourceIDsOf(resources))
+	associations, err := store.associationKinds(resourceIDsOf(resources))
 	if err != nil {
 		return nil, nil, err
 	}
-	var partial []uint
-	for i := range rows {
-		if len(members[i]) < rows[i].MemberCount {
-			partial = append(partial, rows[i].ID)
-		}
-	}
-	ejected, err := store.ejectedCounts(partial)
-	if err != nil {
-		return nil, nil, err
-	}
-
 	views := make([]contracts.ReductionClusterView, 0, len(rows))
 	for i := range rows {
 		row := &rows[i]
@@ -380,7 +422,7 @@ func (ctx *MahresourcesContext) hydrateReviewPage(store *reductionStore, r *mode
 			})
 		}
 		if len(members[i]) < row.MemberCount {
-			leftOut = ejected[row.ID]
+			leftOut = storedEjectedCount(row, members[i])
 		}
 		view.LeftOutCount = leftOut
 		if row.State == models.ReductionClusterApplied && row.Merged {

@@ -105,7 +105,7 @@ type reductionReviewExtras struct {
 // the ordinary projection (never the legacy plan and extent documents).
 func (ctx *MahresourcesContext) loadReductionForStoreRead(id uint, ownerUserID *uint, ownerRestricted bool) (*models.ResourceReduction, error) {
 	var row models.ResourceReduction
-	err := ctx.db.Select(reductionColumns).
+	err := ctx.db.Select(ctx.reductionStore().boundedReductionColumns()).
 		Scopes(database_scopes.ResourceReductionQuery(reductionQueryFor(ownerUserID, ownerRestricted), true)).
 		Where("id = ?", id).
 		First(&row).Error
@@ -115,7 +115,15 @@ func (ctx *MahresourcesContext) loadReductionForStoreRead(id uint, ownerUserID *
 	if err != nil {
 		return nil, err
 	}
+	row.Name = trimDisplayText([]byte(row.Name))
 	return &row, nil
+}
+
+// boundedReductionColumns is reductionColumns with the name cut to
+// reductionDisplayTextBytes in SQL, so a name stored at its full length never
+// crosses into Go; trimDisplayText finishes the cut at a rune boundary.
+func (s *reductionStore) boundedReductionColumns() string {
+	return strings.Replace(reductionColumns, " name, ", " "+s.boundedText("name")+" AS name, ", 1)
 }
 
 // storeGetReductionReview is GetReductionReview over the plan tables. One read
@@ -158,6 +166,7 @@ func (ctx *MahresourcesContext) storeReviewInSnapshot(id uint, ownerUserID *uint
 	generation := reductionGenerationOf(reduction)
 	store := ctx.reductionStore()
 	scoped := ctx.isScopedPrincipal()
+	now := time.Now() // one reading for the lease checks, so running and settle agree
 
 	if page < 1 {
 		page = 1
@@ -179,11 +188,11 @@ func (ctx *MahresourcesContext) storeReviewInSnapshot(id uint, ownerUserID *uint
 	if err != nil {
 		return nil, nil, err
 	}
-	settleable, err := store.settleableClaims(reduction, generation, time.Now())
+	settleable, err := store.settleableClaims(reduction, generation, now)
 	if err != nil {
 		return nil, nil, err
 	}
-	rows, clusterCount, err := store.pageClusters(reduction, generation, query, (page-1)*pageSize, pageSize)
+	rows, clusterCount, err := store.pageClusters(reduction, generation, withDistinctTiers(query), (page-1)*pageSize, pageSize)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -235,16 +244,19 @@ func (ctx *MahresourcesContext) storeReviewInSnapshot(id uint, ownerUserID *uint
 		if ok, err := decodeStoredJSON(reduction.LastApply, &rec); err != nil {
 			return nil, nil, err
 		} else if ok {
-			lastView = describeLastApply(&rec.ReductionLastApply)
-			if scoped {
-				visible, err := store.lastApplyCountsVisible(reduction, generation, rec.BatchID, rec.Applied+rec.Stale)
-				if err != nil {
-					return nil, nil, err
-				}
-				if !visible {
-					lastView.Applied, lastView.Removed, lastView.Stale = 0, 0, 0
-					lastView.CountsHidden = true
-				}
+			lastView = describeStoredLastApply(reduction, &rec.ReductionLastApply, now)
+			// The counts are shown to anyone only with evidence (design D10): the
+			// record names a batch, exactly that many Clusters carry it, and (for a
+			// scoped viewer) none of them is withheld. Without it the counts are
+			// unavailable, for an administrator too: a record whose Clusters cannot
+			// be accounted for is not a number to act on.
+			visible, err := store.lastApplyCountsVisible(reduction, generation, rec.BatchID, rec.Applied+rec.Stale)
+			if err != nil {
+				return nil, nil, err
+			}
+			if !visible {
+				lastView.Applied, lastView.Removed, lastView.Stale = 0, 0, 0
+				lastView.CountsHidden = true
 			}
 		}
 	}
@@ -252,8 +264,8 @@ func (ctx *MahresourcesContext) storeReviewInSnapshot(id uint, ownerUserID *uint
 	return &contracts.ReductionReview{
 		SelectionGroups:     sel.groupRefs,
 		SelectionResources:  sel.resourceRefs,
-		MoreGroups:          max(0, sel.groups-reductionSelectionNamesShown),
-		MoreResources:       max(0, sel.resources-reductionSelectionNamesShown),
+		MoreGroups:          sel.moreGroups,
+		MoreResources:       sel.moreResources,
 		Reduction:           reduction,
 		Status:              EffectiveReductionStatus(reduction),
 		Coverage:            coverage,
@@ -286,14 +298,16 @@ type reductionSelectionSummary struct {
 	resources, groups             int
 	storedResources, storedGroups int
 	resourceRefs, groupRefs       []contracts.ReductionNamedRef
+	moreResources, moreGroups     int
 }
 
 // selectionSummary counts and names the Reduction's explicit selection through
 // the principal's subtree: a Resource or Group outside it is neither named nor
-// counted (design D5, D8). A whole-library Reduction selects nothing by name.
+// counted (design D5, D8). A whole-library Reduction names nothing, but a selection
+// kept from before it was widened is still counted, as the JSON reader counts it.
 func (s *reductionStore) selectionSummary(r *models.ResourceReduction) (*reductionSelectionSummary, error) {
 	out := &reductionSelectionSummary{}
-	if r.ExtentAll || s.scope.mode == scopeDeny {
+	if s.scope.mode == scopeDeny {
 		return out, nil
 	}
 	prefix, args := s.with()
@@ -336,6 +350,11 @@ func (s *reductionStore) selectionSummary(r *models.ResourceReduction) (*reducti
 		}
 		return refs, nil
 	}
+	if r.ExtentAll {
+		return out, nil
+	}
+	out.moreResources = max(0, out.resources-reductionSelectionNamesShown)
+	out.moreGroups = max(0, out.groups-reductionSelectionNamesShown)
 	if out.resources > 0 {
 		if out.resourceRefs, err = named(prefix+`SELECT x.id AS id, `+s.boundedText("x.name")+` AS name FROM reduction_extent_resources e JOIN resources x ON x.id = e.resource_id
 			WHERE e.reduction_id = ?`+resVisible+` ORDER BY x.id LIMIT ?`, append(append([]any{}, args...), r.ID, reductionSelectionNamesShown)...); err != nil {
@@ -387,4 +406,46 @@ func (s *reductionStore) enteredSince(r *models.ResourceReduction, since time.Ti
 		return 0, err
 	}
 	return int(n), nil
+}
+
+// describeStoredLastApply is the stored apply record as the page shows it. Whether
+// it is running is read from the leases, not a clock on its start: a worker that
+// died leaves a record with no finish, and its lease expires (10 minutes) long
+// before any start-time ceiling, so the live lease says running and an expired one
+// says interrupted, which is what shows the recovery control.
+func describeStoredLastApply(r *models.ResourceReduction, last *models.ReductionLastApply, now time.Time) *contracts.ReductionLastApplyView {
+	view := describeLastApply(last)
+	unfinished := last.FinishedAt == nil
+	nanos := now.UnixNano()
+	live := r.ApplyLeaseUntil > nanos || (r.SettleOp != nil && r.SettleLeaseUntil > nanos)
+	view.Running = unfinished && live
+	view.Interrupted = unfinished && !live
+	return view
+}
+
+// withDistinctTiers returns the query with its tier filter's values reduced to the
+// distinct ones, and every value no Cluster can hold collapsed to one (it still
+// matches nothing). A request that repeats a value would otherwise bind each copy.
+func withDistinctTiers(q *query_models.ResourceReductionReviewQuery) *query_models.ResourceReductionReviewQuery {
+	if q == nil || len(q.Tier) < 2 {
+		return q
+	}
+	seen := map[string]bool{}
+	unknown := false
+	var tiers []string
+	for _, tier := range q.Tier {
+		switch {
+		case tier == models.ReductionTierIdentical || tier == models.ReductionTierNear:
+			if !seen[tier] {
+				seen[tier] = true
+				tiers = append(tiers, tier)
+			}
+		case !unknown:
+			unknown = true
+			tiers = append(tiers, tier)
+		}
+	}
+	cp := *q
+	cp.Tier = tiers
+	return &cp
 }

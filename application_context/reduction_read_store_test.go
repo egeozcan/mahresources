@@ -236,11 +236,16 @@ func testStoreReviewHidesTruncationFromAScopedViewer(t *testing.T, ctx *Mahresou
 	assert.Equal(t, "kept: the copy the others were matched to", admin.Clusters[0].DecidedByLabel, "a full star's seed is justified as the copy the others were matched to")
 
 	scoped := ctx.WithPrincipal(&auth.Principal{Role: models.RoleUser, UserID: 5, ScopeGroupID: &home.ID})
-	_, extras, err := scoped.storeGetReductionReview(r.ID, nil, false, 1, nil)
+	scopedReview, extras, err := scoped.storeGetReductionReview(r.ID, nil, false, 1, nil)
 	require.NoError(t, err)
-	assert.Zero(t, extras.Clusters["star"].Truncated, "omitted copies may lie outside a scoped viewer's scope")
+	require.Len(t, scopedReview.Clusters, 1, "the scoped viewer sees the Cluster, so a zero below is a hidden count and not a missing entry")
+	scopedStar, present := extras.Clusters["star"]
+	require.True(t, present, "the Cluster has an entry in the extras")
+	assert.Equal(t, 3, scopedStar.MemberCount)
+	assert.Zero(t, scopedStar.Truncated, "omitted copies may lie outside a scoped viewer's scope")
 	_, extras, err = ctx.storeGetReductionReview(r.ID, nil, false, 1, nil)
 	require.NoError(t, err)
+	require.Contains(t, extras.Clusters, "star")
 	assert.Equal(t, 5, extras.Clusters["star"].Truncated)
 
 	// A scoped viewer whose scope misses a member sees no Cluster, no stub and no count.

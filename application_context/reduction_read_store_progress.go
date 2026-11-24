@@ -1,6 +1,10 @@
 package application_context
 
 import (
+	"time"
+
+	"gorm.io/gorm"
+
 	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
@@ -105,17 +109,65 @@ func (ctx *MahresourcesContext) storeProgressInSnapshot(reductions []models.Reso
 // storeListReductions reads a list page, the count under the same predicate and
 // the page's progress in one snapshot, so the three cannot disagree.
 func (ctx *MahresourcesContext) storeListReductions(offset, limit int, query *query_models.ResourceReductionQuery) ([]models.ResourceReduction, int64, *reductionListProgress, error) {
+	return ctx.storeListReductionsAt(time.Now(), offset, limit, query)
+}
+
+// reductionStatusScope is the list's status filter judged against now. The shared
+// scope reads the clock itself, once per statement, and the rows and the count are
+// two statements: a Reduction whose computing deadline passes between them would be
+// on the page and not in the count, or the reverse. The reader strips the filter
+// from the shared scope and applies it here with the one instant it was given. The
+// rule is the shared scope's: a computing Reduction past its deadline reads as
+// failed, in both filters.
+func reductionStatusScope(statuses []string, now time.Time) func(db *gorm.DB) *gorm.DB {
+	return func(db *gorm.DB) *gorm.DB {
+		wantsFailed, wantsComputing := false, false
+		var wanted []string
+		for _, status := range statuses {
+			if status == "" {
+				continue
+			}
+			wanted = append(wanted, status)
+			switch status {
+			case models.ReductionStatusFailed:
+				wantsFailed = true
+			case models.ReductionStatusComputing:
+				wantsComputing = true
+			}
+		}
+		if len(wanted) == 0 {
+			return db
+		}
+		expired := "status = 'computing' AND compute_deadline IS NOT NULL AND compute_deadline < ?"
+		switch {
+		case wantsFailed && !wantsComputing:
+			return db.Where("status IN ? OR ("+expired+")", wanted, now)
+		case wantsComputing && !wantsFailed:
+			return db.Where("status IN ? AND NOT ("+expired+")", wanted, now)
+		}
+		return db.Where("status IN ?", wanted)
+	}
+}
+
+// storeListReductionsAt is storeListReductions with the instant a computing
+// deadline is judged against given once, for the rows and the count both.
+func (ctx *MahresourcesContext) storeListReductionsAt(now time.Time, offset, limit int, query *query_models.ResourceReductionQuery) ([]models.ResourceReduction, int64, *reductionListProgress, error) {
 	var rows []models.ResourceReduction
 	var count int64
 	var progress *reductionListProgress
+	rest := *query
+	rest.Status = nil
 	err := ctx.withReadSnapshot(func(snap *MahresourcesContext) error {
-		if err := snap.db.Select(reductionColumns).
-			Scopes(database_scopes.ResourceReductionQuery(query, false)).
+		if err := snap.db.Select(snap.reductionStore().boundedReductionColumns()).
+			Scopes(database_scopes.ResourceReductionQuery(&rest, false), reductionStatusScope(query.Status, now)).
 			Offset(offset).Limit(limit).Find(&rows).Error; err != nil {
 			return err
 		}
+		for i := range rows {
+			rows[i].Name = trimDisplayText([]byte(rows[i].Name))
+		}
 		if err := snap.db.Model(&models.ResourceReduction{}).
-			Scopes(database_scopes.ResourceReductionQuery(query, true)).
+			Scopes(database_scopes.ResourceReductionQuery(&rest, true), reductionStatusScope(query.Status, now)).
 			Count(&count).Error; err != nil {
 			return err
 		}
