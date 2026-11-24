@@ -96,7 +96,7 @@ func CreateServer(appContext *application_context.MahresourcesContext, fs afero.
 	// auth is disabled it injects an implicit administrator so behaviour matches
 	// the historical no-auth deployment. CSRF runs after auth (so the session
 	// token is on the context) and before authz; it is a no-op when auth is off.
-	chain := withAuthentication(appContext, withCSRFProtection(appContext, withAuthorization(appContext, withJSONBodyLimit(appContext, router))))
+	chain := withRouteBodyLimit(withAuthentication(appContext, withCSRFProtection(appContext, withAuthorization(appContext, withJSONBodyLimit(appContext, router)))))
 
 	// The MCP endpoint dispatches every tool call back through chain as the
 	// caller, so it sees exactly the authentication, roles, scope and limits

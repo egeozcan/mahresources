@@ -47,6 +47,10 @@ func statusCodeForError(err error, fallback int) int {
 		return http.StatusForbidden
 	}
 
+	if errors.Is(err, application_context.ErrTooManyResources) {
+		return http.StatusBadRequest
+	}
+
 	// A manual schedule run that was refused. Typed for the same reason the two
 	// above are: "no such plugin schedule" contains no "not found", and "already
 	// running" matches nothing in the scan below, so both would fall through to
