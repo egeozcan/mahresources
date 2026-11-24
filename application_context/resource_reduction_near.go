@@ -51,7 +51,7 @@ func (ctx *MahresourcesContext) clusterNearIdentical(jobCtx context.Context, ext
 		return nil, nil
 	}
 
-	seeds, err := ctx.loadClusterCandidates(seedIDs, rule, extent)
+	seeds, err := ctx.loadRankingCandidates(seedIDs, rule, extent)
 	if err != nil {
 		return nil, err
 	}
@@ -122,15 +122,26 @@ func (ctx *MahresourcesContext) clusterNearIdentical(jobCtx context.Context, ext
 		// The neighbours are loaded rather than taken from `seeds`, because a
 		// neighbour may sit outside the Extent — which is exactly the better copy
 		// elsewhere the reviewer needs to see, and it is never a seed.
-		members, err := ctx.loadClusterCandidates(neighbourIDs, rule, extent)
+		//
+		// The seed is loaded again with them: it was ranked from the Winner Rule's
+		// columns alone, and a Cluster member needs the whole row. One that has
+		// gone since the pool was read simply forms no Cluster.
+		members, err := ctx.loadClusterCandidates(append(neighbourIDs, seed.Resource.ID), rule, extent)
 		if err != nil {
 			return nil, err
 		}
+		seedFound := false
 		for i := range members {
+			if members[i].Resource.ID == seed.Resource.ID {
+				seedFound = true
+				continue
+			}
 			d := distances[members[i].Resource.ID]
 			members[i].Distance = &d
 		}
-		members = append(members, seed)
+		if !seedFound {
+			continue
+		}
 
 		cluster := buildCluster(models.ReductionTierNear, members, rule)
 		if cluster == nil {
@@ -197,14 +208,18 @@ func (ctx *MahresourcesContext) perceptuallyHashed(ids []uint) (map[uint]bool, e
 }
 
 // perceptualExtentIDs is the seed pool: the Extent's Resources that carry a
-// perceptual hash, minus anything a frozen Cluster or the Identical tier already
-// claimed.
+// perceptual hash and appear in at least one stored pair, minus anything a frozen
+// Cluster or the Identical tier already claimed. An image with no stored pair has
+// no neighbour to find, and leaving it out keeps a whole-library pool to the
+// paired images rather than every hashed one.
 func (ctx *MahresourcesContext) perceptualExtentIDs(extent *ReductionExtent, excluded map[uint]bool) ([]uint, error) {
 	var ids []uint
 	err := ctx.extentResourceIDs(extent, func(chunk []uint) error {
 		var hashed []uint
 		if err := ctx.db.Model(&models.ImageHash{}).
 			Where("image_hashes.resource_id IN ?", chunk).
+			Where("(EXISTS (SELECT 1 FROM resource_similarities s WHERE s.resource_id1 = image_hashes.resource_id) OR "+
+				"EXISTS (SELECT 1 FROM resource_similarities s WHERE s.resource_id2 = image_hashes.resource_id))").
 			Pluck("image_hashes.resource_id", &hashed).Error; err != nil {
 			return err
 		}

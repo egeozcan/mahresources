@@ -248,6 +248,27 @@ func clusterID(tier string, members []*models.ReductionMember) string {
 // loadClusterCandidates reads the Resources behind a set of ids and decorates
 // them with what the Winner Rule needs.
 func (ctx *MahresourcesContext) loadClusterCandidates(ids []uint, rule []string, extent *ReductionExtent) ([]clusterCandidate, error) {
+	return ctx.loadCandidateColumns(ids, rule, extent, nil)
+}
+
+// loadRankingCandidates is loadClusterCandidates reduced to the columns the
+// Winner Rule compares, for ordering a pool too large to hold in full: the
+// Near-Identical seed pool of a whole-library Extent is every paired image in it,
+// and a full Resource row (description, meta, own meta) runs to kilobytes. A
+// candidate loaded this way ranks exactly like a full one but is never a Cluster
+// member: members are loaded whole.
+func (ctx *MahresourcesContext) loadRankingCandidates(ids []uint, rule []string, extent *ReductionExtent) ([]clusterCandidate, error) {
+	columns := []string{
+		"resources.id", "resources.width", "resources.height", "resources.file_size",
+		"resources.created_at", "resources.updated_at", "resources.name", "resources.content_type",
+	}
+	if contains(rule, models.WinnerCriterionHasDescription) {
+		columns = append(columns, "resources.description")
+	}
+	return ctx.loadCandidateColumns(ids, rule, extent, columns)
+}
+
+func (ctx *MahresourcesContext) loadCandidateColumns(ids []uint, rule []string, extent *ReductionExtent, columns []string) ([]clusterCandidate, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -255,7 +276,11 @@ func (ctx *MahresourcesContext) loadClusterCandidates(ids []uint, rule []string,
 	var resources []*models.Resource
 	for _, chunk := range chunkUints(ids, idChunk) {
 		var batch []*models.Resource
-		if err := ctx.db.Where("resources.id IN ?", chunk).Find(&batch).Error; err != nil {
+		q := ctx.db.Where("resources.id IN ?", chunk)
+		if columns != nil {
+			q = q.Select(columns)
+		}
+		if err := q.Find(&batch).Error; err != nil {
 			return nil, fmt.Errorf("loading Cluster candidates: %w", err)
 		}
 		resources = append(resources, batch...)
@@ -408,12 +433,8 @@ func (ctx *MahresourcesContext) countResourceAssociationKinds(ids []uint) (map[u
 func (ctx *MahresourcesContext) clusterIdentical(extent *ReductionExtent, rule []string, excluded map[uint]bool, report func(done, total int64)) ([]*models.ReductionCluster, error) {
 	hashes := map[string]bool{}
 	err := ctx.extentResourceIDs(extent, func(ids []uint) error {
-		var found []string
-		if err := ctx.db.Model(&models.Resource{}).
-			Where("resources.id IN ?", ids).
-			Where("resources.hash <> ''").
-			Distinct().
-			Pluck("resources.hash", &found).Error; err != nil {
+		found, err := ctx.repeatedHashesIn(ids)
+		if err != nil {
 			return err
 		}
 		for _, h := range found {
@@ -502,6 +523,26 @@ func (ctx *MahresourcesContext) clusterIdentical(extent *ReductionExtent, rule [
 		}
 	}
 	return clusters, nil
+}
+
+// repeatedHashesIn is the content hashes of the named Resources that at least one
+// other Resource also holds. Only those can form an Identical Cluster, and keeping
+// every distinct hash instead held one string per Resource of a whole-library
+// Extent in memory: millions, almost all of them unique.
+//
+// The other holder is looked up unscoped, which is safe: it only nominates the
+// hash, and the candidates for it are read again through the scoped handle, so a
+// twin outside the caller's subtree never becomes a member.
+func (ctx *MahresourcesContext) repeatedHashesIn(ids []uint) ([]string, error) {
+	var found []string
+	err := ctx.db.Model(&models.Resource{}).
+		Where("resources.id IN ?", ids).
+		Where("resources.hash <> ''").
+		Where("EXISTS (SELECT 1 FROM resources twin WHERE twin.hash = resources.hash AND twin.id <> resources.id)").
+		Distinct().
+		Order("resources.hash").
+		Pluck("resources.hash", &found).Error
+	return found, err
 }
 
 // reductionCoverage reports how much of the Extent could actually be examined, so
