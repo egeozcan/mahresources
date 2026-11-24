@@ -237,7 +237,7 @@ func (ctx *MahresourcesContext) scrubReductionMappingsBatch(cursor string, limit
 			return false, cursor, errors.New("resource reduction mapping id is invalid")
 		}
 		var row models.ResourceReduction
-		if err := ctx.db.First(&row, uint(id)).Error; err != nil {
+		if err := ctx.db.Select(reductionColumns).First(&row, uint(id)).Error; err != nil {
 			return false, mapping.SourceID, errors.New("resource reduction disappeared before retirement marker")
 		}
 		postHash := hashReductionExecution(row)
