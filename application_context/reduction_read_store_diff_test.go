@@ -120,7 +120,7 @@ func makeReadTwin(t *testing.T, w *reductionWorld, rng *rand.Rand) *readTwin {
 	extentJSON, err := json.Marshal(extent)
 	require.NoError(t, err)
 	require.NoError(t, ctx.db.Exec("UPDATE resource_reductions SET extent = ?, computed_at = ?, status = 'ready' WHERE id = ?", string(extentJSON), computedAt, oldRow.ID).Error)
-	require.NoError(t, ctx.OverwritePlanForTest(oldRow.ID, oldRow.Version, plan))
+	require.NoError(t, ctx.overwriteLegacyPlanForTest(oldRow.ID, plan))
 
 	// The table Reduction.
 	newRow := newReductionRow(t, ctx.db)
@@ -341,7 +341,7 @@ func testReductionReadStoreMatchesJSONReader(t *testing.T, newCtx func(*testing.
 				q.PageSize = []int{0, 20, 50}[rng.Intn(3)]
 				page := 1 + rng.Intn(2)
 				label := fmt.Sprintf("seed %d principal %s query %+v page %d", seed, name, q, page)
-				want, err := pctx.GetReductionReview(twin.oldID, nil, false, page, q)
+				want, err := pctx.getReductionReview(twin.oldID, nil, false, page, q)
 				require.NoError(t, err, label)
 				got, _, err := pctx.storeGetReductionReview(twin.newID, nil, false, page, q)
 				require.NoError(t, err, label)
@@ -372,7 +372,7 @@ func testReductionReadStoreMatchesJSONReader(t *testing.T, newCtx func(*testing.
 			// The list's progress.
 			oldRow, err := ctx.GetResourceReduction(twin.oldID, nil, false)
 			require.NoError(t, err)
-			wantProgress, err := pctx.GetReductionProgress([]models.ResourceReduction{*oldRow})
+			wantProgress, err := pctx.legacyReductionProgress([]models.ResourceReduction{*oldRow})
 			require.NoError(t, err)
 			newRow, err := ctx.GetResourceReduction(twin.newID, nil, false)
 			require.NoError(t, err)

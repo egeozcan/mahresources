@@ -3,6 +3,7 @@ package application_context
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -13,203 +14,6 @@ import (
 	"mahresources/models"
 	"mahresources/models/query_models"
 )
-
-// ReductionClustersPerPage is how many Clusters one page of the review shows.
-//
-// Small, because a Cluster is several thumbnails, a justification and a row of
-// controls, and the reviewer is meant to look at each one. A Reduction with
-// thousands of Clusters still has to load.
-const ReductionClustersPerPage = 20
-
-// GetReductionReview loads a page of a Reduction's plan with the Resources behind
-// it.
-//
-// Membership is re-checked against the *current* principal here rather than
-// trusted from compute time. A scoped user's subtree can change after a Reduction
-// is created, so a Cluster computed when they could see a Resource must not still
-// show it to them once they cannot. The check is the db handle's own scope: the
-// Resources are loaded through it, and anything outside the subtree simply does
-// not come back.
-//
-// The query filters Clusters before pagination, exactly as the SQL list queries
-// filter rows: the page shown and the count in the review are both over what
-// matches. The checked counts are deliberately not filtered — apply acts on
-// every checked Cluster across the whole plan, and hiding skipped ones from the
-// page must not change what Apply would do.
-func (ctx *MahresourcesContext) GetReductionReview(id uint, ownerUserID *uint, ownerRestricted bool, page int, query *query_models.ResourceReductionReviewQuery) (*contracts.ReductionReview, error) {
-	// One snapshot for every read in the page: the version, the reachability
-	// query, the hydration and the counts. Read apart, a Resource moving between
-	// two of them let a Cluster be counted and paginated as visible and then
-	// rendered as withheld.
-	var review *contracts.ReductionReview
-	err := ctx.withReadSnapshot(func(snap *MahresourcesContext) error {
-		var err error
-		review, err = snap.getReductionReview(id, ownerUserID, ownerRestricted, page, query)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	return review, nil
-}
-
-func (ctx *MahresourcesContext) getReductionReview(id uint, ownerUserID *uint, ownerRestricted bool, page int, query *query_models.ResourceReductionReviewQuery) (*contracts.ReductionReview, error) {
-	reduction, err := ctx.loadReductionForUpdate(id, ownerUserID, ownerRestricted)
-	if err != nil {
-		return nil, err
-	}
-	plan, err := DecodeReductionPlan(reduction.Plan)
-	if err != nil {
-		return nil, err
-	}
-	storedExtent, err := DecodeReductionExtent(reduction.Extent)
-	if err != nil {
-		return nil, err
-	}
-	if err := ctx.deriveKeepsSmallerForOldPlan(&plan, reduction); err != nil {
-		return nil, err
-	}
-
-	if page < 1 {
-		page = 1
-	}
-	pageSize := ReductionClustersPerPage
-	if query != nil {
-		pageSize = normalizeReviewPageSize(query.PageSize)
-	}
-	start := (page - 1) * pageSize
-
-	// Reachability for the whole plan, decided once by an id-only read through the
-	// scoped handle, which costs far less than hydrating every member. Everything
-	// below leans on it: the status tabs count only Clusters the caller may fully
-	// see, the filter excludes the rest before consulting any of their fields, and
-	// the apply figures leave them out of the blast radius.
-	//
-	// A Cluster a scoped reviewer may not fully see is redacted down to "a Cluster
-	// outside your access" — tier, state, the curation markers and the
-	// justification are all statements about Resources they may not know about.
-	// The filter is therefore applied in two steps: reachability first, then the
-	// criteria, and a withheld Cluster is excluded before its fields are ever
-	// consulted — so the filter itself can never answer "what tier is the hidden
-	// Cluster?".
-	visible, err := ctx.reviewReach(&plan, reductionMemberIDs(plan.Clusters))
-	if err != nil {
-		return nil, err
-	}
-	tabCounts := countReviewTabs(plan.Clusters, visible)
-
-	// Withheld Clusters are out before anything is counted or paginated, whatever
-	// the query: not a stub, not a position.
-	candidates := filterReviewClusters(plan.Clusters, visible, query)
-	clusterCount := len(candidates)
-	candidates, err = ctx.sortReviewClusters(candidates, visible, query)
-	if err != nil {
-		return nil, err
-	}
-	if start > len(candidates) {
-		start = len(candidates)
-	}
-	end := start + pageSize
-	if end > len(candidates) {
-		end = len(candidates)
-	}
-	pageClusters := candidates[start:end]
-
-	// One load for the whole page rather than one per Cluster.
-	resources, err := ctx.loadResourcesByID(reductionMemberIDs(pageClusters))
-	if err != nil {
-		return nil, err
-	}
-	associations, err := ctx.countResourceAssociationKinds(resourceIDsOf(resources))
-	if err != nil {
-		return nil, err
-	}
-	pageViews := buildClusterViews(pageClusters, resources, associations, ctx.isScopedPrincipal())
-
-	// Counted over every Cluster, not the page: apply acts on the whole plan, and
-	// a confirmation that counts only what is on screen understates the blast
-	// radius by however many pages the reviewer has not opened.
-	//
-	// A Cluster reaching a Resource this caller may not see is left out of the
-	// count entirely. It cannot be applied, and counting it would tell them "there
-	// is one more Cluster, with two Resources in it" about Clusters the page
-	// otherwise refuses to describe.
-	figures, eligible := reviewFiguresOf(reduction, plan.Clusters, visible)
-
-	// Deliberately no walk of the Extent here. Resolving it is one recursive CTE
-	// per selected Group, which is cheap; *counting* what it reaches is not, and a
-	// Reduction over a top-level Group in a library of millions would pay that on
-	// every page view. The size the page shows is the one the last compute
-	// recorded, which is the figure its coverage line is about anyway; the drift
-	// query below is filtered on creation time first, so only what arrived since
-	// then is ever materialised.
-	extent, err := ctx.resolveReductionExtent(storedExtent)
-	if err != nil {
-		return nil, err
-	}
-	entered := 0
-	if reduction.ComputedAt != nil {
-		entered, err = ctx.extentArrivalsSince(extent, *reduction.ComputedAt)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Redacted here, not in the template. The template is not the only reader:
-	// every server-rendered page also answers `.json` and an
-	// `Accept: application/json` request by serialising its whole context, so
-	// hiding these in the HTML would leave the pre-shrink extent size and the hash
-	// totals one URL suffix away — the same mistake the withheld Cluster made.
-	// Coverage answers a question about the *whole* Extent — how much of it could
-	// be examined — so it is shown only to a principal who can see the whole
-	// Extent. Comparing selection counts was not enough: narrowing a subtree can
-	// hide a Resource reached through a Group that is still visible, leaving every
-	// count unchanged while the figures describe more than the reviewer can now
-	// reach. Subtree confinement is the honest predicate, and it needs no walk.
-	coverage := plan.Coverage
-	coverageTrusted := !ctx.isScopedPrincipal() &&
-		len(extent.ResourceIDs) == len(storedExtent.ResourceIDs) &&
-		extent.SelectedGroups == len(storedExtent.GroupIDs)
-	extentSize := plan.Coverage.ExtentSize
-	if !coverageTrusted {
-		coverage = models.ReductionCoverage{}
-		extentSize = 0
-	}
-
-	selection, err := ctx.reductionSelectionNames(storedExtent, extent)
-	if err != nil {
-		return nil, err
-	}
-
-	return &contracts.ReductionReview{
-		SelectionGroups:     selection.groups,
-		SelectionResources:  selection.resources,
-		MoreGroups:          selection.moreGroups,
-		MoreResources:       selection.moreResources,
-		Reduction:           reduction,
-		Status:              EffectiveReductionStatus(reduction),
-		Coverage:            coverage,
-		CoverageTrusted:     coverageTrusted,
-		Clusters:            pageViews,
-		ClusterCount:        clusterCount,
-		CheckedCount:        figures.checked,
-		CheckedLoserCount:   figures.checkedLosers,
-		Page:                page,
-		PageSize:            pageSize,
-		SelectedResources:   len(extent.ResourceIDs),
-		SelectedGroups:      extent.SelectedGroups,
-		ExtentSize:          extentSize,
-		EnteredSinceCompute: entered,
-		ExtentAll:           storedExtent.All,
-		TabCounts:           tabCounts,
-		ApplyFigures:        figures.apply,
-		ApplyToken:          applyToken(eligible),
-		SettleableClaims:    settleableClaims(&plan, visible),
-		Bulk:                figures.bulk,
-		SettingsChanged:     reductionSettingsChanged(reduction, plan.Settings),
-		LastApply:           ctx.scopeLastApply(describeLastApply(plan.LastApply), plan.LastApply, plan.Clusters, visible),
-	}, nil
-}
 
 // reviewFiguresOf is the one pass over a plan that the review's counts come from:
 // the checked totals, what an apply would do per tier, and the bulk buttons'
@@ -257,116 +61,11 @@ func reviewFiguresOf(reduction *models.ResourceReduction, clusters []*models.Red
 	return figures, eligible
 }
 
-type reductionSelection struct {
-	groups, resources         []contracts.ReductionNamedRef
-	moreGroups, moreResources int
-}
-
-const reductionSelectionNamesShown = 20
-
-// reductionSelectionNames names the first 20 Groups and Resources of the selection
-// the caller may see. Visibility is the scoped handle's: ids it cannot read are
-// neither listed nor counted.
-func (ctx *MahresourcesContext) reductionSelectionNames(stored models.ResourceReductionExtent, resolved *ReductionExtent) (*reductionSelection, error) {
-	out := &reductionSelection{}
-	if stored.All {
-		return out, nil
-	}
-	var groupIDs []uint
-	for _, chunk := range chunkUints(dedupeUints(stored.GroupIDs), idChunk) {
-		var found []uint
-		if err := ctx.db.Model(&models.Group{}).Where("groups.id IN ?", chunk).Pluck("groups.id", &found).Error; err != nil {
-			return nil, err
-		}
-		groupIDs = append(groupIDs, found...)
-	}
-	sort.Slice(groupIDs, func(i, j int) bool { return groupIDs[i] < groupIDs[j] })
-	resourceIDs := mapKeys(resolved.ResourceIDs)
-	sort.Slice(resourceIDs, func(i, j int) bool { return resourceIDs[i] < resourceIDs[j] })
-
-	if len(groupIDs) > reductionSelectionNamesShown {
-		out.moreGroups = len(groupIDs) - reductionSelectionNamesShown
-		groupIDs = groupIDs[:reductionSelectionNamesShown]
-	}
-	if len(resourceIDs) > reductionSelectionNamesShown {
-		out.moreResources = len(resourceIDs) - reductionSelectionNamesShown
-		resourceIDs = resourceIDs[:reductionSelectionNamesShown]
-	}
-	if len(groupIDs) > 0 {
-		var rows []struct {
-			ID   uint
-			Name string
-		}
-		if err := ctx.db.Model(&models.Group{}).Select("groups.id, groups.name").Where("groups.id IN ?", groupIDs).Order("groups.id").Find(&rows).Error; err != nil {
-			return nil, err
-		}
-		for _, r := range rows {
-			out.groups = append(out.groups, contracts.ReductionNamedRef{ID: r.ID, Name: r.Name})
-		}
-	}
-	if len(resourceIDs) > 0 {
-		var rows []struct {
-			ID   uint
-			Name string
-		}
-		if err := ctx.db.Model(&models.Resource{}).Select("resources.id, resources.name").Where("resources.id IN ?", resourceIDs).Order("resources.id").Find(&rows).Error; err != nil {
-			return nil, err
-		}
-		for _, r := range rows {
-			out.resources = append(out.resources, contracts.ReductionNamedRef{ID: r.ID, Name: r.Name})
-		}
-	}
-	return out, nil
-}
-
 // reviewFigures gathers what one pass over the plan counts.
 type reviewFigures struct {
 	checked, checkedLosers int
 	apply                  contracts.ReductionApplyFigures
 	bulk                   contracts.ReductionBulkFigures
-}
-
-// reductionSettingsChanged reports whether the row's settings differ from the ones
-// the plan was computed with. A plan with none recorded has nothing to compare.
-// Keep-as-version flags are not compared: they act at apply, not at compute.
-func reductionSettingsChanged(reduction *models.ResourceReduction, ran *models.ReductionSettings) bool {
-	if ran == nil {
-		return false
-	}
-	if ran.MatchingMode != normalizeMatchingMode(reduction.MatchingMode) ||
-		ran.ExcludeExternal != reduction.ExcludeExternalResources {
-		return true
-	}
-	rule := DecodeWinnerRule(reduction.WinnerRule)
-	if len(rule) != len(ran.WinnerRule) {
-		return true
-	}
-	for i := range rule {
-		if rule[i] != ran.WinnerRule[i] {
-			return true
-		}
-	}
-	return false
-}
-
-// describeLastApply is the stored apply record as the page shows it, with the
-// interruption reading derived from the clock: a record still running past the
-// ceiling is one whose process died or whose batch was abandoned.
-func describeLastApply(last *models.ReductionLastApply) *contracts.ReductionLastApplyView {
-	if last == nil {
-		return nil
-	}
-	running := last.FinishedAt == nil
-	return &contracts.ReductionLastApplyView{
-		StartedAt:   last.StartedAt,
-		FinishedAt:  last.FinishedAt,
-		Applied:     last.Applied,
-		Removed:     last.Removed,
-		Stale:       last.Stale,
-		RequestID:   last.RequestID,
-		Running:     running,
-		Interrupted: running && time.Since(last.StartedAt) > ReductionApplyCeiling,
-	}
 }
 
 // scopeLastApply removes the counts from a record the viewer may not read them
@@ -403,18 +102,6 @@ func lastApplyCountsVisible(last *models.ReductionLastApply, clusters []*models.
 		}
 	}
 	return true
-}
-
-// ReductionPageSizes are the page sizes the review offers.
-var ReductionPageSizes = []int{20, 50, 100}
-
-func normalizeReviewPageSize(asked int) int {
-	for _, size := range ReductionPageSizes {
-		if asked == size {
-			return size
-		}
-	}
-	return ReductionClustersPerPage
 }
 
 // countReviewTabs counts the Clusters of each status tab, over the ones the caller
@@ -497,36 +184,6 @@ func (ctx *MahresourcesContext) sortReviewClusters(clusters []*models.ReductionC
 		return sorted[i].ID < sorted[j].ID
 	})
 	return sorted, nil
-}
-
-// resourceFileSizes reads the stored file size of the named Resources through the
-// caller's scoped handle, so a Resource outside their subtree contributes nothing.
-func (ctx *MahresourcesContext) resourceFileSizes(ids []uint) (map[uint]int64, error) {
-	out := make(map[uint]int64, len(ids))
-	for _, chunk := range chunkUints(dedupeUints(ids), idChunk) {
-		var rows []struct {
-			ID       uint
-			FileSize int64
-		}
-		if err := ctx.db.Model(&models.Resource{}).
-			Select("resources.id, resources.file_size").
-			Where("resources.id IN ?", chunk).
-			Find(&rows).Error; err != nil {
-			return nil, err
-		}
-		for _, row := range rows {
-			out[row.ID] = row.FileSize
-		}
-	}
-	return out, nil
-}
-
-func resourceIDsOf(resources map[uint]*models.Resource) []uint {
-	ids := make([]uint, 0, len(resources))
-	for id := range resources {
-		ids = append(ids, id)
-	}
-	return ids
 }
 
 // reviewQueryActive reports whether any filter criterion is set. The distinction
@@ -677,6 +334,430 @@ func (ctx *MahresourcesContext) withMergedHistory(clusters []*models.ReductionCl
 	return out, nil
 }
 
+// reviewClusterStatusMatches is the state filter. "reviewed" is not a state of
+// its own — it is a judgement recorded on an open Cluster — so it selects open
+// Clusters that have been acted on, and "open" selects every open Cluster, acted
+// on or not: the Open tab is where the work is, and approving a Cluster must not
+// move it to another one.
+func reviewClusterStatusMatches(c *models.ReductionCluster, wanted map[string]bool) bool {
+	switch c.State {
+	case models.ReductionClusterOpen:
+		return wanted["open"] || (wanted["reviewed"] && c.Reviewed)
+	case models.ReductionClusterSkipped:
+		return wanted[models.ReductionClusterSkipped]
+	case models.ReductionClusterApplied:
+		// A claim not yet confirmed is not an applied Cluster: its copies still exist.
+		return wanted[models.ReductionClusterApplied] && c.Merged
+	case models.ReductionClusterStale:
+		return wanted[models.ReductionClusterStale]
+	}
+	return false
+}
+
+// clusterNeedsAttention is the plan-level counterpart of the page's curation
+// markers: a Cluster whose merge would discard something (Lossy) or one that is
+// large enough to demand expanding before it can be checked (Oversized), or one
+// that would keep a lower-resolution copy than one it removes (KeepsSmaller).
+// Withheld Clusters are decided at render time — the membership is re-checked
+// against the caller's scope — so they cannot take part in a filter over the
+// stored plan, and an inaccessible Cluster is not one the reviewer can act on
+// anyway.
+func clusterNeedsAttention(c *models.ReductionCluster) bool {
+	return len(c.Lossy) > 0 || c.Oversized || c.KeepsSmaller
+}
+
+// reductionStateLabel is a Cluster's state in words. "Reviewed" is not a state of
+// its own — it is a judgement recorded on an open Cluster — but it is what the
+// reviewer needs to see, because it is the difference between a Cluster a
+// recompute may rearrange and one it may not.
+func reductionStateLabel(cluster *models.ReductionCluster) string {
+	switch cluster.State {
+	case models.ReductionClusterSkipped:
+		return "Skipped"
+	case models.ReductionClusterApplied:
+		if !cluster.Merged {
+			return "Merging"
+		}
+		return "Applied"
+	case models.ReductionClusterStale:
+		return "Stale"
+	}
+	if clusterApproved(cluster) {
+		return "Approved"
+	}
+	if cluster.Reviewed {
+		return "Not approved"
+	}
+	return "Open"
+}
+
+// planWinnerRule is the Winner Rule a plan's proposals were computed under: the one
+// recorded with the plan, and the row's current rule only for a plan that recorded
+// none. Anything derived about a proposal (the keeps-smaller suppression) has to
+// follow the rule that made it, or editing the rule changes the warning on a
+// proposal nobody recomputed.
+func planWinnerRule(reduction *models.ResourceReduction, plan *models.ResourceReductionPlan) []string {
+	if plan.Settings != nil && len(plan.Settings.WinnerRule) > 0 {
+		return plan.Settings.WinnerRule
+	}
+	return DecodeWinnerRule(reduction.WinnerRule)
+}
+
+// reviewReach is the visibility every count, tab, filter, figure and apply of one
+// plan reasons from, and the one place "deleted" is told apart from "not yours".
+//
+// For a scope-confined caller a member that does not come back is either, and the
+// two stay one answer: the Cluster is withheld. For anyone else it can only have
+// been deleted (typically merged away by another Reduction), so a still-pending
+// Cluster that names one is read as stale, with the reason, and nothing about it
+// is withheld. The plan is changed in memory only; callers that write it back
+// persist the same reading, which is accurate.
+func (ctx *MahresourcesContext) reviewReach(plan *models.ResourceReductionPlan, ids []uint) (map[uint]bool, error) {
+	visible, err := ctx.visibleMemberIDs(ids)
+	if err != nil {
+		return nil, err
+	}
+	if visible, err = ctx.withMergedHistory(plan.Clusters, visible); err != nil {
+		return nil, err
+	}
+	ctx.readDeletions(plan, visible)
+	if !ctx.isScopedPrincipal() {
+		// Nothing is withheld from them: a missing member is a deleted one.
+		for _, id := range ids {
+			visible[id] = true
+		}
+	}
+	return visible, nil
+}
+
+// readDeletions applies reviewReach's unrestricted reading to a plan given the
+// visibility already read, and returns nothing for a scoped caller.
+func (ctx *MahresourcesContext) readDeletions(plan *models.ResourceReductionPlan, visible map[uint]bool) {
+	if ctx.isScopedPrincipal() {
+		return
+	}
+	for _, cluster := range plan.Clusters {
+		if cluster.State != models.ReductionClusterOpen && cluster.State != models.ReductionClusterSkipped {
+			continue
+		}
+		for _, member := range cluster.Members {
+			if !member.Ejected && !visible[member.ResourceID] {
+				cluster.State = models.ReductionClusterStale
+				cluster.StaleReason = staleReasonDeleted
+				cluster.Checked = false
+				break
+			}
+		}
+	}
+}
+
+// visibleOrAll is visibleMemberIDs with reviewReach's rule for an unconfined caller:
+// nothing is withheld from them.
+func (ctx *MahresourcesContext) visibleOrAll(ids []uint) (map[uint]bool, error) {
+	visible, err := ctx.visibleMemberIDs(ids)
+	if err != nil {
+		return nil, err
+	}
+	if !ctx.isScopedPrincipal() {
+		for _, id := range ids {
+			visible[id] = true
+		}
+	}
+	return visible, nil
+}
+
+// applyToken is the digest an apply is bound to: for every approved, eligible
+// Cluster (in id order) its id, Winner and reviewed hash, and each Loser with the
+// hash it was reviewed as holding. Two different sets of proposals with the same
+// totals have different tokens.
+func applyToken(clusters []*models.ReductionCluster) string {
+	sorted := append([]*models.ReductionCluster(nil), clusters...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
+	hash := sha256.New()
+	for _, cluster := range sorted {
+		parts := []string{cluster.ID, strconv.FormatUint(uint64(cluster.WinnerID), 10)}
+		var losers []string
+		for _, member := range cluster.Members {
+			entry := strconv.FormatUint(uint64(member.ResourceID), 10) + "@" + member.Hash
+			if member.ResourceID == cluster.WinnerID {
+				parts[1] += "@" + member.Hash
+			} else if member.IsLoser(cluster.WinnerID) {
+				losers = append(losers, entry)
+			}
+		}
+		sort.Strings(losers)
+		fmt.Fprintf(hash, "%s|%s|%s\n", parts[0], parts[1], strings.Join(losers, ","))
+	}
+	return hex.EncodeToString(hash.Sum(nil))[:32]
+}
+
+// clusterApproved is the one meaning of "approved" a count, a filter, a label and an
+// apply share: checked, and with at least one copy it would remove. A checked
+// Cluster whose every Loser was ejected (an older plan can hold one) is not.
+func clusterApproved(c *models.ReductionCluster) bool {
+	return c.Checked && len(c.LoserIDs()) > 0
+}
+
+// settleableClaims counts the Clusters settle-only could release for this viewer:
+// claimed and not merged, fully visible to them, with no running apply that owns
+// them. Filters do not enter into it.
+func settleableClaims(plan *models.ResourceReductionPlan, visible map[uint]bool) int {
+	if last := plan.LastApply; last != nil && last.FinishedAt == nil && time.Since(last.StartedAt) <= ReductionApplyCeiling {
+		return 0
+	}
+	n := 0
+	for _, cluster := range plan.Clusters {
+		if cluster.State == models.ReductionClusterApplied && !cluster.Merged && !clusterWithheld(cluster, visible) {
+			n++
+		}
+	}
+	return n
+}
+
+// resourceFileSizes reads the stored file size of the named Resources through the
+// caller's scoped handle, so a Resource outside their subtree contributes nothing.
+func (ctx *MahresourcesContext) resourceFileSizes(ids []uint) (map[uint]int64, error) {
+	out := make(map[uint]int64, len(ids))
+	for _, chunk := range chunkUints(dedupeUints(ids), idChunk) {
+		var rows []struct {
+			ID       uint
+			FileSize int64
+		}
+		if err := ctx.db.Model(&models.Resource{}).
+			Select("resources.id, resources.file_size").
+			Where("resources.id IN ?", chunk).
+			Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			out[row.ID] = row.FileSize
+		}
+	}
+	return out, nil
+}
+
+func (ctx *MahresourcesContext) getReductionReview(id uint, ownerUserID *uint, ownerRestricted bool, page int, query *query_models.ResourceReductionReviewQuery) (*contracts.ReductionReview, error) {
+	reduction, err := ctx.loadReductionForUpdate(id, ownerUserID, ownerRestricted)
+	if err != nil {
+		return nil, err
+	}
+	legacyPlan, legacyExtent, err := ctx.legacyDocuments(reduction.ID)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := decodeLegacyPlan(legacyPlan)
+	if err != nil {
+		return nil, err
+	}
+	storedExtent, err := decodeLegacyExtent(legacyExtent)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.deriveKeepsSmallerForOldPlan(&plan, reduction); err != nil {
+		return nil, err
+	}
+
+	if page < 1 {
+		page = 1
+	}
+	pageSize := ReductionClustersPerPage
+	if query != nil {
+		pageSize = normalizeReviewPageSize(query.PageSize)
+	}
+	start := (page - 1) * pageSize
+
+	// Reachability for the whole plan, decided once by an id-only read through the
+	// scoped handle, which costs far less than hydrating every member. Everything
+	// below leans on it: the status tabs count only Clusters the caller may fully
+	// see, the filter excludes the rest before consulting any of their fields, and
+	// the apply figures leave them out of the blast radius.
+	//
+	// A Cluster a scoped reviewer may not fully see is redacted down to "a Cluster
+	// outside your access" — tier, state, the curation markers and the
+	// justification are all statements about Resources they may not know about.
+	// The filter is therefore applied in two steps: reachability first, then the
+	// criteria, and a withheld Cluster is excluded before its fields are ever
+	// consulted — so the filter itself can never answer "what tier is the hidden
+	// Cluster?".
+	visible, err := ctx.reviewReach(&plan, reductionMemberIDs(plan.Clusters))
+	if err != nil {
+		return nil, err
+	}
+	tabCounts := countReviewTabs(plan.Clusters, visible)
+
+	// Withheld Clusters are out before anything is counted or paginated, whatever
+	// the query: not a stub, not a position.
+	candidates := filterReviewClusters(plan.Clusters, visible, query)
+	clusterCount := len(candidates)
+	candidates, err = ctx.sortReviewClusters(candidates, visible, query)
+	if err != nil {
+		return nil, err
+	}
+	if start > len(candidates) {
+		start = len(candidates)
+	}
+	end := start + pageSize
+	if end > len(candidates) {
+		end = len(candidates)
+	}
+	pageClusters := candidates[start:end]
+
+	// One load for the whole page rather than one per Cluster.
+	resources, err := ctx.loadResourcesByID(reductionMemberIDs(pageClusters))
+	if err != nil {
+		return nil, err
+	}
+	associations, err := ctx.countResourceAssociationKinds(resourceIDsOf(resources))
+	if err != nil {
+		return nil, err
+	}
+	pageViews := buildClusterViews(pageClusters, resources, associations, ctx.isScopedPrincipal())
+
+	// Counted over every Cluster, not the page: apply acts on the whole plan, and
+	// a confirmation that counts only what is on screen understates the blast
+	// radius by however many pages the reviewer has not opened.
+	//
+	// A Cluster reaching a Resource this caller may not see is left out of the
+	// count entirely. It cannot be applied, and counting it would tell them "there
+	// is one more Cluster, with two Resources in it" about Clusters the page
+	// otherwise refuses to describe.
+	figures, eligible := reviewFiguresOf(reduction, plan.Clusters, visible)
+
+	// Deliberately no walk of the Extent here. Resolving it is one recursive CTE
+	// per selected Group, which is cheap; *counting* what it reaches is not, and a
+	// Reduction over a top-level Group in a library of millions would pay that on
+	// every page view. The size the page shows is the one the last compute
+	// recorded, which is the figure its coverage line is about anyway; the drift
+	// query below is filtered on creation time first, so only what arrived since
+	// then is ever materialised.
+	extent, err := ctx.resolveReductionExtent(storedExtent)
+	if err != nil {
+		return nil, err
+	}
+	entered := 0
+	if reduction.ComputedAt != nil {
+		entered, err = ctx.extentArrivalsSince(extent, *reduction.ComputedAt)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Redacted here, not in the template. The template is not the only reader:
+	// every server-rendered page also answers `.json` and an
+	// `Accept: application/json` request by serialising its whole context, so
+	// hiding these in the HTML would leave the pre-shrink extent size and the hash
+	// totals one URL suffix away — the same mistake the withheld Cluster made.
+	// Coverage answers a question about the *whole* Extent — how much of it could
+	// be examined — so it is shown only to a principal who can see the whole
+	// Extent. Comparing selection counts was not enough: narrowing a subtree can
+	// hide a Resource reached through a Group that is still visible, leaving every
+	// count unchanged while the figures describe more than the reviewer can now
+	// reach. Subtree confinement is the honest predicate, and it needs no walk.
+	coverage := plan.Coverage
+	coverageTrusted := !ctx.isScopedPrincipal() &&
+		len(extent.ResourceIDs) == len(storedExtent.ResourceIDs) &&
+		extent.SelectedGroups == len(storedExtent.GroupIDs)
+	extentSize := plan.Coverage.ExtentSize
+	if !coverageTrusted {
+		coverage = models.ReductionCoverage{}
+		extentSize = 0
+	}
+
+	selection, err := ctx.reductionSelectionNames(storedExtent, extent)
+	if err != nil {
+		return nil, err
+	}
+
+	return &contracts.ReductionReview{
+		SelectionGroups:     selection.groups,
+		SelectionResources:  selection.resources,
+		MoreGroups:          selection.moreGroups,
+		MoreResources:       selection.moreResources,
+		Reduction:           reduction,
+		Status:              EffectiveReductionStatus(reduction),
+		Coverage:            coverage,
+		CoverageTrusted:     coverageTrusted,
+		Clusters:            pageViews,
+		ClusterCount:        clusterCount,
+		CheckedCount:        figures.checked,
+		CheckedLoserCount:   figures.checkedLosers,
+		Page:                page,
+		PageSize:            pageSize,
+		SelectedResources:   len(extent.ResourceIDs),
+		SelectedGroups:      extent.SelectedGroups,
+		ExtentSize:          extentSize,
+		EnteredSinceCompute: entered,
+		ExtentAll:           storedExtent.All,
+		TabCounts:           tabCounts,
+		ApplyFigures:        figures.apply,
+		ApplyToken:          applyToken(eligible),
+		SettleableClaims:    settleableClaims(&plan, visible),
+		Bulk:                figures.bulk,
+		SettingsChanged:     reductionSettingsChanged(reduction, plan.Settings),
+		LastApply:           ctx.scopeLastApply(describeLastApply(plan.LastApply), plan.LastApply, plan.Clusters, visible),
+	}, nil
+}
+
+type reductionSelection struct {
+	groups, resources         []contracts.ReductionNamedRef
+	moreGroups, moreResources int
+}
+
+// reductionSelectionNames names the first 20 Groups and Resources of the selection
+// the caller may see. Visibility is the scoped handle's: ids it cannot read are
+// neither listed nor counted.
+func (ctx *MahresourcesContext) reductionSelectionNames(stored models.ResourceReductionExtent, resolved *ReductionExtent) (*reductionSelection, error) {
+	out := &reductionSelection{}
+	if stored.All {
+		return out, nil
+	}
+	var groupIDs []uint
+	for _, chunk := range chunkUints(dedupeUints(stored.GroupIDs), idChunk) {
+		var found []uint
+		if err := ctx.db.Model(&models.Group{}).Where("groups.id IN ?", chunk).Pluck("groups.id", &found).Error; err != nil {
+			return nil, err
+		}
+		groupIDs = append(groupIDs, found...)
+	}
+	sort.Slice(groupIDs, func(i, j int) bool { return groupIDs[i] < groupIDs[j] })
+	resourceIDs := mapKeys(resolved.ResourceIDs)
+	sort.Slice(resourceIDs, func(i, j int) bool { return resourceIDs[i] < resourceIDs[j] })
+
+	if len(groupIDs) > reductionSelectionNamesShown {
+		out.moreGroups = len(groupIDs) - reductionSelectionNamesShown
+		groupIDs = groupIDs[:reductionSelectionNamesShown]
+	}
+	if len(resourceIDs) > reductionSelectionNamesShown {
+		out.moreResources = len(resourceIDs) - reductionSelectionNamesShown
+		resourceIDs = resourceIDs[:reductionSelectionNamesShown]
+	}
+	if len(groupIDs) > 0 {
+		var rows []struct {
+			ID   uint
+			Name string
+		}
+		if err := ctx.db.Model(&models.Group{}).Select("groups.id, groups.name").Where("groups.id IN ?", groupIDs).Order("groups.id").Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			out.groups = append(out.groups, contracts.ReductionNamedRef{ID: r.ID, Name: r.Name})
+		}
+	}
+	if len(resourceIDs) > 0 {
+		var rows []struct {
+			ID   uint
+			Name string
+		}
+		if err := ctx.db.Model(&models.Resource{}).Select("resources.id, resources.name").Where("resources.id IN ?", resourceIDs).Order("resources.id").Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			out.resources = append(out.resources, contracts.ReductionNamedRef{ID: r.ID, Name: r.Name})
+		}
+	}
+	return out, nil
+}
+
 // buildClusterViews hydrates a set of Clusters into the page's views, checking
 // every member against the caller's scoped handle and redacting any Cluster that
 // reaches a Resource the caller may not see.
@@ -778,95 +859,6 @@ func describeKeepsSmaller(view *contracts.ReductionClusterView, resources map[ui
 	view.LargestMemberID = largest.ID
 }
 
-// reviewClusterStatusMatches is the state filter. "reviewed" is not a state of
-// its own — it is a judgement recorded on an open Cluster — so it selects open
-// Clusters that have been acted on, and "open" selects every open Cluster, acted
-// on or not: the Open tab is where the work is, and approving a Cluster must not
-// move it to another one.
-func reviewClusterStatusMatches(c *models.ReductionCluster, wanted map[string]bool) bool {
-	switch c.State {
-	case models.ReductionClusterOpen:
-		return wanted["open"] || (wanted["reviewed"] && c.Reviewed)
-	case models.ReductionClusterSkipped:
-		return wanted[models.ReductionClusterSkipped]
-	case models.ReductionClusterApplied:
-		// A claim not yet confirmed is not an applied Cluster: its copies still exist.
-		return wanted[models.ReductionClusterApplied] && c.Merged
-	case models.ReductionClusterStale:
-		return wanted[models.ReductionClusterStale]
-	}
-	return false
-}
-
-// clusterNeedsAttention is the plan-level counterpart of the page's curation
-// markers: a Cluster whose merge would discard something (Lossy) or one that is
-// large enough to demand expanding before it can be checked (Oversized), or one
-// that would keep a lower-resolution copy than one it removes (KeepsSmaller).
-// Withheld Clusters are decided at render time — the membership is re-checked
-// against the caller's scope — so they cannot take part in a filter over the
-// stored plan, and an inaccessible Cluster is not one the reviewer can act on
-// anyway.
-func clusterNeedsAttention(c *models.ReductionCluster) bool {
-	return len(c.Lossy) > 0 || c.Oversized || c.KeepsSmaller
-}
-
-// loadResourcesByID reads the named Resources through the caller's scoped handle.
-// An id that is missing from the result is one that was deleted or that this
-// principal may not see; the two are deliberately not distinguished.
-func (ctx *MahresourcesContext) loadResourcesByID(ids []uint) (map[uint]*models.Resource, error) {
-	out := map[uint]*models.Resource{}
-	for _, chunk := range chunkUints(dedupeUints(ids), idChunk) {
-		var batch []*models.Resource
-		if err := ctx.db.
-			Preload("Series").
-			Preload("ResourceCategory").
-			Where("resources.id IN ?", chunk).
-			Find(&batch).Error; err != nil {
-			return nil, err
-		}
-		for _, r := range batch {
-			out[r.ID] = r
-		}
-	}
-	return out, nil
-}
-
-// reductionStateLabel is a Cluster's state in words. "Reviewed" is not a state of
-// its own — it is a judgement recorded on an open Cluster — but it is what the
-// reviewer needs to see, because it is the difference between a Cluster a
-// recompute may rearrange and one it may not.
-func reductionStateLabel(cluster *models.ReductionCluster) string {
-	switch cluster.State {
-	case models.ReductionClusterSkipped:
-		return "Skipped"
-	case models.ReductionClusterApplied:
-		if !cluster.Merged {
-			return "Merging"
-		}
-		return "Applied"
-	case models.ReductionClusterStale:
-		return "Stale"
-	}
-	if clusterApproved(cluster) {
-		return "Approved"
-	}
-	if cluster.Reviewed {
-		return "Not approved"
-	}
-	return "Open"
-}
-
-// reductionDistanceLabel renders a member's stored perceptual distance, and
-// nothing at all when it has none. A Winner has no distance to itself and the
-// Identical tier has no distances anywhere, so the empty string is the common
-// case rather than an error one.
-func reductionDistanceLabel(distance *uint8) string {
-	if distance == nil {
-		return ""
-	}
-	return "distance " + strconv.FormatUint(uint64(*distance), 10)
-}
-
 // redactWithheldCluster strips a Cluster the caller may not fully see down to the
 // fact that it exists.
 //
@@ -888,18 +880,6 @@ func redactWithheldCluster(view contracts.ReductionClusterView) contracts.Reduct
 		Withheld:         1,
 		Position:         view.Position,
 	}
-}
-
-// planWinnerRule is the Winner Rule a plan's proposals were computed under: the one
-// recorded with the plan, and the row's current rule only for a plan that recorded
-// none. Anything derived about a proposal (the keeps-smaller suppression) has to
-// follow the rule that made it, or editing the rule changes the warning on a
-// proposal nobody recomputed.
-func planWinnerRule(reduction *models.ResourceReduction, plan *models.ResourceReductionPlan) []string {
-	if plan.Settings != nil && len(plan.Settings.WinnerRule) > 0 {
-		return plan.Settings.WinnerRule
-	}
-	return DecodeWinnerRule(reduction.WinnerRule)
 }
 
 // deriveKeepsSmallerForOldPlan fills in KeepsSmaller on a plan stored before the
@@ -953,122 +933,99 @@ func (ctx *MahresourcesContext) deriveKeepsSmallerForOldPlan(plan *models.Resour
 	return nil
 }
 
-// reviewReach is the visibility every count, tab, filter, figure and apply of one
-// plan reasons from, and the one place "deleted" is told apart from "not yours".
-//
-// For a scope-confined caller a member that does not come back is either, and the
-// two stay one answer: the Cluster is withheld. For anyone else it can only have
-// been deleted (typically merged away by another Reduction), so a still-pending
-// Cluster that names one is read as stale, with the reason, and nothing about it
-// is withheld. The plan is changed in memory only; callers that write it back
-// persist the same reading, which is accurate.
-func (ctx *MahresourcesContext) reviewReach(plan *models.ResourceReductionPlan, ids []uint) (map[uint]bool, error) {
-	visible, err := ctx.visibleMemberIDs(ids)
-	if err != nil {
-		return nil, err
-	}
-	if visible, err = ctx.withMergedHistory(plan.Clusters, visible); err != nil {
-		return nil, err
-	}
-	ctx.readDeletions(plan, visible)
-	if !ctx.isScopedPrincipal() {
-		// Nothing is withheld from them: a missing member is a deleted one.
-		for _, id := range ids {
-			visible[id] = true
-		}
-	}
-	return visible, nil
+// legacyDocuments reads a row's `plan` and `extent` JSON documents, the one place the
+// oracle (and the migration, in its own SQL) may select them.
+func (ctx *MahresourcesContext) legacyDocuments(id uint) (plan, extent []byte, err error) {
+	var row struct{ Plan, Extent []byte }
+	err = ctx.db.Raw(`SELECT plan, extent FROM resource_reductions WHERE id = ?`, id).Scan(&row).Error
+	return row.Plan, row.Extent, err
 }
 
-// readDeletions applies reviewReach's unrestricted reading to a plan given the
-// visibility already read, and returns nothing for a scoped caller.
-func (ctx *MahresourcesContext) readDeletions(plan *models.ResourceReductionPlan, visible map[uint]bool) {
-	if ctx.isScopedPrincipal() {
-		return
+func decodeLegacyPlan(raw []byte) (models.ResourceReductionPlan, error) {
+	var plan models.ResourceReductionPlan
+	if len(raw) == 0 || string(raw) == "null" {
+		return plan, nil
 	}
-	for _, cluster := range plan.Clusters {
-		if cluster.State != models.ReductionClusterOpen && cluster.State != models.ReductionClusterSkipped {
+	return plan, json.Unmarshal(raw, &plan)
+}
+
+func decodeLegacyExtent(raw []byte) (models.ResourceReductionExtent, error) {
+	var extent models.ResourceReductionExtent
+	if len(raw) == 0 || string(raw) == "null" {
+		return extent, nil
+	}
+	return extent, json.Unmarshal(raw, &extent)
+}
+
+// overwriteLegacyPlanForTest writes a JSON plan document as the previous release
+// stored it.
+func (ctx *MahresourcesContext) overwriteLegacyPlanForTest(id uint, plan models.ResourceReductionPlan) error {
+	raw, err := json.Marshal(plan)
+	if err != nil {
+		return err
+	}
+	return ctx.db.Exec(`UPDATE resource_reductions SET plan = ? WHERE id = ?`, string(raw), id).Error
+}
+
+// legacyReductionProgress is the previous release's list progress over the JSON plan,
+// the oracle for the table-backed GetReductionProgress.
+func (ctx *MahresourcesContext) legacyReductionProgress(reductions []models.ResourceReduction) (map[uint]contracts.ReductionProgress, error) {
+	out := make(map[uint]contracts.ReductionProgress, len(reductions))
+	plans := make(map[uint]models.ResourceReductionPlan, len(reductions))
+	for i := range reductions {
+		raw, _, err := ctx.legacyDocuments(reductions[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		plan, err := decodeLegacyPlan(raw)
+		if err != nil {
 			continue
 		}
-		for _, member := range cluster.Members {
-			if !member.Ejected && !visible[member.ResourceID] {
-				cluster.State = models.ReductionClusterStale
-				cluster.StaleReason = staleReasonDeleted
-				cluster.Checked = false
-				break
-			}
-		}
+		plans[reductions[i].ID] = plan
 	}
-}
 
-// visibleOrAll is visibleMemberIDs with reviewReach's rule for an unconfined caller:
-// nothing is withheld from them.
-func (ctx *MahresourcesContext) visibleOrAll(ids []uint) (map[uint]bool, error) {
+	// The same reading the review's tabs use, so the list and the page agree.
+	var ids []uint
+	for _, plan := range plans {
+		ids = append(ids, reductionMemberIDs(plan.Clusters)...)
+	}
 	visible, err := ctx.visibleMemberIDs(ids)
 	if err != nil {
 		return nil, err
 	}
-	if !ctx.isScopedPrincipal() {
-		for _, id := range ids {
-			visible[id] = true
-		}
-	}
-	return visible, nil
-}
 
-// applyToken is the digest an apply is bound to: for every approved, eligible
-// Cluster (in id order) its id, Winner and reviewed hash, and each Loser with the
-// hash it was reviewed as holding. Two different sets of proposals with the same
-// totals have different tokens.
-func applyToken(clusters []*models.ReductionCluster) string {
-	sorted := append([]*models.ReductionCluster(nil), clusters...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
-	hash := sha256.New()
-	for _, cluster := range sorted {
-		parts := []string{cluster.ID, strconv.FormatUint(uint64(cluster.WinnerID), 10)}
-		var losers []string
-		for _, member := range cluster.Members {
-			entry := strconv.FormatUint(uint64(member.ResourceID), 10) + "@" + member.Hash
-			if member.ResourceID == cluster.WinnerID {
-				parts[1] += "@" + member.Hash
-			} else if member.IsLoser(cluster.WinnerID) {
-				losers = append(losers, entry)
+	for id, plan := range plans {
+		plan := plan
+		ctx.readDeletions(&plan, visible)
+		planVisible, err := ctx.withMergedHistory(plan.Clusters, visible)
+		if err != nil {
+			return nil, err
+		}
+		var progress contracts.ReductionProgress
+		for _, cluster := range plan.Clusters {
+			if ctx.isScopedPrincipal() && clusterWithheld(cluster, planVisible) {
+				continue
+			}
+			progress.Clusters++
+			switch cluster.State {
+			case models.ReductionClusterOpen:
+				progress.Open++
+				if clusterApproved(cluster) {
+					progress.Approved++
+				}
+			case models.ReductionClusterSkipped:
+				progress.Skipped++
+			case models.ReductionClusterStale:
+				progress.Stale++
+			case models.ReductionClusterApplied:
+				if cluster.Merged {
+					progress.Applied++
+				} else {
+					progress.Merging++
+				}
 			}
 		}
-		sort.Strings(losers)
-		fmt.Fprintf(hash, "%s|%s|%s\n", parts[0], parts[1], strings.Join(losers, ","))
+		out[id] = progress
 	}
-	return hex.EncodeToString(hash.Sum(nil))[:32]
-}
-
-// clusterApproved is the one meaning of "approved" a count, a filter, a label and an
-// apply share: checked, and with at least one copy it would remove. A checked
-// Cluster whose every Loser was ejected (an older plan can hold one) is not.
-func clusterApproved(c *models.ReductionCluster) bool {
-	return c.Checked && len(c.LoserIDs()) > 0
-}
-
-func containsUint(list []uint, v uint) bool {
-	for _, x := range list {
-		if x == v {
-			return true
-		}
-	}
-	return false
-}
-
-// settleableClaims counts the Clusters settle-only could release for this viewer:
-// claimed and not merged, fully visible to them, with no running apply that owns
-// them. Filters do not enter into it.
-func settleableClaims(plan *models.ResourceReductionPlan, visible map[uint]bool) int {
-	if last := plan.LastApply; last != nil && last.FinishedAt == nil && time.Since(last.StartedAt) <= ReductionApplyCeiling {
-		return 0
-	}
-	n := 0
-	for _, cluster := range plan.Clusters {
-		if cluster.State == models.ReductionClusterApplied && !cluster.Merged && !clusterWithheld(cluster, visible) {
-			n++
-		}
-	}
-	return n
+	return out, nil
 }

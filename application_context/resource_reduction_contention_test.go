@@ -18,8 +18,8 @@ import (
 func newReductionWALContext(t *testing.T) *MahresourcesContext {
 	t.Helper()
 	ctx := newWALTestContext(t, 0)
-	require.NoError(t, ctx.db.AutoMigrate(&models.ResourceReduction{}))
-	return ctx
+	require.NoError(t, ctx.db.AutoMigrate(reductionTables...))
+	return withSettings(ctx)
 }
 
 func TestWideningAReductionIsNotRefusedByACommitBeforeItsWrite(t *testing.T) {
@@ -34,7 +34,7 @@ func TestWideningAReductionIsNotRefusedByACommitBeforeItsWrite(t *testing.T) {
 	require.NoError(t, err)
 	require.NotZero(t, fired.Load(), "the widening wrote nothing, so the interleave never happened")
 
-	extent, err := DecodeReductionExtent(widened.Extent)
+	extent, err := ctx.ExtentForTest(widened.ID)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []uint{1, 2}, extent.ResourceIDs)
 	assert.Equal(t, created.Version+1, widened.Version)
@@ -52,7 +52,7 @@ func TestCreatingAReductionFromAGroupIsNotRefusedByACommitBeforeItsWrite(t *test
 	require.NoError(t, err)
 	require.NotZero(t, fired.Load(), "the create wrote nothing, so the interleave never happened")
 
-	extent, err := DecodeReductionExtent(created.Extent)
+	extent, err := ctx.ExtentForTest(created.ID)
 	require.NoError(t, err)
 	assert.Equal(t, []uint{resource.ID}, extent.ResourceIDs)
 }
@@ -76,14 +76,13 @@ func TestAReductionOverrideIsNotRefusedByACommitBeforeItsWrite(t *testing.T) {
 	for _, name := range []string{"winner", "loser"} {
 		require.NoError(t, ctx.db.Create(&models.Resource{Name: name}).Error)
 	}
-	reduction := &models.ResourceReduction{
-		Name:   "override under load",
-		Status: models.ReductionStatusReady,
-		Extent: []byte(`{"resourceIds":[1,2]}`),
-		Plan: []byte(`{"clusters":[{"id":"c1","tier":"identical","winnerId":1,"state":"open",` +
-			`"members":[{"resourceId":1,"inExtent":true},{"resourceId":2,"inExtent":true}]}]}`),
-	}
+	reduction := &models.ResourceReduction{Name: "override under load", Status: models.ReductionStatusReady, PlanSchema: 1}
 	require.NoError(t, ctx.db.Create(reduction).Error)
+	require.NoError(t, ctx.OverwritePlanForTest(reduction.ID, reduction.Version, models.ResourceReductionPlan{Clusters: []*models.ReductionCluster{{
+		ID: "c1", Tier: "identical", WinnerID: 1, State: models.ReductionClusterOpen,
+		Members: []*models.ReductionMember{{ResourceID: 1, InExtent: true}, {ResourceID: 2, InExtent: true}},
+	}}}))
+	reduction = loadReductionRow(t, ctx.db, reduction.ID)
 
 	fired := commitBeforeEveryWriteTo(t, ctx, "resource_reductions")
 	updated, err := ctx.OverrideReductionCluster(&query_models.ReductionOverride{
@@ -92,7 +91,8 @@ func TestAReductionOverrideIsNotRefusedByACommitBeforeItsWrite(t *testing.T) {
 	require.NoError(t, err)
 	require.NotZero(t, fired.Load(), "the override wrote nothing, so the interleave never happened")
 
-	plan, err := DecodeReductionPlan(updated.Plan)
+	require.NotZero(t, updated.Version)
+	plan, err := ctx.PlanForTest(reduction.ID)
 	require.NoError(t, err)
 	require.Len(t, plan.Clusters, 1)
 	assert.Equal(t, models.ReductionClusterSkipped, plan.Clusters[0].State)
@@ -121,27 +121,31 @@ func TestAGroupSelectionIsReadFromOneSnapshot(t *testing.T) {
 	moved := &models.Resource{Name: "moved", OwnerId: &later}
 	require.NoError(t, ctx.db.Create(moved).Error)
 
+	// A competing writer moves the Resource from the later chunk of Groups into the
+	// earlier one while the selection is part-way through. It is started between the
+	// first Group's count and its inserts, and the selection's own transaction holds
+	// the writer lock, so the move lands only after the selection has read the whole
+	// subtree as of one moment: the Resource is selected once, and not lost.
 	sqlDB, err := ctx.db.DB()
 	require.NoError(t, err)
 	var once sync.Once
-	const name = "test:move_between_chunks"
-	require.NoError(t, ctx.db.Callback().Query().After("gorm:query").Register(name, func(tx *gorm.DB) {
-		if tx.Statement.Table != "resources" {
-			return
-		}
+	moveDone := make(chan error, 1)
+	selectionAfterPreflight = func(*gorm.DB) {
 		once.Do(func() {
-			if _, err := sqlDB.Exec(`UPDATE resources SET owner_id = ? WHERE id = ?`, earlier, moved.ID); err != nil {
-				t.Errorf("competing move: %v", err)
-			}
+			go func() {
+				_, err := sqlDB.Exec(`UPDATE resources SET owner_id = ? WHERE id = ?`, earlier, moved.ID)
+				moveDone <- err
+			}()
 		})
-	}))
-	t.Cleanup(func() { _ = ctx.db.Callback().Query().Remove(name) })
+	}
+	t.Cleanup(func() { selectionAfterPreflight = nil })
 
 	created, err := ctx.CreateOrExtendResourceReduction(&query_models.ResourceReductionCreator{
 		OwnerId: root.ID, IncludeDescendants: true,
 	}, nil, false)
 	require.NoError(t, err)
-	extent, err := DecodeReductionExtent(created.Extent)
+	require.NoError(t, <-moveDone, "the competing move")
+	extent, err := ctx.ExtentForTest(created.ID)
 	require.NoError(t, err)
 	assert.Equal(t, []uint{moved.ID}, extent.ResourceIDs)
 }

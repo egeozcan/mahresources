@@ -518,7 +518,7 @@ func TestAQueuedClusteringRunLeavesTheReductionFreeForTheRuntimeThatRunsIt(t *te
 	// The one slot the deployment has, held by a claim of the runtime test Kind.
 	holder := holdTheDeploymentBudgetIn(t, first)
 
-	reduction := createReductionRowForTest(t, first, `{"clusters":[]}`, models.ReductionStatusFailed)
+	reduction := createReductionRowForTest(t, first, models.ReductionStatusFailed)
 	running, err := first.RequestReductionCompute(reduction.ID, reduction.Version, nil, false, nil)
 	if err != nil {
 		t.Fatalf("request the compute: %v", err)

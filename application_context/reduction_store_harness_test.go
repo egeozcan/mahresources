@@ -30,6 +30,8 @@ var reductionTables = []any{
 	&models.ResourceCleanupManifest{},
 	&models.ReductionMigrationRow{},
 	&models.ReductionMigration{},
+	// The legacy plan and extent columns the migration reads: no other model names them.
+	&legacyReduction{},
 }
 
 // newReductionSQLiteContext is a context with the plan tables migrated.

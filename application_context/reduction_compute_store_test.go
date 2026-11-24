@@ -424,34 +424,34 @@ func testStoreComputeSeams(t *testing.T, ctx *MahresourcesContext) {
 		Coverage: models.ReductionCoverage{ExtentSize: 2},
 		Settings: &models.ReductionSettings{MatchingMode: "identical"},
 	}
-	require.NoError(t, ctx.OverwritePlanStoreForTest(r.ID, r.Version, plan))
+	require.NoError(t, ctx.OverwritePlanForTest(r.ID, r.Version, plan))
 	row := loadReductionRow(t, ctx.db, r.ID)
 	require.NotNil(t, row.PlanGeneration)
 	require.Equal(t, uint(1), countUint(t, ctx, "reduction_clusters", "reduction_id = ? AND generation = ?", r.ID, *row.PlanGeneration))
-	require.ErrorIs(t, ctx.OverwritePlanStoreForTest(r.ID, r.Version, plan), ErrReductionConflict)
+	require.ErrorIs(t, ctx.OverwritePlanForTest(r.ID, r.Version, plan), ErrReductionConflict)
 
 	// the claim and release halves, under a batch the test makes live
 	rec := fmt.Sprintf(`{"batchId":"b1","generation":%q,"startedAt":"2026-11-24T00:00:00Z"}`, *row.PlanGeneration)
 	require.NoError(t, ctx.db.Exec("UPDATE resource_reductions SET last_apply = ?, apply_lease_until = ? WHERE id = ?", rec, time.Now().Add(time.Hour).UnixNano(), r.ID).Error)
 	require.NoError(t, ctx.db.Exec(`UPDATE reduction_clusters SET apply_batch = 'b1', approved_winner = winner_id, approved_seq = restore_seq WHERE "key" = 'one'`).Error)
-	claimed := ctx.ClaimClusterForApplyStoreForTest(r.ID, "b1", "one")
+	claimed := ctx.ClaimClusterForApplyForTest(r.ID, "b1", "one")
 	require.NotNil(t, claimed)
 	require.Equal(t, models.ReductionClusterApplied, claimed.State)
 	require.Equal(t, []uint{l}, claimed.LoserIDs())
-	require.Nil(t, ctx.ClaimClusterForApplyStoreForTest(r.ID, "b1", "one"), "claimed once")
-	ctx.ReleaseClaimStoreForTest(r.ID, "b1", "one", "not-the-claim")
+	require.Nil(t, ctx.ClaimClusterForApplyForTest(r.ID, "b1", "one"), "claimed once")
+	ctx.ReleaseClaimForTest(r.ID, "b1", "one", "not-the-claim")
 	require.Equal(t, models.ReductionClusterApplied, rowOf(t, ctx, "one").State, "a stale claim id changes nothing")
-	ctx.ReleaseClaimStoreForTest(r.ID, "b1", "one", claimed.ClaimID)
+	ctx.ReleaseClaimForTest(r.ID, "b1", "one", claimed.ClaimID)
 	require.Equal(t, models.ReductionClusterOpen, rowOf(t, ctx, "one").State)
 
 	// landing a plan wholesale needs a compute underway
 	r = loadReductionRow(t, ctx.db, r.ID)
-	require.ErrorIs(t, ctx.StoreReductionPlanStoreForTest(r.ID, "job-1", r.Version, plan), ErrReductionComputeSuperseded)
+	require.ErrorIs(t, ctx.StoreReductionPlanForTest(r.ID, "job-1", r.Version, plan), ErrReductionComputeSuperseded)
 	require.NoError(t, ctx.db.Exec("UPDATE resource_reductions SET apply_lease_until = 0 WHERE id = ?", r.ID).Error)
 	r = loadReductionRow(t, ctx.db, r.ID)
 	jobID, gen, version := computing(t, ctx, r)
 	replacement := models.ResourceReductionPlan{Clusters: []*models.ReductionCluster{freshCluster("two", w, l)}}
-	require.NoError(t, ctx.StoreReductionPlanStoreForTest(r.ID, jobID, version, replacement))
+	require.NoError(t, ctx.StoreReductionPlanForTest(r.ID, jobID, version, replacement))
 	require.Equal(t, gen, *loadReductionRow(t, ctx.db, r.ID).PlanGeneration)
 	require.EqualValues(t, 1, planRows(t, ctx, "reduction_clusters", `reduction_id = ? AND "key" = 'two'`, r.ID))
 	require.Zero(t, planRows(t, ctx, "reduction_clusters", `reduction_id = ? AND "key" = 'one'`, r.ID), "the replaced plan is swept")

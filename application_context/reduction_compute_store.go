@@ -92,8 +92,9 @@ func (ctx *MahresourcesContext) storeAdmitComputeLease(reductionID uint, generat
 		if row.ComputingStartedAt != nil {
 			started = *row.ComputingStartedAt
 		}
-		return tx.Exec(`UPDATE resource_reductions SET compute_lease_until = ? WHERE id = ? AND compute_generation = ?`,
-			leaseDeadline(afterLock(now), started), reductionID, generation).Error
+		until := leaseDeadline(afterLock(now), started)
+		return tx.Exec(`UPDATE resource_reductions SET compute_lease_until = ?, compute_deadline = ? WHERE id = ? AND compute_generation = ?`,
+			until, time.Unix(0, until), reductionID, generation).Error
 	})
 }
 
@@ -597,7 +598,9 @@ func stagingGuard(x string) string {
 var sweepBetweenReadAndDeleteHook func()
 
 // SweepReductionGenerations is the startup entry to the sweep.
-func (ctx *MahresourcesContext) SweepReductionGenerations() error { return ctx.sweepReductionGenerations() }
+func (ctx *MahresourcesContext) SweepReductionGenerations() error {
+	return ctx.sweepReductionGenerations()
+}
 
 // sweepReductionGenerations deletes every generation of plan rows nobody owns, and
 // the staging rows of any compute that is not running. Generations are discovered
@@ -756,87 +759,4 @@ func (ctx *MahresourcesContext) storeDeleteReduction(r *models.ResourceReduction
 		}
 	}
 	return nil
-}
-
-// ---- test seams -----------------------------------------------------------------------------------
-
-// OverwritePlanStoreForTest writes a plan wholesale as the Reduction's plan: a new
-// generation holding exactly these Clusters (states, claims and merged flags as
-// given), pointed at by plan_generation under the version compare-and-set. It is the
-// table-backed OverwritePlanForTest: how a test puts a Cluster into a state that has
-// no other seam, such as the same key over a different proposal.
-func (ctx *MahresourcesContext) OverwritePlanStoreForTest(reductionID, version uint, plan models.ResourceReductionPlan) error {
-	s := ctx.reductionStore()
-	generation := string(types.NewUUIDv7())
-	r := &models.ResourceReduction{ID: reductionID}
-	var base int64
-	for i, planned := range plan.Clusters {
-		err := s.db.Transaction(func(tx *gorm.DB) error {
-			return s.in(tx).insertOneFresh(r, generation, planned, base+1+int64(i))
-		})
-		if err != nil {
-			return err
-		}
-	}
-	coverageJSON, err := json.Marshal(plan.Coverage)
-	if err != nil {
-		return err
-	}
-	var settingsJSON, applyJSON any
-	if plan.Settings != nil {
-		raw, _ := json.Marshal(plan.Settings)
-		settingsJSON = string(raw)
-	}
-	if plan.LastApply != nil {
-		raw, _ := json.Marshal(plan.LastApply)
-		applyJSON = string(raw)
-	}
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		res := tx.Exec(`UPDATE resource_reductions SET plan_generation = ?, coverage = ?, plan_settings = ?, last_apply = COALESCE(?, last_apply),
-			version = version + 1, updated_at = ? WHERE id = ? AND version = ?`, generation, string(coverageJSON), settingsJSON, applyJSON, time.Now(), reductionID, version)
-		if res.Error != nil {
-			return res.Error
-		}
-		if res.RowsAffected != 1 {
-			return ErrReductionConflict
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	return ctx.sweepReductionGenerations()
-}
-
-// StoreReductionPlanStoreForTest is StoreReductionPlanForTest on the tables: it lands
-// the plan's Clusters (all of them fresh, nothing carried: the plan already holds
-// whatever was carried) through the same fenced landing a compute uses. The
-// Reduction must be computing, as beginReductionComputeStore leaves it.
-func (ctx *MahresourcesContext) StoreReductionPlanStoreForTest(reductionID uint, jobID string, version uint, plan models.ResourceReductionPlan) error {
-	s := ctx.reductionStore()
-	var row struct{ ComputeGeneration *string }
-	if err := s.db.Raw(`SELECT compute_generation FROM resource_reductions WHERE id = ?`, reductionID).Scan(&row).Error; err != nil {
-		return err
-	}
-	if row.ComputeGeneration == nil {
-		return ErrReductionComputeSuperseded
-	}
-	return ctx.landComputedPlan(&models.ResourceReduction{ID: reductionID}, jobID, *row.ComputeGeneration, version, plan.Clusters, plan.Coverage, plan.Settings, false)
-}
-
-// ClaimClusterForApplyStoreForTest is ClaimClusterForApplyForTest on the tables: the
-// per-Cluster claim of the batch that currently owns the Reduction. It returns the
-// snapshot the claim committed in today's shape, or nil when the claim was refused.
-func (ctx *MahresourcesContext) ClaimClusterForApplyStoreForTest(reductionID uint, batch, key string) *models.ReductionCluster {
-	claimed, gate, err := ctx.storeClaimCluster(reductionID, batch, key)
-	if err != nil || gate != claimWon {
-		return nil
-	}
-	return toPlanCluster(claimed)
-}
-
-// ReleaseClaimStoreForTest settles a claim as a delayed writer would, with the claim
-// id it holds.
-func (ctx *MahresourcesContext) ReleaseClaimStoreForTest(reductionID uint, batch, key, claimID string) {
-	ctx.storeReleaseClaim(reductionID, batch, key, claimID)
 }

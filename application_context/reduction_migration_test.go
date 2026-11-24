@@ -52,9 +52,9 @@ func seedLegacyReduction(t *testing.T, ctx *MahresourcesContext, withOverCap boo
 	planJSON, err := json.Marshal(plan)
 	require.NoError(t, err)
 	extent, _ := json.Marshal(map[string]any{"resourceIds": ids[:3], "groupIds": []uint{4, 5}, "all": true})
-	red := &models.ResourceReduction{Name: "legacy", Status: models.ReductionStatusReady, MatchingMode: "both", Plan: planJSON, Extent: extent}
-	require.NoError(t, ctx.db.Create(red).Error)
-	return red, ids
+	legacy := &legacyReduction{ResourceReduction: models.ResourceReduction{Name: "legacy", Status: models.ReductionStatusReady, MatchingMode: "both"}, Plan: planJSON, Extent: extent}
+	require.NoError(t, ctx.db.Create(legacy).Error)
+	return &legacy.ResourceReduction, ids
 }
 
 func TestReductionMigrationSpoolsAndPublishes(t *testing.T) {
@@ -136,9 +136,10 @@ func TestReductionMigrationNullClustersKeepsApplyRecord(t *testing.T) {
 }
 
 func testReductionMigrationNullClustersKeepsApplyRecord(t *testing.T, ctx *MahresourcesContext) {
-	red := &models.ResourceReduction{Name: "empty", Status: models.ReductionStatusReady, MatchingMode: "both",
+	legacy := &legacyReduction{ResourceReduction: models.ResourceReduction{Name: "empty", Status: models.ReductionStatusReady, MatchingMode: "both"},
 		Plan: []byte(`{"clusters":null,"coverage":{},"lastApply":{"startedAt":"2026-01-02T03:04:05Z","applied":0,"removed":0,"stale":0,"requestId":"r"}}`)}
-	require.NoError(t, ctx.db.Create(red).Error)
+	require.NoError(t, ctx.db.Create(legacy).Error)
+	red := &legacy.ResourceReduction
 	require.NoError(t, ctx.MigrateReductionPlans())
 	var got models.ResourceReduction
 	require.NoError(t, ctx.db.Select(reductionColumns).First(&got, red.ID).Error)
@@ -153,10 +154,11 @@ func TestReductionMigrationFailsComputingAndMigratesDrafts(t *testing.T) {
 }
 
 func testReductionMigrationFailsComputingAndMigratesDrafts(t *testing.T, ctx *MahresourcesContext) {
-	computing := &models.ResourceReduction{Name: "c", Status: models.ReductionStatusComputing, MatchingMode: "both"}
-	draft := &models.ResourceReduction{Name: "d", Status: models.ReductionStatusDraft, MatchingMode: "both", Extent: []byte(`{"resourceIds":[1,2]}`)}
-	require.NoError(t, ctx.db.Create(computing).Error)
-	require.NoError(t, ctx.db.Create(draft).Error)
+	computingRow := &legacyReduction{ResourceReduction: models.ResourceReduction{Name: "c", Status: models.ReductionStatusComputing, MatchingMode: "both"}}
+	draftRow := &legacyReduction{ResourceReduction: models.ResourceReduction{Name: "d", Status: models.ReductionStatusDraft, MatchingMode: "both"}, Extent: []byte(`{"resourceIds":[1,2]}`)}
+	require.NoError(t, ctx.db.Create(computingRow).Error)
+	require.NoError(t, ctx.db.Create(draftRow).Error)
+	computing, draft := &computingRow.ResourceReduction, &draftRow.ResourceReduction
 	require.NoError(t, ctx.MigrateReductionPlans())
 	var c, d models.ResourceReduction
 	require.NoError(t, ctx.db.Select(reductionColumns).First(&c, computing.ID).Error)

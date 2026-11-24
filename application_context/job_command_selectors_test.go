@@ -184,7 +184,7 @@ func seedSelectorJobs(t *testing.T, ctx *MahresourcesContext, ownerID, otherOwne
 		t.Fatalf("record missing-plan facts: %v", err)
 	}
 
-	reduction := createReductionRowForTest(t, ctx, `{"clusters":[]}`, models.ReductionStatusFailed)
+	reduction := createReductionRowForTest(t, ctx, models.ReductionStatusFailed)
 	reductionInput, err := json.Marshal(reductionComputeJobInput{ReductionID: reduction.ID, Version: reduction.Version})
 	if err != nil {
 		t.Fatalf("build Reduction input: %v", err)

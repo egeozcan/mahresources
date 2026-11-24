@@ -100,7 +100,7 @@ func TestTestContextCleanupWaitsForTheQueueFollower(t *testing.T) {
 			t.Fatalf("register callbacks: %v", err)
 		}
 
-		reduction := createReductionRowForTest(t, ctx, `{"clusters":[]}`, models.ReductionStatusFailed)
+		reduction := createReductionRowForTest(t, ctx, models.ReductionStatusFailed)
 		if _, err := ctx.RequestReductionCompute(reduction.ID, reduction.Version, nil, false, nil); err != nil {
 			t.Fatalf("request the compute: %v", err)
 		}

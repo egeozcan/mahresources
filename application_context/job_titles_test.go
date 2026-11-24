@@ -74,7 +74,7 @@ func TestALongNameIsCutInAJobTitle(t *testing.T) {
 // A clustering run is titled by the Resource Reduction it computes.
 func TestAClusteringRunIsTitledByItsReduction(t *testing.T) {
 	ctx := newWorkflowJobContext(t)
-	reduction := createReductionRowForTest(t, ctx, `{"clusters":[]}`, models.ReductionStatusFailed)
+	reduction := createReductionRowForTest(t, ctx, models.ReductionStatusFailed)
 	if err := ctx.db.Model(reduction).Update("name", "L6 reduction photos").Error; err != nil {
 		t.Fatalf("name the Reduction: %v", err)
 	}

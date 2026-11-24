@@ -18,12 +18,12 @@ import (
 
 func createLegacyReduction(t *testing.T, ctx *MahresourcesContext, plan, extent string) *models.ResourceReduction {
 	t.Helper()
-	red := &models.ResourceReduction{Name: "legacy", Status: models.ReductionStatusReady, MatchingMode: "both", Plan: []byte(plan)}
+	legacy := &legacyReduction{ResourceReduction: models.ResourceReduction{Name: "legacy", Status: models.ReductionStatusReady, MatchingMode: "both"}, Plan: []byte(plan)}
 	if extent != "" {
-		red.Extent = []byte(extent)
+		legacy.Extent = []byte(extent)
 	}
-	require.NoError(t, ctx.db.Create(red).Error)
-	return red
+	require.NoError(t, ctx.db.Create(legacy).Error)
+	return &legacy.ResourceReduction
 }
 
 func legacyColumnsAreNull(t *testing.T, ctx *MahresourcesContext, id uint) bool {

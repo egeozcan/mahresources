@@ -72,8 +72,12 @@ func (s *reductionStore) renewComputeLease(id uint, generation string, started, 
 			return nil
 		}
 		held = true
-		return tx.Exec(`UPDATE resource_reductions SET compute_lease_until = ? WHERE id = ? AND compute_generation = ?`,
-			leaseDeadline(now, started), id, generation).Error
+		// compute_deadline follows the lease: it is what the status reads as failed
+		// past, and a compute that renews for longer than the reservation's hour
+		// must not read as failed while it still holds its lease.
+		until := leaseDeadline(now, started)
+		return tx.Exec(`UPDATE resource_reductions SET compute_lease_until = ?, compute_deadline = ? WHERE id = ? AND compute_generation = ?`,
+			until, time.Unix(0, until), id, generation).Error
 	})
 	return held, err
 }
