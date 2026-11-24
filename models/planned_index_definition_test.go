@@ -17,6 +17,10 @@ func TestPlannedIndexDefinitionRefusesCastsThatChangeTheType(t *testing.T) {
 		{"text cast", "CREATE INDEX idx_sim_r1_eff_dist ON public.resource_similarities USING btree (resource_id1, COALESCE((p_distance)::text, (hamming_distance)::text), resource_id2)", false},
 		{"bigint cast on the columns", "CREATE INDEX idx_sim_r1_eff_dist ON public.resource_similarities USING btree (resource_id1, COALESCE((p_distance)::bigint, (hamming_distance)::bigint), resource_id2)", false},
 		{"other columns", "CREATE INDEX idx_sim_r1_eff_dist ON public.resource_similarities USING btree (resource_id1)", false},
+		// Removing the parentheses made these equal to the planned three-key list.
+		{"one expression key folding the third column in", "CREATE INDEX idx_sim_r1_eff_dist ON resource_similarities (resource_id1, COALESCE(p_distance, hamming_distance, resource_id2))", false},
+		{"one parenthesised expression key folding the third column in", "CREATE INDEX idx_sim_r1_eff_dist ON resource_similarities (resource_id1, (COALESCE(p_distance, hamming_distance, resource_id2)))", false},
+		{"two keys", "CREATE INDEX idx_sim_r1_eff_dist ON resource_similarities (resource_id1, (COALESCE(p_distance, hamming_distance, resource_id2)), resource_id2)", false},
 	}
 	for _, c := range cases {
 		if got := index.definitionMatches(c.def); got != c.want {

@@ -66,11 +66,45 @@ var (
 	numericLiteralCast = regexp.MustCompile(`(^|[^a-z0-9_.])([0-9]+)::[a-z_]+`)
 )
 
+// normalizeIndexDefinition reduces a key list to its keys joined by "|". The list
+// is split at the commas outside any parenthesis first, because the commas inside
+// COALESCE(a, b, c) are arguments of one key and the parentheses around a key are
+// only a spelling: dropping the parentheses before the split would make
+// (a, COALESCE(b, c, d)) read as the three keys a, b, c, d.
 func normalizeIndexDefinition(s string) string {
-	s = strings.ToLower(s)
-	s = strings.NewReplacer(" ", "", "\n", "", "\t", "", "(", "", ")", "", `"`, "").Replace(s)
-	s = stringLiteralCast.ReplaceAllString(s, "$1")
-	return numericLiteralCast.ReplaceAllString(s, "$1$2")
+	keys := splitTopLevel(strings.ToLower(s))
+	for i, key := range keys {
+		key = strings.NewReplacer(" ", "", "\n", "", "\t", "", "(", "", ")", "", `"`, "").Replace(key)
+		key = stringLiteralCast.ReplaceAllString(key, "$1")
+		keys[i] = numericLiteralCast.ReplaceAllString(key, "$1$2")
+	}
+	return strings.Join(keys, "|")
+}
+
+// splitTopLevel splits s at the commas that sit outside every parenthesis and
+// outside a quoted name or string literal.
+func splitTopLevel(s string) []string {
+	var keys []string
+	depth, start := 0, 0
+	var quote rune
+	for i, r := range s {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0 // a doubled quote closes and reopens, which lands in the same state
+			}
+		case r == '"' || r == '\'':
+			quote = r
+		case r == '(':
+			depth++
+		case r == ')':
+			depth--
+		case r == ',' && depth == 0:
+			keys = append(keys, s[start:i])
+			start = i + 1
+		}
+	}
+	return append(keys, s[start:])
 }
 
 // isExpression reports an index over an expression (its column list holds a
