@@ -204,26 +204,21 @@ func TestASecondApplyIsRefusedWhileOneIsRunning(t *testing.T) {
 	plan := computeReduction(t, tc, red.ID)
 	owner, restricted := asAdmin()
 
-	running := plan
-	running.LastApply = &models.ReductionLastApply{StartedAt: time.Now()}
-	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
-	require.NoError(t, err)
-	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, running))
+	// A batch is running: its record names it and its apply lease is live.
+	require.NoError(t, tc.AppCtx.HoldApplyLeaseForTest(red.ID, true))
+	before := planOf(t, tc, red.ID).LastApply
+	require.NotNil(t, before)
 
 	// A fresh version, read after the "first" claim.
-	current, err = tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
 	require.NoError(t, err)
 	_, err = tc.AppCtx.ApplyResourceReduction(&query_models.ReductionApply{ID: red.ID, Version: current.Version}, owner, restricted)
 	assert.ErrorIs(t, err, application_context.ErrReductionConflict)
 	assert.True(t, resourceExists(t, tc, plan.Clusters[0].Members[0].ResourceID) && resourceExists(t, tc, plan.Clusters[0].Members[1].ResourceID))
-	assert.True(t, planOf(t, tc, red.ID).LastApply.StartedAt.Equal(running.LastApply.StartedAt), "the running record was not overwritten")
+	assert.True(t, planOf(t, tc, red.ID).LastApply.StartedAt.Equal(before.StartedAt), "the running record was not overwritten")
 
-	// Interrupted: running for longer than the ceiling.
-	stale := plan
-	stale.LastApply = &models.ReductionLastApply{StartedAt: time.Now().Add(-2 * application_context.ReductionApplyCeiling)}
-	current, err = tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
-	require.NoError(t, err)
-	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, stale))
+	// Interrupted: the batch's lease ran out, so a new apply proceeds.
+	require.NoError(t, tc.AppCtx.HoldApplyLeaseForTest(red.ID, false))
 	result := applyReduction(t, tc, red.ID)
 	assert.Len(t, result.Applied, 1)
 }
@@ -350,9 +345,10 @@ func TestKeepsSmallerSuppressionFollowsTheRuleThePlanWasComputedUnder(t *testing
 		"the proposal is still the one the old rule computed, so its warning stays suppressed")
 }
 
-// P1-11b. A plan stored before the flag existed has no KeepsSmaller on a Cluster
-// whose frozen manual promotion keeps a smaller copy. The review derives it at read
-// time, so the card, the figures, the filter and bulk approval all see it.
+// P1-11b. A Cluster whose frozen manual promotion keeps a smaller copy, in a plan
+// with no recorded settings, shows the keeps-smaller warning in the card, the
+// figures, the filter and bulk approval. (Deriving the flag for a plan stored before
+// it existed is the legacy migration's job now, not the read's.)
 func TestKeepsSmallerIsDerivedForAPlanStoredBeforeTheFlag(t *testing.T) {
 	tc := SetupTestEnv(t)
 	owner, restricted := asAdmin()
@@ -368,17 +364,33 @@ func TestKeepsSmallerIsDerivedForAPlanStoredBeforeTheFlag(t *testing.T) {
 	require.True(t, plan.Clusters[0].KeepsSmaller)
 	plan = override(t, tc, red.ID, plan.Clusters[0].ID, application_context.ReductionActionCheck, 0)
 
-	// Rewrite the stored plan as an older release left it: no flag, no settings.
+	// Rewrite the stored plan as an older release left it: a JSON document with no
+	// settings recorded and no keeps-smaller flag on the Cluster, in a Reduction whose
+	// plan is not in tables yet. The flag is derived when the legacy plan is migrated
+	// (reduction_store_migration.go), and the table-backed read shows what it stored.
 	legacy := plan
 	legacy.Settings = nil
-	legacy.Clusters[0].KeepsSmaller = false
-	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
+	for i := range legacy.Clusters {
+		legacy.Clusters[i].KeepsSmaller = false
+	}
+	document, err := json.Marshal(legacy)
 	require.NoError(t, err)
-	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, legacy))
+	require.NoError(t, tc.DB.Exec(`DELETE FROM reduction_members WHERE reduction_id = ?`, red.ID).Error)
+	require.NoError(t, tc.DB.Exec(`DELETE FROM reduction_clusters WHERE reduction_id = ?`, red.ID).Error)
+	// The legacy columns are not part of the current schema; an upgraded database still has them.
+	jsonType := "JSON"
+	if tc.DB.Dialector.Name() == "postgres" {
+		jsonType = "JSONB"
+	}
+	require.NoError(t, tc.DB.Exec(`ALTER TABLE resource_reductions ADD COLUMN plan `+jsonType).Error)
+	require.NoError(t, tc.DB.Exec(`ALTER TABLE resource_reductions ADD COLUMN extent `+jsonType).Error)
+	require.NoError(t, tc.DB.Exec(`UPDATE resource_reductions SET plan = ?, plan_schema = 0, plan_generation = NULL WHERE id = ?`, string(document), red.ID).Error)
+	require.NoError(t, tc.AppCtx.SpoolReductionMigrations())
+	require.NoError(t, tc.AppCtx.MigrateReductionPlans())
 
 	review := reviewOf(t, tc, red.ID, 1, nil)
 	require.Len(t, review.Clusters, 1)
-	assert.True(t, review.Clusters[0].KeepsSmaller, "derived at read time")
+	assert.True(t, review.Clusters[0].KeepsSmaller, "the migration derived the flag the legacy plan never stored")
 	assert.True(t, review.Clusters[0].NeedsAttention)
 	assert.Equal(t, 1, review.ApplyFigures.KeepsSmaller)
 	assert.Equal(t, 0, review.Bulk.IdenticalApprovable, "it needs attention, so the bulk button skips it")
@@ -579,7 +591,6 @@ func TestRecomputeKeepsTheLegacyKeepsSmallerWarning(t *testing.T) {
 	plan = override(t, tc, red.ID, plan.Clusters[0].ID, application_context.ReductionActionPromote, small.ID)
 	legacy := plan
 	legacy.Settings = nil
-	legacy.Clusters[0].KeepsSmaller = false
 	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
 	require.NoError(t, err)
 	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, legacy))
@@ -627,7 +638,7 @@ func TestAbandonedClaimsAreSettledByTheNextApply(t *testing.T) {
 			red := createReduction(t, tc, "Claimed", ids)
 			plan := computeReduction(t, tc, red.ID)
 			cluster := plan.Clusters[0]
-			claimed := tc.AppCtx.ClaimClusterForApplyForTest(red.ID, cluster.ID, cluster.WinnerID, map[uint]string{ids[0]: "r3-claim", ids[1]: "r3-claim"})
+			claimed := tc.AppCtx.StrandClaimForTest(red.ID, cluster.ID)
 			require.NotNil(t, claimed)
 			require.NotEmpty(t, claimed.ClaimID)
 
@@ -663,16 +674,15 @@ func TestASettlementOfAnOldClaimDoesNotTouchANewerClaim(t *testing.T) {
 	setDimensions(t, tc, ids[0], 900, 900)
 	red := createReduction(t, tc, "Generations", ids)
 	cluster := computeReduction(t, tc, red.ID).Clusters[0]
-	approved := map[uint]string{ids[0]: "r3-gen", ids[1]: "r3-gen"}
 
-	first := tc.AppCtx.ClaimClusterForApplyForTest(red.ID, cluster.ID, cluster.WinnerID, approved)
+	first := tc.AppCtx.StrandClaimForTest(red.ID, cluster.ID)
 	require.NotNil(t, first)
 	applyReduction(t, tc, red.ID) // settles the abandoned first claim back to open, then applies nothing
-	second := tc.AppCtx.ClaimClusterForApplyForTest(red.ID, cluster.ID, cluster.WinnerID, approved)
+	second := tc.AppCtx.StrandClaimForTest(red.ID, cluster.ID)
 	require.NotNil(t, second)
 	require.NotEqual(t, first.ClaimID, second.ClaimID)
 
-	tc.AppCtx.ReleaseClaimForTest(red.ID, cluster.ID, first.ClaimID)
+	tc.AppCtx.ReleaseStrandedClaimForTest(red.ID, cluster.ID, first.ClaimID)
 	after := planOf(t, tc, red.ID).Clusters[0]
 	assert.Equal(t, models.ReductionClusterApplied, after.State, "the old claim's settlement found a different claim and did nothing")
 	assert.Equal(t, second.ClaimID, after.ClaimID)
@@ -691,7 +701,7 @@ func TestAClaimedClusterWithAHiddenLoserStaysWithheld(t *testing.T) {
 	f.place(t, f.wide, ids[1])
 	plan := f.compute(t, ids)
 	cluster := plan.Clusters[0]
-	require.NotNil(t, tc.AppCtx.ClaimClusterForApplyForTest(f.red.ID, cluster.ID, cluster.WinnerID, map[uint]string{ids[0]: "r3-hidden-claim", ids[1]: "r3-hidden-claim"}))
+	require.NotNil(t, tc.AppCtx.StrandClaimForTest(f.red.ID, cluster.ID))
 	require.NoError(t, tc.DB.Where("id = ?", ids[1]).Delete(&models.Resource{}).Error)
 
 	review, err := f.narrowCtx.GetReductionReview(f.red.ID, owner, restricted, 1, nil)
@@ -753,7 +763,8 @@ func TestApprovingAClusterStaleForADeletedCopySaysSo(t *testing.T) {
 	ids := clusterOf(t, tc, "r2-stale-msg", 2)
 	red := createReduction(t, tc, "Stale msg", ids)
 	plan := computeReduction(t, tc, red.ID)
-	require.NoError(t, tc.DB.Where("id = ?", ids[1]).Delete(&models.Resource{}).Error)
+	// Through the delete path: the deletion hook is what marks the member gone.
+	require.NoError(t, tc.AppCtx.DeleteResource(ids[1]))
 
 	err := overrideErr(t, tc, red.ID, plan.Clusters[0].ID, application_context.ReductionActionCheck, 0)
 	assert.ErrorIs(t, err, application_context.ErrReductionClusterStale)
@@ -786,18 +797,15 @@ func TestClusterViewCarriesTheLoserCount(t *testing.T) {
 // goes ahead while the claim it was started for is still current.
 func TestAMergeWhoseClaimWasReplacedDeletesNothing(t *testing.T) {
 	tc := SetupTestEnv(t)
-	owner, restricted := asAdmin()
 	ids := clusterOf(t, tc, "r4-claimlost", 2)
 	setDimensions(t, tc, ids[0], 900, 900)
 	red := createReduction(t, tc, "Claim lost", ids)
 	computeReduction(t, tc, red.ID)
 
 	restore := application_context.SetReductionApplyAfterClaimHookForTest(func() {
-		forced := planOf(t, tc, red.ID)
-		forced.Clusters[0].ClaimID = "someone-else"
-		current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
-		require.NoError(t, err)
-		require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, forced))
+		// In place, on the batch's own generation: replacing the plan would end the
+		// batch's ownership, which is a different refusal.
+		require.NoError(t, tc.DB.Exec(`UPDATE reduction_clusters SET claim_id = 'someone-else' WHERE reduction_id = ?`, red.ID).Error)
 	})
 	defer restore()
 
@@ -830,8 +838,7 @@ func TestRecomputeKeepsAnUnsettledClaimsMembersOutOfThePool(t *testing.T) {
 	setDimensions(t, tc, ids[0], 900, 900)
 	red := createReduction(t, tc, "Recompute claim", ids)
 	plan := computeReduction(t, tc, red.ID)
-	require.NotNil(t, tc.AppCtx.ClaimClusterForApplyForTest(red.ID, plan.Clusters[0].ID, plan.Clusters[0].WinnerID,
-		map[uint]string{ids[0]: "r4-recompute", ids[1]: "r4-recompute"}))
+	require.NotNil(t, tc.AppCtx.StrandClaimForTest(red.ID, plan.Clusters[0].ID))
 	after := computeReduction(t, tc, red.ID)
 	require.Len(t, after.Clusters, 1, "no second Cluster was made over the same Resources")
 	assert.Equal(t, models.ReductionClusterApplied, after.Clusters[0].State)
@@ -977,7 +984,8 @@ func TestSettleOnlyReleasesAStrandedClaimAndMergesNothing(t *testing.T) {
 	red := createReduction(t, tc, "Settle", append(append([]uint{}, a...), b...))
 	plan := computeReduction(t, tc, red.ID)
 	cluster := clusterFor(plan, a[0])
-	require.NotNil(t, tc.AppCtx.ClaimClusterForApplyForTest(red.ID, cluster.ID, cluster.WinnerID, map[uint]string{a[0]: "r4-settle-a", a[1]: "r4-settle-a"}))
+	require.NotNil(t, tc.AppCtx.StrandClaimForTest(red.ID, cluster.ID))
+	stranded := planOf(t, tc, red.ID).LastApply // the dead batch's own record
 
 	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
 	require.NoError(t, err)
@@ -987,7 +995,7 @@ func TestSettleOnlyReleasesAStrandedClaimAndMergesNothing(t *testing.T) {
 	after := planOf(t, tc, red.ID)
 	assert.Equal(t, models.ReductionClusterOpen, findClusterByID(after, cluster.ID).State)
 	assert.True(t, findClusterByID(after, cluster.ID).Checked)
-	assert.Nil(t, after.LastApply, "no apply was recorded")
+	assert.Equal(t, stranded, after.LastApply, "no apply was recorded: the dead batch's record is untouched")
 	for _, id := range append(append([]uint{}, a...), b...) {
 		assert.True(t, resourceExists(t, tc, id), "nothing was merged, the other approved Cluster included")
 	}
@@ -1005,7 +1013,7 @@ func TestSettleOnlyLeavesTheVersionAloneForAHiddenClaim(t *testing.T) {
 	f.place(t, f.wide, ids[1])
 	plan := f.compute(t, ids)
 	cluster := plan.Clusters[0]
-	require.NotNil(t, tc.AppCtx.ClaimClusterForApplyForTest(f.red.ID, cluster.ID, cluster.WinnerID, map[uint]string{ids[0]: "r5-hidden-settle", ids[1]: "r5-hidden-settle"}))
+	require.NotNil(t, tc.AppCtx.StrandClaimForTest(f.red.ID, cluster.ID))
 
 	before := versionOf(t, tc, f.red.ID)
 	_, err := f.narrowCtx.ApplyResourceReduction(&query_models.ReductionApply{ID: f.red.ID, Version: before, SettleOnly: true}, owner, restricted)
@@ -1100,7 +1108,7 @@ func TestAppliesCountTheirReconciliationTransitions(t *testing.T) {
 		red := createReduction(t, tc, "Recon", ids)
 		plan := computeReduction(t, tc, red.ID)
 		cluster := plan.Clusters[0]
-		require.NotNil(t, tc.AppCtx.ClaimClusterForApplyForTest(red.ID, cluster.ID, cluster.WinnerID, map[uint]string{ids[0]: "r5-recon", ids[1]: "r5-recon"}))
+		require.NotNil(t, tc.AppCtx.StrandClaimForTest(red.ID, cluster.ID))
 		require.NoError(t, tc.DB.Where("id = ?", ids[1]).Delete(&models.Resource{}).Error)
 		return tc, red.ID, cluster.ID
 	}
@@ -1114,10 +1122,11 @@ func TestAppliesCountTheirReconciliationTransitions(t *testing.T) {
 	t.Run("settle only", func(t *testing.T) {
 		tc, id, _ := setup(t)
 		owner, restricted := asAdmin()
+		stranded := planOf(t, tc, id).LastApply // the dead batch's own record
 		result, err := tc.AppCtx.ApplyResourceReduction(&query_models.ReductionApply{ID: id, Version: versionOf(t, tc, id), SettleOnly: true}, owner, restricted)
 		require.NoError(t, err)
 		assert.Empty(t, result.Stale)
-		assert.Nil(t, planOf(t, tc, id).LastApply)
+		assert.Equal(t, stranded, planOf(t, tc, id).LastApply, "settle-only counts nothing and records nothing")
 	})
 }
 
@@ -1149,7 +1158,7 @@ func TestSettleableClaimsCountsVisibleStrandedClaimsIgnoringFilters(t *testing.T
 	plan := f.compute(t, append(append(append([]uint{}, mine...), hidden...), other...))
 	claim := func(id uint) {
 		c := clusterFor(plan, id)
-		require.NotNil(t, tc.AppCtx.ClaimClusterForApplyForTest(f.red.ID, c.ID, c.WinnerID, map[uint]string{c.Members[0].ResourceID: c.Members[0].Hash, c.Members[1].ResourceID: c.Members[1].Hash}))
+		require.NotNil(t, tc.AppCtx.StrandClaimForTest(f.red.ID, c.ID))
 	}
 	claim(mine[0])
 	claim(hidden[0])
@@ -1242,7 +1251,7 @@ func TestAScopedApplyLeavesAClaimWithAMissingMemberAlone(t *testing.T) {
 	f.place(t, f.narrow, ids...)
 	plan := f.compute(t, ids)
 	cluster := plan.Clusters[0]
-	require.NotNil(t, tc.AppCtx.ClaimClusterForApplyForTest(f.red.ID, cluster.ID, cluster.WinnerID, map[uint]string{ids[0]: "r6-recovery", ids[1]: "r6-recovery"}))
+	require.NotNil(t, tc.AppCtx.StrandClaimForTest(f.red.ID, cluster.ID))
 	require.NoError(t, tc.DB.Where("id = ?", ids[1]).Delete(&models.Resource{}).Error)
 
 	err, applied, stale := f.narrowApply(t, nil, nil)
@@ -1260,7 +1269,7 @@ func TestADeletedKeptCopyReadsAsTheWinnerChanged(t *testing.T) {
 	setDimensions(t, tc, ids[0], 900, 900)
 	red := createReduction(t, tc, "Winner gone", ids)
 	computeReduction(t, tc, red.ID)
-	require.NoError(t, tc.DB.Where("id = ?", ids[0]).Delete(&models.Resource{}).Error)
+	require.NoError(t, tc.AppCtx.DeleteResource(ids[0]))
 	view := reviewOf(t, tc, red.ID, 1, &query_models.ResourceReductionReviewQuery{Status: []string{"stale"}}).Clusters[0]
 	assert.True(t, view.WinnerChanged)
 }
@@ -1285,24 +1294,19 @@ func TestRecomputeIsRefusedWhileAnApplyIsRunning(t *testing.T) {
 	tc := SetupTestEnv(t)
 	owner, restricted := asAdmin()
 	red := createReduction(t, tc, "Compute during apply", clusterOf(t, tc, "r7-compute", 2))
-	plan := computeReduction(t, tc, red.ID)
+	computeReduction(t, tc, red.ID)
 
-	running := plan
-	running.LastApply = &models.ReductionLastApply{StartedAt: time.Now()}
+	// An apply batch is running: its lease is live.
+	require.NoError(t, tc.AppCtx.HoldApplyLeaseForTest(red.ID, true))
 	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
-	require.NoError(t, err)
-	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, running))
-	current, err = tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
 	require.NoError(t, err)
 
 	_, err = tc.AppCtx.RequestReductionCompute(red.ID, current.Version, owner, restricted, nil)
 	assert.ErrorIs(t, err, application_context.ErrReductionConflict)
 	assert.Equal(t, models.ReductionStatusReady, application_context.EffectiveReductionStatus(mustReduction(t, tc, red.ID)), "it did not start computing")
 
-	// Interrupted: past the ceiling, a compute may proceed.
-	stale := plan
-	stale.LastApply = &models.ReductionLastApply{StartedAt: time.Now().Add(-2 * application_context.ReductionApplyCeiling)}
-	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, stale))
+	// Interrupted: the batch's lease ran out, so a compute may proceed.
+	require.NoError(t, tc.AppCtx.HoldApplyLeaseForTest(red.ID, false))
 	current, err = tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
 	require.NoError(t, err)
 	_, err = tc.AppCtx.RequestReductionCompute(red.ID, current.Version, owner, restricted, nil)

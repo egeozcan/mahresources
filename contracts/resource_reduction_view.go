@@ -1,6 +1,7 @@
 package contracts
 
 import (
+	"encoding/json"
 	"time"
 
 	"mahresources/models"
@@ -73,6 +74,12 @@ type ReductionClusterView struct {
 	// NeedsAttention is the plan-level marker a bulk approval refuses to sweep up:
 	// Lossy, Oversized or KeepsSmaller. False on a withheld Cluster.
 	NeedsAttention bool
+	// ReadOnly is history that cannot be acted on (a legacy Cluster over the member
+	// cap). FixedSeed marks a full Near star whose kept copy is the seed every other
+	// member was matched to. Both are properties of the Cluster's own rows, so a
+	// scoped viewer learns nothing about copies it cannot see.
+	ReadOnly  bool
+	FixedSeed bool
 	// KeptDimensions and LargerDimensions ("800×533", "1600×1066") are the two
 	// resolutions the keeps-smaller warning compares: the kept copy's and the
 	// largest copy being removed. LargestMemberID is that larger copy, the one the
@@ -81,6 +88,37 @@ type ReductionClusterView struct {
 	KeptDimensions   string
 	LargerDimensions string
 	LargestMemberID  uint
+
+	// MemberCount is every member the Cluster stores, MembersShown how many this
+	// view carries. They differ when the page's member budget or the 200-member
+	// card cap left some out, and then MoreMembers is true and MembersAfter is the
+	// cursor GET /v1/reduction/members takes ("" starts from the first member).
+	MemberCount  int    `json:"memberCount"`
+	MembersShown int    `json:"membersShown"`
+	MoreMembers  bool   `json:"moreMembers,omitempty"`
+	MembersAfter string `json:"membersAfter,omitempty"`
+	// Truncated counts eligible copies the compute's member cap left out. It is
+	// always zero for a scoped viewer: omitted copies may lie outside their scope,
+	// and a count would say so.
+	Truncated int `json:"truncated,omitempty"`
+}
+
+// ReductionMembersExpect is what a members request says its card looked like. Each
+// field is checked only when present; a mismatch is a version conflict, so a page
+// requested for one render of a card is never appended to another.
+type ReductionMembersExpect struct {
+	// Version is the Reduction version the card was rendered at.
+	Version *uint
+	// WinnerID is the copy the card showed as kept.
+	WinnerID *uint
+}
+
+// ReductionMembersPage is one page of a Cluster's members, hydrated the way the
+// review card shows them.
+type ReductionMembersPage struct {
+	Members []ReductionMemberView
+	// After is the cursor for the next page, and "" when there is none.
+	After string
 }
 
 // ReductionTabCounts is how many Clusters each review tab holds, over the
@@ -187,6 +225,9 @@ type ReductionReview struct {
 	// than surprising them with it.
 	ExtentSize          int
 	EnteredSinceCompute int
+	// EnteredSinceCapped is true when the count stopped at a bound: more Resources
+	// arrived than the report examines, and EnteredSinceCompute is a floor.
+	EnteredSinceCapped bool
 	// ExtentAll is true for a whole-library Reduction: everything the caller can
 	// access, with no named Resources or Groups.
 	ExtentAll bool
@@ -231,6 +272,9 @@ type ReductionApplyOutcome struct {
 	LoserIDs  []uint `json:"loserIds,omitempty"`
 	// Reason is why the Cluster was refused. Empty for one that was applied.
 	Reason string `json:"reason,omitempty"`
+	// WinnerName is the kept Resource's name as the caller may see it, cut to a
+	// bounded length. Empty when the legacy path produced the outcome.
+	WinnerName string `json:"winnerName,omitempty"`
 }
 
 // ReductionApplyResult is the report of one apply.
@@ -248,10 +292,20 @@ type ReductionApplyResult struct {
 	// Errors counts Clusters the batch could not read (a database failure). They are
 	// neither stale nor changed, and are still approved.
 	Errors int `json:"errors"`
+	// AppliedCount, StaleCount and Destroyed are the totals the capped lists above
+	// stop short of: the table-backed apply stops appending to each list at a cap and
+	// says so in More. Zero on the legacy path, whose lists are complete.
+	AppliedCount int  `json:"appliedCount"`
+	StaleCount   int  `json:"staleCount"`
+	Destroyed    int  `json:"destroyed"`
+	More         bool `json:"more"`
 }
 
 // DestroyedCount is how many Resources this apply actually merged away.
 func (r *ReductionApplyResult) DestroyedCount() int {
+	if r.AppliedCount > 0 {
+		return r.Destroyed
+	}
 	total := 0
 	for _, outcome := range r.Applied {
 		total += len(outcome.LoserIDs)
@@ -276,16 +330,30 @@ type ReductionBulkResult struct {
 // stored figure would keep counting Clusters they can no longer see.
 type ReductionProgress struct {
 	// Clusters is every visible Cluster, whatever its state.
-	Clusters int
+	Clusters int `json:"clusters"`
 	// Open is the Clusters still awaiting a decision or an apply, Approved the part
 	// of them that is approved. Skipped, Stale and Applied are the other states.
-	Open     int
-	Approved int
-	Skipped  int
-	Stale    int
+	Open     int `json:"open"`
+	Approved int `json:"approved"`
+	Skipped  int `json:"skipped"`
+	Stale    int `json:"stale"`
 	// Applied is confirmed merges only; Merging is claimed and not yet confirmed.
-	Applied int
-	Merging int
+	Applied int `json:"applied"`
+	Merging int `json:"merging"`
+	// Upgrading is true for a Reduction whose plan is still the legacy document the
+	// background migration has not moved to tables yet: it has no counts, and the
+	// list renders it as being upgraded instead of failing the page.
+	Upgrading bool `json:"upgrading"`
+}
+
+// MarshalJSON writes an upgrading Reduction as {"upgrading":true} and nothing else: it
+// has no counts, and a row of zeros would read as an empty plan.
+func (p ReductionProgress) MarshalJSON() ([]byte, error) {
+	if p.Upgrading {
+		return []byte(`{"upgrading":true}`), nil
+	}
+	type plain ReductionProgress
+	return json.Marshal(plain(p))
 }
 
 // ReductionNamedRef is an entity's id and name.

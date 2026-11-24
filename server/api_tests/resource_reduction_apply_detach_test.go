@@ -7,7 +7,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 	"mahresources/application_context"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -39,17 +38,15 @@ func TestApplySurvivesTheRequestBeingCancelledAfterTheClaim(t *testing.T) {
 	defer cancel()
 	request := tc.AppCtx.WithParentContext(requestCtx)
 
-	// The first write to the row is the batch's claim, the second is the Cluster's.
-	var writes atomic.Int32
+	// The hook runs between a Cluster's claim and its merge: the window the
+	// cancellation must not strand.
 	var cancelled atomic.Bool
-	require.NoError(t, tc.DB.Callback().Update().After("gorm:update").Register("test:cancel_after_cluster_claim", func(db *gorm.DB) {
-		if db.Statement.Table != "resource_reductions" || cancelled.Load() {
-			return
-		}
-		if writes.Add(1) == 2 && cancelled.CompareAndSwap(false, true) {
+	restore := application_context.SetReductionApplyAfterClaimHookForTest(func() {
+		if cancelled.CompareAndSwap(false, true) {
 			cancel()
 		}
-	}))
+	})
+	defer restore()
 
 	_, _ = request.ApplyResourceReduction(&query_models.ReductionApply{
 		ID: red.ID, Version: current.Version,
@@ -86,27 +83,19 @@ func TestApplyRecordsTheLastApplyAndTheOtherWritersKeepIt(t *testing.T) {
 	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
 	require.NoError(t, err)
 
+	// Read the record between the first Cluster's claim and its merge: the batch has
+	// written its record by then and has not finished.
 	var observed atomic.Pointer[models.ReductionLastApply]
-	var reads atomic.Int32
-	var inside atomic.Bool
-	require.NoError(t, tc.DB.Callback().Query().After("gorm:query").Register("test:observe_last_apply", func(db *gorm.DB) {
-		// Reading the row from inside the callback is itself a read of the row.
-		if db.Statement.Table != "resource_reductions" || observed.Load() != nil || !inside.CompareAndSwap(false, true) {
+	restore := application_context.SetReductionApplyAfterClaimHookForTest(func() {
+		if observed.Load() != nil {
 			return
 		}
-		defer inside.Store(false)
-		if reads.Add(1) < 3 {
-			return
-		}
-		row, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
-		if err != nil {
-			return
-		}
-		if p, err := application_context.DecodeReductionPlan(row.Plan); err == nil && p.LastApply != nil {
+		if p, err := tc.AppCtx.PlanForTest(red.ID); err == nil && p.LastApply != nil {
 			cp := *p.LastApply
 			observed.Store(&cp)
 		}
-	}))
+	})
+	defer restore()
 
 	result, err := tc.AppCtx.ApplyResourceReduction(&query_models.ReductionApply{ID: red.ID, Version: current.Version}, owner, restricted)
 	require.NoError(t, err)

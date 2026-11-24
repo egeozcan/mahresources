@@ -8,13 +8,15 @@ import (
 // ResourceReduction is a named, durable proposal to collapse Clusters of
 // Identical and Near-Identical Resources down to one Winner each.
 //
-// The whole feature lives in this one row: the Extent it considers, the plan its
-// clustering job computed, and every decision the reviewer has made about that
-// plan. ADR 0003 records why, in one line: group import's file-backed plan keeps
-// its decisions in an Alpine object that a reload destroys, and derives its
-// authorization from an in-memory job record that is swept an hour after the job
-// finishes. A Reduction is named, accumulated over several sittings and applied
-// in parts, so both of those properties are disqualifying.
+// The row carries the Reduction's identity, settings, status and version; its
+// Extent and its plan (every Cluster, member and decision) are rows of their own
+// tables (ADR 0011), so memory per request stays bounded however large the
+// library is. ADR 0003 records why the work is durable rather than file-backed:
+// group import's plan keeps its decisions in an Alpine object that a reload
+// destroys, and derives its authorization from an in-memory job record that is
+// swept an hour after the job finishes. A Reduction is named, accumulated over
+// several sittings and applied in parts, so both of those properties are
+// disqualifying.
 //
 // It never expires. There is no retention sweep on this table, deliberately —
 // this is domain data someone named and curated, not an artifact like an export
@@ -58,16 +60,6 @@ type ResourceReduction struct {
 	// Winner, stored as a JSON array of criterion tokens.
 	WinnerRule types.JSON `gorm:"type:json" json:"-"`
 
-	// Extent is the ResourceReductionExtent: an explicit Resource set, a Group
-	// set expanded through descendants at compute time, or both. Never flattened
-	// into a URL, and never expanded at rest — a Group's descendants change.
-	Extent types.JSON `gorm:"type:json" json:"-"`
-
-	// Plan is the ResourceReductionPlan: the computed Clusters together with
-	// every decision made about them. One document, three independent writers
-	// (recompute, override, apply), which is what Version is for.
-	Plan types.JSON `gorm:"type:json" json:"-"`
-
 	// ComputedAt is when the plan in this row was produced. Nil before the first
 	// successful compute.
 	ComputedAt *time.Time `json:"computedAt,omitempty"`
@@ -94,6 +86,34 @@ type ResourceReduction struct {
 	// ClaimDownloadHistoryRetry already uses. A stale write is refused, never
 	// merged.
 	Version uint `gorm:"not null;default:0" json:"version"`
+
+	// The columns below belong to the plan-as-tables design (docs/plans/
+	// 2026-11-24-reduction-plan-tables-design.md): the plan is rows of
+	// reduction_clusters and reduction_members, the Extent is rows of the selection
+	// tables. A row written by the previous release still holds both as JSON
+	// documents in `plan` and `extent` columns this model does not name, so no
+	// ordinary load can read them; the background migration alone does, through its
+	// own SQL. None of these is part of the API.
+
+	// PlanSchema is 0 for a legacy JSON plan and 1 for one in tables. AutoMigrate's
+	// backfill of the default marks every existing row legacy; the migration is the
+	// only writer of 0 to 1.
+	PlanSchema int `gorm:"not null;default:0" json:"-"`
+	// ExtentAll is the whole-library flag, moved out of the Extent JSON.
+	ExtentAll bool `gorm:"not null;default:false" json:"-"`
+	// PlanGeneration names the generation of Cluster rows the plan is; nil until one has landed.
+	PlanGeneration *string `gorm:"size:64" json:"-"`
+	// ComputeGeneration names the running compute's staging generation.
+	ComputeGeneration *string `gorm:"size:64" json:"-"`
+	// SettleOp and SettleLeaseUntil are settle-only's own fence.
+	SettleOp         *string `gorm:"size:64" json:"-"`
+	SettleLeaseUntil int64   `gorm:"not null;default:0" json:"-"`
+	// The leases are Unix nanoseconds, so a check never compares text timestamps on SQLite.
+	ComputeLeaseUntil int64      `gorm:"not null;default:0" json:"-"`
+	ApplyLeaseUntil   int64      `gorm:"not null;default:0" json:"-"`
+	Coverage          types.JSON `gorm:"type:json" json:"-"`
+	PlanSettings      types.JSON `gorm:"type:json" json:"-"`
+	LastApply         types.JSON `gorm:"type:json" json:"-"`
 }
 
 func (r ResourceReduction) GetId() uint {
@@ -122,6 +142,10 @@ const (
 )
 
 // Cluster tiers.
+// MaxClusterMembers is the most members one Cluster holds, in compute, in storage
+// and on the page (design D6).
+const MaxClusterMembers = 200
+
 const (
 	// ReductionTierIdentical is byte-identity: same content hash, any content
 	// type. A fact.
@@ -200,6 +224,15 @@ type ReductionLastApply struct {
 	ClusterIDs []string `json:"clusterIds,omitempty"`
 	// RequestID is the client's own id for the apply that wrote this record.
 	RequestID string `json:"requestId,omitempty"`
+	// BatchID, Generation, ExpectedClusters and ExpectedLosers belong to the plan-as-
+	// tables apply (design D10): the server-generated id the batch's stamp and every
+	// outcome carry, the plan generation it pinned, and the counts the request
+	// confirmed. A record written before them has none, and its counts cannot be
+	// checked against any Cluster.
+	BatchID          string `json:"batchId,omitempty"`
+	Generation       string `json:"generation,omitempty"`
+	ExpectedClusters int    `json:"expectedClusters,omitempty"`
+	ExpectedLosers   int    `json:"expectedLosers,omitempty"`
 }
 
 // ReductionCoverage reports how much of the Extent the clustering could actually

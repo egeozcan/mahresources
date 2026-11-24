@@ -33,7 +33,7 @@ func TestAWholeLibraryReductionCoversEveryResource(t *testing.T) {
 	addResourceWithBody(t, tc, "single.txt", "single")
 
 	red := createWholeLibrary(t, tc, tc.AppCtx, "Everything")
-	extent, err := application_context.DecodeReductionExtent(red.Extent)
+	extent, err := tc.AppCtx.ExtentForTest(red.ID)
 	require.NoError(t, err)
 	assert.True(t, extent.All)
 	assert.Empty(t, extent.ResourceIDs)
@@ -152,7 +152,7 @@ func TestCreatingAWholeLibraryReductionOverTheRoutes(t *testing.T) {
 
 	red, err := tc.AppCtx.GetResourceReduction(uint(created["id"].(float64)), owner, restricted)
 	require.NoError(t, err)
-	extent, err := application_context.DecodeReductionExtent(red.Extent)
+	extent, err := tc.AppCtx.ExtentForTest(red.ID)
 	require.NoError(t, err)
 	assert.True(t, extent.All)
 

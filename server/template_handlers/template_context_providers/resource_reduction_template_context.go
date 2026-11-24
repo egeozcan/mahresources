@@ -83,11 +83,9 @@ func ResourceReductionListContextProvider(context ResourceReductionPageContext) 
 		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
 
-		reductions, err := context.GetResourceReductions(int(offset), constants.MaxResultsPerPage, &query)
-		if err != nil {
-			return addErrContext(err, baseContext)
-		}
-		count, err := context.GetResourceReductionCount(&query)
+		// Rows, count and each row's progress from one snapshot, so a Reduction that
+		// finishes between them cannot be on the page and missing from the count.
+		reductions, count, progress, err := context.ListResourceReductions(int(offset), constants.MaxResultsPerPage, &query)
 		if err != nil {
 			return addErrContext(err, baseContext)
 		}
@@ -100,15 +98,17 @@ func ResourceReductionListContextProvider(context ResourceReductionPageContext) 
 			return addErrContext(err, baseContext)
 		}
 
-		progress, err := context.GetReductionProgress(reductions)
-		if err != nil {
-			return addErrContext(err, baseContext)
-		}
 		rows := make([]reductionRow, 0, len(reductions))
 		for i := range reductions {
 			row := describeReduction(&reductions[i])
 			row.Progress = progress[reductions[i].ID]
-			row.DonePercent, row.ActionKind, row.ActionLabel = describeProgress(row.Progress, row.StatusEffective)
+			row.Upgrading = row.Progress.Upgrading
+			if row.Upgrading {
+				// No counts yet: the card says so instead of reading as an empty plan.
+				row.ActionKind, row.ActionLabel = "upgrading", "Being upgraded"
+			} else {
+				row.DonePercent, row.ActionKind, row.ActionLabel = describeProgress(row.Progress, row.StatusEffective)
+			}
 			rows = append(rows, row)
 		}
 
@@ -149,10 +149,6 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 		}
 
 		owner, restricted := reductionScope(auth.PrincipalFromContext(request.Context()))
-		reduction, err := context.GetResourceReduction(uint(id), owner, restricted)
-		if err != nil {
-			return addErrContext(err, baseContext)
-		}
 
 		page := http_utils.GetPageParameter(request)
 		var reviewQuery query_models.ResourceReductionReviewQuery
@@ -177,7 +173,7 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 
 		// One source for the whole page: the version the figures and the apply token
 		// were read at, not an earlier read of the row.
-		reduction = review.Reduction
+		reduction := review.Reduction
 
 		if redirect := outOfRangePageRedirect(request, int64(review.ClusterCount), review.PageSize, page); redirect != nil {
 			return redirect
@@ -206,6 +202,9 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 				"groupCount":    review.SelectedGroups,
 				"resolvedSize":  review.ExtentSize,
 				"enteredSince":  review.EnteredSinceCompute,
+				// The count stopped at the report's bound: it is a floor ("N+"), and
+				// with none counted it says only that a great many arrived.
+				"enteredSinceCapped": review.EnteredSinceCapped,
 			},
 			"winnerCriteria":  allWinnerCriteria(),
 			"winnerRuleSlots": winnerRuleSlots(application_context.DecodeWinnerRule(reduction.WinnerRule)),
@@ -404,7 +403,10 @@ type reductionRow struct {
 	// Progress, DonePercent and the action are filled on the list page only, from
 	// the Clusters the viewer may see. DonePercent is the share of those that are
 	// applied or skipped. ActionKind is one of find, continue, view or retry.
-	Progress    contracts.ReductionProgress
+	Progress contracts.ReductionProgress
+	// Upgrading is true for a Reduction whose plan the migration has not moved to
+	// tables yet: it has no counts and offers no action until it does.
+	Upgrading   bool
 	DonePercent int
 	ActionKind  string
 	ActionLabel string

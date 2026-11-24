@@ -46,7 +46,7 @@ func TestContainmentWritersRederiveTheirScope(t *testing.T) {
 	}
 	exempt := map[string]string{
 		"deleteGroupInTransaction": "delete helper; its callers (DeleteGroup, BulkDeleteGroups, MergeGroups) rescope first",
-		"deleteResourceDBOnly":     "delete helper; its callers (BulkDeleteResources, MergeResourcesLocking) rescope first",
+		"deleteResourcesDBOnly":    "delete helper; its callers (BulkDeleteResources, MergeResourcesLocking) rescope first",
 		"deleteNoteInTransaction":  "delete helper; its callers (DeleteNote, BulkDeleteNotes) rescope first",
 	}
 	// Each signature is a set of substrings that must all appear in one body.
@@ -55,7 +55,7 @@ func TestContainmentWritersRederiveTheirScope(t *testing.T) {
 		{`Update("owner_id"`},
 		{"ResourceVersion{}", `"resource_id":`}, // re-pointing versions at another resource
 		{"deleteGroupInTransaction("},
-		{"deleteResourceDBOnly("},
+		{"deleteResourcesDBOnly("},
 		{"deleteNoteInTransaction("},
 	}
 

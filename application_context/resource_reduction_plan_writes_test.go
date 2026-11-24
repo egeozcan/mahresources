@@ -5,81 +5,126 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
-	"sort"
+	"regexp"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"gorm.io/gorm"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"mahresources/models"
+	"mahresources/models/query_models"
 )
 
-// The plan document has several independent writers, and everything the plan
-// carries beyond its Clusters (the settings the compute ran with, the record of
-// the last apply) survives only because each writer decodes the whole plan and
-// writes the whole plan back. A new site that built a plan from scratch would drop
-// them without any test failing. So every write of the row's "plan" column goes
-// through a known site, and adding one means deciding here how it preserves them.
-func TestEveryPlanWriteGoesThroughAKnownSite(t *testing.T) {
-	known := map[string]string{
-		"storeReductionPlan":                "compute's landing: rebuilds the Clusters, carries LastApply over from the plan it replaces",
-		"mutatePlan":                        "every bookkeeping write: decodes and re-encodes the whole plan",
-		"overrideReductionClusterOnce":      "a review decision: decodes and re-encodes the whole plan",
-		"bulkOverrideReductionClustersOnce": "a bulk decision: decodes and re-encodes the whole plan",
-		"claimReductionApplyBatch":          "the batch claim: decodes the plan, sets LastApply running, re-encodes",
-		"reductionMergeHooks":               "the merge's in-transaction confirmation: decodes the locked row's plan and re-encodes it whole",
-		"recordStaleLocked":                 "the early stale outcome, under the Reduction row lock and the members' locks: decodes and re-encodes the whole plan",
-		"settleReductionClaims":             "settle-only: decodes the plan, reconciles claims, re-encodes it whole",
-		"OverwritePlanForTest":              "test seam",
+// The plan is rows (ADR 0011), and every invariant over them (derived columns,
+// lock order, fences, the deletion hook's re-derivation) is kept by the store's own
+// writers. A write from anywhere else would bypass all of it without any test
+// failing, so a statement that writes one of the plan tables, or touches one through
+// its model, may appear only in the store files.
+func TestPlanTablesAreWrittenOnlyByTheStore(t *testing.T) {
+	tables := `(reduction_clusters|reduction_members|reduction_extent_resources|reduction_extent_groups|reduction_extent|reduction_seeds|reduction_deleted_ids|reduction_migration_rows|reduction_migrations|resource_cleanup_manifest)`
+	sqlWrite := regexp.MustCompile(`(?is)\b(insert\s+into|update|delete\s+from)\s+` + "`?\"?" + tables + `\b`)
+	models := map[string]bool{
+		"ReductionClusterRow": true, "ReductionMemberRow": true, "ReductionExtentResource": true, "ReductionExtentGroup": true,
+		"ReductionExtentRow": true, "ReductionSeed": true, "ReductionDeletedID": true, "ReductionMigrationRow": true,
+		"ReductionMigration": true, "ResourceCleanupManifest": true,
 	}
+	store := regexp.MustCompile(`^(reduction_[a-z_]*store[a-z_]*|reduction_deletion|resource_delete_stage|reduction_test_seams|reduction_legacy_model)\.go$`)
 
 	files, err := filepath.Glob("*.go")
 	require.NoError(t, err)
-
-	found := map[string][]string{}
+	checked := 0
 	for _, file := range files {
-		if filepath.Ext(file) != ".go" || len(file) > 8 && file[len(file)-8:] == "_test.go" {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		checked++
+		if store.MatchString(file) {
 			continue
 		}
 		parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
 		require.NoError(t, err)
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
+		ast.Inspect(parsed, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.BasicLit:
+				if x.Kind == token.STRING {
+					if value, err := strconv.Unquote(x.Value); err == nil && sqlWrite.MatchString(value) {
+						t.Errorf("%s writes a plan table with SQL outside the store: %.80q", file, value)
+					}
+				}
+			case *ast.SelectorExpr:
+				if pkg, ok := x.X.(*ast.Ident); ok && pkg.Name == "models" && models[x.Sel.Name] {
+					t.Errorf("%s names models.%s outside the store", file, x.Sel.Name)
+				}
 			}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				kv, ok := n.(*ast.KeyValueExpr)
-				if !ok {
-					return true
-				}
-				lit, ok := kv.Key.(*ast.BasicLit)
-				if !ok || lit.Kind != token.STRING {
-					return true
-				}
-				if value, err := strconv.Unquote(lit.Value); err == nil && value == "plan" {
-					found[fn.Name.Name] = append(found[fn.Name.Name], file)
-				}
-				return true
-			})
+			return true
+		})
+	}
+	require.Greater(t, checked, 100, "the guard scanned the package")
+}
+
+// The legacy `plan` and `extent` documents are megabytes per row on a library that
+// ran a whole-library Reduction, and a SELECT * ships them on every fence, lease
+// renewal and page. So no ordinary entry point may select them: every statement an
+// entry point issues against resource_reductions names reductionColumns, and the
+// documents cross the wire only in the migration. The run is against a row whose
+// legacy columns hold multi-megabyte documents, and records the SQL actually sent.
+func TestNoOrdinaryQuerySelectsTheLegacyPlanOrExtent(t *testing.T) {
+	ctx := newReductionSQLiteContext(t)
+	require.NoError(t, models.EnsureSimilarityDistanceIndexes(ctx.db))
+	big := []byte(`{"clusters":[],"pad":"` + strings.Repeat("x", 3<<20) + `"}`)
+	legacy := &legacyReduction{ResourceReduction: models.ResourceReduction{Name: "legacy", Status: models.ReductionStatusReady, MatchingMode: "both"}, Plan: big, Extent: big}
+	require.NoError(t, ctx.db.Create(legacy).Error)
+	current := &models.ResourceReduction{Name: "current", Status: models.ReductionStatusReady, MatchingMode: "both", PlanSchema: 1}
+	require.NoError(t, ctx.db.Create(current).Error)
+
+	var mu sync.Mutex
+	var statements []string
+	record := func(tx *gorm.DB) {
+		sql := tx.Statement.SQL.String()
+		if strings.Contains(sql, "resource_reductions") {
+			mu.Lock()
+			statements = append(statements, sql)
+			mu.Unlock()
 		}
 	}
+	const name = "test:record_reduction_sql"
+	require.NoError(t, ctx.db.Callback().Query().After("gorm:query").Register(name, record))
+	require.NoError(t, ctx.db.Callback().Row().After("gorm:row").Register(name, record))
+	t.Cleanup(func() { _ = ctx.db.Callback().Query().Remove(name); _ = ctx.db.Callback().Row().Remove(name) })
 
-	var sites []string
-	for name := range found {
-		sites = append(sites, name)
+	rows := []*models.ResourceReduction{&legacy.ResourceReduction, current}
+	for _, r := range rows {
+		_, _ = ctx.GetResourceReduction(r.ID, nil, false)
+		_, _ = ctx.GetReductionReview(r.ID, nil, false, 1, &query_models.ResourceReductionReviewQuery{})
+		_, _ = ctx.GetReductionClusterMembers(r.ID, nil, false, "none", "")
+		_, _ = ctx.OverrideReductionCluster(&query_models.ReductionOverride{ID: r.ID, Version: r.Version, ClusterID: "none", Action: ReductionActionSkip}, nil, false)
+		_, _ = ctx.BulkOverrideReductionClusters(&query_models.ReductionBulkOverride{ID: r.ID, Version: r.Version, Action: ReductionActionCheck, ClusterIDs: []string{"none"}}, nil, false)
+		_, _ = ctx.ApplyResourceReduction(&query_models.ReductionApply{ID: r.ID, Version: r.Version}, nil, false)
+		_, _ = ctx.UpdateResourceReductionSettings(&query_models.ResourceReductionEditor{ID: r.ID, Version: r.Version, Name: "renamed"}, nil, false)
+		_, _ = ctx.CreateOrExtendResourceReduction(&query_models.ResourceReductionCreator{ID: r.ID, ResourceIds: []uint{1}}, nil, false)
+		_, _ = ctx.RequestReductionCompute(r.ID, r.Version, nil, false, nil)
 	}
-	sort.Strings(sites)
-	for _, name := range sites {
-		_, allowed := known[name]
-		assert.True(t, allowed, "%s (%v) writes the plan column and is not a known site", name, found[name])
+	_, _ = ctx.GetResourceReductions(0, 20, &query_models.ResourceReductionQuery{})
+	_, _ = ctx.GetResourceReductionCount(&query_models.ResourceReductionQuery{})
+	_, _, _, _ = ctx.ListResourceReductions(0, 20, &query_models.ResourceReductionQuery{})
+	_, _ = ctx.GetReductionProgress([]models.ResourceReduction{legacy.ResourceReduction, *current})
+	_, _, _ = ctx.copyReductionsBatch("", 20, time.Now())
+
+	legacyColumn := regexp.MustCompile("(?i)[\\s,.`\"(](plan|extent)[\\s,`\"),]")
+	require.NotEmpty(t, statements, "the entry points issued no statement against resource_reductions")
+	for _, sql := range statements {
+		assert.False(t, strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "SELECT *"), "an unprojected load of resource_reductions: %s", sql)
+		assert.NotRegexp(t, legacyColumn, strings.SplitN(sql, " FROM ", 2)[0], "a statement selects the legacy plan or extent: %s", sql)
 	}
-	for name := range known {
-		_, present := found[name]
-		assert.True(t, present, "%s is listed as a plan write site but no longer writes the plan; remove it", name)
-	}
+	var plan, extent int
+	require.NoError(t, ctx.db.Raw(`SELECT length(plan), length(extent) FROM resource_reductions WHERE id = ?`, legacy.ID).Row().Scan(&plan, &extent))
+	assert.Greater(t, plan, 3<<20, "the legacy documents are still on the row: nothing ordinary rewrote or dropped them")
 }
 
 // A record still running past the ceiling is one whose process died or whose batch

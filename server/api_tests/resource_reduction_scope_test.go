@@ -279,8 +279,16 @@ func TestTheExtentCountsShrinkWithTheReviewersAccess(t *testing.T) {
 	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", visible.ID).Update("owner_id", narrow.ID).Error)
 	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id = ?", hidden.ID).Update("owner_id", elsewhere.ID).Error)
 
+	// A confined creator may not name a Group outside their subtree (refused whole),
+	// so the selection that outgrows a reviewer's access is one an administrator
+	// made, or one made before the reviewer's subtree shrank.
 	wideCtx := scopedTo(t, tc, wide.ID)
-	red, err := wideCtx.CreateOrExtendResourceReduction(&query_models.ResourceReductionCreator{
+	_, err = wideCtx.CreateOrExtendResourceReduction(&query_models.ResourceReductionCreator{
+		Name: "Refused", GroupIds: []uint{wide.ID, elsewhere.ID},
+	}, owner, restricted)
+	require.ErrorIs(t, err, application_context.ErrReductionGroupNotVisible)
+
+	red, err := tc.AppCtx.CreateOrExtendResourceReduction(&query_models.ResourceReductionCreator{
 		Name:        "Shrinking extent",
 		ResourceIds: []uint{visible.ID, hidden.ID},
 		GroupIds:    []uint{wide.ID, elsewhere.ID},

@@ -24,6 +24,27 @@ export const HINTS = {
   custom: '',
 };
 
+/**
+ * The name a save sends: the typed one when the reviewer changed it, nothing
+ * otherwise. The form shows the name cut to a display bound, so sending it back
+ * unchanged would overwrite a longer stored name with its own truncation; the
+ * server leaves the name alone when none is sent.
+ */
+export function nameToSend(typed, shown, original = shown) {
+  return isNameEdited(typed, shown, original) ? typed : '';
+}
+
+/**
+ * Whether the reviewer changed the name. Unchanged means the field still holds what it
+ * was given: its default value, or the stored name as a single-line input keeps it (a
+ * text input drops line breaks from its value, so a stored name containing one never
+ * equals its own default). The stored name is compared exactly, from the server's state.
+ */
+export function isNameEdited(typed, shown, original = shown) {
+  if (typed === shown || typed === original) return false;
+  return typed !== String(original ?? '').replace(/[\r\n]/g, '');
+}
+
 export function matchPreset(tokens) {
   for (const [name, rule] of Object.entries(PRESETS)) {
     if (rule.length === tokens.length && rule.every((c, i) => c === tokens[i])) return name;
@@ -151,16 +172,19 @@ export function reductionSettingsForm(rule) {
       if (this.reconcile()) return;
       this.notice = '';
       const data = new FormData(form);
+      const typedName = data.get('name') || '';
+      const shownName = form.elements.namedItem('name')?.defaultValue;
+      const storedName = review.serverSettings?.name ?? shownName;
+      const renamed = isNameEdited(typedName, shownName, storedName);
       const body = {
         id: review.reductionId,
         version: review.version,
-        name: data.get('name') || '',
+        name: nameToSend(typedName, shownName, storedName),
         matchingMode: data.get('matchingMode') || 'both',
         winnerRule: this.slots.filter(Boolean),
         keepAsVersionNear: this.$refs.keepNear.checked,
         keepAsVersionIdentical: this.$refs.keepIdentical.checked,
       };
-      const renamed = body.name !== form.elements.namedItem('name')?.defaultValue;
       this.saving = true;
       this.saved = false;
       this.error = '';
@@ -185,7 +209,7 @@ export function reductionSettingsForm(rule) {
         if (!response.ok) throw new Error(await window.errorMessageFromResponse(response));
         const saved = await response.json();
         this.synced = {
-          name: body.name,
+          name: renamed ? typedName : storedName,
           matchingMode: body.matchingMode,
           winnerRule: body.winnerRule,
           keepAsVersionNear: body.keepAsVersionNear,

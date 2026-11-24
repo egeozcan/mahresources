@@ -1,7 +1,9 @@
 package api_handlers
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"reflect"
 	"strings"
@@ -66,6 +68,21 @@ func tryFillStructValuesFromRequestWithLimit(dst any, w http.ResponseWriter, req
 	return tryFillStructValuesFromRequest(dst, request)
 }
 
+type boundedBodyKey struct{}
+
+// MarkBodyBounded returns r marked as one whose body a route capped (design D14b). A JSON
+// decode of such a request reads to the end of the body, so bytes after the value count
+// against the cap too. The mark rides on the request's context rather than on a wrapper
+// type of the body, so a later wrapper (the global JSON cap) cannot hide it.
+func MarkBodyBounded(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), boundedBodyKey{}, true))
+}
+
+func bodyIsBounded(r *http.Request) bool {
+	b, _ := r.Context().Value(boundedBodyKey{}).(bool)
+	return b
+}
+
 func tryFillStructValuesFromRequest(dst any, request *http.Request) error {
 	contentTypeHeader := request.Header.Get("Content-type")
 
@@ -73,7 +90,18 @@ func tryFillStructValuesFromRequest(dst any, request *http.Request) error {
 		// KAN-22: No JSON body size limit is by design. Mahresources is a personal information
 		// management application designed to run on private/internal networks with no authentication
 		// layer. All users are trusted, and large JSON payloads are expected for bulk operations.
-		return json.NewDecoder(request.Body).Decode(dst) // KAN-22: no size limit by design — internal network app, all users trusted
+		if err := json.NewDecoder(request.Body).Decode(dst); err != nil { // KAN-22: no size limit by design — internal network app, all users trusted
+			return err
+		}
+		// The decoder stops at the end of the value. On a route with a limit, whatever
+		// follows must fit the limit too, or a valid value plus megabytes of whitespace
+		// commits past it; reading on reports the cap.
+		if bodyIsBounded(request) {
+			if _, err := io.Copy(io.Discard, request.Body); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
 	if strings.HasPrefix(contentTypeHeader, constants.UrlEncodedForm) {
@@ -95,9 +123,27 @@ func tryFillStructValuesFromRequest(dst any, request *http.Request) error {
 		if err := decoder.Decode(dst, request.PostForm); err != nil {
 			return err
 		}
+		// The parser stops at the closing boundary. On a route with a limit, an
+		// epilogue after it must fit the limit too, or a valid form plus megabytes
+		// of padding commits past it; reading on reports the cap.
+		if bodyIsBounded(request) {
+			if _, err := io.Copy(io.Discard, request.Body); err != nil {
+				return err
+			}
+		}
 		// gorilla/schema converter doesn't work for slice fields; parse manually
 		query_models.FillMetaQueryFromRequest(request, dst)
 		return nil
+	}
+
+	// A content type no decoder above reads falls back to the query string and never
+	// touches the body. On a route with a limit the body must fit it anyway, or
+	// megabytes of padding ride along with a request that still commits; reading on
+	// reports the cap.
+	if bodyIsBounded(request) && request.Body != nil {
+		if _, err := io.Copy(io.Discard, request.Body); err != nil {
+			return err
+		}
 	}
 
 	if err := decoder.Decode(dst, request.URL.Query()); err != nil {

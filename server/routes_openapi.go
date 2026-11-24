@@ -3160,7 +3160,7 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		Path:        "/v1/reductions",
 		OperationID: "listResourceReductions",
 		Summary:     "List Resource Reductions",
-		Description: "Returns the Resource Reductions the caller may see. Administrators see every one; every other principal sees only the ones it created.",
+		Description: "Returns the Resource Reductions the caller may see. Administrators see every one; every other principal sees only the ones it created. The body is {reductions, count, page, progress}: progress maps each listed Reduction id to its Cluster counts, and a Reduction whose plan the background migration has not yet moved to tables has progress.upgrading true and no counts.",
 		Tags:        []string{"reductions"},
 		// Spelled out rather than derived from ResourceReductionQuery, which also
 		// carries the two owner fields — those are the visibility decision and are
@@ -3172,6 +3172,23 @@ func registerDownloadRoutes(r *openapi.Registry) {
 			{Name: "sortBy", Type: "string", Description: "Sort column, e.g. `created_at desc`. Repeat for several."},
 		},
 		Paginated:            true,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodGet,
+		Path:        "/v1/reduction/members",
+		OperationID: "listResourceReductionClusterMembers",
+		Summary:     "List more members of a Resource Reduction Cluster",
+		Description: "Returns up to 200 members of one Cluster after a cursor, for a review card the page cut short (the page's member budget, or a Cluster over 200 members). `after` is the `membersAfter` cursor the review gave; empty starts from the first member. A Cluster the caller may not fully see answers as an unknown one. A Reduction whose plan the background migration has not yet moved to tables answers 503 until it has.",
+		Tags:        []string{"reductions"},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "id", Type: "integer", Required: true, Description: "The Reduction's id."},
+			{Name: "cluster", Type: "string", Required: true, Description: "The Cluster's key."},
+			{Name: "after", Type: "string", Description: "The cursor to continue from; empty starts at the first member."},
+			{Name: "version", Type: "integer", Description: "The Reduction version the card was rendered at. When sent, a different current version is refused with 409."},
+			{Name: "winner", Type: "integer", Description: "The id of the copy the card showed as kept. When sent, a Cluster that keeps a different copy is refused with 409."},
+		},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 
@@ -3229,7 +3246,7 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		Path:                 "/v1/reduction/cluster",
 		OperationID:          "overrideResourceReductionCluster",
 		Summary:              "Record a review decision about one Cluster",
-		Description:          "Promotes a member to Winner, ejects or restores a member, skips or reopens a Cluster, or checks and unchecks it. Promotion is refused when it would demote a Winner outside the Extent, and on the Near-Identical tier it ejects any Loser with no stored pair to the new Winner. Carries the version the caller last saw; a stale one is refused with 409.",
+		Description:          "Promotes a member to Winner, ejects or restores a member, skips or reopens a Cluster, or checks and unchecks it. Promotion is refused when it would demote a Winner outside the Extent, and on the Near-Identical tier it ejects any Loser with no stored pair to the new Winner. Checking an unusually large Near-Identical Cluster needs `acknowledgeOversized`. A `membersSeen` that is sent, zero included, must equal the Cluster's copy count or the check is refused with 400; leaving it out lets the acknowledgement alone stand. A `winnerId` that is sent must be the copy the Cluster keeps, or the check is refused with 409. Carries the version the caller last saw; a stale one is refused with 409.",
 		Tags:                 []string{"reductions"},
 		RequestType:          reductionOverrideType,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
@@ -3241,7 +3258,7 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		Path:                 "/v1/reduction/clusters",
 		OperationID:          "bulkCheckResourceReductionClusters",
 		Summary:              "Check or uncheck many Clusters of a Resource Reduction at once",
-		Description:          "Approves (check) or clears (uncheck) either the listed Cluster ids, any tier, or every open Identical Cluster (allIdentical, which needs the expectedCount the caller saw and never reaches the Near-Identical tier). A check leaves alone every Cluster that needs individual review (lossy, oversized, or keeping a lower-resolution copy) and counts them in needsReview. An unknown Cluster, or one the caller may not see, refuses the whole request like a single unknown Cluster; so does one that is not open. Carries the version the caller last saw; a stale one is refused with 409. Returns the new version, how many Clusters changed and how many need review.",
+		Description:          "Approves (check) or clears (uncheck) either the listed Cluster ids, any tier, or every open Identical Cluster (allIdentical, which needs the expectedCount the caller saw and never reaches the Near-Identical tier). A check leaves alone every Cluster that needs individual review (lossy, oversized, or keeping a lower-resolution copy) and counts them in needsReview. An unknown Cluster, or one the caller may not see, refuses the whole request like a single unknown Cluster; so does one that is not open. Carries the version the caller last saw; a stale one is refused with 409. Naming more than 500 Cluster ids is refused with 400. A Reduction whose plan the background migration has not yet moved to tables is refused with 503 until it has. Returns the new version, how many Clusters changed and how many need review.",
 		Tags:                 []string{"reductions"},
 		RequestType:          reductionBulkType,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
@@ -3253,7 +3270,7 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		Path:                 "/v1/reduction/apply",
 		OperationID:          "applyResourceReduction",
 		Summary:              "Apply a Resource Reduction's checked Clusters",
-		Description:          "Merges every checked Cluster's Losers into its Winner and deletes them. This cannot be undone. Applying is partial and repeatable: unchecked Clusters stay open, and a Cluster whose Resources changed since it was reviewed is refused, marked stale, named in the response and kept. Carries the version the caller last saw; a stale one is refused with 409 before anything is destroyed.",
+		Description:          "Merges every checked Cluster's Losers into its Winner and deletes them. This cannot be undone. Applying is partial and repeatable: unchecked Clusters stay open, and a Cluster whose Resources changed since it was reviewed is refused, marked stale and kept. The response lists each merged Cluster in `applied` and each refused one in `stale`, but each list stops at 200 entries: `appliedCount` and `staleCount` are the full totals, `destroyed` is the number of Resources merged away, and `more` is true when either list was cut short. `changed` counts Clusters that were approved when the batch began and that another decision (unchecked, skipped or changed) moved before their turn: they are left as that decision set them, so one that was unchecked is no longer approved. `errors` counts Clusters the batch could not read; those stay approved. Carries the version the caller last saw; a stale one is refused with 409 before anything is destroyed.",
 		Tags:                 []string{"reductions"},
 		RequestType:          reductionApplyType,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},

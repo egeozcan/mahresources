@@ -55,7 +55,11 @@ type clusterCandidate struct {
 // So a Cluster holds at most one out-of-Extent member, always as its Winner, and
 // "nothing outside the Extent is ever destroyed" is structural rather than a rule
 // apply has to remember.
-func buildCluster(tier string, candidates []clusterCandidate, rule []string) *models.ReductionCluster {
+//
+// fixedSeed, when nonzero, names the candidate a full Near star keeps whatever the
+// Winner Rule says: the seed every other member was matched to (design D5). Its
+// justification is then the seed itself, no margin, never undecided.
+func buildCluster(tier string, candidates []clusterCandidate, rule []string, fixedSeed uint) *models.ReductionCluster {
 	if len(candidates) < 2 {
 		return nil
 	}
@@ -96,9 +100,28 @@ func buildCluster(tier string, candidates []clusterCandidate, rule []string) *mo
 		return nil
 	}
 
+	var decidedBy, margin string
+	var undecided bool
+	if fixedSeed != 0 {
+		// The seed leads, the rest keep their Winner Rule order.
+		for i := range kept {
+			if kept[i].Resource.ID == fixedSeed {
+				seed := kept[i]
+				copy(kept[1:i+1], kept[:i])
+				kept[0] = seed
+				break
+			}
+		}
+		if kept[0].Resource.ID != fixedSeed {
+			return nil
+		}
+		decidedBy = models.SeedCriterion
+	}
 	winner := kept[0]
 	runnerUp := kept[1]
-	decidedBy, margin, undecided := models.DecidingCriterion(rule, winner.WinnerCandidate, runnerUp.WinnerCandidate)
+	if fixedSeed == 0 {
+		decidedBy, margin, undecided = models.DecidingCriterion(rule, winner.WinnerCandidate, runnerUp.WinnerCandidate)
+	}
 
 	members := make([]*models.ReductionMember, 0, len(kept))
 	for _, candidate := range kept {
@@ -245,86 +268,6 @@ func clusterID(tier string, members []*models.ReductionMember) string {
 	return tier + "-" + hex.EncodeToString(sum[:])[:16]
 }
 
-// loadClusterCandidates reads the Resources behind a set of ids and decorates
-// them with what the Winner Rule needs.
-func (ctx *MahresourcesContext) loadClusterCandidates(ids []uint, rule []string, extent *ReductionExtent) ([]clusterCandidate, error) {
-	return ctx.loadCandidateColumns(ids, rule, extent, nil)
-}
-
-// loadRankingCandidates is loadClusterCandidates reduced to the columns the
-// Winner Rule compares, for ordering a pool too large to hold in full: the
-// Near-Identical seed pool of a whole-library Extent is every paired image in it,
-// and a full Resource row (description, meta, own meta) runs to kilobytes. A
-// candidate loaded this way ranks exactly like a full one but is never a Cluster
-// member: members are loaded whole.
-func (ctx *MahresourcesContext) loadRankingCandidates(ids []uint, rule []string, extent *ReductionExtent) ([]clusterCandidate, error) {
-	columns := []string{
-		"resources.id", "resources.width", "resources.height", "resources.file_size",
-		"resources.created_at", "resources.updated_at", "resources.name", "resources.content_type",
-	}
-	if contains(rule, models.WinnerCriterionHasDescription) {
-		columns = append(columns, "resources.description")
-	}
-	return ctx.loadCandidateColumns(ids, rule, extent, columns)
-}
-
-func (ctx *MahresourcesContext) loadCandidateColumns(ids []uint, rule []string, extent *ReductionExtent, columns []string) ([]clusterCandidate, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-
-	var resources []*models.Resource
-	for _, chunk := range chunkUints(ids, idChunk) {
-		var batch []*models.Resource
-		q := ctx.db.Where("resources.id IN ?", chunk)
-		if columns != nil {
-			q = q.Select(columns)
-		}
-		if err := q.Find(&batch).Error; err != nil {
-			return nil, fmt.Errorf("loading Cluster candidates: %w", err)
-		}
-		resources = append(resources, batch...)
-	}
-	if len(resources) == 0 {
-		return nil, nil
-	}
-
-	loaded := make([]uint, 0, len(resources))
-	for _, r := range resources {
-		loaded = append(loaded, r.ID)
-	}
-
-	inExtent, err := ctx.containsResources(extent, loaded)
-	if err != nil {
-		return nil, err
-	}
-
-	// Only when the rule asks. Three GROUP BY queries over the candidate set are
-	// cheap next to the clustering itself, but they are not free, and the default
-	// rule never consults them.
-	var associations map[uint]int
-	if ruleUsesAssociations(rule) {
-		associations, err = ctx.countResourceAssociations(loaded)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	out := make([]clusterCandidate, 0, len(resources))
-	for _, r := range resources {
-		// Filter before winner selection and near-match claiming so an external
-		// match cannot displace an in-Extent Winner or split its Cluster.
-		if extent.ExcludeExternalResources && !inExtent[r.ID] {
-			continue
-		}
-		out = append(out, clusterCandidate{
-			WinnerCandidate: models.WinnerCandidate{Resource: r, Associations: associations[r.ID]},
-			InExtent:        inExtent[r.ID],
-		})
-	}
-	return out, nil
-}
-
 func ruleUsesAssociations(rule []string) bool {
 	for _, c := range rule {
 		if c == models.WinnerCriterionAssociationsDesc || c == models.WinnerCriterionAssociationsAsc {
@@ -416,173 +359,6 @@ func (ctx *MahresourcesContext) countResourceAssociationKinds(ids []uint) (map[u
 		}
 	}
 	return counts, nil
-}
-
-// clusterIdentical groups the Extent by content hash.
-//
-// The empty hash is excluded, and that exclusion is load-bearing rather than
-// tidy: resources.hash is a plain string and "" is a live value in this schema,
-// so a GROUP BY would collapse every hashless Resource into one Cluster —
-// arriving checked, exempt from the size cap, and proposing to delete files that
-// have nothing whatever to do with each other. Hashless Resources are reported in
-// the coverage line instead.
-//
-// A Cluster's members are every Resource sharing the hash, not only the ones in
-// the Extent, so the better copy sitting elsewhere is visible. buildCluster is
-// what keeps exactly one of those and never lets it lose.
-func (ctx *MahresourcesContext) clusterIdentical(extent *ReductionExtent, rule []string, excluded map[uint]bool, report func(done, total int64)) ([]*models.ReductionCluster, error) {
-	hashes := map[string]bool{}
-	err := ctx.extentResourceIDs(extent, func(ids []uint) error {
-		found, err := ctx.repeatedHashesIn(ids)
-		if err != nil {
-			return err
-		}
-		for _, h := range found {
-			if h != "" {
-				hashes[h] = true
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("collecting the Extent's content hashes: %w", err)
-	}
-	if len(hashes) == 0 {
-		return nil, nil
-	}
-
-	hashList := make([]string, 0, len(hashes))
-	for h := range hashes {
-		hashList = append(hashList, h)
-	}
-	sort.Strings(hashList)
-
-	var clusters []*models.ReductionCluster
-	done := int64(0)
-	total := int64(len(hashList))
-	for start := 0; start < len(hashList); start += idChunk {
-		end := start + idChunk
-		if end > len(hashList) {
-			end = len(hashList)
-		}
-		chunk := hashList[start:end]
-
-		var rows []struct {
-			ID   uint
-			Hash string
-		}
-		// Find, not Scan: Scan runs the Row callback chain, which carries no
-		// subtree filter, so this would offer candidates from outside the caller's
-		// subtree. loadClusterCandidates would drop them again — it uses Find — but
-		// a Cluster is not the place to rely on a second line.
-		if err := ctx.db.Model(&models.Resource{}).
-			Select("resources.id, resources.hash").
-			Where("resources.hash IN ?", chunk).
-			Find(&rows).Error; err != nil {
-			return nil, fmt.Errorf("collecting Identical candidates: %w", err)
-		}
-
-		byHash := map[string][]uint{}
-		for _, row := range rows {
-			if excluded[row.ID] {
-				continue
-			}
-			byHash[row.Hash] = append(byHash[row.Hash], row.ID)
-		}
-
-		for _, hash := range chunk {
-			ids := byHash[hash]
-			if len(ids) < 2 {
-				continue
-			}
-			candidates, err := ctx.loadClusterCandidates(ids, rule, extent)
-			if err != nil {
-				return nil, err
-			}
-			// Re-checked against the rows as loaded, not trusted from the grouping
-			// query above. A version upload landing between the two rewrites
-			// resources.hash, and a Cluster built from the stale grouping would carry
-			// members whose recorded hashes differ — labelled Identical, arriving
-			// checked, and passing apply's revalidation, because each member is
-			// validated against its own snapshot rather than against the others.
-			// Byte-identity is the one thing this tier is allowed to assert.
-			sharing := make([]clusterCandidate, 0, len(candidates))
-			for _, candidate := range candidates {
-				if candidate.Resource.Hash == hash {
-					sharing = append(sharing, candidate)
-				}
-			}
-			if cluster := buildCluster(models.ReductionTierIdentical, sharing, rule); cluster != nil {
-				clusters = append(clusters, cluster)
-			}
-		}
-
-		done += int64(len(chunk))
-		if report != nil {
-			report(done, total)
-		}
-	}
-	return clusters, nil
-}
-
-// repeatedHashesIn is the content hashes of the named Resources that at least one
-// other Resource also holds. Only those can form an Identical Cluster, and keeping
-// every distinct hash instead held one string per Resource of a whole-library
-// Extent in memory: millions, almost all of them unique.
-//
-// The other holder is looked up unscoped, which is safe: it only nominates the
-// hash, and the candidates for it are read again through the scoped handle, so a
-// twin outside the caller's subtree never becomes a member.
-func (ctx *MahresourcesContext) repeatedHashesIn(ids []uint) ([]string, error) {
-	var found []string
-	err := ctx.db.Model(&models.Resource{}).
-		Where("resources.id IN ?", ids).
-		Where("resources.hash <> ''").
-		Where("EXISTS (SELECT 1 FROM resources twin WHERE twin.hash = resources.hash AND twin.id <> resources.id)").
-		Distinct().
-		Pluck("resources.hash", &found).Error
-	return found, err
-}
-
-// reductionCoverage reports how much of the Extent could actually be examined, so
-// "no repeats found" stays distinguishable from "nothing was hashed".
-func (ctx *MahresourcesContext) reductionCoverage(extent *ReductionExtent) (models.ReductionCoverage, error) {
-	size, err := ctx.countExtentResources(extent)
-	if err != nil {
-		return models.ReductionCoverage{}, err
-	}
-	coverage := models.ReductionCoverage{ExtentSize: size}
-	eligible := hashableContentTypes()
-
-	err = ctx.extentResourceIDs(extent, func(ids []uint) error {
-		var withHash int64
-		if err := ctx.db.Model(&models.Resource{}).
-			Where("resources.id IN ?", ids).
-			Where("resources.hash <> ''").
-			Count(&withHash).Error; err != nil {
-			return err
-		}
-		coverage.ContentHashed += int(withHash)
-
-		var eligibleCount int64
-		if err := ctx.db.Model(&models.Resource{}).
-			Where("resources.id IN ?", ids).
-			Where("resources.content_type IN ?", eligible).
-			Count(&eligibleCount).Error; err != nil {
-			return err
-		}
-		coverage.PerceptualEligible += int(eligibleCount)
-
-		var hashed int64
-		if err := ctx.db.Model(&models.ImageHash{}).
-			Where("image_hashes.resource_id IN ?", ids).
-			Count(&hashed).Error; err != nil {
-			return err
-		}
-		coverage.PerceptualHashed += int(hashed)
-		return nil
-	})
-	return coverage, err
 }
 
 func hashableContentTypes() []string {

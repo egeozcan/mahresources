@@ -4462,6 +4462,9 @@ progress.export-progress-bar::-moz-progress-bar {
     flex-direction: column;
     gap: 0.25rem;
     min-width: 0;
+    /* The subgrid's single column would otherwise size to its widest child, so a
+       name with no break opportunities widened the card. */
+    grid-template-columns: minmax(0, 1fr);
     padding: 0.5rem;
     border: 2px solid #e7e5e4;
     border-radius: 0.375rem;
@@ -4488,6 +4491,31 @@ progress.export-progress-bar::-moz-progress-bar {
     max-height: 160px;
     margin: 0 auto;
     border-radius: 0.25rem;
+}
+
+.reduction-thumb-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    width: 100%;
+    min-height: 6rem;
+    padding: 0.5rem;
+    border-radius: 0.25rem;
+    background: #f5f5f4;
+    color: #57534e;
+    font-size: 0.75rem;
+    text-align: center;
+}
+
+.reduction-thumb-placeholder[hidden] {
+    display: none;
+}
+
+.reduction-thumb-type {
+    max-width: 100%;
+    overflow-wrap: anywhere;
 }
 
 .reduction-member--keep {
@@ -4522,6 +4550,8 @@ progress.export-progress-bar::-moz-progress-bar {
     font-size: 0.75rem;
     color: #44403c;
     max-width: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .reduction-facts {
@@ -5168,13 +5198,14 @@ progress.export-progress-bar::-moz-progress-bar {
    ~13px tall target; this floors it without changing the strip's layout, because
    the name already sits on its own line. */
 .reduction-member-link {
-    display: inline-flex;
-    align-items: center;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
     min-height: 1.5rem;
     max-width: 100%;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
 }
 
 /* Compact cards keep previews beside content and constrain long descriptions. */

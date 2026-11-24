@@ -1,7 +1,6 @@
 package api_tests
 
 import (
-	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -12,21 +11,19 @@ import (
 	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/query_models"
-	"mahresources/models/types"
 )
 
 // planReduction stores a Reduction whose plan is exactly the Clusters given, so the
 // list counts can be checked against a plan built by hand.
 func planReduction(t *testing.T, tc *TestContext, name string, clusters []*models.ReductionCluster) *models.ResourceReduction {
 	t.Helper()
-	encoded, err := json.Marshal(models.ResourceReductionPlan{Clusters: clusters})
-	require.NoError(t, err)
 	now := time.Now()
 	row := &models.ResourceReduction{
 		Name: name, Status: models.ReductionStatusReady, MatchingMode: models.MatchingModeBothTiers,
-		Plan: types.JSON(encoded), ComputedAt: &now,
+		PlanSchema: 1, ComputedAt: &now,
 	}
 	require.NoError(t, tc.DB.Create(row).Error)
+	require.NoError(t, tc.AppCtx.OverwritePlanForTest(row.ID, row.Version, models.ResourceReductionPlan{Clusters: clusters}))
 	return row
 }
 
@@ -65,15 +62,15 @@ func TestListProgressCountsEachStatus(t *testing.T) {
 		pairCluster("h", models.ReductionClusterStale, false, 15, 16),
 	})
 	// Two of the three applied Clusters have a confirmed merge; one is only claimed.
-	var plan models.ResourceReductionPlan
-	require.NoError(t, json.Unmarshal(red.Plan, &plan))
+	plan, err := tc.AppCtx.PlanForTest(red.ID)
+	require.NoError(t, err)
 	for _, c := range plan.Clusters {
 		c.Merged = c.ID == "e" || c.ID == "f"
 	}
-	encoded, err := json.Marshal(plan)
-	require.NoError(t, err)
-	require.NoError(t, tc.DB.Model(&models.ResourceReduction{}).Where("id = ?", red.ID).Update("plan", types.JSON(encoded)).Error)
-	draft := &models.ResourceReduction{Name: "Never computed", Status: models.ReductionStatusDraft, MatchingMode: models.MatchingModeBothTiers}
+	var current models.ResourceReduction
+	require.NoError(t, tc.DB.First(&current, red.ID).Error)
+	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, plan))
+	draft := &models.ResourceReduction{Name: "Never computed", Status: models.ReductionStatusDraft, MatchingMode: models.MatchingModeBothTiers, PlanSchema: 1}
 	require.NoError(t, tc.DB.Create(draft).Error)
 
 	owner, restricted := asAdmin()

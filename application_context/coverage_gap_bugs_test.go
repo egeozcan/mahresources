@@ -36,6 +36,8 @@ func createCoverageTestContext(t *testing.T, cacheName string) *MahresourcesCont
 		&models.GroupRelationType{},
 		&models.ImageHash{},
 		&models.ResourceSimilarity{},
+		&models.ResourceReduction{}, &models.ReductionClusterRow{}, &models.ReductionMemberRow{}, &models.ReductionDeletedID{}, &models.ResourceCleanupManifest{}, &models.ReductionMigration{},
+		&models.Job{}, &models.JobResourceReceipt{},
 		&models.LogEntry{},
 		&models.ResourceCategory{},
 		&models.Series{},

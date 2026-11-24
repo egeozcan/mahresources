@@ -138,6 +138,7 @@
              x-show="$store.reductionReview.applyCounts" x-cloak data-testid="reduction-apply-result">
             <p class="font-medium text-stone-900" x-text="$store.reductionReview.applySummary()"></p>
             <p class="text-sm">This does not free disk space.</p>
+            <p class="text-sm" x-show="$store.reductionReview.applyListsCapped" data-testid="reduction-apply-more">This report names only some Clusters. The full list is in the Applied and Stale tabs.</p>
             <template x-if="$store.reductionReview.applyCounts?.stale && !$store.reductionReview.applyResult?.stale?.length">
                 <p class="mt-2 text-sm text-amber-900">
                     <span x-text="$store.reductionReview.applyCounts.stale + ($store.reductionReview.applyCounts.stale === 1 ? ' Cluster' : ' Clusters')"></span>
@@ -147,7 +148,7 @@
             <template x-if="$store.reductionReview.applyResult?.stale?.length">
                 <div class="mt-2">
                     <p class="text-sm text-amber-900">
-                        <span x-text="$store.reductionReview.applyResult.stale.length + ($store.reductionReview.applyResult.stale.length === 1 ? ' Cluster' : ' Clusters')"></span> could not be applied.
+                        <span x-text="($store.reductionReview.applyCounts.stale || $store.reductionReview.applyResult.stale.length) + (($store.reductionReview.applyCounts.stale || $store.reductionReview.applyResult.stale.length) === 1 ? ' Cluster' : ' Clusters')"></span> could not be applied.
                         <a class="underline" :href="'/reduction?id={{ raw.ID }}&status=stale'">See the Stale tab</a>.
                     </p>
                     <ul class="list-disc list-inside text-sm text-stone-800">
@@ -176,9 +177,13 @@
 
     <div data-reduction-live="body">
         {% if showReview %}
-            {% if extent.enteredSince %}
+            {% if extent.enteredSinceCapped and not extent.enteredSince %}
             <div class="reduction-notice reduction-notice--warn" key="reduction-drift" data-testid="reduction-drift">
-                <p>{{ extent.enteredSince }} Resource{% if extent.enteredSince != 1 %}s{% endif %} added since the last run. Recompute to include {% if extent.enteredSince != 1 %}them{% else %}it{% endif %}.</p>
+                <p>More Resources were added since the last run than this page checks, and some may belong to this selection. Recompute to include them.</p>
+            </div>
+            {% elif extent.enteredSince %}
+            <div class="reduction-notice reduction-notice--warn" key="reduction-drift" data-testid="reduction-drift">
+                <p>{{ extent.enteredSince }}{% if extent.enteredSinceCapped %}+{% endif %} Resource{% if extent.enteredSince != 1 %}s{% endif %} added since the last run. Recompute to include {% if extent.enteredSince != 1 %}them{% else %}it{% endif %}.</p>
             </div>
             {% endif %}
             {% if settingsChanged and statusTab == "open" %}

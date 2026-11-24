@@ -8,7 +8,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 	"mahresources/application_context"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -54,7 +53,7 @@ func awaitReduction(t *testing.T, tc *TestContext, id uint) models.ResourceReduc
 		require.NoError(t, err)
 		if red.Status != models.ReductionStatusComputing {
 			require.Equal(t, models.ReductionStatusReady, red.Status, "clustering failed: %s", red.ComputeError)
-			plan, err := application_context.DecodeReductionPlan(red.Plan)
+			plan, err := tc.AppCtx.PlanForTest(red.ID)
 			require.NoError(t, err)
 			return plan
 		}
@@ -404,18 +403,23 @@ func TestAComputeThatLostItsRowIsRefusedRatherThanRebased(t *testing.T) {
 
 	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
 	require.NoError(t, err)
-	stalePlan, err := application_context.DecodeReductionPlan(current.Plan)
+	stalePlan, err := tc.AppCtx.PlanForTest(current.ID)
 	require.NoError(t, err)
 
-	// Something widens the Extent while the run is notionally still going.
+	// A compute begins (its request bumps the version), and the plan it computed
+	// from the version before is landed against it: refused, not rebased.
+	jobID, err := tc.AppCtx.BeginComputeForTest(red.ID, current.Version)
+	require.NoError(t, err)
+
+	// Widening the Extent while it runs is refused outright now.
 	c := addWithHash(t, tc, "c.txt", "c body", "shared-hash")
 	_, err = tc.AppCtx.CreateOrExtendResourceReduction(&query_models.ResourceReductionCreator{
 		ID:          red.ID,
 		ResourceIds: []uint{c.ID},
 	}, owner, restricted)
-	require.NoError(t, err)
+	assert.Error(t, err, "settings and Extent edits are refused while computing")
 
-	err = tc.AppCtx.StoreReductionPlanForTest(red.ID, current.ComputeJobID, current.Version, stalePlan)
+	err = tc.AppCtx.StoreReductionPlanForTest(red.ID, jobID, current.Version, stalePlan)
 	assert.ErrorIs(t, err, application_context.ErrReductionStaleCompute)
 }
 
@@ -484,18 +488,15 @@ func TestAnIdenticalClusterHoldsOnlyResourcesThatStillShareTheHash(t *testing.T)
 	third := addWithHash(t, tc, "third.txt", "third body", "shared-hash")
 	setDimensions(t, tc, stays.ID, 400, 400)
 
-	// Fire once, on the grouping query's own read of resources: by the time
-	// loadClusterCandidates runs, `moves` no longer holds that content.
+	// Fire once, between the tier nominating the hash and loading its holders: by
+	// the time they load, `moves` no longer holds that content.
 	var fired atomic.Bool
-	// tc.DB is private to this fixture and is discarded at test cleanup. Keep the
-	// callback installed until then: GORM cannot remove it while the queue's owner
-	// goroutine may still be compiling a query callback chain.
-	require.NoError(t, tc.DB.Callback().Query().After("gorm:query").Register("test:rehash_mid_cluster", func(db *gorm.DB) {
-		if db.Statement.Table != "resources" || !fired.CompareAndSwap(false, true) {
-			return
+	restore := application_context.SetComputeAfterNominateHookForTest(func([]string) {
+		if fired.CompareAndSwap(false, true) {
+			_ = tc.DB.Model(&models.Resource{}).Where("id = ?", moves.ID).Update("hash", "different-now").Error
 		}
-		_ = tc.DB.Model(&models.Resource{}).Where("id = ?", moves.ID).Update("hash", "different-now").Error
-	}))
+	})
+	t.Cleanup(restore)
 
 	red := createReduction(t, tc, "Racing rehash", []uint{stays.ID, moves.ID, third.ID})
 	plan := computeReduction(t, tc, red.ID)

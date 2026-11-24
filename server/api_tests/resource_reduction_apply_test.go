@@ -31,7 +31,7 @@ func planOf(t *testing.T, tc *TestContext, id uint) models.ResourceReductionPlan
 	owner, restricted := asAdmin()
 	red, err := tc.AppCtx.GetResourceReduction(id, owner, restricted)
 	require.NoError(t, err)
-	plan, err := application_context.DecodeReductionPlan(red.Plan)
+	plan, err := tc.AppCtx.PlanForTest(red.ID)
 	require.NoError(t, err)
 	return plan
 }
@@ -409,20 +409,15 @@ func TestAnEjectionLandingDuringTheClaimIsHonoured(t *testing.T) {
 	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
 	require.NoError(t, err)
 
-	// Fire the ejection on the third read of the reduction row after the apply
-	// starts: the entry read, then applyOneCluster's, then the claim's own. The
-	// claim's is the one that matters — an ejection landing there is inside the
-	// window between the batch reading a Cluster and freezing it.
-	var reads atomic.Int32
+	// Fire the ejection on the first read of member rows after the apply starts:
+	// the batch loading the Cluster to revalidate it, which is before its claim
+	// freezes it.
 	var fired atomic.Bool
 	// This GORM callback belongs to the fixture's private DB, which is discarded at
 	// test cleanup. Leave it installed through queue finalization because GORM
 	// cannot remove callbacks while another goroutine is compiling a query chain.
 	require.NoError(t, tc.DB.Callback().Query().After("gorm:query").Register("test:eject_mid_apply", func(db *gorm.DB) {
-		if fired.Load() || db.Statement.Table != "resource_reductions" {
-			return
-		}
-		if reads.Add(1) < 3 {
+		if fired.Load() || db.Statement.Table != "reduction_members" {
 			return
 		}
 		if !fired.CompareAndSwap(false, true) {
@@ -444,14 +439,17 @@ func TestAnEjectionLandingDuringTheClaimIsHonoured(t *testing.T) {
 		"a member ejected while the batch was running is not destroyed by it")
 }
 
-// A Cluster's identity is not enough to claim it. The id is derived from the tier
-// and the member ids, so a recompute landing mid-batch can replace one with a
-// Cluster of the same membership carrying *different* reviewed hashes — same id,
-// different bytes — and claiming by id alone would merge a proposal this reviewer
-// never saw.
+// A Cluster's identity is not enough to claim it. Under the plan tables the claim
+// no longer compares reviewed content hashes: it takes what the batch stamped
+// (approved winner and restore sequence) and refuses a Cluster whose Winner, Losers
+// or members moved since. That refusal, for each way a Cluster can change under a
+// batch, is covered at the store level by testOpsClaim in
+// application_context/reduction_ops_apply_store_test.go; the Winner-swap case is
+// driven through the public apply below.
+//
+// What the API can still show: a Cluster in its reviewed shape is claimable once.
 func TestAClaimIsRefusedWhenTheClusterIsNoLongerWhatWasValidated(t *testing.T) {
 	tc := SetupTestEnv(t)
-	owner, restricted := asAdmin()
 
 	winner := addWithHash(t, tc, "winner.txt", "winner body", "shared-hash")
 	loser := addWithHash(t, tc, "loser.txt", "loser body", "shared-hash")
@@ -461,38 +459,12 @@ func TestAClaimIsRefusedWhenTheClusterIsNoLongerWhatWasValidated(t *testing.T) {
 	plan := computeReduction(t, tc, red.ID)
 	clusterID := plan.Clusters[0].ID
 
-	// The plan is rewritten with the same membership and different reviewed
-	// hashes, exactly as a recompute after a version upload would leave it.
-	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
-	require.NoError(t, err)
-	swapped, err := application_context.DecodeReductionPlan(current.Plan)
-	require.NoError(t, err)
-	for _, member := range swapped.Clusters[0].Members {
-		member.Hash = "some-other-content"
-	}
-	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, current.Version, swapped))
-
-	// What the apply request approved: these two Resources holding the content
-	// they were reviewed as holding.
-	approved := map[uint]string{winner.ID: "shared-hash", loser.ID: "shared-hash"}
-	claimed := tc.AppCtx.ClaimClusterForApplyForTest(red.ID, clusterID, winner.ID, approved)
-	assert.Nil(t, claimed, "a Cluster that is no longer the one that was reviewed is not claimable")
+	assert.NotNil(t, tc.AppCtx.StrandClaimForTest(red.ID, clusterID),
+		"the Cluster as it was proposed is claimable")
+	assert.Nil(t, tc.AppCtx.StrandClaimForTest(red.ID, clusterID),
+		"a claimed Cluster is not claimable again")
+	assert.Nil(t, tc.AppCtx.StrandClaimForTest(red.ID, "no-such-cluster"))
 	assert.True(t, resourceExists(t, tc, loser.ID))
-
-	// An ejection is the change that *is* accepted: members may leave what was
-	// approved, they may not arrive in it.
-	shrunk, err := application_context.DecodeReductionPlan(current.Plan)
-	require.NoError(t, err)
-	for _, member := range shrunk.Clusters[0].Members {
-		if member.ResourceID != winner.ID && member.ResourceID != loser.ID {
-			member.Ejected = true
-		}
-	}
-	fresh, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
-	require.NoError(t, err)
-	require.NoError(t, tc.AppCtx.OverwritePlanForTest(red.ID, fresh.Version, shrunk))
-	assert.NotNil(t, tc.AppCtx.ClaimClusterForApplyForTest(red.ID, clusterID, winner.ID, approved),
-		"the original proposal is still claimable")
 }
 
 // A promotion landing after Apply was pressed swaps which Resource survives
@@ -515,15 +487,11 @@ func TestAPromotionAfterApplyWasPressedDoesNotSwapTheVictim(t *testing.T) {
 	current, err := tc.AppCtx.GetResourceReduction(red.ID, owner, restricted)
 	require.NoError(t, err)
 
-	// Promote on the third read of the reduction row after the apply starts — the
-	// claim's own — which is the window a subset check on membership alone accepts.
-	var reads atomic.Int32
+	// Promote on the first read of member rows after the apply starts, before the
+	// claim, which is the window a subset check on membership alone accepts.
 	var fired atomic.Bool
 	require.NoError(t, tc.DB.Callback().Query().After("gorm:query").Register("test:promote_mid_apply", func(db *gorm.DB) {
-		if fired.Load() || db.Statement.Table != "resource_reductions" {
-			return
-		}
-		if reads.Add(1) < 3 {
+		if fired.Load() || db.Statement.Table != "reduction_members" {
 			return
 		}
 		if !fired.CompareAndSwap(false, true) {

@@ -597,6 +597,13 @@ func main() {
 		log.Printf("Warning: ensuring image_hashes.resource_id unique index failed: %v", err)
 	}
 
+	// Postgres has no collation tag for AutoMigrate: the Reduction Cluster keys get
+	// COLLATE "C" here so SQL orders them the way Go sorts them. A no-op once set.
+	if err := models.EnsureReductionKeyCollation(db); err != nil {
+		fail("failed to collate the Reduction Cluster keys: %v", err)
+		return
+	}
+
 	// The durable Job core. Separated from the migration list above because the
 	// step is not only a schema: it also seeds the writer epoch that every
 	// subsequent start preflights against, and keeping the two together is what
@@ -784,6 +791,9 @@ func main() {
 			log.Printf("[plugin] Activated %d plugin(s)", len(plugins))
 		}
 	}
+	// A delete that committed but whose files, hooks and manifest were never drained
+	// (a crash, a failed drain) is finished now, before any request can race it.
+	context.ReplayResourceCleanupManifest()
 
 	if err := models.EnsureSupplementalIndexes(db); err != nil {
 		fail("Error when creating supplemental indexes: %v", err)
@@ -804,6 +814,38 @@ func main() {
 	} else if err := models.EnsureResourceListIndexes(db); err != nil {
 		fail("Error when creating resource list indexes: %v", err)
 		return
+	}
+
+	// The Near tier's neighbour query reads each similarity pair direction by its
+	// effective distance. CONCURRENTLY and beside the server on Postgres; on SQLite
+	// one table scan under the writer lock, before any request is served.
+	if db.Dialector.Name() == "postgres" {
+		go func() {
+			ensureIndexesUntilBuilt("similarity distance indexes", func() error {
+				return models.EnsureSimilarityDistanceIndexesOnOwnConnection(context.Config.DbDsn)
+			}, jobFilterIndexRetryInterval)
+			// A clustering run that found them still building is held, not waiting in a
+			// worker: return those to the queue now.
+			context.ResumeIndexBlockedReductionComputes()
+		}()
+	} else if err := models.EnsureSimilarityDistanceIndexes(db); err != nil {
+		fail("Error when creating similarity distance indexes: %v", err)
+		return
+	}
+
+	// Resource Reductions written by the previous release keep their plan as one JSON
+	// document until the background migration moves it to tables. On SQLite, where a
+	// write holds the whole database's writer lock, the one statement that parses
+	// each document runs now, before any request is served; on Postgres it runs
+	// online with the rest of the migration after start. A Reduction that fails to
+	// spool keeps its legacy plan and answers "being upgraded" until a later run.
+	if db.Dialector.Name() != "postgres" {
+		if err := context.SpoolReductionMigrations(); err != nil {
+			// Not retried online: on SQLite the periodic runner never runs the spool
+			// statement (it would hold the writer lock mid-traffic), so a Reduction
+			// missed here answers "being upgraded" until the next startup.
+			log.Printf("Warning: reduction plan spool failed; unspooled Reductions answer 'being upgraded' until the next startup: %v", err)
+		}
 	}
 
 	// Migrate existing resources to versioning system in background (skip with -skip-version-migration flag)
@@ -988,6 +1030,9 @@ func main() {
 	// This allows long-lived handlers (e.g. SSE) to detect shutdown and return.
 	serverCtx, serverCancel := gocontext.WithCancel(gocontext.Background())
 	context.StartMetadataIndexer(serverCtx)
+	// A manifest row that comes due later (a failed file step's backoff) or whose drain
+	// died is retried here, not only at the next start.
+	manifestReplayDone := context.StartResourceManifestReplay(serverCtx, application_context.ResourceManifestReplayInterval)
 	srv.BaseContext = func(_ net.Listener) gocontext.Context {
 		return serverCtx
 	}
@@ -995,6 +1040,19 @@ func main() {
 	serveErr := make(chan error, 1)
 	go func() {
 		serveErr <- srv.ListenAndServe()
+	}()
+
+	// After the server is up: sweep the plan generations nobody owns (a compute that
+	// died, a landing that crashed before its staging rows were removed), then move
+	// every legacy Reduction plan to tables. Both are chunked and restartable. The
+	// migration runs again every minute until no legacy plan is left: a run that
+	// crashed leaves a live lease, which a single startup pass would skip, and the
+	// Reduction would stay unreadable until the next restart.
+	go func() {
+		if err := context.SweepReductionGenerations(); err != nil {
+			log.Printf("Warning: reduction generation sweep: %v", err)
+		}
+		<-context.StartReductionMigration(serverCtx, time.Minute)
 	}()
 
 	quit := make(chan os.Signal, 1)
@@ -1009,6 +1067,10 @@ func main() {
 	}
 
 	serverCancel()
+	select {
+	case <-manifestReplayDone:
+	case <-time.After(5 * time.Second):
+	}
 
 	shutdownCtx, shutdownCancel := gocontext.WithTimeout(gocontext.Background(), 30*time.Second)
 	defer shutdownCancel()
@@ -1105,6 +1167,18 @@ func migrateModels(db *gorm.DB) error {
 		// since been deleted is a staleness the apply revalidation must detect and
 		// report, not a row the database quietly rewrites.
 		&models.ResourceReduction{},
+		// The plan as rows (D1 of the plan-tables design): associationless like the
+		// Reduction they hang off, so any order is FK-safe; they follow it for the reader.
+		&models.ReductionClusterRow{},
+		&models.ReductionMemberRow{},
+		&models.ReductionExtentResource{},
+		&models.ReductionExtentGroup{},
+		&models.ReductionExtentRow{},
+		&models.ReductionSeed{},
+		&models.ReductionDeletedID{},
+		&models.ResourceCleanupManifest{},
+		&models.ReductionMigrationRow{},
+		&models.ReductionMigration{},
 		// Tables with FK to independent tables
 		&models.Group{},             // FK to Category (self-referencing Owner is handled by GORM)
 		&models.GroupRelationType{}, // FK to Category

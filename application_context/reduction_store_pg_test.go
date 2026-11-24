@@ -1,0 +1,136 @@
+//go:build postgres && json1 && fts5
+
+package application_context
+
+import (
+	"testing"
+
+	"github.com/jmoiron/sqlx"
+	"github.com/spf13/afero"
+	"github.com/stretchr/testify/require"
+
+	"mahresources/constants"
+	"mahresources/models"
+)
+
+// newReductionPGContext is a Postgres context with the plan tables migrated and
+// the Cluster key collated as a server start does.
+func newReductionPGContext(t *testing.T) *MahresourcesContext {
+	t.Helper()
+	db, dsn := pgContainer.CreateTestDBWithDSN(t)
+	require.NoError(t, db.AutoMigrate(
+		&models.Resource{}, &models.Note{}, &models.Tag{}, &models.Group{},
+		&models.Category{}, &models.NoteType{}, &models.TemplateRevision{}, &models.ResourceCategory{},
+		&models.Series{}, &models.Preview{}, &models.GroupRelation{},
+		&models.GroupRelationType{}, &models.ImageHash{}, &models.ResourceSimilarity{}, &models.ResourceReduction{}, &models.ReductionClusterRow{}, &models.ReductionMemberRow{}, &models.ReductionDeletedID{}, &models.ResourceCleanupManifest{}, &models.ReductionMigration{}, &models.Job{}, &models.JobResourceReceipt{},
+		&models.ResourceVersion{}, &models.NoteBlock{}, &models.LogEntry{}, &models.User{},
+		&models.Job{}, &models.JobResourceReceipt{},
+	))
+	require.NoError(t, db.AutoMigrate(reductionTables...))
+	require.NoError(t, models.EnsureReductionKeyCollation(db))
+	readOnly, err := sqlx.Connect("pgx", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { readOnly.Close() })
+	ctx := NewMahresourcesContext(afero.NewMemMapFs(), db, readOnly, &MahresourcesConfig{DbType: constants.DbTypePosgres})
+	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
+	defaultRC.ID = 1
+	require.NoError(t, db.FirstOrCreate(defaultRC, 1).Error)
+	return ctx
+}
+
+func TestReductionStoreRoundTripPG(t *testing.T) {
+	testReductionStoreRoundTrip(t, newReductionPGContext(t))
+}
+
+func TestReductionStoreReadsPG(t *testing.T) {
+	testReductionStoreReads(t, newReductionPGContext(t))
+}
+
+func TestReductionVisibilityMatchesScopeCallbackPG(t *testing.T) {
+	testReductionVisibilityMatchesScopeCallback(t, newReductionPGContext, []int64{1, 2, 3})
+}
+
+func TestReductionSubqueryArgGetsScopeCallbackPG(t *testing.T) {
+	testReductionSubqueryArgGetsScopeCallback(t, newReductionPGContext(t))
+}
+
+func TestReductionConfinedShapesNeverShowTheTwinPG(t *testing.T) {
+	testReductionConfinedShapesNeverShowTheTwin(t, newReductionPGContext(t))
+}
+
+func TestReductionTwentyThousandGroupSubtreePG(t *testing.T) {
+	testReductionTwentyThousandGroupSubtree(t, newReductionPGContext(t))
+}
+
+func TestSeedKeysOrderAsBytesDoPG(t *testing.T) {
+	testSeedKeysOrderAsBytesDo(t, newReductionPGContext(t))
+}
+
+func TestReductionStoreMatchesOraclePG(t *testing.T) {
+	testReductionStoreMatchesOracle(t, newReductionPGContext, []int64{1, 2, 3, 4})
+}
+
+func TestReductionMigrationSpoolsAndPublishesPG(t *testing.T) {
+	testReductionMigrationSpoolsAndPublishes(t, newReductionPGContext(t))
+}
+
+func TestReductionMigrationNullClustersKeepsApplyRecordPG(t *testing.T) {
+	testReductionMigrationNullClustersKeepsApplyRecord(t, newReductionPGContext(t))
+}
+
+func TestReductionMigrationFailsComputingAndMigratesDraftsPG(t *testing.T) {
+	testReductionMigrationFailsComputingAndMigratesDrafts(t, newReductionPGContext(t))
+}
+
+func TestReductionMigrationResumesAfterTakeoverPG(t *testing.T) {
+	testReductionMigrationResumesAfterTakeover(t, newReductionPGContext(t))
+}
+
+func TestReductionSelectionsPG(t *testing.T) { testReductionSelections(t, newReductionPGContext(t)) }
+
+func TestReductionSelectFromGroupPG(t *testing.T) {
+	testReductionSelectFromGroup(t, newReductionPGContext(t))
+}
+
+func TestReductionLeasesPG(t *testing.T) { testReductionLeases(t, newReductionPGContext(t)) }
+
+func TestReductionDenyWithholdsEveryClusterPG(t *testing.T) {
+	testReductionDenyWithholdsEveryCluster(t, newReductionPGContext(t))
+}
+
+func TestReductionTokenOrdersByKeyAcrossChunksPG(t *testing.T) {
+	testReductionTokenOrdersByKeyAcrossChunks(t, newReductionPGContext(t))
+}
+
+func newOpsPGContext(t *testing.T) *MahresourcesContext {
+	return withSettings(newReductionPGContext(t))
+}
+
+func TestOpsOverrideActionsPG(t *testing.T)  { testOpsOverrideActions(t, newOpsPGContext(t)) }
+func TestOpsOverrideRefusalsPG(t *testing.T) { testOpsOverrideRefusals(t, newOpsPGContext(t)) }
+func TestOpsOverrideNearPG(t *testing.T)     { testOpsOverrideNear(t, newOpsPGContext(t)) }
+func TestOpsOverrideFullStarAndGonePG(t *testing.T) {
+	testOpsOverrideFullStarAndGone(t, newOpsPGContext(t))
+}
+func TestOpsOverrideMatchesLegacyPG(t *testing.T) {
+	for _, seed := range []int64{1, 2} {
+		testOpsOverrideMatchesLegacy(t, newOpsPGContext(t), seed)
+	}
+}
+func TestOpsBulkByIDsPG(t *testing.T)        { testOpsBulkByIDs(t, newOpsPGContext(t)) }
+func TestOpsBulkAllIdenticalPG(t *testing.T) { testOpsBulkAllIdentical(t, newOpsPGContext(t)) }
+func TestOpsBulkScopedPG(t *testing.T)       { testOpsBulkScoped(t, newOpsPGContext(t)) }
+func TestOpsBulkMatchesLegacyLoopPG(t *testing.T) {
+	for _, seed := range []int64{1, 2} {
+		testOpsBulkMatchesLegacyLoop(t, newOpsPGContext(t), seed)
+	}
+}
+
+func TestOpsClaimPG(t *testing.T)            { testOpsClaim(t, newOpsPGContext(t)) }
+func TestOpsFencesPG(t *testing.T)           { testOpsFences(t, newOpsPGContext(t)) }
+func TestOpsDemoteAndReleasePG(t *testing.T) { testOpsDemoteAndRelease(t, newOpsPGContext(t)) }
+func TestOpsRecordStalePG(t *testing.T)      { testOpsRecordStale(t, newOpsPGContext(t)) }
+func TestOpsReconcilePG(t *testing.T)        { testOpsReconcile(t, newOpsPGContext(t)) }
+func TestOpsSettlePG(t *testing.T)           { testOpsSettle(t, newOpsPGContext(t)) }
+
+func TestOpsBulkChunksAreKeysetsPG(t *testing.T) { testOpsBulkChunksAreKeysets(t, newOpsPGContext(t)) }

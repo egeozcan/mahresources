@@ -1,17 +1,18 @@
 {# One copy in a Cluster. Included twice by reductionCluster.tpl, the kept copy first. #}
 {# A member with no Resource behind it is one of two things, and they read very        #}
-{# differently. On an applied Cluster it is a copy this Reduction just merged away.     #}
+{# differently. On an applied Cluster it is a copy this Reduction just merged away (or,#}
+{# for its kept copy, one deleted elsewhere), and its id is printed so paging dedupes.  #}
 {# Anywhere else it is a Resource outside what this reviewer may see, rendered as a     #}
 {# placeholder and nothing else (no id, no role, no distance, no controls), because     #}
 {# printing any of those answers "what is over there?" for somebody whose whole         #}
 {# confinement is that they may not ask.                                                #}
 {% if not member.Resource %}
-<div class="reduction-member reduction-member--gone" data-testid="reduction-member-withheld">
+<div class="reduction-member reduction-member--gone" data-testid="reduction-member-withheld"{% if cluster.State == "stale" or cluster.Merged %} data-gone-resource-id="{{ member.ResourceID }}"{% endif %}>
     <p class="text-xs text-stone-600 max-w-[10rem]">
-        {% if cluster.Merged %}Merged and removed.{% elif cluster.State == "stale" %}Removed elsewhere.{% else %}Resource unavailable.{% endif %}
+        {% if cluster.Merged and not member.IsWinner %}Merged and removed.{% elif cluster.State == "stale" or cluster.Merged %}Removed elsewhere.{% else %}Resource unavailable.{% endif %}
     </p>
     {# A copy that is gone is left out of a stale Cluster the same way as one that is not: this reopens the rest for review. #}
-    {% if cluster.State == "stale" and not member.IsWinner and not member.Ejected and not cluster.WinnerChanged %}
+    {% if cluster.State == "stale" and cluster.StaleReason != "too large: compute again" and not member.IsWinner and not member.Ejected and not cluster.WinnerChanged %}
     <button type="button" data-testid="member-eject" class="reduction-btn reduction-btn--small"
             :disabled="$store.reductionReview.busy"
             @click="$store.reductionReview.act('{{ cluster.ID }}', 'eject', {{ member.ResourceID }})">Don't remove<span class="sr-only"> (the copy that was removed elsewhere)</span></button>
@@ -22,7 +23,7 @@
      key="{{ member.ResourceID }}"
      data-testid="reduction-member"
      data-resource-id="{{ member.ResourceID }}"
-     {% if member.IsWinner %}data-winner="true"{% endif %}
+     {% if member.IsWinner %}data-winner="true" data-kept-width="{{ member.Resource.Width }}" data-kept-height="{{ member.Resource.Height }}" data-kept-size="{{ member.Resource.FileSize }}" data-kept-type="{{ member.Resource.ContentType }}" data-kept-added="{{ member.Resource.CreatedAt|date:"2006-01-02" }}" data-kept-tags="{{ member.TagCount }}" data-kept-notes="{{ member.NoteCount }}" data-kept-groups="{{ member.GroupCount }}"{% endif %}
      {% if member.Ejected %}data-ejected="true"{% endif %}>
     <p class="reduction-roles">
         {% if member.IsWinner %}
@@ -55,8 +56,15 @@
        data-resource-hash="{{ member.Resource.Hash }}"
        data-resource-width="{{ member.Resource.Width }}"
        data-resource-height="{{ member.Resource.Height }}">
+        {# A preview that fails to load (no thumbnail, a failed fetch) is swapped for a type placeholder; the link's own label already names the Resource. #}
         <img height="160" src="/v1/resource/preview?id={{ member.Resource.ID }}&height=160&v={{ member.Resource.Hash }}"
-             alt="" loading="lazy" decoding="async">
+             alt="" loading="lazy" decoding="async"
+             x-init="if ($el.complete && $el.src && !$el.naturalWidth) { $el.hidden = true; $el.nextElementSibling.hidden = false }"
+             @error="$el.hidden = true; $el.nextElementSibling.hidden = false">
+        <span class="reduction-thumb-placeholder" data-testid="member-thumb-placeholder" hidden>
+            <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <span class="reduction-thumb-type">{{ member.Resource.ContentType }}</span>
+        </span>
     </a>
     <p class="reduction-member-name">
         <a class="reduction-member-link" href="/resource?id={{ member.Resource.ID }}" title="{{ member.Resource.Name }}">{{ member.Resource.Name }}</a>
@@ -103,7 +111,7 @@
 
     <div class="reduction-member-actions">
     {% if cluster.State == "stale" %}
-        {% if not member.IsWinner and not member.Ejected and not cluster.WinnerChanged %}
+        {% if cluster.StaleReason != "too large: compute again" and not member.IsWinner and not member.Ejected and not cluster.WinnerChanged %}
         <button type="button" data-testid="member-eject" class="reduction-btn reduction-btn--small"
                 :disabled="$store.reductionReview.busy"
                 @click="$store.reductionReview.act('{{ cluster.ID }}', 'eject', {{ member.ResourceID }})">Don't remove<span class="sr-only"> ({{ member.Resource.Name }})</span></button>
@@ -111,7 +119,8 @@
     {% elif cluster.State != "applied" %}
         {% if not member.IsWinner and not member.Ejected %}
         <button type="button" data-testid="member-promote" class="reduction-btn reduction-btn--small"
-                :disabled="$store.reductionReview.busy"
+                {% if cluster.DecidedBy == "seed" %}aria-describedby="cluster-{{ cluster.ID }}-fixed-note"{% endif %}
+                :disabled="$store.reductionReview.busy{% if cluster.DecidedBy == "seed" %} || true{% endif %}"
                 @click="$store.reductionReview.act('{{ cluster.ID }}', 'promote', {{ member.ResourceID }})">Keep this instead<span class="sr-only"> ({{ member.Resource.Name }})</span></button>
         {% endif %}
         {% if member.IsLoser and cluster.Winner and not member.Ejected %}

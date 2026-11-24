@@ -289,7 +289,7 @@ func TestALiveReductionIsNotQueuedOverByAnExpiredClaim(t *testing.T) {
 	// itself, and a running loop does both on its own tick, so it would take the
 	// queued Job before this claim or settle the expired one before reconcileOnce.
 	ctx := newJobHarnessContext(t, false)
-	reduction := createReductionRowForTest(t, ctx, `{"clusters":[]}`, models.ReductionStatusComputing)
+	reduction := createReductionRowForTest(t, ctx, models.ReductionStatusComputing)
 
 	input, err := json.Marshal(reductionComputeJobInput{ReductionID: reduction.ID, Version: reduction.Version})
 	if err != nil {

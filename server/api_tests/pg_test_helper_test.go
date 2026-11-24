@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/spf13/afero"
 
@@ -78,6 +79,8 @@ func setupPostgresTestEnvWith(t *testing.T, mutate func(*application_context.Mah
 		&models.GroupRelation{},
 		&models.ImageHash{},
 		&models.ResourceSimilarity{},
+		&models.ResourceReduction{}, &models.ReductionClusterRow{}, &models.ReductionMemberRow{}, &models.ReductionDeletedID{}, &models.ResourceCleanupManifest{}, &models.ReductionMigration{},
+		&models.ReductionExtentResource{}, &models.ReductionExtentGroup{}, &models.ReductionExtentRow{}, &models.ReductionSeed{}, &models.ReductionMigrationRow{},
 		&models.User{},
 		&models.SavedSearch{}, &models.UserSetting{},
 		&models.Session{},
@@ -107,11 +110,19 @@ func setupPostgresTestEnvWith(t *testing.T, mutate func(*application_context.Mah
 	if err := models.EnsureSupplementalIndexes(db); err != nil {
 		t.Fatalf("Failed to create supplemental indexes: %v", err)
 	}
+	if err := models.EnsureSimilarityDistanceIndexes(db); err != nil {
+		t.Fatalf("Failed to create similarity distance indexes: %v", err)
+	}
 	seed.AddInitialData(db)
 
 	config := &application_context.MahresourcesConfig{
 		DbType:      constants.DbTypePosgres,
 		BindAddress: ":0",
+		// What the runtime settings the review decisions read are built from.
+		MRQLDefaultLimit:        500,
+		MRQLQueryTimeoutBoot:    10 * time.Second,
+		HashSimilarityThreshold: 10,
+		HashAHashThreshold:      5,
 	}
 	if mutate != nil {
 		mutate(config)
@@ -138,6 +149,11 @@ func setupPostgresTestEnvWith(t *testing.T, mutate func(*application_context.Mah
 	t.Cleanup(func() { readOnlyDB.Close() })
 
 	appCtx := application_context.NewMahresourcesContext(fs, db, readOnlyDB, config)
+	// The review decisions read the similarity thresholds from the runtime settings.
+	settings := application_context.NewRuntimeSettings(db, application_context.NewStdlibSettingsLogger(),
+		application_context.BuildSpecsExported(), application_context.BuildDefaultsFromConfig(config))
+	_ = settings.Load()
+	appCtx.SetSettings(settings)
 
 	// Ensure default resource category exists
 	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}

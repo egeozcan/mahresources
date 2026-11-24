@@ -13939,3 +13939,32 @@ MRQL/API suites, and the PostgreSQL replay-envelope lifecycle test. CLI docs
 lint reports zero warnings; generated CLI docs match the committed reference
 with this change applied, the generated skill reference is unchanged, and the
 Docusaurus production build succeeds.
+
+## Resource Reduction plan tables: follow-ups (2026-11-24)
+
+Found or deliberately left alone by `docs/plans/2026-11-24-reduction-plan-tables-design.md`
+(ADR 0011). None changes a Reduction's memory bound, which `application_context/reduction_scale_test.go`
+proves.
+
+- [ ] A scoped principal's request binding flattens its Group subtree into a Go allow-list, for every page
+  and API in the app. `WithPrincipal` (`application_context/scoping.go`) calls `applyPrincipalScope`, which
+  reads the whole subtree through `collectSubtreeGroupIDs` into `scopeFilter.allowed`; `rescopeTx` and the job
+  dispatch re-derive it the same way. The list grows with the number of Groups in the subtree, not with the
+  library or any Reduction. The Reduction store does not use it (it binds the subtree once as the CTE in
+  `reduction_store_visibility.go`), and the scale test records the binding's own cost for a 20,000 Group
+  subtree. Replacing it means changing the app's scope mechanism: a subtree predicate in SQL for the scope
+  callback, with the per-request snapshot semantics `rescopeTx` documents kept.
+- [ ] The Winner's backup history grows with every merge into it. `resources.meta` holds a `backups` key with
+  one snapshot per merged Loser (`metaBackupsKey`, `resource_merge_snapshot.go`), so a Resource that keeps
+  winning grows without bound in the database. The Reduction paths and the merge no longer load it into Go;
+  the Resource detail page and any other reader of `meta` still do. Decide a retention rule (cap, age, or
+  move the snapshots to their own table) before changing the shape.
+- [ ] A Group reparent can race a scoped merge. The merge reads the principal's scope snapshot, then locks the
+  participating Resources (`lockResourcesAfterSeriesWith`, `resource_bulk_context.go`); a reparent that
+  commits between the two can move a Resource out of the principal's subtree after the check. This predates
+  the plan tables and is unchanged by them. Closing it means making the scope snapshot and the participant
+  locks one atomic step, and it needs a Postgres test with an injected interleave (SQLite serializes
+  writers and cannot reproduce it).
+- [x] The Resource cleanup manifest is replayed on a timer, not only at startup.
+  `StartResourceManifestReplay` (started from `main.go`) runs the same claimed replay every minute, and every
+  drain write requires the drain's own live claim, so a replay never races a live drain.

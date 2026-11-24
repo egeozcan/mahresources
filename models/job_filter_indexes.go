@@ -1,7 +1,9 @@
 package models
 
 import (
+	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -19,6 +21,97 @@ type plannedIndex struct {
 	table   string
 	columns string
 }
+
+// definitionMatches reports whether a database's spelling of an index (a
+// pg_get_indexdef line or sqlite_master's sql) has exactly this index's key
+// list: no extra leading or trailing column, no INCLUDE and no WHERE. The two
+// databases respell an expression (casts, extra parentheses, case), so both
+// sides are reduced to lower-case with spaces, parentheses, quotes and casts on
+// literals removed.
+func (p plannedIndex) definitionMatches(def string) bool {
+	m := indexKeyList.FindStringSubmatch(def)
+	if m == nil {
+		return false
+	}
+	// Postgres spells the access method ("USING btree"); SQLite has none. An
+	// index of another method (BRIN, hash) over the same keys cannot serve the
+	// ordered seeks the planned index exists for.
+	if m[1] != "" && !strings.EqualFold(m[1], "btree") {
+		return false
+	}
+	return normalizeIndexDefinition(m[2]) == normalizeIndexDefinition(p.columns)
+}
+
+// indexKeyList captures what sits between the parentheses that open after
+// "ON <table> [USING <method>]" and the last closing one. A trailing WHERE or
+// INCLUDE is then part of the capture, and so never equals the planned columns.
+//
+// Both identifiers (the index's and the table's, possibly schema-qualified) are
+// matched as runs of quoted names and plain characters, so a schema that needs
+// quoting ("my library".resource_similarities) or a name containing "on" parses.
+// The pattern is anchored at CREATE INDEX for the same reason: an unanchored
+// "on" could be found inside a quoted index name.
+var indexKeyList = regexp.MustCompile(`(?is)^\s*create\s+(?:unique\s+)?index\s+(?:concurrently\s+)?(?:if\s+not\s+exists\s+)?` + sqlIdentifier +
+	`\s+on\s+(?:only\s+)?` + sqlIdentifier + `\s*(?:using\s+(\w+)\s*)?\((.*)\)\s*$`)
+
+// sqlIdentifier is one possibly qualified, possibly quoted name: quoted parts may
+// hold spaces, parentheses and doubled quotes.
+const sqlIdentifier = `(?:"(?:[^"]|"")*"|[^\s("])+`
+
+// Only a cast on a literal ('x'::text, 0::bigint) is Postgres respelling the
+// same expression. A cast on a column or an expression changes its type, so it
+// is kept and the definition no longer matches the planned one.
+var (
+	stringLiteralCast  = regexp.MustCompile(`('[^']*')::[a-z_]+`)
+	numericLiteralCast = regexp.MustCompile(`(^|[^a-z0-9_.])([0-9]+)::[a-z_]+`)
+)
+
+// normalizeIndexDefinition reduces a key list to its keys joined by "|". The list
+// is split at the commas outside any parenthesis first, because the commas inside
+// COALESCE(a, b, c) are arguments of one key and the parentheses around a key are
+// only a spelling: dropping the parentheses before the split would make
+// (a, COALESCE(b, c, d)) read as the three keys a, b, c, d.
+func normalizeIndexDefinition(s string) string {
+	keys := splitTopLevel(strings.ToLower(s))
+	for i, key := range keys {
+		key = strings.NewReplacer(" ", "", "\n", "", "\t", "", "(", "", ")", "", `"`, "").Replace(key)
+		key = stringLiteralCast.ReplaceAllString(key, "$1")
+		keys[i] = numericLiteralCast.ReplaceAllString(key, "$1$2")
+	}
+	return strings.Join(keys, "|")
+}
+
+// splitTopLevel splits s at the commas that sit outside every parenthesis and
+// outside a quoted name or string literal.
+func splitTopLevel(s string) []string {
+	var keys []string
+	depth, start := 0, 0
+	var quote rune
+	for i, r := range s {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0 // a doubled quote closes and reopens, which lands in the same state
+			}
+		case r == '"' || r == '\'':
+			quote = r
+		case r == '(':
+			depth++
+		case r == ')':
+			depth--
+		case r == ',' && depth == 0:
+			keys = append(keys, s[start:i])
+			start = i + 1
+		}
+	}
+	return append(keys, s[start:])
+}
+
+// isExpression reports an index over an expression (its column list holds a
+// parenthesis). The database spells such a definition back in its own way, so
+// an existing one is accepted by name, table, validity and plainness rather
+// than by comparing its columns.
+func (i plannedIndex) isExpression() bool { return strings.Contains(i.columns, "(") }
 
 // jobFilterIndexes serve the list filters added after the jobs tables were
 // created:
@@ -105,6 +198,22 @@ func ensurePlannedIndexes(db *gorm.DB, what string, lockKey int64, indexes []pla
 			if err := db.Raw("SELECT tbl_name FROM sqlite_master WHERE type = 'index' AND name = ?", index.name).Scan(&table).Error; err != nil {
 				return fmt.Errorf("inspect %s: %w", index.name, err)
 			}
+			if index.isExpression() {
+				var sqls []string
+				if err := db.Raw("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", index.name).Scan(&sqls).Error; err != nil {
+					return fmt.Errorf("inspect %s: %w", index.name, err)
+				}
+				if len(table) == 1 && table[0] == index.table && len(sqls) == 1 && index.definitionMatches(sqls[0]) {
+					continue
+				}
+				if err := db.Exec("DROP INDEX IF EXISTS " + index.name).Error; err != nil {
+					return fmt.Errorf("drop %s: %w", index.name, err)
+				}
+				if err := db.Exec(fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (%s)", index.name, index.table, index.columns)).Error; err != nil {
+					return fmt.Errorf("create %s: %w", index.name, err)
+				}
+				continue
+			}
 			var columns []string
 			if err := db.Raw("SELECT name FROM pragma_index_info(?) ORDER BY seqno", index.name).Scan(&columns).Error; err != nil {
 				return fmt.Errorf("inspect %s: %w", index.name, err)
@@ -142,15 +251,35 @@ func ensurePlannedIndexes(db *gorm.DB, what string, lockKey int64, indexes []pla
 // server's build then wait on each other until Postgres aborts one as a
 // deadlock. Between polls the waiter has no statement running.
 func pollAdvisoryLock(conn *gorm.DB, key int64) error {
-	for {
+	return pollLockFor(func() (bool, error) {
 		var locked bool
-		if err := conn.Raw("SELECT pg_try_advisory_lock(?)", key).Scan(&locked).Error; err != nil {
+		err := conn.Raw("SELECT pg_try_advisory_lock(?)", key).Scan(&locked).Error
+		return locked, err
+	}, advisoryLockPoll, advisoryLockMaxWait)
+}
+
+// errAdvisoryLockTimeout says another server held the lock for the whole bounded
+// wait. The caller logs it, releases its connection and tries again later, so a
+// build that takes hours cannot pin a connection of this server's for as long.
+var errAdvisoryLockTimeout = errors.New("another instance is still building these indexes; giving up this wait")
+
+// advisoryLockMaxWait bounds one wait for the lock.
+const advisoryLockMaxWait = 2 * time.Minute
+
+func pollLockFor(try func() (bool, error), poll, max time.Duration) error {
+	deadline := time.Now().Add(max)
+	for {
+		locked, err := try()
+		if err != nil {
 			return err
 		}
 		if locked {
 			return nil
 		}
-		time.Sleep(advisoryLockPoll)
+		if time.Now().After(deadline) {
+			return errAdvisoryLockTimeout
+		}
+		time.Sleep(poll)
 	}
 }
 
@@ -192,6 +321,8 @@ func onOwnConnection(dsn, what string, ensure func(*gorm.DB) error) error {
 //     page of its largest owner.
 var resourceListIndexes = []plannedIndex{
 	{"idx_resources_owner_created", "resources", "owner_id, created_at"},
+	// The arrivals walk of the Reduction drift count seeks a (created_at, id) cursor.
+	{"idx_resources_created_at_id", "resources", "created_at, id"},
 }
 
 // resourceListIndexLockKey is the PostgreSQL advisory lock one server holds
@@ -239,7 +370,8 @@ func ensurePostgresPlannedIndex(conn *gorm.DB, index plannedIndex) error {
 	// (<columns>)".
 	shape := fmt.Sprintf(" USING btree (%s)", index.columns)
 	if len(found) == 1 && found[0].Valid && !strings.HasPrefix(found[0].Def, "CREATE UNIQUE") &&
-		strings.HasSuffix(found[0].Def, shape) && strings.Contains(found[0].Def, "."+index.table+" USING") {
+		(index.isExpression() && index.definitionMatches(found[0].Def) || !index.isExpression() && strings.HasSuffix(found[0].Def, shape)) &&
+		strings.Contains(found[0].Def, "."+index.table+" USING") {
 		return nil
 	}
 	if len(found) == 1 {

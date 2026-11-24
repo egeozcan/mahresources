@@ -58,25 +58,28 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 	if err != nil {
 		return nil, err
 	}
+	if err := reductionUpgrading(reduction); err != nil {
+		return nil, err
+	}
 	if EffectiveReductionStatus(reduction) == models.ReductionStatusComputing {
 		return nil, ErrReductionBusy
 	}
-	// A recompute replaces the plan under a running apply's feet. The same refusal
-	// the batch claim and settle-only make: a record still running and younger than
-	// the ceiling owns the Reduction; past the ceiling it is an interrupted one.
-	// A plan that cannot be read has no record to consult; the compute itself reports
-	// that, as it always has.
-	if plan, decodeErr := DecodeReductionPlan(reduction.Plan); decodeErr == nil {
-		if last := plan.LastApply; last != nil && last.FinishedAt == nil && time.Since(last.StartedAt) <= ReductionApplyCeiling {
-			return nil, ErrReductionConflict
-		}
+	if err := ctx.requireSimilarityIndexes(); err != nil {
+		return nil, err
 	}
 
 	// The caller's version, not the one just read. Recompute replaces the plan,
 	// so a request made from a page that predates somebody else's decisions would
 	// discard them without their author ever seeing a refusal — and "every write
-	// is a compare-and-set" has to mean this write too.
-	generation, err := ctx.beginReductionCompute(reduction.ID, version)
+	// is a compare-and-set" has to mean this write too. The same statement refuses
+	// a running apply or settle, so queued and replayed starts are refused too.
+	if reductionComputeAfterLoadHook != nil {
+		reductionComputeAfterLoadHook()
+	}
+	// Owner-qualified with the owner just loaded: an owner deleted since (nulled, no
+	// version bump) no longer matches, and nothing is claimed (design D2).
+	claimOwner := reduction.CreatedByUserId
+	nonce, generation, err := ctx.beginReductionComputeStoreAs(reduction.ID, version, claimOwner)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +89,7 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 		// No queue in this deployment (the CLI's and the tests' bare contexts).
 		// Running it inline is better than leaving the row at `computing` with
 		// nothing that will ever move it.
-		if runErr := ctx.runReductionCompute(context.Background(), reduction.ID, "", nil); runErr != nil {
+		if runErr := ctx.runReductionComputeOwned(context.Background(), reduction.ID, "", generation, nil, claimOwner, true); runErr != nil {
 			return nil, runErr
 		}
 		return ctx.loadReductionForUpdate(reduction.ID, ownerUserID, ownerRestricted)
@@ -105,7 +108,7 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 		clusterInput = &reductionComputeJobInput{ReductionID: reduction.ID, Version: version}
 		input, marshalErr := json.Marshal(clusterInput)
 		if marshalErr != nil {
-			ctx.undoRefusedReductionCompute(reduction.ID, generation, marshalErr)
+			ctx.undoRefusedReductionCompute(reduction.ID, nonce, generation, marshalErr)
 			return nil, marshalErr
 		}
 		legacyID = download_queue.NewJobID()
@@ -121,7 +124,7 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 			LegacyRefs:  []jobs.LegacyRef{{Namespace: ReductionComputeHandleNamespace, Handle: legacyID}},
 		})
 		if acceptErr != nil {
-			ctx.undoRefusedReductionCompute(reduction.ID, generation, acceptErr)
+			ctx.undoRefusedReductionCompute(reduction.ID, nonce, generation, acceptErr)
 			return nil, acceptErr
 		}
 		admission = admitted
@@ -140,12 +143,12 @@ func (ctx *MahresourcesContext) RequestReductionCompute(id uint, version uint, o
 	// the SSE stream drops any event whose job the principal may not see, so a
 	// job with no owner yet never reaches its own submitter's jobs panel — which
 	// is the only place the progress of this run is visible.
-	entry, err := ctx.startReductionComputeQueueJob(reduction.ID, generation, legacyID,
-		jobs.ExecutionRef{JobID: admission.Execution.JobID, ExecutionToken: admission.Execution.ExecutionToken}, actorUserID)
+	entry, err := ctx.startReductionComputeQueueJob(reduction.ID, nonce, generation, legacyID,
+		jobs.ExecutionRef{JobID: admission.Execution.JobID, ExecutionToken: admission.Execution.ExecutionToken}, actorUserID, claimOwner)
 	if err != nil {
 		// The queue refused it, so nothing is going to compute this. Put the row
 		// back rather than leaving it at `computing` until the deadline.
-		ctx.undoRefusedReductionCompute(reduction.ID, generation, err)
+		ctx.undoRefusedReductionCompute(reduction.ID, nonce, generation, err)
 		ctx.failUndispatchedQueueJob(admission, err)
 		return nil, err
 	}
@@ -194,41 +197,19 @@ func (ctx *MahresourcesContext) releaseReductionComputeClaim(before *models.Reso
 	if before == nil || generation == "" {
 		return
 	}
-	for attempt := 0; attempt < reductionCASRetries; attempt++ {
-		current, err := ctx.loadReductionForUpdate(before.ID, nil, false)
-		if err != nil {
-			if isLockContentionError(err) {
-				waitOutContention(attempt)
-				continue
-			}
-			ctx.logReductionClaimRelease(before.ID, generation, err)
-			return
-		}
-		if current.ComputeJobID != generation {
-			// Somebody else owns the row now: their run is the one that counts, and
-			// restoring this request's snapshot over it would take their claim away.
-			return
-		}
-		ok, err := ctx.casReduction(current.ID, current.Version, map[string]any{
-			"status":               before.Status,
-			"computing_started_at": before.ComputingStartedAt,
-			"compute_deadline":     before.ComputeDeadline,
-			"compute_job_id":       before.ComputeJobID,
-			"compute_error":        before.ComputeError,
-		})
-		if err != nil {
-			if isLockContentionError(err) {
-				waitOutContention(attempt)
-				continue
-			}
-			ctx.logReductionClaimRelease(before.ID, generation, err)
-			return
-		}
-		if ok {
-			return
-		}
+	err := retryOnLockContention(reductionCASRetries, func() error {
+		// Only while the row still carries this request's own generation: a newer
+		// request that has taken the row since owns its outcome, and restoring this
+		// request's snapshot over it would take their claim away.
+		return ctx.reductionStore().db.Exec(`UPDATE resource_reductions SET status = ?, computing_started_at = ?, compute_deadline = ?, compute_job_id = ?,
+				compute_error = ?, compute_generation = NULL, compute_lease_until = 0, version = version + 1, updated_at = ?
+			WHERE id = ? AND status = 'computing' AND compute_generation = ?`,
+			before.Status, before.ComputingStartedAt, before.ComputeDeadline, before.ComputeJobID, before.ComputeError, time.Now(),
+			before.ID, generation).Error
+	})
+	if err != nil {
+		ctx.logReductionClaimRelease(before.ID, generation, err)
 	}
-	ctx.logReductionClaimRelease(before.ID, generation, ErrReductionConflict)
 }
 
 // logReductionClaimRelease reports a compute claim that could not be handed back.
@@ -248,12 +229,12 @@ func (ctx *MahresourcesContext) logReductionClaimRelease(reductionID uint, gener
 // `computing` with nothing running until its deadline. The generation is what tells a
 // refusal the row has since been handed to somebody else apart from one that is still
 // this request's to undo.
-func (ctx *MahresourcesContext) undoRefusedReductionCompute(reductionID uint, generation string, cause error) {
+func (ctx *MahresourcesContext) undoRefusedReductionCompute(reductionID uint, nonce, generation string, cause error) {
 	var name string
 	if reduction, err := ctx.loadReductionForUpdate(reductionID, nil, false); err == nil {
 		name = reduction.Name
 	}
-	if undoErr := ctx.recordReductionComputeFailure(reductionID, generation, cause); undoErr != nil {
+	if undoErr := ctx.storeFailCompute(reductionID, nonce, generation, cause); undoErr != nil {
 		ctx.Logger().Warning(models.LogActionUpdate, "resource_reduction", &reductionID, name,
 			"Could not record a refused clustering job: "+undoErr.Error(), nil)
 	}
@@ -267,10 +248,10 @@ func (ctx *MahresourcesContext) undoRefusedReductionCompute(reductionID uint, ge
 // version belongs to the plan. The `compute_job_id = ”` predicate is what makes
 // it idempotent under a retry, and the `status = 'computing'` predicate is what
 // stops a run whose row has since been recomputed from re-claiming it.
-func (ctx *MahresourcesContext) claimReductionComputeJob(reductionID uint, generation, jobID string) error {
+func (ctx *MahresourcesContext) claimReductionComputeJob(reductionID uint, nonce, jobID string) error {
 	for attempt := 0; attempt < reductionCASRetries; attempt++ {
 		res := ctx.db.Model(&models.ResourceReduction{}).
-			Where("id = ? AND status = ? AND compute_job_id = ?", reductionID, models.ReductionStatusComputing, generation).
+			Where("id = ? AND status = ? AND compute_job_id = ?", reductionID, models.ReductionStatusComputing, nonce).
 			Update("compute_job_id", jobID)
 		if res.Error != nil {
 			if isLockContentionError(res.Error) {
@@ -315,333 +296,119 @@ func (ctx *MahresourcesContext) claimReductionComputeJob(reductionID uint, gener
 // they could act on. The same reasoning AddResource's phase-3 retry gives.
 const reductionComputeAttempts = 3
 
-// runReductionCompute is the clustering job's body.
-func (ctx *MahresourcesContext) runReductionCompute(jobCtx context.Context, reductionID uint, jobID string, progress download_queue.ProgressSink) error {
-	var plan models.ResourceReductionPlan
-	var version uint
+// runReductionCompute is the clustering job's body: it admits the run's lease, keeps
+// it renewed while the Clusters are built in memory, and lands them as a new
+// generation of rows (design D4, D11).
+func (ctx *MahresourcesContext) runReductionCompute(jobCtx context.Context, reductionID uint, jobID, generation string, progress download_queue.ProgressSink) error {
+	return ctx.runReductionComputeOwned(jobCtx, reductionID, jobID, generation, progress, nil, false)
+}
+
+// reductionComputeAfterLoadHook runs between the request's load of the Reduction and
+// its claim. Only a test sets it, to delete the owner in that window.
+var reductionComputeAfterLoadHook func()
+
+// reductionComputeAfterClaimHook runs once the run holds its claim and lease, before
+// the stream reads the Reduction. Only a test sets it, to delete the owner there.
+var reductionComputeAfterClaimHook func()
+
+// runReductionComputeOwned is runReductionCompute carrying the owner the claim was
+// made against. When checkOwner is set the landing compares it with the row's owner
+// under the row lock, so an owner deleted mid-compute does not authorize it. The
+// owner is the one captured at claim, never re-read at the start of the stream: that
+// read already sees a NULL left by a deletion.
+func (ctx *MahresourcesContext) runReductionComputeOwned(jobCtx context.Context, reductionID uint, jobID, generation string, progress download_queue.ProgressSink, claimOwner *uint, checkOwner bool) error {
+	if err := ctx.storeAdmitComputeLease(reductionID, generation); err != nil {
+		if errors.Is(err, ErrReductionLeaseLost) {
+			// Another generation owns the row, or this reservation ran out: the newer
+			// run reports its own outcome, so this one records nothing.
+			return ErrReductionComputeSuperseded
+		}
+		return ctx.failReductionCompute(reductionID, jobID, generation, err)
+	}
+	if reductionComputeAfterClaimHook != nil {
+		reductionComputeAfterClaimHook()
+	}
+	started := time.Now()
+	ticker, stopTicker := context.WithCancel(jobCtx)
+	defer stopTicker()
+	go runLeaseTicker(ticker, leaseRenewEvery, func(now time.Time) (bool, error) {
+		return ctx.reductionStore().boundTo(ticker).renewComputeLease(reductionID, generation, started, now)
+	})
+
 	var err error
 	for attempt := 0; attempt < reductionComputeAttempts; attempt++ {
-		plan, version, err = ctx.computeReductionPlan(jobCtx, reductionID, progress)
+		err = ctx.streamReductionPlanOwned(jobCtx, reductionID, jobID, generation, progress, claimOwner, checkOwner)
 		if err == nil || !isLockContentionError(err) || jobCtx.Err() != nil {
 			break
 		}
 		// Backing off, like the bookkeeping loops. Three immediate attempts are
 		// three attempts inside a few microseconds, so a lock held across them
 		// consumes the whole budget and records a compute that was only unlucky as
-		// one that failed.
+		// one that failed. Each attempt deletes its own generation's rows first.
 		waitOutContention(attempt)
 	}
 	if err != nil {
-		if writeErr := ctx.recordReductionComputeFailure(reductionID, jobID, err); writeErr != nil {
-			return fmt.Errorf("%w (and the failure could not be recorded: %v)", err, writeErr)
-		}
-		return err
-	}
-	if storeErr := ctx.storeReductionPlan(reductionID, jobID, version, plan); storeErr != nil {
 		// A superseded run belongs to nobody: the newer job owns the row and will
 		// report its own outcome, so this one must not overwrite it. Every other
 		// refusal has to be recorded, or the row sits at `computing` until its
-		// deadline with nothing alive to move it — which is the exact stranding
-		// the deadline exists to bound rather than to cause.
-		if errors.Is(storeErr, ErrReductionComputeSuperseded) {
-			return storeErr
+		// deadline with nothing alive to move it.
+		if errors.Is(err, ErrReductionComputeSuperseded) {
+			return err
 		}
-		if writeErr := ctx.recordReductionComputeFailure(reductionID, jobID, storeErr); writeErr != nil {
-			return fmt.Errorf("%w (and the failure could not be recorded: %v)", storeErr, writeErr)
-		}
-		return storeErr
+		return ctx.failReductionCompute(reductionID, jobID, generation, err)
 	}
 	return nil
 }
 
-// computeReductionPlan does the work: resolve the Extent, cluster it, and carry
-// forward every judgement already made.
-func (ctx *MahresourcesContext) computeReductionPlan(jobCtx context.Context, reductionID uint, progress download_queue.ProgressSink) (models.ResourceReductionPlan, uint, error) {
-	var plan models.ResourceReductionPlan
-
-	// Read unscoped by owner: this runs for the Reduction the request already
-	// authorized, and the principal's *data* scope still applies through the db
-	// handle. Re-applying the owner predicate here would fail under the auth-off
-	// super-user, whose id the job does not carry.
-	reduction, err := ctx.loadReductionForUpdate(reductionID, nil, false)
-	if err != nil {
-		return plan, 0, err
+// failReductionCompute records a compute that ended without landing and returns the
+// cause, saying so when the record itself could not be written.
+func (ctx *MahresourcesContext) failReductionCompute(reductionID uint, jobID, generation string, cause error) error {
+	if writeErr := ctx.storeFailCompute(reductionID, jobID, generation, cause); writeErr != nil {
+		return fmt.Errorf("%w (and the failure could not be recorded: %v)", cause, writeErr)
 	}
-	// The version this plan is *about*. Everything below describes the Extent,
-	// the Winner Rule and the decisions as they stand right now, so the write at
-	// the end has to lose if any of them moved.
-	version := reduction.Version
-
-	storedExtent, err := DecodeReductionExtent(reduction.Extent)
-	if err != nil {
-		return plan, version, err
-	}
-	previous, err := DecodeReductionPlan(reduction.Plan)
-	if err != nil {
-		return plan, version, err
-	}
-	// A plan from before the keeps-smaller flag has no recorded settings, and this
-	// compute is about to write them, which would end the read-time derivation. The
-	// frozen Clusters it carries over are therefore given their flag now, under the
-	// rule they were made with.
-	if err := ctx.deriveKeepsSmallerForOldPlan(&previous, reduction); err != nil {
-		return plan, version, err
-	}
-	rule := DecodeWinnerRule(reduction.WinnerRule)
-
-	if progress != nil {
-		progress.SetPhase("resolving the Extent")
-	}
-	extent, err := ctx.resolveReductionExtent(storedExtent)
-	if err != nil {
-		return plan, version, err
-	}
-	extent.ExcludeExternalResources = reduction.ExcludeExternalResources
-	if err := jobCtx.Err(); err != nil {
-		return plan, version, err
-	}
-
-	if progress != nil {
-		progress.SetPhase("measuring coverage")
-	}
-	coverage, err := ctx.reductionCoverage(extent)
-	if err != nil {
-		return plan, version, err
-	}
-	plan.Coverage = coverage
-
-	// A judgement already made is never rearranged by a later compute. Frozen
-	// Clusters carry over whole and their members are held out of the pool, so
-	// growing the Extent can add Clusters but cannot move a Resource out of one
-	// the reviewer has acted on.
-	//
-	// An *applied* Cluster is different, and deliberately: its Losers no longer
-	// exist and its Winner goes back into the pool as an ordinary candidate. What
-	// freezing protects is the judgement, not the Winner's future eligibility —
-	// a duplicate arriving next month has to be catchable.
-	carried := make([]*models.ReductionCluster, 0, len(previous.Clusters))
-	excluded := map[uint]bool{}
-	for _, cluster := range previous.Clusters {
-		if cluster.State == models.ReductionClusterApplied {
-			carried = append(carried, cluster)
-			// A claim that is not confirmed is a keep decision in flight (or stranded
-			// by a crash): its Resources stay out of the pool until it settles, or a
-			// recompute could propose the Winner as a Loser of a new Cluster.
-			if !cluster.Merged {
-				for _, member := range cluster.Members {
-					excluded[member.ResourceID] = true
-				}
-			}
-			continue
-		}
-		if !cluster.Frozen() {
-			continue
-		}
-		carried = append(carried, cluster)
-		for _, member := range cluster.Members {
-			excluded[member.ResourceID] = true
-		}
-	}
-
-	if progress != nil {
-		progress.SetPhase("Identical Resources")
-	}
-	identical, err := ctx.clusterIdentical(extent, rule, excluded, func(done, total int64) {
-		if progress != nil {
-			progress.SetPhaseProgress(done, total)
-		}
-	})
-	if err != nil {
-		return plan, version, err
-	}
-	if err := jobCtx.Err(); err != nil {
-		return plan, version, err
-	}
-
-	// Every Resource an Identical Cluster claims — Winner and Losers alike —
-	// leaves the pool before the perceptual tier runs. Byte-identical images
-	// decode to identical pixels and are therefore also stored as distance-zero
-	// pairs, so without this the same Resources would appear in two Clusters with
-	// different defaults and possibly different Winners. When both apply, take the
-	// fact.
-	fresh := identical
-	for _, cluster := range identical {
-		for _, member := range cluster.Members {
-			excluded[member.ResourceID] = true
-		}
-	}
-
-	if reduction.MatchingMode != models.MatchingModeIdenticalOnly {
-		if progress != nil {
-			progress.SetPhase("Near-Identical Resources")
-		}
-		near, nearErr := ctx.clusterNearIdentical(jobCtx, extent, rule, excluded, func(done, total int64) {
-			if progress != nil {
-				progress.SetPhaseProgress(done, total)
-			}
-		})
-		if nearErr != nil {
-			return plan, version, nearErr
-		}
-		fresh = append(fresh, near...)
-	}
-
-	plan.Clusters = append(carried, fresh...)
-	ensureDistinctClusterIDs(plan.Clusters)
-	// What this plan was computed with, so the page can say when the settings have
-	// since changed. The matching mode and rule are the normalised ones actually
-	// used, not whatever the row's column happened to hold.
-	plan.Settings = &models.ReductionSettings{
-		MatchingMode:    normalizeMatchingMode(reduction.MatchingMode),
-		WinnerRule:      rule,
-		ExcludeExternal: reduction.ExcludeExternalResources,
-	}
-	// The record of the last apply is not the compute's to rebuild: carried over
-	// from the plan it replaces.
-	plan.LastApply = previous.LastApply
-	return plan, version, nil
+	return cause
 }
 
-// StoreReductionPlanForTest exposes the plan write so a test can reproduce the
-// one interleaving that has no other seam: a run that finishes after the row it
-// was computing for has moved on. The clustering job is the only real caller, and
-// forcing it to lose a race it wins in microseconds is not something a test can do
-// from outside.
-func (ctx *MahresourcesContext) StoreReductionPlanForTest(reductionID uint, jobID string, version uint, plan models.ResourceReductionPlan) error {
-	return ctx.storeReductionPlan(reductionID, jobID, version, plan)
-}
-
-// storeReductionPlan lands a finished plan.
-//
-// Two guards, doing different jobs. The version compare-and-set is the ordinary
-// one every writer on this row goes through. The job-id check is what makes a run
-// that outlived its own deadline harmless: if a second compute has since claimed
-// the row, this result describes an Extent nobody is waiting for, and writing it
-// would overwrite a newer plan with an older one.
-func (ctx *MahresourcesContext) storeReductionPlan(reductionID uint, jobID string, version uint, plan models.ResourceReductionPlan) error {
-	encoded, err := encodeJSON(plan)
+// requireSimilarityIndexes refuses a compute until both effective-distance indexes
+// the neighbour query reads exist and read valid (design D1).
+func (ctx *MahresourcesContext) requireSimilarityIndexes() error {
+	valid, err := models.SimilarityDistanceIndexesValid(ctx.reductionStore().db)
 	if err != nil {
 		return err
 	}
-	now := time.Now()
-
-	for attempt := 0; attempt < reductionCASRetries; attempt++ {
-		current, err := ctx.loadReductionForUpdate(reductionID, nil, false)
-		if err != nil {
-			if isLockContentionError(err) {
-				waitOutContention(attempt)
-				continue
-			}
-			return err
-		}
-		if jobID != "" && current.ComputeJobID != jobID {
-			return ErrReductionComputeSuperseded
-		}
-		if current.Version != version {
-			// Refused, not rebased. The plan describes the Extent, the Winner Rule
-			// and the decisions as they were when the run began; writing it over a
-			// row that has since been widened, re-ruled or overridden would present
-			// a stale proposal as current — with a fresh computed_at, so the page's
-			// own drift line would report zero and the reviewer would have no way to
-			// tell. R8 says a stale write is refused; this is one.
-			return ErrReductionStaleCompute
-		}
-		ok, err := ctx.casReduction(current.ID, version, map[string]any{
-			"plan":                 encoded,
-			"status":               models.ReductionStatusReady,
-			"computed_at":          now,
-			"computing_started_at": nil,
-			"compute_deadline":     nil,
-			"compute_error":        "",
-		})
-		if err != nil {
-			// Contention is retried like a lost compare-and-set: this write is the
-			// only record that the run succeeded, and losing it would leave the
-			// Reduction reading as failed with a finished plan nobody can see.
-			if isLockContentionError(err) {
-				waitOutContention(attempt)
-				continue
-			}
-			return err
-		}
-		if ok {
-			return nil
-		}
+	if !valid {
+		return ErrReductionIndexesBuilding
 	}
-	return ErrReductionConflict
+	return nil
 }
 
-func (ctx *MahresourcesContext) recordReductionComputeFailure(reductionID uint, jobID string, cause error) error {
-	for attempt := 0; attempt < reductionCASRetries; attempt++ {
-		current, err := ctx.loadReductionForUpdate(reductionID, nil, false)
-		if err != nil {
-			// Contention is retried rather than returned. This is the only writer
-			// that can move a Reduction off `computing` once its worker has given
-			// up, so losing the read to a lock leaves the row stranded for an hour
-			// — which is the deadline doing the job of a bug rather than its own.
-			if isLockContentionError(err) {
-				waitOutContention(attempt)
-				continue
+// storedReductionExtent reads the Reduction's selection rows back as the Extent
+// document the resolver takes, in id-keyset chunks.
+func (ctx *MahresourcesContext) storedReductionExtent(r *models.ResourceReduction) (models.ResourceReductionExtent, error) {
+	extent := models.ResourceReductionExtent{All: r.ExtentAll}
+	s := ctx.reductionStore()
+	for _, spec := range []struct {
+		table, column string
+		into          *[]uint
+	}{
+		{"reduction_extent_resources", "resource_id", &extent.ResourceIDs},
+		{"reduction_extent_groups", "group_id", &extent.GroupIDs},
+	} {
+		var after uint
+		for {
+			var ids []uint
+			if err := s.db.Raw(`SELECT `+spec.column+` FROM `+spec.table+` WHERE reduction_id = ? AND `+spec.column+` > ? ORDER BY `+spec.column+` LIMIT ?`,
+				r.ID, after, reductionRowChunk*10).Scan(&ids).Error; err != nil {
+				return extent, err
 			}
-			return err
-		}
-		if jobID != "" && current.ComputeJobID != jobID {
-			// A newer run owns the row — the token here is whatever this run last
-			// held, its generation nonce before the claim and its job id after, and
-			// either way a mismatch means somebody else's outcome is the one that
-			// counts.
-			return nil
-		}
-		ok, err := ctx.casReduction(current.ID, current.Version, map[string]any{
-			"status":               models.ReductionStatusFailed,
-			"computing_started_at": nil,
-			"compute_deadline":     nil,
-			"compute_error":        truncateRunes(cause.Error(), 2000),
-		})
-		if err != nil {
-			if isLockContentionError(err) {
-				waitOutContention(attempt)
-				continue
-			}
-			return err
-		}
-		if ok {
-			return nil
-		}
-	}
-	return ErrReductionConflict
-}
-
-// ensureDistinctClusterIDs guarantees no two Clusters in one plan answer to the
-// same id.
-//
-// The id is derived from the tier and the member ids, which is what keeps a
-// frozen Cluster addressable across recomputes — and it means a *carried* Cluster
-// and a *fresh* one over the same members collide exactly. That is not
-// hypothetical: an applied Cluster is carried forward while its members return to
-// the pool, so a crash between an apply's claim and its merge leaves the Losers
-// alive to re-cluster into the same set. findCluster takes the first match, so
-// every override and every apply on the fresh Cluster would be refused as already
-// settled, permanently.
-//
-// Numbering the collision rather than changing the derivation keeps the ordinary
-// case stable, which is the property the derivation exists for.
-func ensureDistinctClusterIDs(clusters []*models.ReductionCluster) {
-	seen := make(map[string]bool, len(clusters))
-	for _, cluster := range clusters {
-		if !seen[cluster.ID] {
-			seen[cluster.ID] = true
-			continue
-		}
-		for suffix := 2; ; suffix++ {
-			candidate := fmt.Sprintf("%s-%d", cluster.ID, suffix)
-			if !seen[candidate] {
-				cluster.ID = candidate
-				seen[candidate] = true
+			if len(ids) == 0 {
 				break
 			}
+			*spec.into = append(*spec.into, ids...)
+			after = ids[len(ids)-1]
 		}
 	}
+	return extent, nil
 }
 
 // waitOutContention pauses between compare-and-set attempts that lost to a lock.

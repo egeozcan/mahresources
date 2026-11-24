@@ -128,6 +128,21 @@ type ReductionOverride struct {
 	// that is not the page — which is the only kind of caller that could check
 	// three hundred files in one request without having looked at any of them.
 	AcknowledgeOversized bool `json:"acknowledgeOversized" schema:"acknowledgeOversized"`
+
+	// MembersSeen is how many of the Cluster's copies the reviewer's page had
+	// rendered when they acknowledged it. The review page sends it, because a page
+	// past its member budget shows only a large Cluster's kept copy until "Show more
+	// members" loads the rest. When it is sent, zero included, an acknowledgement is
+	// refused unless it equals the Cluster's member count. Nil means the caller did not
+	// say, and the acknowledgement alone stands: like AcknowledgeOversized itself this
+	// is the caller's own statement, a guard against a page that skipped the copies,
+	// not proof against a caller that lies.
+	MembersSeen *uint `json:"membersSeen" schema:"membersSeen"`
+
+	// WinnerID is the copy the reviewer's card showed as kept. When sent, a check is
+	// refused with a version conflict unless the Cluster keeps that copy now: the
+	// approval is of the Cluster the reviewer saw, not of one re-decided since.
+	WinnerID *uint `json:"winnerId" schema:"winnerId"`
 }
 
 // ReductionApply is a request to apply what is checked.
