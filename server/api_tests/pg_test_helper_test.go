@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/spf13/afero"
 
@@ -117,6 +118,11 @@ func setupPostgresTestEnvWith(t *testing.T, mutate func(*application_context.Mah
 	config := &application_context.MahresourcesConfig{
 		DbType:      constants.DbTypePosgres,
 		BindAddress: ":0",
+		// What the runtime settings the review decisions read are built from.
+		MRQLDefaultLimit:        500,
+		MRQLQueryTimeoutBoot:    10 * time.Second,
+		HashSimilarityThreshold: 10,
+		HashAHashThreshold:      5,
 	}
 	if mutate != nil {
 		mutate(config)
@@ -143,6 +149,11 @@ func setupPostgresTestEnvWith(t *testing.T, mutate func(*application_context.Mah
 	t.Cleanup(func() { readOnlyDB.Close() })
 
 	appCtx := application_context.NewMahresourcesContext(fs, db, readOnlyDB, config)
+	// The review decisions read the similarity thresholds from the runtime settings.
+	settings := application_context.NewRuntimeSettings(db, application_context.NewStdlibSettingsLogger(),
+		application_context.BuildSpecsExported(), application_context.BuildDefaultsFromConfig(config))
+	_ = settings.Load()
+	appCtx.SetSettings(settings)
 
 	// Ensure default resource category exists
 	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
