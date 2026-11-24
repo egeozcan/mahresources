@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"context"
+	"mahresources/jobs"
 	"testing"
 	"time"
 
@@ -60,16 +61,16 @@ func TestQueuedComputeWaitsForSimilarityIndexes(t *testing.T) {
 		time.Sleep(60 * time.Millisecond)
 		_ = models.EnsureSimilarityDistanceIndexes(ctx.db)
 	}()
-	require.NoError(t, adapter.awaitSimilarityIndexes(context.Background()), "the run proceeds once the indexes are valid")
+	require.NoError(t, adapter.awaitSimilarityIndexes(context.Background(), jobs.Execution{}), "the run proceeds once the indexes are valid")
 
 	// Bounded: indexes that never finish end the wait with the building error.
 	require.NoError(t, ctx.db.Exec(`DROP INDEX idx_sim_r1_eff_dist`).Error)
 	reductionIndexMaxWait = 40 * time.Millisecond
-	err := adapter.awaitSimilarityIndexes(context.Background())
+	err := adapter.awaitSimilarityIndexes(context.Background(), jobs.Execution{})
 	require.ErrorIs(t, err, ErrReductionIndexesBuilding)
 
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 	reductionIndexMaxWait = time.Minute
-	require.ErrorIs(t, adapter.awaitSimilarityIndexes(cancelled), context.Canceled)
+	require.ErrorIs(t, adapter.awaitSimilarityIndexes(cancelled, jobs.Execution{}), context.Canceled)
 }

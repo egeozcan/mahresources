@@ -179,6 +179,16 @@ func (a *reductionComputeAdapter) Dispatch(ctx context.Context, execution jobs.E
 	if !found {
 		entry, err = a.start(ctx, execution, input)
 		if err != nil {
+			var refused *reductionStartRefusal
+			if errors.As(err, &refused) {
+				return a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, refused.reason)
+			}
+			if errors.Is(err, errReductionStartCancelled) {
+				return a.ctx.finishQueueJob(execution, jobs.StateCancelled, nil, nil)
+			}
+			if errors.Is(err, errDispatchAccountDeleted) {
+				return a.ctx.answerDispatchCheck(execution, err)
+			}
 			if errors.Is(err, ErrReductionBusy) {
 				return a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, "reduction-busy")
 			}
@@ -279,7 +289,7 @@ func reductionOwnerFilter(principal *auth.Principal) (*uint, bool) {
 func (a *reductionComputeAdapter) start(ctx context.Context, execution jobs.Execution, input *reductionComputeJobInput) (*download_queue.DownloadJob, error) {
 	// A Reduction the migration has not moved to tables yet is waited for, not
 	// refused: the Job stays claimed and runs once the plan is published (design D12).
-	reduction, err := a.awaitUpgrade(ctx, input.ReductionID)
+	reduction, err := a.awaitUpgrade(ctx, execution, input.ReductionID)
 	if err != nil {
 		return nil, err
 	}
@@ -289,8 +299,33 @@ func (a *reductionComputeAdapter) start(ctx context.Context, execution jobs.Exec
 	// The Postgres similarity indexes build CONCURRENTLY beside the server, so a
 	// compute queued before they finish waits for them like it waits for the
 	// upgrade; failing at dispatch would end the Job for a condition that passes.
-	if err := a.awaitSimilarityIndexes(ctx); err != nil {
+	if err := a.awaitSimilarityIndexes(ctx, execution); err != nil {
 		return nil, err
+	}
+	// Both waits can run for many minutes, and the authorization Dispatch made
+	// before them is not a standing permission: an administrator may have disabled,
+	// demoted or re-scoped the account meanwhile. Ask again, against the account as
+	// it stands now, immediately before the claim, and run under that binding.
+	if a.ctx.executionCancelled(execution) {
+		return nil, errReductionStartCancelled
+	}
+	if err := a.ctx.accountStillBound(a.ctx.db); err != nil {
+		if errors.Is(err, errAccountChanged) {
+			return nil, &reductionStartRefusal{reason: "account-changed"}
+		}
+		return nil, err
+	}
+	fresh, err := a.forExecution(execution)
+	if err != nil {
+		return nil, err
+	}
+	a = fresh
+	reason, err := a.refusalReason(execution, input)
+	if err != nil {
+		return nil, err
+	}
+	if reason != "" {
+		return nil, &reductionStartRefusal{reason: reason}
 	}
 	nonce, generation, err := a.ctx.beginReductionComputeStoreAs(reduction.ID, reduction.Version, reduction.CreatedByUserId)
 	if err != nil {
@@ -311,6 +346,31 @@ func (a *reductionComputeAdapter) start(ctx context.Context, execution jobs.Exec
 	)
 }
 
+// reductionStartRefusal is a start that must end the Job blocked with a reason.
+type reductionStartRefusal struct{ reason string }
+
+func (r *reductionStartRefusal) Error() string {
+	return "the clustering run may not start: " + r.reason
+}
+
+// errReductionStartCancelled ends a start whose Job was cancelled while it waited.
+var errReductionStartCancelled = errors.New("the clustering run was cancelled before it started")
+
+// executionCancelled reports whether the durable Job carries a cancel intent. A
+// queued run has no queue entry to cancel while it waits for the migration or the
+// indexes, so the intent recorded on the Job is the only signal it will ever get.
+func (ctx *MahresourcesContext) executionCancelled(execution jobs.Execution) bool {
+	service := ctx.JobService()
+	if service == nil || execution.JobID == "" {
+		return false
+	}
+	current, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, execution.JobID)
+	if err != nil {
+		return false
+	}
+	return current.ControlIntent == jobs.ControlIntentCancel
+}
+
 // reductionUpgradePoll is how often a deferred compute looks again at a Reduction
 // the migration has not published.
 var reductionUpgradePoll = 2 * time.Second
@@ -322,9 +382,12 @@ var reductionUpgradeMaxWait = 30 * time.Minute
 // awaitUpgrade loads the Reduction a queued compute names, waiting while its plan is
 // still the legacy document. The wait ends when the migration publishes, the deadline passes, the
 // Reduction is deleted, or the run is cancelled.
-func (a *reductionComputeAdapter) awaitUpgrade(ctx context.Context, reductionID uint) (*models.ResourceReduction, error) {
+func (a *reductionComputeAdapter) awaitUpgrade(ctx context.Context, execution jobs.Execution, reductionID uint) (*models.ResourceReduction, error) {
 	deadline := time.Now().Add(reductionUpgradeMaxWait)
 	for {
+		if a.ctx.executionCancelled(execution) {
+			return nil, errReductionStartCancelled
+		}
 		reduction, err := a.ctx.loadReductionForUpdate(reductionID, nil, false)
 		if err != nil {
 			return nil, err
@@ -349,9 +412,12 @@ var reductionIndexMaxWait = 30 * time.Minute
 // awaitSimilarityIndexes returns once both similarity distance indexes read valid.
 // Only ErrReductionIndexesBuilding is waited on; the deadline ends the wait with it
 // (wrapped), and a cancelled run stops at once.
-func (a *reductionComputeAdapter) awaitSimilarityIndexes(ctx context.Context) error {
+func (a *reductionComputeAdapter) awaitSimilarityIndexes(ctx context.Context, execution jobs.Execution) error {
 	deadline := time.Now().Add(reductionIndexMaxWait)
 	for {
+		if a.ctx.executionCancelled(execution) {
+			return errReductionStartCancelled
+		}
 		err := a.ctx.requireSimilarityIndexes()
 		if !errors.Is(err, ErrReductionIndexesBuilding) {
 			return err

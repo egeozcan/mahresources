@@ -3,6 +3,7 @@ package application_context
 import (
 	"context"
 	"errors"
+	"mahresources/jobs"
 	"testing"
 	"time"
 
@@ -155,7 +156,7 @@ func TestAQueuedComputeWaitsForTheMigrationRatherThanBlocking(t *testing.T) {
 		time.Sleep(60 * time.Millisecond)
 		_ = ctx.db.Exec(`UPDATE resource_reductions SET plan_schema = 1 WHERE id = ?`, r.ID).Error
 	}()
-	got, err := adapter.awaitUpgrade(context.Background(), r.ID)
+	got, err := adapter.awaitUpgrade(context.Background(), jobs.Execution{}, r.ID)
 	require.NoError(t, err)
 	assert.Equal(t, 1, got.PlanSchema, "the run proceeds once the migration publishes")
 
@@ -163,6 +164,6 @@ func TestAQueuedComputeWaitsForTheMigrationRatherThanBlocking(t *testing.T) {
 	other := legacyRow(t, ctx, models.ReductionStatusFailed)
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = adapter.awaitUpgrade(cancelled, other.ID)
+	_, err = adapter.awaitUpgrade(cancelled, jobs.Execution{}, other.ID)
 	assert.True(t, errors.Is(err, context.Canceled))
 }

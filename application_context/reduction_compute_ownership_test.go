@@ -3,6 +3,7 @@ package application_context
 import (
 	"context"
 	"fmt"
+	"mahresources/jobs"
 	"testing"
 	"time"
 
@@ -107,7 +108,7 @@ func TestAwaitUpgradeGivesUpAtItsDeadline(t *testing.T) {
 	bound, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	start := time.Now()
-	_, err := adapter.awaitUpgrade(bound, r.ID)
+	_, err := adapter.awaitUpgrade(bound, jobs.Execution{}, r.ID)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "migration")
 	assert.Less(t, time.Since(start), 5*time.Second)
