@@ -1,302 +1,431 @@
 # Resource Reduction plan as tables: bounded memory at any library size
 
-Status: design, v1. Supersedes ADR 0003's "one row carries the plan" for the Cluster list.
+Status: design v2 (v1 review: pi 9 P0 / 4 P1, architect 3 P0 / 18 P1; every P0 and P1 is addressed
+below, and the findings table at the end maps each to its section). Supersedes ADR 0003's "one row
+carries the plan" for the Cluster list.
 
 ## Problem
 
 A Reduction's plan (every Cluster, every member, every decision) is one JSON value in
-`resource_reductions.plan`. Every reader decodes all of it and every writer rewrites all of it.
-The first whole-library Reduction on a 2.2M-Resource library exhausted a 15.6 GB host during
-compute; that tier is now trimmed (4f310c83), but the rest still grows with the library:
+`resource_reductions.plan`. Every reader decodes all of it and every writer rewrites all of it. The
+first whole-library Reduction on a 2.2M-Resource library exhausted a 15.6 GB host during compute;
+that tier was trimmed in 4f310c83, but the rest still grows with the library:
 
 | Path | Today |
 |---|---|
-| Review page, `.json` twin | decode whole plan; reachability over every member of every Cluster; tab counts, figures, apply token, sort and filter over all Clusters in Go; slice a page |
-| List page | decode the plan of each of up to 50 Reductions, reachability over all their members |
-| Approve / Skip / promote / eject | decode, change one Cluster, re-encode and rewrite everything |
-| Bulk approve | decode, reachability over everything, rewrite everything; share-lock every target member in one transaction |
-| Apply | for each approved Cluster about three whole-plan decode/encode round trips, plus a linear `findCluster` |
-| Compute | previous plan decoded; carried, `excluded`, `claimed`, all fresh Clusters, the extent `seen` set and the Near seed list all in memory; one blob written at the end |
-| Cluster size | unbounded: one hash held by 50k files is one Cluster of 50k fully loaded members |
-| Compute time | one hour deadline; a large compute fails however healthy it is |
+| Review page, `.json` twin | decode whole plan; reachability over every member; tabs, figures, apply token, sort, filter in Go |
+| List page | decode the plan of each of up to 50 Reductions; reachability over all their members |
+| Override (approve, skip, promote, eject, …) | decode, change one Cluster, rewrite everything; promote re-reads every stored pair of the new Winner |
+| Bulk approve | decode, reachability over everything, rewrite everything |
+| Apply | ~3 whole-plan decode/encode round trips per Cluster; response lists every outcome |
+| Compute | previous plan, carried, `excluded`, `claimed`, all fresh Clusters, the Extent `seen` set, Group subtree maps, the Near seed list in memory; one blob at the end |
+| Extent | explicit ids in one JSON document; Group expansion and "arrived since" collect ids in memory |
+| Cluster size | unbounded (one hash held by 50k files is one Cluster of 50k loaded members) |
+| Compute time | fixed one-hour deadline; a large healthy compute fails |
 
-A library with a million paired images plausibly yields ~300k Clusters: 100-200 MB of JSON,
-~1 GB once decoded, on every page view.
+## Goal and the rule every section follows
 
-## Goal
+Per-request and per-job **memory** is bounded by constants (page size, chunk size, the member cap,
+the request id-list limit), never by the number of Resources, Clusters, members, Groups or pairs.
+Work that must touch everything (a count, a digest, an apply) streams through SQL in bounded
+chunks. Per-request **time** for an unscoped principal is O(Clusters) over narrow indexed rows, not
+O(members); for a scoped principal it is O(members) over an indexed anti-join (D8, measured in D13).
 
-Per-request and per-job memory is bounded by constants (page size, chunk size, the member cap),
-never by the number of Resources, Clusters or members. Work that must touch everything (a count,
-a digest, an apply) streams through SQL in chunks. Behaviour visible to users and API clients
-does not change, except the member cap (new, shown) and the compute deadline (now a liveness
-deadline).
+Behaviour visible to users and API clients does not change, except: the member cap (D6), the
+compute lease (D11), the apply response's capped outcome lists (D10), settings and Extent edits
+refused while computing (D11), size sort by compute-time sizes (D8). Each is documented on the
+docs-site page.
 
-Out of scope: the per-request flattened subtree allow-list of a scoped principal (pre-existing,
-shared by every scoped query in the app).
+Out of scope, recorded: the per-request flattened subtree allow-list of a scoped principal (shared
+by every scoped query in the app; D8 only guarantees it is expanded at most once per statement).
 
-## Decisions
-
-### D1. Two tables, one generation pointer
+## D1. Tables
 
 ```
 reduction_clusters
-  id              bigint pk                 -- surrogate, never shown
-  reduction_id    bigint not null           -- index (reduction_id, generation, ...) below
-  generation      varchar(64) not null      -- which compute produced/carried the row
-  key             varchar(64) not null      -- today's Cluster id ("near-1a2b…", "-2" suffix); the public id
-  position        bigint not null           -- creation order inside the generation ("computed" sort)
+  id               bigint pk                    -- surrogate, never shown
+  reduction_id     bigint not null
+  generation       varchar(64) not null
+  key              varchar(64) not null         -- today's Cluster id, the public id
+  position         bigint not null              -- carried first in their old order, then fresh in build order
   tier, state, winner_id, checked, reviewed, oversized,
   decided_by, margin, undecided, keeps_smaller,
-  lossy           json                      -- small list of field names
+  lossy            json                         -- field names, bounded
   stale_reason, applied_at, merged, claim_id,
-  changed_members json                      -- bounded by the member cap
-  member_count    int  not null             -- denormalised, maintained by every writer
-  loser_count     int  not null             -- non-ejected, non-winner members
-  needs_attention bool not null             -- lossy<>[] OR oversized OR keeps_smaller
-  total_size      bigint not null           -- sum of member file sizes at compute (size sort)
-  truncated       int  not null default 0   -- members left out by the cap (D6)
-  last_apply_id   varchar(64)               -- the apply request that applied/staled it (replaces LastApply.ClusterIDs)
+  changed_members  json                         -- bounded by the member cap
+  member_count     int not null                 -- \
+  loser_count      int not null                 --  | derived, written only by deriveClusterColumns (D3)
+  needs_attention  bool not null                --  |
+  fingerprint      char(64) not null            --  | sha256(key | winner@hash | sorted loser@hash), the apply-token unit
+  total_size       bigint not null              -- / sum of member file sizes at compute (size sort)
+  truncated        int not null default 0       -- eligible members left out by the cap (D6)
+  gone_members     int not null default 0       -- non-ejected members whose Resource was deleted (D9)
+  apply_batch      varchar(64)                  -- the apply batch that stamped it eligible (D10)
+  approved_winner  bigint                       -- winner at stamp time (D10)
+  outcome_batch    varchar(64)                  -- the batch that applied or staled it (replaces LastApply.ClusterIDs)
   unique (reduction_id, generation, key)
-  index  (reduction_id, generation, state, tier)
-  index  (reduction_id, generation, last_apply_id)
+  index  (reduction_id, generation, state, tier, checked)
+  index  (reduction_id, generation, member_count desc, key)
+  index  (reduction_id, generation, total_size desc, key)
+  index  (reduction_id, generation, position)
+  index  (reduction_id, generation, apply_batch, key)
+  index  (reduction_id, generation, outcome_batch)
 
 reduction_members
-  id              bigint pk
-  cluster_id      bigint not null  -- index
-  reduction_id    bigint not null
-  generation      varchar(64) not null
-  resource_id     bigint not null
-  position        int not null     -- member order (today's slice order)
+  id               bigint pk
+  cluster_id       bigint not null
+  reduction_id     bigint not null
+  generation       varchar(64) not null
+  resource_id      bigint not null
+  position         int not null
   hash, in_extent, ejected, ejected_reason, distance,
-  owner_at_merge  bigint           -- replaces Cluster.LoserOwners; set in the merge tx for each Loser
-  index (reduction_id, generation, resource_id)
+  owner_at_merge   bigint not null default 0    -- 0 = unknown; set in the merge tx for each Loser
+  approved         bool not null default false  -- a Loser at apply-batch stamp time (D10)
   index (cluster_id, position)
+  index (reduction_id, generation, resource_id)
+  index (resource_id)                           -- the deletion hook (D9)
+
+reduction_extent  (reduction_id, generation, resource_id)  primary key all three   -- D5
+reduction_seeds   (reduction_id, generation, rank, resource_id) primary key (reduction_id, generation, rank)
+reduction_extent_ids (reduction_id, resource_id) primary key both                  -- D5, explicit selection
 ```
 
-`resource_reductions` gains `plan_generation varchar(64)` (the generation readers see),
-`coverage json`, `plan_settings json`, `last_apply json` (all small, fixed size). The `plan` column
-stays in the schema (AutoMigrate does not drop) and is NULL once migrated (D11).
+`resource_reductions` gains: `plan_generation varchar(64)` (what readers see), `compute_generation
+varchar(64)` (what the running compute writes, D4), `coverage json`, `plan_settings json`,
+`last_apply json`, `has_explicit_ids bool`. The `plan` column is not dropped and not cleared (D12).
 
-Every read joins on `reduction_id = ? AND generation = reduction.plan_generation`. Rows of other
-generations are invisible and are garbage (D4).
+No table has a foreign key to `resources`: a member outlives its Resource (merged Loser, deleted
+member). All five are classified in `models/saved_sql_tables.go` as not readable by saved SQL, like
+`resource_reductions`.
 
-Neither table has a foreign key to `resources`: a member must outlive its Resource (a merged Loser,
-a deleted member read as stale). Clusters and members are deleted with their Reduction in the same
-transaction as `DeleteResourceReduction`, and by the generation sweep.
+## D2. Authorization and the store boundary
 
-### D2. Concurrency: the Reduction row stays the single version, and the lock order is unchanged
+All access to the new tables goes through one `reductionStore` in `application_context`. Its
+methods take an already-authorized `*models.ResourceReduction` (loaded with the owner predicate by
+`loadReductionForUpdate`), never a bare id from a request, so ADR 0003's explicit owner predicate
+cannot be skipped. A test asserts that user B naming user A's Reduction id and a Cluster key
+through the review, `.json`, override, bulk and apply gets the same not-found as an unknown id.
+The scoped-principal visibility mask (D8) is a separate layer inside the store.
 
-Every write to a Cluster or member row happens in a transaction that first takes the Reduction
-row (`FOR UPDATE` on Postgres, the writer lock on SQLite) and bumps `resource_reductions.version`
-by compare-and-set, exactly as today. So:
+Every statement that touches `resources`, `groups` or `notes` is built with the GORM builder on the
+request's scoped handle, and a subquery reaches the scope callback only as a `?` argument
+(`clause.Expr{SQL: "EXISTS (?)", Vars: []any{subdb}}`): GORM runs the query callback chain on such
+a subquery (`gorm/statement.go` AddVar, `DryRun` session), but not on a `Where(*gorm.DB)` condition,
+a string fragment, `Raw`, `Exec`, `Scan` or `Rows`. Slice 1's step 0 proves this on SQLite and
+Postgres for a confined principal, with an aliased outer table, and with a negative control (the
+same subquery as a string must not filter). A store-level test per statement shape runs as a
+confined principal with an out-of-subtree twin and asserts the twin never appears.
 
-- the client contract (`version` in, `version` out, 409 on mismatch) is unchanged;
-- the documented lock order (Reduction row, then Series, then Resources) is unchanged;
-- the cost of a write is O(one Cluster), not O(plan).
+`TestEveryPlanWriteGoesThroughAKnownSite` is replaced by a guard that finds every write to the new
+tables (GORM `Model`/`Table` on them, and any `Exec` whose SQL names them) and allows them only in
+the store file.
 
-Per-Cluster versions were considered and rejected: they would change the client contract and the
-apply binding for a contention problem we do not have (one reviewer per Reduction in practice), and
-the whole-row version is what makes "the plan did not move since you looked" a single comparison.
+## D3. Concurrency, derived columns, and every write site
 
-### D3. Every write site, rewritten
+The Reduction row stays the single version. Every write to a Cluster or member row happens in a
+transaction whose first statement is the existing `casReduction` (conditional `UPDATE … SET
+version = version + 1 WHERE id = ? AND version = ?`, the transaction's first statement so SQLite
+never upgrades a read snapshot), then loads what it changes, then writes it. `retryReductionWrite`
+stays. The lock order is unchanged: Reduction row, then Series, then Resources, then Cluster and
+member rows (D9's deletion hook takes Resources then Cluster rows, the same relative order).
 
-| Site | New shape |
+`deriveClusterColumns(cluster)` computes `member_count`, `loser_count`, `needs_attention`,
+`fingerprint` and `total_size` from the loaded Go struct; every writer calls it, nothing else writes
+those columns. `assertDerivedColumnsConsistent(reduction)` recomputes them from the member rows and
+runs at the end of every store, override, bulk, apply, merge and compute test, on both databases.
+
+| Site | Shape |
 |---|---|
-| override (promote, eject, restore, skip, reopen, check, uncheck) | tx: lock+CAS row; load the one Cluster + members by key; mutate in Go (existing logic); update the cluster row and changed member rows; share-lock that Cluster's member Resources (unchanged) |
-| bulk by ids | tx: lock+CAS row; one `UPDATE … WHERE key IN (?) AND <eligible>`; share-lock members of the named Clusters (bounded by request size, already capped) |
-| bulk allIdentical | tx: lock+CAS row; one `UPDATE reduction_clusters SET checked, reviewed WHERE <approvable identical predicate, visibility predicate included>`; `RowsAffected` must equal `expectedCount` or the tx rolls back with `ErrReductionCountMismatch`. No per-member locks: the predicate is evaluated atomically in the statement, and approval destroys nothing (apply revalidates and locks per Cluster) |
-| claim, demote, release, confirm-in-merge-tx, record-stale, reconcile | same steps as today on one cluster row; `claim_id` compare in the `WHERE`; the merge's InTx hook sets `merged` and each Loser's `owner_at_merge` |
-| LastApply start/finish | the small `last_apply` JSON on the row; `last_apply_id` set on each Cluster the apply applies or stales |
+| override (promote, eject, restore, skip, reopen, check, uncheck) | CAS; load the Cluster + members by key (bounded by the cap); existing Go logic; write the Cluster row and changed member rows; share-lock that Cluster's member Resources (today's `casReductionAndReloadHolding`). Promote's re-justification probes only the stored pair between the new Winner and each member (an indexed lookup per pair), not every pair of the Winner |
+| bulk by ids | request list capped at 500 ids (400 otherwise). CAS; classification pass `SELECT key, state, withheld …` for the named keys; unknown or withheld → `ErrReductionClusterNotFound`, not open → `ErrReductionClusterNotOpen`, exactly as `bulkTargets` orders them; then the UPDATE; share-lock the named Clusters' members |
+| bulk allIdentical check | CAS; `UPDATE … SET checked = true, reviewed = true WHERE tier='identical' AND effective-open AND NOT needs_attention AND loser_count > 0 AND NOT withheld` (today's set: already-checked ones are also marked reviewed); the approvable count (unchecked members of that set) is read first in the same transaction and must equal `expectedCount`, else rollback with `ErrReductionCountMismatch`; then `SELECT … FOR SHARE` (Postgres) over the targets' member Resources through a join, so no ids are held in Go |
+| bulk allIdentical uncheck | the same with today's uncheck predicate (all open visible Identical), no count |
+| batch claim, per-Cluster claim, confirm-in-merge-tx, demote, release, record-stale, reconcile | today's steps on one Cluster row each, `claim_id` compared in the `WHERE`; the merge's InTx hook sets `merged` and each Loser's `owner_at_merge`; reconcile walks stranded claims (`state='applied' AND NOT merged`) by keyset, one transaction per chunk of 50. Bookkeeping writes after a merge stay best-effort and logged (a failure to record never turns a completed merge into an error) |
 | compute landing | D4 |
 
-`mutatePlan`'s no-transaction retry loop goes away: each of its callers becomes a locked
-single-Cluster transaction like the others.
+Settings edits and Extent widening bump the version, so they are refused with `ErrReductionBusy`
+while `computing` (overrides already are). A compute's landing therefore fails only when the
+Reduction really changed under it.
 
-`TestEveryPlanWriteGoesThroughAKnownSite` is rewritten to guard writes to the two tables and to
-`plan_generation`, with the same allow-list idea.
+Effective state (D9) applies to writers too: an override, bulk or claim treats a Cluster with
+`gone_members > 0` as stale (refuses check, reopen; skip is allowed), and every count of "checked"
+or "approved" is over `checked AND effective-open`.
 
-### D4. Compute writes a new generation, landing flips the pointer
+## D4. Compute generations
 
-A compute owns generation `G` = the nonce it already carries (`pending:<uuid>` → the job id).
+- `beginReductionCompute` (the existing CAS) sets `compute_generation = <new uuid>`. Each attempt
+  of a run (the in-process retry loop and a replayed job) first deletes rows of
+  `compute_generation` (guarded, below), so a retry never collides with its own earlier rows.
+  The job id swap does not touch `compute_generation`.
+- Staging writes (extent, seeds, Clusters, members) never touch the Reduction row or its version.
+  Between batches the compute checks `jobCtx`, that the row still exists, and that
+  `compute_generation` still names its generation; any failure stops it (a superseded or deleted
+  compute stops writing).
+- Carried Clusters (applied, frozen, and effectively stale ones) are copied into `G` with two
+  `INSERT … SELECT` statements: Clusters (`position` preserved), then members remapped by joining
+  old Cluster to new Cluster on `(reduction_id, key)` through the unique index.
+- Fresh Clusters are inserted as built, `position` continuing after the carried maximum.
+- Landing, one transaction: `casReduction` at the version captured at start (refused, not rebased,
+  as today), `compute_job_id` still this job, lease unexpired (D11); set `plan_generation =
+  compute_generation`, coverage, settings, status.
+- Sweep, chunked, guarded inside each statement: `DELETE FROM reduction_members WHERE id IN (SELECT
+  id FROM reduction_members m WHERE m.reduction_id = ? AND m.generation NOT IN (SELECT
+  plan_generation FROM resource_reductions WHERE id = ?) AND m.generation NOT IN (SELECT
+  COALESCE(compute_generation,'') FROM resource_reductions WHERE id = ? AND status = 'computing')
+  LIMIT 1000)`, likewise for Clusters, extent and seeds. Never a Go-side list of live generations.
+  Run after landing, at compute start, and at startup. Deleting a Reduction deletes only its row
+  (one small transaction); an orphan sweep (`reduction_id NOT IN (SELECT id FROM
+  resource_reductions)`, chunked) runs at startup and after every delete, and a compute whose row
+  is gone stops at its next batch check. A test injects a compute start between the
+  sweep's read and its delete (the injected-interleave technique, not a goroutine race).
+- Distinct keys: keys are computed in Go as today. Before inserting a batch of fresh Clusters, one
+  query `SELECT key FROM reduction_clusters WHERE reduction_id=? AND generation=? AND (key IN (?)
+  OR (key > ? AND key < ?))` per colliding base finds taken keys and suffixes; the compute is the
+  only writer of `G`, so no conflict can appear between the check and the insert.
 
-1. Stage the Extent (D5).
-2. Copy carried Clusters (applied, and every `Frozen()` one) from the current generation into `G`
-   with `INSERT … SELECT` for clusters and members. No Go memory.
-3. Identical tier, then Near tier, inserting each Cluster as it is built, in batches.
-4. Landing, one tx: lock+CAS the row at the version captured at start (refused, not rebased, as
-   today); require `compute_job_id` to still name this job; set `plan_generation = G`, coverage,
-   settings, status. O(1).
-5. Sweep: delete rows of any generation that is neither `plan_generation` nor the in-flight
-   compute's, in chunks, after landing and at compute start. A failed or superseded compute's rows
-   are swept the same way.
+## D5. Compute without in-memory sets
 
-Readers never see a half-written generation. Overrides stay refused while `computing` (today's
-rule), so the carried copy cannot drift from the original during the compute.
+- **Explicit selection.** `ResourceIDs` move out of the Extent JSON into `reduction_extent_ids`
+  (the Extent keeps `groupIds` and `all`). Create/widen requests are capped at 10,000 ids each;
+  more are added by widening again or by selecting a Group.
+- **Extent staging** into `reduction_extent(G)`: explicit ids joined through the scoped handle;
+  `All` by keyset through the scoped handle; Groups by a recursive CTE into a staged Group list,
+  then owned and related Resources by `INSERT … SELECT` joined to it, each carrying the scope
+  predicate as a GORM expression (D2). Insert-ignore (`ON CONFLICT DO NOTHING`; SQLite's
+  `INSERT … SELECT … WHERE true ON CONFLICT` form) replaces the `seen` map.
+- **"Arrived since" and coverage** are aggregates over the same CTE or staged set; the review page's
+  drift count is one `COUNT` with `created_at > computed_at` over the Extent definition, never a
+  collected list.
+- **Unavailable**: a member of a `G` Cluster that holds its members (not `applied AND merged`). One
+  `NOT EXISTS` on `reduction_members (reduction_id, generation, resource_id)`. It serves the frozen
+  carry-over exclusion, the Identical tier's claims and the Near tier's `claimed`. Inside one seed
+  chunk, ids claimed since the chunk was read are also kept in a set bounded by chunk × cap.
+- **Identical tier.** Keyset over repeated hashes of the staged Extent (`hash <> ''`, a twin
+  looked up unscoped to nominate, `hash > ?`, 500 per chunk). Per hash, stream its holders through
+  the scoped handle by `id > ?` in 500s, re-check `hash` on the loaded rows (a version upload
+  between grouping and load must not produce a mixed Cluster; a test injects that interleave),
+  drop unavailable ones, and keep a bounded heap of the best `MaxClusterMembers` by
+  `models.CompareByWinnerRule`. No SQL ordering, so the true Winner is always kept. `truncated` is
+  the count of the rest.
+- **Near tier seeds.** `reduction_seeds(G)` filled by one `INSERT … SELECT … ROW_NUMBER() OVER
+  (ORDER BY <Winner Rule SQL>, id)` over staged Extent ids that carry a perceptual hash, have a pair
+  row and are available; association counts come from pre-aggregated joins, not correlated
+  subqueries. The loop reads seeds by `rank > ?` in chunks of 500.
+- **Near neighbours.** One query: both pair directions unioned, a neighbour reached twice keeps the
+  closer distance, joined to `image_hashes` and to the scoped `resources`, filtered by the read
+  threshold and aHash guard (`mrql.SimilarPairPredicate`) and by availability, then `ORDER BY
+  distance, id LIMIT MaxClusterMembers - 1`; `truncated` counts the eligible rest. The out-of-Extent
+  better copy is preserved: the query keeps, besides the closest in-Extent neighbours, the single
+  best eligible outsider by the Winner Rule (today's `buildCluster` admits at most one).
+- **Cluster build** in Go over at most `MaxClusterMembers` loaded rows, exactly as today, including
+  `rejustifyAgainstWinner` (which probes named pairs only, D3).
 
-Distinct keys: `ensureDistinctClusterIDs` held every key in memory. The unique index
-`(reduction_id, generation, key)` now enforces it; on conflict the insert retries with the next
-`-N` suffix found by `SELECT … WHERE key = ? OR key LIKE ?` (only for colliding keys, which arise only
-between a carried applied Cluster and a fresh one with the same members).
+## D6. Member cap
 
-### D5. Compute without in-memory sets
+`MaxClusterMembers = 200`. Left-out members are counted in `truncated`, stay available, and nothing
+is merged that was not shown. The card says "Showing 200 of N copies. Apply this Cluster, then
+compute again for the rest." `Oversized` (Near, >12) is unchanged. A follow-up (not this change):
+"Apply and find more" as one action, for hashes held by thousands of files.
 
-- **Extent staging.** `reduction_extent(reduction_id, generation, resource_id, primary key all three)`.
-  The existing resolvers stream ids in chunks of 500 through the scoped handle and insert them with
-  conflict-ignore; that replaces the `seen` map and makes every later "is it in the Extent" an
-  indexed join. Swept with its generation.
-- **Coverage.** Aggregates over the staged Extent, one query each.
-- **Excluded / claimed.** A Resource is unavailable if it is a member of a generation-`G` Cluster
-  that holds its members, i.e. not (`applied` and `merged`). One `NOT EXISTS` against
-  `reduction_members (reduction_id, generation, resource_id)`; the same predicate serves both the
-  frozen carry-over exclusion and the Near tier's `claimed`. Inside one seed chunk, ids claimed
-  since the chunk was read are also kept in a set bounded by chunk size × member cap.
-- **Identical tier.** Stream repeated hashes of the staged Extent by keyset on `hash`
-  (`GROUP BY` over the join, `EXISTS` a twin, `hash > ?`, limit 500). Per hash, candidates are the
-  top `MaxClusterMembers` holders by the Winner Rule in SQL (D7) that are not unavailable; the
-  Winner is then chosen in Go over those exactly as today.
-- **Near tier seed order.** `reduction_seeds(reduction_id, generation, rank, resource_id)` filled by one
-  `INSERT … SELECT … ROW_NUMBER() OVER (ORDER BY <Winner Rule in SQL>, id)` over staged Extent ids
-  that carry a perceptual hash, have a stored pair row and are not unavailable. The loop reads
-  seeds by `rank > ?` in chunks of 500, re-checking availability per seed. ADR 0002's "seed order is
-  the Winner Rule" is preserved.
-- **Near neighbours.** `similarWithin` gets `LIMIT MaxClusterMembers-1` ordered by distance, id.
-- **Cluster build** stays in Go over at most `MaxClusterMembers` loaded rows.
+## D7. The Winner Rule in SQL is exact
 
-### D6. Member cap
+Only the Near seed order uses SQL (Identical uses the Go comparator over a heap). ADR 0002 makes
+seed order part of the design, so the SQL order must equal `models.CompareByWinnerRule` exactly,
+including `preferPresent` (missing last in either direction):
 
-`MaxClusterMembers = 200`. A Cluster that would have more keeps the top 200 (Identical: by the
-Winner Rule, so the true Winner is included; Near: the 199 closest to the seed plus the seed) and
-records `truncated = n left out`. The card says "Showing 200 of N copies. Apply this Cluster, then
-compute again to continue." Members left out stay available to the next compute; nothing is lost
-or merged that was not shown. `Oversized` (>12, Near) is unchanged and still applies.
+| Criterion | Missing when | Ordered by |
+|---|---|---|
+| pixels | `width*height = 0` (both NOT NULL) | `width*height` |
+| size | `file_size = 0` | `file_size` |
+| created / updated | NULL or year < 2 (Go zero time) | Postgres: the column. SQLite: `unixepoch(col)` then the fractional digits right-padded to 9 (`substr(frac || '000000000', 1, 9)`, `frac` the digit run after `.`), exact to the nanosecond across offsets |
+| name / content type | `COALESCE(col,'') = ''` | `col COLLATE "C"` (Postgres), BINARY (SQLite): byte order like Go |
+| has description | trimmed to empty with the full `unicode.IsSpace` set as the trim characters (`btrim` / `trim(X, Y)`) | |
+| associations | | pre-aggregated counts joined |
+| tiebreak | | `id` |
 
-### D7. The Winner Rule in SQL, with Go as the oracle
+The differential test generates randomized rows including NULLs, zero times, mixed UTC offsets
+across DST, sub-microsecond differences, every Unicode space, and equal keys, and requires the SQL
+rank to equal the Go sort exactly on both databases. A divergence fails the slice; there is no
+documented-divergence escape.
 
-`winnerRuleOrderSQL(rule, dialect)` builds the `ORDER BY` for seed ranking and Identical candidate
-selection. It must match `models.CompareByWinnerRule`, including "a missing value sorts last in
-either direction" (`preferPresent`):
+## D8. Reads: one SQL visibility rule, one snapshot
 
-| Criterion | Expression (both directions put missing last) |
+Every review, `.json`, list, progress and apply-eligibility read runs in one `withReadSnapshot`
+transaction (REPEATABLE READ on Postgres), reading the Reduction row first (version,
+`plan_generation`), then everything else at that generation. A Reduction with a NULL
+`plan_generation` and a non-NULL `plan` (not yet migrated, D12) answers "being upgraded, try again
+shortly" (503).
+
+The rule, built once per statement by the store (two-valued throughout):
+
+- `memberInScope(m)` = `EXISTS (? )` over the scoped `resources` subquery for `m.resource_id`.
+- `mergedLoserVisible(m)` = `c.merged AND m.resource_id <> c.winner_id AND NOT m.ejected AND
+  m.owner_at_merge <> 0 AND EXISTS (?)` over the scoped `groups` subquery for `m.owner_at_merge`.
+- `withheld(c)` (scoped principal only) = `EXISTS (SELECT 1 FROM reduction_members m WHERE
+  m.cluster_id = c.id AND NOT memberInScope(m) AND NOT mergedLoserVisible(m))`. Every operand is
+  an `EXISTS` or a NOT NULL column, so no NULL can fail open; a merged Loser with owner 0 (unknown,
+  every legacy plan) keeps the Cluster withheld, as today.
+- Unscoped: nothing is withheld; `effective-open` = `state IN ('open','skipped') AND gone_members = 0`
+  is what the tabs read, and a Cluster with `gone_members > 0` reads as stale with reason
+  "deleted".
+- The scoped allow-list is expanded at most once per statement: the store builds `withheld` as one
+  derived table per statement and joins it, never repeats the fragment. A test runs every statement
+  shape with a 20,000-Group subtree on both databases.
+
+What uses it: tab counts, checked/approved counts, apply figures, bulk approvable count, list-page
+progress (one `GROUP BY` per Reduction on the page, each bounded by an aggregate); the page query
+(filter in SQL, `ORDER BY member_count DESC | total_size DESC | position`, then `key`,
+`LIMIT/OFFSET` on the matching index; only the page's members and Resources are hydrated);
+`settleableClaims` (`COUNT` of stranded, not withheld); LastApply counts (D10).
+
+Cost: unscoped, every aggregate reads Cluster rows only (indexed, narrow): O(Clusters). Scoped,
+`withheld` is an anti-join over members: O(members) indexed. The scale test (D13) measures both
+with a budget; scoped principals do not exist on an auth-off install.
+
+Size sort uses compute-time sizes (documented).
+
+## D9. Deleted members without read-time scans
+
+`gone_members` replaces `readDeletions`. Every Resource deletion path (`DeleteResource`, bulk
+delete, the merge's Loser removal, and any other site the implementation's grep for `Delete(`
+on Resources finds) increments it in the same transaction: `UPDATE reduction_clusters SET
+gone_members = gone_members + 1 WHERE id IN (SELECT cluster_id FROM reduction_members WHERE
+resource_id IN (?) AND NOT ejected)`. It touches no Reduction row and no version (today's read-time
+reading never bumped one either), and it takes Cluster rows after the Resource rows it is deleting,
+the same relative order as the apply.
+
+Safety net: compute start recounts `gone_members` for the current generation by keyset chunks,
+and apply's revalidation still refuses any Cluster whose member is gone. Effectively stale Clusters
+are carried by a recompute as stale, which makes today's accidental behaviour (a bulk write
+persisting the stale reading plan-wide, freezing them) the explicit rule for all of them.
+
+## D10. Apply: a stamped worklist, an exact token, a bounded response
+
+- **Token.** The exact digest of today, over eligible Clusters `ORDER BY key` (`COLLATE "C"` on
+  Postgres, BINARY on SQLite, matching Go's byte sort), but folding the stored `fingerprint`
+  column, so it streams narrow Cluster rows with no member join. Computed in the review snapshot and
+  in the apply claim. The v1 "cheap token" fallback is dropped: a scope widening or an owner move can
+  add eligible Clusters without a version bump.
+- **Batch claim**, one transaction: CAS; refuse a running apply (the `last_apply` running check,
+  moved to the row's `last_apply` column with its three readers: compute request, batch claim,
+  settle); `UPDATE reduction_clusters SET apply_batch = :batch, approved_winner = winner_id WHERE
+  <eligible: effective-open, checked, loser_count > 0, NOT withheld>` and `UPDATE reduction_members
+  SET approved = (current Loser) WHERE cluster in that set`; recompute the token over
+  `apply_batch = :batch` and require it and the counts to equal the request's; write `last_apply`
+  with an internal batch id (`:batch`, server-generated) and the pinned `plan_generation`. Anything
+  wrong rolls the whole stamp back.
+- **Loop** by keyset over `apply_batch = :batch ORDER BY key`, 50 Clusters per read, at the pinned
+  generation. Per Cluster: load it; `withinApproved` = Winner equals `approved_winner` and every
+  current Loser has `approved = true` with its stamped hash (subset semantics: an eject during the
+  batch is honoured, a substitution is refused); visibility re-checked; then today's claim, merge,
+  confirm-in-transaction, stale or release. A landing compute cannot flip the generation mid-batch
+  (a running apply refuses compute, today's rule), and the loop asserts the pinned generation.
+- **Outcome evidence.** Each Cluster the batch applies or stales gets `outcome_batch = :batch` in
+  the same statement that settles it. LastApply counts are shown only if `NOT EXISTS` a Cluster
+  with `outcome_batch = last_apply.batch` that is withheld, and only if the record carries a batch
+  id (legacy records without one: hidden for a scoped viewer, as today's "never recorded" case).
+- **Response.** `applied` and `stale` arrays are capped at 200 entries each, with `appliedCount`,
+  `staleCount` and `more` added; the page reads the counts (one JS change); the full list is the
+  Applied and Stale tabs. Documented in `openapi.yaml`.
+
+## D11. Compute liveness
+
+`compute_deadline` becomes a lease. A ticker goroutine tied to `jobCtx` renews it every 30 s, phase
+independent: `UPDATE resource_reductions SET compute_deadline = now + 10 min WHERE id = ? AND
+compute_job_id = ? AND status = 'computing' AND compute_deadline > now`. It never touches `version`
+or `updated_at`, and an expired lease cannot be renewed (no resurrection: expiry already unlocks
+edits). New: a hard ceiling of `computing_started_at + 24 h`, checked by renewal and landing.
+Landing requires an unexpired lease. A test expires the lease during a long phase and asserts the
+compute stops writing and cannot land.
+
+## D12. Migration and cutover
+
+- Startup, before the HTTP server accepts requests, after AutoMigrate: for each Reduction with
+  `plan IS NOT NULL AND plan_generation IS NULL`, in id order, decode its plan (bounded by the
+  largest legacy plan, which the old code already held in memory whole on every request, so the
+  host has survived it), write Clusters and members under a new generation in batches with
+  `deriveClusterColumns`, derive `keeps_smaller` for settings-less plans in chunks (tolerating
+  deleted Resources as today), map `LoserOwners` to `owner_at_merge` (absent → 0) and
+  `LastApply.ClusterIDs` to `outcome_batch` under a synthetic batch id, move explicit ids to
+  `reduction_extent_ids`; then one transaction guarded by `WHERE plan_generation IS NULL AND
+  version = :seen` sets `plan_generation`, coverage, settings, `last_apply`. A crash leaves an
+  unreferenced generation the sweep removes; a second instance's guarded write is a no-op.
+- `plan` is left as it was (expand/contract): rolling back to the previous binary shows the plan as
+  of the upgrade instead of an empty one. A later release clears it.
+- A Reduction `computing` at upgrade: failed with "interrupted by an upgrade; compute again".
+- Cutover is one slice (below): no state in which some paths read the tables and others the JSON.
+
+## D13. Proof
+
+- **Scale tests** (both databases): 300k Clusters, 1M members inserted directly. Review page,
+  `.json` twin, list page with 50 such Reductions, a bulk approve of all Identical, an apply of
+  2,000 Clusters, concurrent override during a render; unscoped and scoped (20k-Group subtree).
+  Peak `HeapInuse` sampled on a 10 ms ticker after a forced GC, under 64 MB per request; a GORM
+  callback asserts no statement returns more than 1,000 member rows or 1,000 Cluster rows
+  (narrow digest streams excepted, they are counted separately); wall time logged and asserted
+  against a generous budget.
+- **Compute scale test**: 100k hashed images, dense stars (a neighbourhood larger than the cap),
+  a 50k-holder hash, Group drift; peak heap under 128 MB.
+- **Differential tests** against a test oracle made of today's Go functions (tab counts, figures,
+  filters, sorts, `clusterWithheld`, `withMergedHistory`, `applyToken`, `scopeLastApply`,
+  `settleableClaims`), for randomized plans and principals, including merged Losers with owner
+  unknown, out of scope and in scope, deleted ejected members, and stranded claims.
+- **Interleave tests** (injected, not raced): sweep vs compute start; version upload between
+  Identical grouping and load; claim lost before the merge commits (Postgres barrier); lease
+  expiry mid-phase; a retry of a compute attempt.
+- **Seams rewritten as store writers**: `OverwritePlanForTest`, `StoreReductionPlanForTest`,
+  `ClaimClusterForApplyForTest`, `ReleaseClaimForTest`, the hook seams.
+- `MergeResources`: the Loser version transfer becomes a set-based `UPDATE`, and the note-block
+  scrub reads blocks by keyset; both bounded, verified by the compute/apply scale tests.
+
+## D14. Records
+
+ADR 0011 "Reduction Clusters live in tables" (supersedes ADR 0003's plan-as-document; amends ADR 0002
+only by stating the seed order is computed in SQL and proven equal). docs-site: member cap, compute
+lease, edits refused while computing, apply response counts, size sort.
+
+## Slices
+
+Each is TDD, green on SQLite and Postgres, committed, and pi-reviewed before the next.
+
+1. **Store and proofs.** Tables, AutoMigrate, saved-SQL classification, `reductionStore`,
+   `deriveClusterColumns`, step-0 scope proof, the visibility fragments, the differential oracle,
+   the Winner Rule SQL with its differential test. Nothing switched yet.
+2. **Cutover.** Backfill (D12); every reader (D8, D10 token) and writer (D3, D9, D10) on the store;
+   compute still builds Clusters in memory but lands them through the store as a generation (D4
+   landing, sweep, keys); test seams as store writers; the plan-writes guard replaced. After this
+   slice nothing reads or writes `plan`.
+3. **Streaming compute.** D5, D6, D7 in use, D11 lease, Extent staging and explicit-id table,
+   MergeResources bounded.
+4. **Proof and records.** D13 scale and interleave tests, ADR 0011, docs-site, full suite (Go
+   SQLite + Postgres, E2E browser + CLI on both). Also in this change, by a separate subagent: the
+   review card layout fix for long Resource names (header justification and member card names
+   overflow; empty Keep thumbnail).
+
+## v1 findings, where addressed
+
+| Finding | Section |
 |---|---|
-| pixels | `(width*height = 0), width*height DESC/ASC` |
-| size | `(file_size = 0), file_size …` |
-| created / updated | `(created_at IS NULL), <instant>` with `<instant>` = column on Postgres, `julianday(column)` on SQLite (text timestamps carry local offsets, so lexicographic order is wrong across DST) |
-| name / content type | `(col = ''), col COLLATE "C"` on Postgres, `col` (BINARY) on SQLite, matching Go's byte comparison |
-| has description | `(trim(description) = '')` (see below) |
-| associations | correlated count subqueries, as `countResourceAssociations` defines them |
-| tiebreak | `id ASC` |
-
-Go's `strings.TrimSpace` trims more than SQL `trim`. The SQL order is only a ranking; the Winner
-is always decided by `CompareByWinnerRule` over loaded rows. Where the two could disagree (a
-whitespace-only description; two timestamps within julianday's precision) the effect is a different
-seed order, never a different Winner among the same members. A differential test runs both
-orderings over randomized rows on SQLite and Postgres and requires equality except for those two
-documented classes, which are generated separately and asserted to differ only in rank.
-
-### D8. Reads: one SQL visibility rule
-
-The rule stays the one the UX overhaul settled on, expressed once as SQL fragments in one file and
-used by every count, filter, figure and page query.
-
-- `memberVisible(m)`: for a scoped principal, `EXISTS (SELECT 1 FROM resources r WHERE r.id =
-  m.resource_id AND <scope>)` OR (`c.merged` AND `m` is a Loser AND `m.owner_at_merge IN <visible
-  groups>`); `<scope>` is the scoped handle's own subquery (`ctx.db.Model(&Resource{}).Select("id")`
-  and the Groups equivalent), so the scope callback supplies the subtree and fails closed. Step 0
-  of implementation proves the callback reaches a GORM subquery on SQLite and Postgres; if it does
-  not, the fragment is built from `subtreeScopeIDs()` explicitly.
-- `withheld(c)`: scoped principal and `EXISTS member of c with NOT memberVisible`. Unscoped: never.
-- `effectiveState(c)`: `CASE WHEN state IN ('open','skipped') AND EXISTS (non-ejected member whose
-  Resource row is gone, read unscoped) THEN 'stale' ELSE state END` for an unscoped principal, with
-  `stale_reason` read the same way. This replaces `readDeletions`. It is computed, never persisted,
-  so no reader rewrites rows (today a bulk write persists it plan-wide as a side effect; that stops).
-- Tab counts, figures, bulk approvable count, checked counts, list-page progress: one
-  `GROUP BY effectiveState, tier, …` aggregate each over the current generation, with `withheld`
-  in the `WHERE`.
-- Page query: filter in SQL, `ORDER BY member_count DESC | total_size DESC | position`, then
-  `key`; `LIMIT/OFFSET`; hydrate only that page's members and Resources (as today).
-- `scopeLastApply`: counts shown only if no Cluster with `last_apply_id = lastApply.requestId` is
-  withheld: one `EXISTS` query.
-- `settleableClaims`: `COUNT(*) WHERE state='applied' AND NOT merged AND NOT withheld`.
-- `GetResourceReductions` and every metadata load stop selecting `plan`.
-
-Sizes, for the record: the `total_size` sort uses compute-time sizes; today it reads live sizes of
-every member. A version upload between compute and review changes `hash` and the Cluster goes
-stale at apply anyway.
-
-### D9. The apply token
-
-Today: sha256 over every eligible Cluster's key, winner@hash and loser@hash, computed on every page
-render. With tables this is a streaming `ORDER BY key` read of all eligible members: bounded
-memory but O(M) work on every render. The design keeps the exact digest and computes it streaming,
-in chunks of 500 Clusters, on render and at apply. If the scale test (D12) shows render time over
-budget, the fallback is to compute it lazily: render a cheap token `sha256(plan_generation,
-version, eligible count, loser count, visibility fingerprint)` and require the client to fetch the
-exact digest from the apply dialog before submitting. The safety argument for the cheap form is
-recorded here so the review loop can attack it: every write to a Cluster bumps `version`, the
-generation pins compute output, and the only changes that move eligibility without a version bump
-(a member deleted elsewhere; the viewer's scope narrowing) can only remove Clusters from the
-eligible set, never add or alter a proposal.
-
-### D10. Compute liveness instead of a fixed hour
-
-`compute_deadline` becomes a lease: the compute extends it to now + 10 minutes each time it
-reports progress (at most every 30 s, one UPDATE guarded by `compute_job_id`). A crashed or stuck
-compute still reads as failed ten minutes after its last progress; a healthy large one runs to
-completion. A hard ceiling of 24 hours remains.
-
-### D11. Migrating existing plans
-
-A startup backfill, idempotent and crash-safe, like the other ad hoc backfills:
-
-- For each Reduction with `plan IS NOT NULL AND plan_generation IS NULL`, in id order: stream-decode
-  the JSON with `json.Decoder` (one Cluster at a time, so a big legacy plan is never in memory);
-  insert clusters and members under a fresh generation in batches; derive `member_count`,
-  `loser_count`, `needs_attention`, `total_size` (sizes read per batch), `keeps_smaller` for plans with
-  no settings (today's `deriveKeepsSmallerForOldPlan`); map `LoserOwners` onto `owner_at_merge`
-  and `LastApply.ClusterIDs` onto `last_apply_id`; then in one tx set `plan_generation`,
-  `coverage`, `plan_settings`, `last_apply`, `plan = NULL`. A crash before that tx leaves an
-  unreferenced generation the sweep removes; the next start redoes the Reduction.
-- `version` is not bumped (nothing a client holds becomes wrong).
-- A Reduction mid-compute at upgrade: its job cannot land (the landing now requires the table
-  path); it is failed with "interrupted by an upgrade, compute again".
-
-### D12. Proof of boundedness
-
-- **Scale test** (`server/api_tests`, both databases): insert 200k Clusters and 600k members
-  directly; render the review page, the list page, a bulk approve of all Identical, and an apply of
-  a few Clusters. Assert per request: heap allocated delta < 64 MB (`runtime.ReadMemStats`), no
-  query returns more than `max(page, chunk, MaxClusterMembers)` member rows (GORM callback), and
-  wall time under budget (logged; asserted loosely on CI).
-- **Compute scale test**: a synthetic library of 100k hashed images with pairs; assert the
-  compute's heap high-water stays under 128 MB.
-- **Differential tests**: the current Go implementations of tab counts, figures, filters, sorts,
-  `clusterWithheld`, `readDeletions`, `applyToken` and `scopeLastApply` move into a test oracle; for
-  randomized plans and principals, the SQL path must agree.
-- All existing Reduction tests (Go, E2E, a11y) pass unchanged except where they reach into
-  `plan` directly.
-
-### D13. Records
-
-- ADR 0011 "Reduction Clusters live in tables": supersedes ADR 0003's plan-as-document part (the
-  row still carries the Reduction, its settings and its small aggregates).
-- Saved-SQL table classification for the three new tables (`false`, like `resource_reductions`).
-- `docs-site` Resource Reduction page: the member cap, the compute lease. No other user-visible
-  change.
-
-## Implementation slices
-
-Each slice is TDD, ends green on SQLite and Postgres, is committed, and gets a pi review before the
-next starts.
-
-1. **Store.** Tables, AutoMigrate, saved-SQL entries, a `reductionStore` (load cluster by key, page
-   query, aggregates, write cluster, write members, sweep) with the SQL visibility fragments; step-0
-   subquery-scope proof; the differential oracle tests against the store with plans written through
-   it.
-2. **Migration backfill** (D11) and the read path switched to the store (D8, D9), `plan` no longer
-   read by the review, list or progress.
-3. **Write path** (D2, D3): override, bulk, apply, claims, merge hooks, reconcile, LastApply.
-   The plan-writes guard test rewritten.
-4. **Compute** (D4-D7, D10): staging, generations, Winner Rule SQL with its differential test,
-   member cap, lease.
-5. **Scale tests** (D12), ADR, docs, `plan` column left NULL and unused, final full test run
-   (Go SQLite + Postgres, E2E browser + CLI on both).
+| apply digest is not a worklist; cheap token unsound (pi P0, arch #2, #6) | D10 |
+| apply response unbounded (pi P0) | D10 |
+| Extent resolution unbounded, explicit ids in one document (pi P0) | D5 |
+| promote/merge read every pair; MergeResources version and block loads (pi P0) | D3, D5, D13 |
+| Identical byte identity (pi P0, arch #20) | D5 |
+| NULL fails open (pi P0, arch #1) | D1, D8 |
+| LastApply evidence, caller-chosen request id (pi P0, arch #14) | D10 |
+| migration bounded and safe cutover (pi P0, arch #11, #13) | D12, slices |
+| staging vs landing CAS; generation identity, sweep race, retry collision (pi P0, arch #3, #16) | D4 |
+| LIMIT before filters; outsider; ranking exactness (pi P1, arch #7, #19) | D5, D7 |
+| bulk semantics (pi P1, arch #15) | D3 |
+| derived stale changes carry-over (pi P1, arch #22) | D3, D9 |
+| lease resurrection, long statements, version bump (pi P1, arch #17) | D11 |
+| per-request O(members) (arch #4) | D8, D9 |
+| no read snapshot (arch #5) | D8 |
+| raw SQL / Scan bypass scope; subquery form; allow-list repetition (arch #8, #9, #10) | D2, D8 |
+| derived columns integrity (arch #12) | D3 |
+| deleting a Reduction (arch #18) | D4 (orphan sweep) |
+| SQL specifics: remap, keys, ON CONFLICT, hash filter, four tables (arch #20) | D4, D5, D1 |
+| child-table authorization (arch #21) | D2 |
+| landing vs long compute (arch #26) | D3 |
+| sort indexes, positions (arch #27) | D1, D4 |
+| scale-test mechanics, seams (arch #24, #25, pi P2) | D13 |
