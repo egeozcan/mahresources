@@ -44,7 +44,7 @@ type reductionStore struct {
 }
 
 // reductionMemberCap is the most members one Cluster loads or shows (design D6).
-const reductionMemberCap = 200
+const reductionMemberCap = models.MaxClusterMembers
 
 // reductionRowChunk is the most rows one store statement inserts.
 const reductionRowChunk = 500

@@ -113,24 +113,6 @@ func (ctx *MahresourcesContext) storeFailCompute(reductionID uint, jobID, genera
 
 // ---- landing -----------------------------------------------------------------------------
 
-// storeLandComputedPlan lands a finished compute: the Clusters it built in memory
-// (fresh), the coverage and the settings it ran with. Every staging transaction
-// begins with the fence, so a compute that expired, was superseded or whose
-// Reduction was deleted writes nothing more.
-//
-//  1. its own generation's rows are deleted first (an earlier attempt's);
-//  2. the carried Clusters are copied from the plan generation: Cluster rows 500 per
-//     statement with every column, then member rows by keyset on (source cluster,
-//     position) 500 per statement, remapped by key, with `gone` taken from the
-//     share-locked Resources;
-//  3. each fresh Cluster is inserted in a transaction of its own;
-//  4. one landing transaction: the version compare-and-set, the job id, a live lease,
-//     the generation, coverage, settings and status;
-//  5. the generation's staging rows are deleted, and stale generations swept.
-func (ctx *MahresourcesContext) storeLandComputedPlan(r *models.ResourceReduction, jobID, generation string, version uint, fresh []*models.ReductionCluster, coverage models.ReductionCoverage, settings *models.ReductionSettings) error {
-	return ctx.landComputedPlan(r, jobID, generation, version, fresh, coverage, settings, true)
-}
-
 // reductionLandHook runs after the carried Clusters are staged and before the first
 // fresh one. Only a test sets it, to move the Reduction under a compute that is
 // part-way through landing.
@@ -152,10 +134,16 @@ func (ctx *MahresourcesContext) landComputedPlan(r *models.ResourceReduction, jo
 	if err := s.insertFreshClusters(r, generation, fresh); err != nil {
 		return err
 	}
+	return ctx.finishLanding(r, jobID, generation, version, coverage, settings)
+}
+
+// finishLanding is the landing transaction and the cleanup after it: the
+// generation's staging rows are deleted and stale generations swept.
+func (ctx *MahresourcesContext) finishLanding(r *models.ResourceReduction, jobID, generation string, version uint, coverage models.ReductionCoverage, settings *models.ReductionSettings) error {
 	if err := ctx.landGeneration(r.ID, jobID, generation, version, coverage, settings); err != nil {
 		return err
 	}
-	if err := s.clearStaging(r.ID, generation); err != nil {
+	if err := ctx.reductionStore().clearStaging(r.ID, generation); err != nil {
 		ctx.logReductionWriteFailure(r.ID, "staging "+generation, err)
 	}
 	if err := ctx.sweepReductionGenerations(); err != nil {
@@ -438,36 +426,54 @@ func (s *reductionStore) insertFreshClusters(r *models.ResourceReduction, genera
 
 // insertOneFresh is one fresh Cluster's insertion, inside the caller's fenced transaction.
 func (s *reductionStore) insertOneFresh(r *models.ResourceReduction, generation string, plan *models.ReductionCluster, position int64) error {
-	ids := make([]uint, 0, len(plan.Members))
-	for _, m := range plan.Members {
+	return s.insertStoredFresh(r, generation, storedFromPlanCluster(plan), position, nil)
+}
+
+// lockedResource is what a fresh Cluster's insertion reads of a member's Resource
+// once it holds the share lock.
+type lockedResource struct {
+	FileSize int64
+	Hash     string
+}
+
+// insertStoredFresh inserts one fresh Cluster inside the caller's fenced
+// transaction: its members' Resources share-locked ascending, then the rows. check,
+// when given, sees the locked read before anything is written and may refuse the
+// Cluster (the streaming compute's re-check of what it built against what is true
+// now, design D5). The caller's Cluster is not modified: a retried transaction
+// starts from the same key.
+func (s *reductionStore) insertStoredFresh(r *models.ResourceReduction, generation string, in *storedCluster, position int64, check func(c *storedCluster, locked map[uint]lockedResource) error) error {
+	c := &storedCluster{Row: in.Row, Members: append([]models.ReductionMemberRow(nil), in.Members...)}
+	ids := make([]uint, 0, len(c.Members))
+	for _, m := range c.Members {
 		ids = append(ids, m.ResourceID)
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	if err := s.shareLockResources(ids); err != nil {
 		return err
 	}
-	var existing []struct {
-		ID       uint
-		FileSize int64
-	}
+	locked := map[uint]lockedResource{}
 	for _, chunk := range chunkUints(dedupeUints(ids), reductionRowChunk) {
 		var rows []struct {
 			ID       uint
 			FileSize int64
+			Hash     string
 		}
-		if err := s.db.Raw(`SELECT id, file_size FROM resources WHERE id IN ?`, chunk).Scan(&rows).Error; err != nil {
+		if err := s.db.Raw(`SELECT id, file_size, COALESCE(hash, '') AS hash FROM resources WHERE id IN ?`, chunk).Scan(&rows).Error; err != nil {
 			return err
 		}
-		existing = append(existing, rows...)
+		for _, row := range rows {
+			locked[row.ID] = lockedResource{FileSize: row.FileSize, Hash: row.Hash}
+		}
 	}
-	sizes := make(map[uint]int64, len(existing))
-	for _, e := range existing {
-		sizes[e.ID] = e.FileSize
+	if check != nil {
+		if err := check(c, locked); err != nil {
+			return err
+		}
 	}
-	c := storedFromPlanCluster(plan)
 	for i := range c.Members {
-		size, found := sizes[c.Members[i].ResourceID]
-		c.Members[i].FileSize = size
+		l, found := locked[c.Members[i].ResourceID]
+		c.Members[i].FileSize = l.FileSize
 		c.Members[i].Gone = !found
 	}
 	c.Row.Position = position

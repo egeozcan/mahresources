@@ -309,31 +309,27 @@ func (ctx *MahresourcesContext) runReductionCompute(jobCtx context.Context, redu
 		return ctx.reductionStore().renewComputeLease(reductionID, generation, started, now)
 	})
 
-	var built *builtReductionPlan
 	var err error
 	for attempt := 0; attempt < reductionComputeAttempts; attempt++ {
-		built, err = ctx.computeReductionPlan(jobCtx, reductionID, progress)
+		err = ctx.streamReductionPlan(jobCtx, reductionID, jobID, generation, progress)
 		if err == nil || !isLockContentionError(err) || jobCtx.Err() != nil {
 			break
 		}
 		// Backing off, like the bookkeeping loops. Three immediate attempts are
 		// three attempts inside a few microseconds, so a lock held across them
 		// consumes the whole budget and records a compute that was only unlucky as
-		// one that failed.
+		// one that failed. Each attempt deletes its own generation's rows first.
 		waitOutContention(attempt)
 	}
 	if err != nil {
-		return ctx.failReductionCompute(reductionID, jobID, generation, err)
-	}
-	if storeErr := ctx.storeLandComputedPlan(built.reduction, jobID, generation, built.version, built.fresh, built.coverage, built.settings); storeErr != nil {
 		// A superseded run belongs to nobody: the newer job owns the row and will
 		// report its own outcome, so this one must not overwrite it. Every other
 		// refusal has to be recorded, or the row sits at `computing` until its
 		// deadline with nothing alive to move it.
-		if errors.Is(storeErr, ErrReductionComputeSuperseded) {
-			return storeErr
+		if errors.Is(err, ErrReductionComputeSuperseded) {
+			return err
 		}
-		return ctx.failReductionCompute(reductionID, jobID, generation, storeErr)
+		return ctx.failReductionCompute(reductionID, jobID, generation, err)
 	}
 	return nil
 }
@@ -358,127 +354,6 @@ func (ctx *MahresourcesContext) requireSimilarityIndexes() error {
 		return ErrReductionIndexesBuilding
 	}
 	return nil
-}
-
-// builtReductionPlan is what the in-memory clustering produced, ready to land: the
-// fresh Clusters (carried ones are copied by the landing itself), the coverage and
-// the settings the run used, and the version the plan is about.
-type builtReductionPlan struct {
-	reduction *models.ResourceReduction
-	version   uint
-	fresh     []*models.ReductionCluster
-	coverage  models.ReductionCoverage
-	settings  *models.ReductionSettings
-}
-
-// computeReductionPlan does the work: resolve the Extent, cluster it, holding out
-// every Resource a carried judgement already claims.
-func (ctx *MahresourcesContext) computeReductionPlan(jobCtx context.Context, reductionID uint, progress download_queue.ProgressSink) (*builtReductionPlan, error) {
-	// Read unscoped by owner: this runs for the Reduction the request already
-	// authorized, and the principal's *data* scope still applies through the db
-	// handle. Re-applying the owner predicate here would fail under the auth-off
-	// super-user, whose id the job does not carry.
-	reduction, err := ctx.loadReductionForUpdate(reductionID, nil, false)
-	if err != nil {
-		return nil, err
-	}
-	// The version this plan is *about*. Everything below describes the Extent,
-	// the Winner Rule and the decisions as they stand right now, so the landing
-	// has to lose if any of them moved.
-	built := &builtReductionPlan{reduction: reduction, version: reduction.Version}
-
-	storedExtent, err := ctx.storedReductionExtent(reduction)
-	if err != nil {
-		return nil, err
-	}
-	rule := DecodeWinnerRule(reduction.WinnerRule)
-
-	if progress != nil {
-		progress.SetPhase("resolving the Extent")
-	}
-	extent, err := ctx.resolveReductionExtent(storedExtent)
-	if err != nil {
-		return nil, err
-	}
-	extent.ExcludeExternalResources = reduction.ExcludeExternalResources
-	if err := jobCtx.Err(); err != nil {
-		return nil, err
-	}
-
-	if progress != nil {
-		progress.SetPhase("measuring coverage")
-	}
-	if built.coverage, err = ctx.reductionCoverage(extent); err != nil {
-		return nil, err
-	}
-
-	// A judgement already made is never rearranged by a later compute. Frozen
-	// Clusters carry over whole and their members are held out of the pool, so
-	// growing the Extent can add Clusters but cannot move a Resource out of one
-	// the reviewer has acted on.
-	//
-	// An *applied* Cluster is different, and deliberately: its Losers no longer
-	// exist and its Winner goes back into the pool as an ordinary candidate. A
-	// claim that is not confirmed is a keep decision in flight (or stranded by a
-	// crash): its Resources stay out of the pool until it settles.
-	excluded, err := ctx.reductionStore().carriedResourceIDs(reduction)
-	if err != nil {
-		return nil, err
-	}
-
-	if progress != nil {
-		progress.SetPhase("Identical Resources")
-	}
-	identical, err := ctx.clusterIdentical(extent, rule, excluded, func(done, total int64) {
-		if progress != nil {
-			progress.SetPhaseProgress(done, total)
-		}
-	})
-	if err != nil {
-		return nil, err
-	}
-	if err := jobCtx.Err(); err != nil {
-		return nil, err
-	}
-
-	// Every Resource an Identical Cluster claims — Winner and Losers alike —
-	// leaves the pool before the perceptual tier runs. Byte-identical images
-	// decode to identical pixels and are therefore also stored as distance-zero
-	// pairs, so without this the same Resources would appear in two Clusters with
-	// different defaults and possibly different Winners. When both apply, take the
-	// fact.
-	built.fresh = identical
-	for _, cluster := range identical {
-		for _, member := range cluster.Members {
-			excluded[member.ResourceID] = true
-		}
-	}
-
-	if reduction.MatchingMode != models.MatchingModeIdenticalOnly {
-		if progress != nil {
-			progress.SetPhase("Near-Identical Resources")
-		}
-		near, nearErr := ctx.clusterNearIdentical(jobCtx, extent, rule, excluded, func(done, total int64) {
-			if progress != nil {
-				progress.SetPhaseProgress(done, total)
-			}
-		})
-		if nearErr != nil {
-			return nil, nearErr
-		}
-		built.fresh = append(built.fresh, near...)
-	}
-
-	ensureDistinctClusterIDs(built.fresh)
-	// What this plan was computed with, so the page can say when the settings have
-	// since changed. The matching mode and rule are the normalised ones actually
-	// used, not whatever the row's column happened to hold.
-	built.settings = &models.ReductionSettings{
-		MatchingMode:    normalizeMatchingMode(reduction.MatchingMode),
-		WinnerRule:      rule,
-		ExcludeExternal: reduction.ExcludeExternalResources,
-	}
-	return built, nil
 }
 
 // storedReductionExtent reads the Reduction's selection rows back as the Extent
@@ -508,69 +383,6 @@ func (ctx *MahresourcesContext) storedReductionExtent(r *models.ResourceReductio
 		}
 	}
 	return extent, nil
-}
-
-// carriedResourceIDs is the pool a compute holds out: the members of every Cluster
-// the landing will carry over that still claims them. An applied Cluster claims its
-// members only until its merge is confirmed; read-only history claims only the
-// copies a reviewer ejected (an explicit "don't remove" must not return in an
-// auto-checked Cluster); any other frozen Cluster claims all of them.
-func (s *reductionStore) carriedResourceIDs(r *models.ResourceReduction) (map[uint]bool, error) {
-	out := map[uint]bool{}
-	if r.PlanGeneration == nil {
-		return out, nil
-	}
-	var after uint
-	for {
-		var rows []struct{ ID, ResourceID uint }
-		if err := s.db.Raw(`SELECT m.id AS id, m.resource_id AS resource_id FROM reduction_members m JOIN reduction_clusters c ON c.id = m.cluster_id
-			WHERE c.reduction_id = ? AND c.generation = ? AND m.id > ? AND (
-				(c.state = 'applied' AND NOT c.merged)
-				OR (c.state <> 'applied' AND c.read_only AND m.ejected)
-				OR (c.state <> 'applied' AND NOT c.read_only AND (c.reviewed OR c.state IN ('skipped', 'stale'))))
-			ORDER BY m.id LIMIT ?`, r.ID, *r.PlanGeneration, after, reductionRowChunk*10).Scan(&rows).Error; err != nil {
-			return nil, err
-		}
-		if len(rows) == 0 {
-			return out, nil
-		}
-		for _, row := range rows {
-			out[row.ResourceID] = true
-		}
-		after = rows[len(rows)-1].ID
-	}
-}
-
-// ensureDistinctClusterIDs guarantees no two Clusters in one plan answer to the
-// same id.
-//
-// The id is derived from the tier and the member ids, which is what keeps a
-// frozen Cluster addressable across recomputes — and it means a *carried* Cluster
-// and a *fresh* one over the same members collide exactly. That is not
-// hypothetical: an applied Cluster is carried forward while its members return to
-// the pool, so a crash between an apply's claim and its merge leaves the Losers
-// alive to re-cluster into the same set. findCluster takes the first match, so
-// every override and every apply on the fresh Cluster would be refused as already
-// settled, permanently.
-//
-// Numbering the collision rather than changing the derivation keeps the ordinary
-// case stable, which is the property the derivation exists for.
-func ensureDistinctClusterIDs(clusters []*models.ReductionCluster) {
-	seen := make(map[string]bool, len(clusters))
-	for _, cluster := range clusters {
-		if !seen[cluster.ID] {
-			seen[cluster.ID] = true
-			continue
-		}
-		for suffix := 2; ; suffix++ {
-			candidate := fmt.Sprintf("%s-%d", cluster.ID, suffix)
-			if !seen[candidate] {
-				cluster.ID = candidate
-				seen[candidate] = true
-				break
-			}
-		}
-	}
 }
 
 // waitOutContention pauses between compare-and-set attempts that lost to a lock.

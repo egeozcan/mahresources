@@ -722,13 +722,20 @@ func (e *overrideEnv) promote(c *storedCluster, resourceID uint) error {
 // rejustify is rejustifyAgainstWinner with one probe of the named pairs instead of
 // every pair of the new Winner.
 func (e *overrideEnv) rejustify(c *storedCluster) error {
+	return rejustifyStored(e.s, c, e.threshold, e.aThreshold)
+}
+
+// rejustifyStored re-checks every in-Extent Loser of a Cluster against its current
+// Winner by the named pairs: the compute's build of a Near Cluster whose Winner is
+// not the seed and a promotion both use it.
+func rejustifyStored(s *reductionStore, c *storedCluster, threshold int, aThreshold uint64) error {
 	var named []uint
 	for _, m := range c.Members {
 		if m.ResourceID != c.Row.WinnerID && m.InExtent {
 			named = append(named, m.ResourceID)
 		}
 	}
-	closest, err := e.s.pairProbe(c.Row.WinnerID, named, e.threshold, e.aThreshold, false)
+	closest, err := s.pairProbe(c.Row.WinnerID, named, threshold, aThreshold, false)
 	if err != nil {
 		return err
 	}

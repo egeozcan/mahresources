@@ -44,6 +44,11 @@ const UndecidedCriterion = "lowest_id"
 // UndecidedCriterion it is a label for the page and never part of a rule.
 const ManualCriterion = "manual"
 
+// SeedCriterion is what a full Near star reports: its kept copy is the one every
+// other member was matched to, so no rule criterion chose it. A label for the page,
+// never part of a rule.
+const SeedCriterion = "seed"
+
 // DefaultWinnerRule is pixel count, then file size, then oldest.
 //
 // Resolution first because it is the one criterion where more is unambiguously
@@ -75,6 +80,7 @@ var winnerCriteria = map[string]string{
 	WinnerCriterionAssociationsAsc:  "fewest tags, notes and groups",
 	UndecidedCriterion:              "no criterion could decide",
 	ManualCriterion:                 "you chose it",
+	SeedCriterion:                   "the copy the others were matched to",
 }
 
 // WinnerCriterionLabel returns the human label for a criterion token, or the
@@ -91,7 +97,7 @@ func WinnerCriterionLabel(criterion string) string {
 // dropped criterion would change which Resource is deleted.
 func IsWinnerCriterion(criterion string) bool {
 	_, ok := winnerCriteria[criterion]
-	return ok && criterion != UndecidedCriterion && criterion != ManualCriterion
+	return ok && criterion != UndecidedCriterion && criterion != ManualCriterion && criterion != SeedCriterion
 }
 
 // NormalizeWinnerRule drops unknown and duplicate criteria and falls back to the

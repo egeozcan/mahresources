@@ -142,6 +142,10 @@ const (
 )
 
 // Cluster tiers.
+// MaxClusterMembers is the most members one Cluster holds, in compute, in storage
+// and on the page (design D6).
+const MaxClusterMembers = 200
+
 const (
 	// ReductionTierIdentical is byte-identity: same content hash, any content
 	// type. A fact.

@@ -73,6 +73,12 @@ type ReductionClusterView struct {
 	// NeedsAttention is the plan-level marker a bulk approval refuses to sweep up:
 	// Lossy, Oversized or KeepsSmaller. False on a withheld Cluster.
 	NeedsAttention bool
+	// ReadOnly is history that cannot be acted on (a legacy Cluster over the member
+	// cap). FixedSeed marks a full Near star whose kept copy is the seed every other
+	// member was matched to. Both are properties of the Cluster's own rows, so a
+	// scoped viewer learns nothing about copies it cannot see.
+	ReadOnly  bool
+	FixedSeed bool
 	// KeptDimensions and LargerDimensions ("800×533", "1600×1066") are the two
 	// resolutions the keeps-smaller warning compares: the kept copy's and the
 	// largest copy being removed. LargestMemberID is that larger copy, the one the

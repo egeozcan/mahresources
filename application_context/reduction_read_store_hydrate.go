@@ -391,6 +391,8 @@ func (ctx *MahresourcesContext) hydrateReviewPage(store *reductionStore, r *mode
 			LoserCount:       row.LoserCount,
 			Position:         len(views) + 1,
 			NeedsAttention:   row.NeedsAttention,
+			ReadOnly:         row.ReadOnly,
+			FixedSeed:        row.FixedSeed,
 		}
 		leftOut := 0
 		for k := range members[i] {

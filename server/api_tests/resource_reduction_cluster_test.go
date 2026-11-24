@@ -8,7 +8,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 	"mahresources/application_context"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -489,18 +488,15 @@ func TestAnIdenticalClusterHoldsOnlyResourcesThatStillShareTheHash(t *testing.T)
 	third := addWithHash(t, tc, "third.txt", "third body", "shared-hash")
 	setDimensions(t, tc, stays.ID, 400, 400)
 
-	// Fire once, on the grouping query's own read of resources: by the time
-	// loadClusterCandidates runs, `moves` no longer holds that content.
+	// Fire once, between the tier nominating the hash and loading its holders: by
+	// the time they load, `moves` no longer holds that content.
 	var fired atomic.Bool
-	// tc.DB is private to this fixture and is discarded at test cleanup. Keep the
-	// callback installed until then: GORM cannot remove it while the queue's owner
-	// goroutine may still be compiling a query callback chain.
-	require.NoError(t, tc.DB.Callback().Query().After("gorm:query").Register("test:rehash_mid_cluster", func(db *gorm.DB) {
-		if db.Statement.Table != "resources" || !fired.CompareAndSwap(false, true) {
-			return
+	restore := application_context.SetComputeAfterNominateHookForTest(func([]string) {
+		if fired.CompareAndSwap(false, true) {
+			_ = tc.DB.Model(&models.Resource{}).Where("id = ?", moves.ID).Update("hash", "different-now").Error
 		}
-		_ = tc.DB.Model(&models.Resource{}).Where("id = ?", moves.ID).Update("hash", "different-now").Error
-	}))
+	})
+	t.Cleanup(restore)
 
 	red := createReduction(t, tc, "Racing rehash", []uint{stays.ID, moves.ID, third.ID})
 	plan := computeReduction(t, tc, red.ID)

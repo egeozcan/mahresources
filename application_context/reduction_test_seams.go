@@ -215,3 +215,10 @@ func (ctx *MahresourcesContext) HoldApplyLeaseForTest(reductionID uint, live boo
 	}
 	return s.db.Exec(`UPDATE resource_reductions SET last_apply = ?, apply_lease_until = ? WHERE id = ?`, record, lease, reductionID).Error
 }
+
+// SetComputeAfterNominateHookForTest installs a function the Identical tier calls
+// between nominating hashes and loading their holders, and returns the undo.
+func SetComputeAfterNominateHookForTest(f func(hashes []string)) (restore func()) {
+	computeAfterNominateHook = f
+	return func() { computeAfterNominateHook = nil }
+}
