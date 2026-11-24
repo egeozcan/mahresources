@@ -323,9 +323,26 @@ func (ctx *MahresourcesContext) drainManifestOp(op string, replay bool) {
 	renew := func() {
 		db, cancel := ctx.drainDB()
 		defer cancel()
-		if rerr := db.Exec("UPDATE resource_cleanup_manifest SET claimed_until = ? WHERE op = ? AND claimed_by = ?",
-			time.Now().Add(manifestClaimTTL).Unix(), op, me).Error; rerr != nil {
-			warn("Failed to renew the delete manifest claim", rerr)
+		// A chunk of rows per statement, by id keyset: a drain may hold every row of
+		// a 10,000 id delete, and one statement over all of them would be the longest
+		// write of the operation.
+		until := time.Now().Add(manifestClaimTTL).Unix()
+		var after uint
+		for {
+			var held []uint
+			if rerr := db.Model(&models.ResourceCleanupManifest{}).Where("op = ? AND claimed_by = ? AND id > ?", op, me, after).
+				Order("id ASC").Limit(deleteStageChunk).Pluck("id", &held).Error; rerr != nil {
+				warn("Failed to renew the delete manifest claim", rerr)
+				return
+			}
+			if len(held) == 0 {
+				return
+			}
+			if rerr := db.Exec("UPDATE resource_cleanup_manifest SET claimed_until = ? WHERE id IN ? AND claimed_by = ?", until, held, me).Error; rerr != nil {
+				warn("Failed to renew the delete manifest claim", rerr)
+				return
+			}
+			after = held[len(held)-1]
 		}
 	}
 	// hold extends this drain's claim on one row just before it is worked on, and says

@@ -76,23 +76,49 @@ func pgSpoolID(x string) string {
 // spoolMemberSelectSQLite parses clusters and members with json_each. A JSON null
 // where an array is expected (an empty apply writes clusters: null) expands to
 // nothing.
-var spoolMemberSelectSQLite = `SELECT r.id, ?, 'member', CAST(c.key AS INTEGER), COALESCE(CAST(m.key AS INTEGER), 0),
- COALESCE(json_extract(c.value, '$.id'), ''), COALESCE(json_extract(c.value, '$.tier'), ''), COALESCE(json_extract(c.value, '$.state'), ''),
- ` + sqliteSpoolID("json_extract(c.value, '$.winnerId')") + `,
- COALESCE(json_extract(c.value, '$.checked'), 0), COALESCE(json_extract(c.value, '$.reviewed'), 0), COALESCE(json_extract(c.value, '$.oversized'), 0),
- COALESCE(json_extract(c.value, '$.decidedBy'), ''), COALESCE(json_extract(c.value, '$.margin'), ''), COALESCE(json_extract(c.value, '$.undecided'), 0),
- COALESCE(json_extract(c.value, '$.keepsSmaller'), 0), json_extract(c.value, '$.lossy'), COALESCE(json_extract(c.value, '$.staleReason'), ''),
- COALESCE(json_extract(c.value, '$.merged'), 0), COALESCE(json_extract(c.value, '$.claimId'), ''), json_extract(c.value, '$.appliedAt'),
+//
+// SQLite's json_extract reads its whole text argument on every call, so a
+// Cluster-level field read from the Cluster's JSON inside the per-member select
+// costs the Cluster's size once per member: quadratic in the members of a Cluster,
+// which a 50,000-member legacy Cluster turned into half an hour. Every Cluster-level
+// value is therefore read once per Cluster into the cl CTE, and the two per-member
+// lookups that need a Cluster's lists (loser owners, changed members) become joins
+// on one row per list entry, so a member only ever reads its own small object.
+var spoolMemberSelectSQLite = `WITH cl AS MATERIALIZED (
+ SELECT ? AS generation, r.id AS rid, CAST(c.key AS INTEGER) AS ord, c.value AS doc,
+ (json_type(c.value, '$.members') = 'array') AS has_members,
+ COALESCE(json_extract(c.value, '$.id'), '') AS cluster_key, COALESCE(json_extract(c.value, '$.tier'), '') AS tier,
+ COALESCE(json_extract(c.value, '$.state'), '') AS state,
+ ` + sqliteSpoolID("json_extract(c.value, '$.winnerId')") + ` AS winner_id,
+ COALESCE(json_extract(c.value, '$.checked'), 0) AS checked, COALESCE(json_extract(c.value, '$.reviewed'), 0) AS reviewed,
+ COALESCE(json_extract(c.value, '$.oversized'), 0) AS oversized, COALESCE(json_extract(c.value, '$.decidedBy'), '') AS decided_by,
+ COALESCE(json_extract(c.value, '$.margin'), '') AS margin, COALESCE(json_extract(c.value, '$.undecided'), 0) AS undecided,
+ COALESCE(json_extract(c.value, '$.keepsSmaller'), 0) AS keeps_smaller, json_extract(c.value, '$.lossy') AS lossy,
+ COALESCE(json_extract(c.value, '$.staleReason'), '') AS stale_reason, COALESCE(json_extract(c.value, '$.merged'), 0) AS merged,
+ COALESCE(json_extract(c.value, '$.claimId'), '') AS claim_id, json_extract(c.value, '$.appliedAt') AS applied_at,
+ (CASE WHEN json_type(c.value, '$.loserOwners') = 'object' THEN json_extract(c.value, '$.loserOwners') END) AS owners,
+ (CASE WHEN json_type(c.value, '$.changedMembers') = 'array' THEN json_extract(c.value, '$.changedMembers') END) AS changed
+ FROM resource_reductions r
+ JOIN json_each(CASE WHEN json_type(r.plan, '$.clusters') = 'array' THEN json_extract(r.plan, '$.clusters') ELSE '[]' END) c
+ WHERE r.id = ?
+), owners AS MATERIALIZED (
+ SELECT cl.ord AS cord, o.key AS member_id, MAX(o.value) AS owner FROM cl JOIN json_each(cl.owners) o WHERE cl.owners IS NOT NULL GROUP BY cl.ord, o.key
+), changed AS MATERIALIZED (
+ SELECT DISTINCT cl.ord AS cord, j.value AS member_id FROM cl JOIN json_each(cl.changed) j WHERE cl.changed IS NOT NULL
+)
+SELECT cl.rid, cl.generation, 'member', cl.ord, COALESCE(CAST(m.key AS INTEGER), 0),
+ cl.cluster_key, cl.tier, cl.state, cl.winner_id, cl.checked, cl.reviewed, cl.oversized, cl.decided_by, cl.margin, cl.undecided,
+ cl.keeps_smaller, cl.lossy, cl.stale_reason, cl.merged, cl.claim_id, cl.applied_at,
  ` + sqliteSpoolID("json_extract(m.value, '$.resourceId')") + `, COALESCE(json_extract(m.value, '$.hash'), ''),
  COALESCE(json_extract(m.value, '$.inExtent'), 0), COALESCE(json_extract(m.value, '$.ejected'), 0), COALESCE(json_extract(m.value, '$.ejectedReason'), ''),
  (CASE WHEN typeof(json_extract(m.value, '$.distance')) = 'integer' AND json_extract(m.value, '$.distance') BETWEEN 0 AND 2147483647 THEN json_extract(m.value, '$.distance') END),
- ` + sqliteSpoolID(`json_extract(c.value, '$.loserOwners."' || json_extract(m.value, '$.resourceId') || '"')`) + `,
- COALESCE((SELECT 1 FROM json_each(c.value, '$.changedMembers') cm WHERE json_type(c.value, '$.changedMembers') = 'array' AND cm.value = json_extract(m.value, '$.resourceId') LIMIT 1), 0),
+ ` + sqliteSpoolID("ow.owner") + `,
+ (CASE WHEN ch.member_id IS NULL THEN 0 ELSE 1 END),
  (CASE WHEN m.value IS NOT NULL AND ` + sqliteSpoolID("json_extract(m.value, '$.resourceId')") + ` = 0 THEN 1 ELSE 0 END)
- FROM resource_reductions r
- JOIN json_each(CASE WHEN json_type(r.plan, '$.clusters') = 'array' THEN json_extract(r.plan, '$.clusters') ELSE '[]' END) c
- LEFT JOIN json_each(c.value, '$.members') m ON json_type(c.value, '$.members') = 'array' AND m.type = 'object'
- WHERE r.id = ?`
+ FROM cl
+ LEFT JOIN json_each(cl.doc, '$.members') m ON cl.has_members AND m.type = 'object'
+ LEFT JOIN owners ow ON ow.cord = cl.ord AND ow.member_id = CAST(json_extract(m.value, '$.resourceId') AS TEXT)
+ LEFT JOIN changed ch ON ch.cord = cl.ord AND ch.member_id = json_extract(m.value, '$.resourceId')`
 
 var spoolMemberSelectPG = `SELECT r.id, ?, 'member', (c.ord - 1)::bigint, COALESCE((m.ord - 1)::bigint, 0),
  COALESCE(c.v->>'id', ''), COALESCE(c.v->>'tier', ''), COALESCE(c.v->>'state', ''), ` + pgSpoolID("c.v->'winnerId'") + `,

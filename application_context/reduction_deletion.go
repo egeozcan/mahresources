@@ -55,8 +55,20 @@ func stageDeletedIDs(db *gorm.DB, op string, ids []uint) error {
 
 // purgeDeletedIDs removes op's staged ids. The outer transaction calls it last,
 // after the note-block scrub.
+// It deletes a chunk of rows per statement, by the (op, resource_id) primary key,
+// so no statement holds the writer lock or row locks for more than a chunk (design
+// rule 2), however many ids the request named.
 func purgeDeletedIDs(db *gorm.DB, op string) error {
-	return db.Exec("DELETE FROM reduction_deleted_ids WHERE op = ?", op).Error
+	for {
+		res := db.Exec("DELETE FROM reduction_deleted_ids WHERE op = ? AND resource_id IN (SELECT resource_id FROM reduction_deleted_ids WHERE op = ? ORDER BY resource_id LIMIT ?)",
+			op, op, deleteStageChunk)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected < deleteStageChunk {
+			return nil
+		}
+	}
 }
 
 // opLiteral quotes an operation id for inlining into the scrub's SQL. Operation
