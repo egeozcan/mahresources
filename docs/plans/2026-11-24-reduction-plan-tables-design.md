@@ -1,9 +1,9 @@
 # Resource Reduction plan as tables: bounded memory at any library size
 
-Status: design v12. Review history: v1 pi 9 P0 / 4 P1, architect 3 / 18; v2 pi 9 / 7, architect 1 /
+Status: design v13. Review history: v1 pi 9 P0 / 4 P1, architect 3 / 18; v2 pi 9 / 7, architect 1 /
 12; v3 pi 9 / 2, architect 1 / 7; v4 pi 0 / 11, architect 0 / 5; v5 pi 0 / 9, architect 0 / 2; v6 pi 0 / 11, architect 0 / 1; v7 pi 0 / 10, architect 0 / 1; v8 pi 0 / 6, architect 0 / 3;
-v9 pi 0 / 7, architect 0 / 1; v10 pi 0 / 3, architect 0 / 0. The tables at the end map the v3 to v10
-findings to their fixes. Supersedes
+v9 pi 0 / 7, architect 0 / 1; v10 pi 0 / 3, architect 0 / 0; v11 architect 0 / 1 (pi's run failed on a network error). The
+tables at the end map the v3 to v11 findings to their fixes. Supersedes
 ADR 0003's "one row carries the plan" for the Cluster list.
 
 ## Problem
@@ -126,10 +126,12 @@ On SQLite the build holds the writer lock for one table scan: it is the second n
 rule 2, runs at startup before the HTTP server accepts requests with progress logged (like the D12
 spool), and is idempotent (`IF NOT EXISTS`), re-run every boot after AutoMigrate; on Postgres the boot also
 reads `pg_index.indisvalid` and drops and rebuilds (`CONCURRENTLY`) an index a failed build left
-invalid, logging the result, so a migrator table
+invalid, logging the result; check, drop and build run under a session advisory lock so one
+instance never cancels another's in-progress build, and `beginReductionCompute` is refused ("indexes
+are still being built") until both indexes read valid, so a migrator table
 rebuild cannot silently drop it. D14 measures the pair writer's added index cost.
 
-No table has a foreign key to `resources`. All eight new tables (with the migration spool, D12, and the deletion staging table, D9) are classified in
+No table has a foreign key to `resources`. All nine new tables (with the migration spool and `reduction_migrations`, D12, and the deletion staging table, D9) are classified in
 `models/saved_sql_tables.go` as not readable by saved SQL.
 
 ## D2. Store boundary, authorization, scope
@@ -346,8 +348,10 @@ Bookkeeping after a merge stays best-effort and logged, as today.
   live SQL predicate (the Extent definition: explicit ids, `extent_all`, owned and related through the
   visible selected Group subtrees; not the Group-map `containsResources`). If any member's
   classification differs from the one the Cluster was built with, the Cluster is discarded and
-  rebuilt from its seed (or hash) in the next step, so a Resource moved out of the Extent after
-  staging can never arrive as a Loser.
+  rebuilt from its seed (or hash), at most 3 times, then the seed is skipped with a logged reason.
+  Classification is decided at insertion: a Group change committing later is caught by apply's
+  revalidation, which now re-checks Extent membership of every Loser as part of the claim (≤ 200
+  ids, live SQL predicate), refusing the Cluster as stale ("left the selection").
 
 ADR 0002 amendment: a seed claims every unclaimed Resource within threshold of itself **up to the
 member cap**, nearest first; the rest stay unclaimed and are proposed by a later compute after this
@@ -420,7 +424,9 @@ databases order a set of keys by `(key_prefix, sort_key)` exactly as `bytes.Comp
   (test: a 1,100-byte multibyte name); the full value is kept in a `title` only when it is under that
   bound; descriptions are never loaded there.
 - **Page budget.** A page renders at most 2,000 members in total across its Clusters; a Cluster
-  beyond that shows its Winner and a "show members" cursor. D14 measures `pageSize=100` with full
+  beyond that shows its Winner and a "show members" cursor. A Near Cluster shown that way cannot be
+  approved (its check control and bulk-by-ids refuse it) until its members have been rendered in
+  full, so nothing Near-Identical is approved unseen; an Identical one (same bytes) may be. D14 measures `pageSize=100` with full
   Clusters.
 - **Winner and member paging.** The Cluster's Winner is loaded on its own (it may not be among the
   first 200 members after a promotion); members are hydrated by keyset `(position, id)`, 200 at a time,
@@ -563,7 +569,13 @@ landing; a parked apply worker past its lease cannot merge.
   still this run's and the migrated Cluster and member counts equal the counts the pass read; set
   `plan_generation`, `plan_schema = 1`, coverage, settings, `last_apply`, clear
   `migration_generation`. Version is not compared (edits are refused while `plan_schema = 0`).
-  The legacy `plan` column is kept, never read again, and cleared by a later release.
+  The same transaction sets the legacy `plan` and `extent` columns to NULL: on SQLite (no TOAST)
+  every later fence, lease renewal and CAS rewrites the whole row, so a multi-megabyte blob must not
+  stay on it (rollback is restoring the backup either way).
+- While a Reduction is `plan_schema = 0`, the migration's writer token, lease, checkpoint and fence
+  live in a small `reduction_migrations(reduction_id pk, generation, writer_token, lease_until,
+  checkpoint)` row, never on the Reduction row that still carries the blob; the Reduction row is
+  written once, at publication. (Ninth new table, classified like the others.)
 - A Reduction `computing` at upgrade is failed with "interrupted by an upgrade; compute again".
   A compute job queued for a `plan_schema = 0` Reduction is **deferred** by the job adapter (retried
   later, not marked blocked) and runs after publication.
@@ -605,6 +617,9 @@ landing; a parked apply worker past its lease cannot merge.
 - The deletion hook (D9) runs once per merge, after the Losers are deleted and **before** `InTx`; the
   claimed Cluster is included in the hook's ascending lock set, and `InTx` writes it under that lock,
   so the merge never locks Cluster rows out of order (two-Cluster test, ids 5 and 10, Postgres).
+- Order inside a deleting transaction: stage ids, delete the children and then the rows (D9), walk
+  the affected Clusters (D9 hook), scrub note blocks (below), delete the staged ids; a test fails if
+  the staged ids are gone before the scrub.
 - The note-block scrub runs **once per transaction**, as a keyset over blocks with an `EXISTS` against
   the staged `reduction_deleted_ids` operation, not once per id chunk. It rewrites references in SQL,
   with today's semantics
@@ -631,7 +646,9 @@ landing; a parked apply worker past its lease cannot merge.
 
 ## D14. Proof
 
-- **Fixtures** (both databases): 300k Clusters / 1M members; a 2M-row hash-only library, including
+- **Fixtures** (both databases): a 10,000-id bulk delete including a Resource with a million pairs,
+  and the longest merge (200 Losers, a 50 MB backup history), each asserting the total writer-lock
+  hold on SQLite and the row-lock hold on Postgres (rule 2's atomic operations); 300k Clusters / 1M members; a 2M-row hash-only library, including
   2M unique hashes with 5 duplicates at the end; dense
   stars larger than the cap; a 50k-holder hash; a 50k-member legacy Cluster; a 200 MB legacy plan;
   a Winner with 50 MB of backups; a 20k-Group scoped principal; 50 large Reductions on the list.
@@ -871,3 +888,14 @@ Also in this change: the review card layout fix for long Resource names and fail
 | backup append once per merge (arch 4) | D13 |
 | page member budget (arch 5) | D8 |
 | byte cut at rune boundary (arch 6) | D8 |
+
+## v11 findings, where addressed
+
+| Finding | Section |
+|---|---|
+| legacy blob on the hot row rewrites on every SQLite update (arch P1) | D12 (nulled at publication; migration fence in `reduction_migrations`) |
+| scrub vs staged-id lifecycle (arch 2) | D13 order |
+| in-extent recheck: unbounded rebuilds, overclaimed guarantee (arch 3) | D5 (3 attempts, decided at insertion, apply re-checks membership) |
+| invalid-index repair races another build; compute before indexes (arch 4) | D1 |
+| page budget approves unseen Near Clusters (arch 5) | D8 |
+| delete and merge holds not measured (arch 6) | D14 |
