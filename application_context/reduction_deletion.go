@@ -180,4 +180,3 @@ func postgresBlockScrub(op string) blockScrubSQL {
 		" WHERE id BETWEEN ? AND ? AND type IN ('gallery','calendar') AND CASE WHEN " + object + " THEN (" + calendarHas + ") ELSE false END"
 	return blockScrubSQL{gallery: gallery, calendar: calendar}
 }
-
