@@ -62,6 +62,126 @@ function keepOpenState(el, toEl) {
 }
 
 /** Where keyboard focus is among the Clusters, so a refresh can put it back. */
+function el(tag, attrs = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value === null || value === undefined || value === false) continue;
+    if (key === 'text') node.textContent = value;
+    else node.setAttribute(key, value === true ? '' : String(value));
+  }
+  for (const child of children) node.append(child);
+  return node;
+}
+
+function humanSize(bytes) {
+  if (!bytes || bytes < 1) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const value = bytes / 1024 ** i;
+  return `${i === 0 ? value : value.toFixed(value < 10 ? 1 : 0)} ${units[i]}`;
+}
+
+/**
+ * One copy of a Cluster, built from a GET /v1/reduction/members entry. It carries
+ * the same test ids, roles and names as reductionMember.tpl; the server-rendered
+ * card stays the reference, and a refresh replaces these with it.
+ */
+function buildMemberNode(store, clusterId, member, fixedKeep) {
+  const resource = member.Resource;
+  if (!resource) {
+    return el('div', { class: 'reduction-member reduction-member--gone', 'data-testid': 'reduction-member-withheld' }, [
+      el('p', { class: 'text-xs text-stone-600 max-w-[10rem]', text: 'Resource unavailable.' }),
+    ]);
+  }
+  const rid = member.resourceId;
+  const isWinner = !!member.IsWinner;
+  const ejected = !!member.ejected;
+  const role = isWinner ? ['keep', 'Keep'] : ejected ? ['ejected', 'Not included'] : ['remove', 'Remove'];
+  const node = el('div', {
+    class: `reduction-member ${isWinner ? 'reduction-member--keep' : ejected ? 'reduction-member--ejected' : 'reduction-member--remove'}`,
+    tabindex: '-1',
+    'data-testid': 'reduction-member',
+    'data-resource-id': rid,
+    'data-winner': isWinner,
+    'data-ejected': ejected,
+  });
+  const roles = el('p', { class: 'reduction-roles' }, [
+    el('span', { class: `reduction-badge reduction-badge--${role[0]}`, 'data-testid': 'member-role', text: role[1] }),
+  ]);
+  if (member.Changed) roles.append(' ', el('span', { class: 'reduction-badge reduction-badge--changed', 'data-testid': 'member-changed', text: 'This copy changed' }));
+  if (member.inExtent === false) roles.append(' ', el('span', { class: 'reduction-badge reduction-badge--outside', text: 'Outside the selection' }));
+  node.append(roles);
+
+  const hash = resource.Hash || '';
+  const link = el('a', {
+    href: `/v1/resource/view?id=${resource.ID}&v=${encodeURIComponent(hash)}#${resource.ContentType}`,
+    role: 'button',
+    'aria-label': `Preview ${resource.Name}`,
+    'data-lightbox-item': true,
+    'data-resource-id': resource.ID,
+    'data-content-type': resource.ContentType,
+    'data-resource-name': resource.Name,
+    'data-resource-hash': hash,
+    'data-resource-width': resource.Width,
+    'data-resource-height': resource.Height,
+  });
+  link.addEventListener('click', (event) => {
+    event.preventDefault();
+    Alpine.store('lightbox')?.openFromClick(event, resource.ID, resource.ContentType);
+  });
+  link.addEventListener('keydown', (event) => {
+    if (event.key === ' ') {
+      event.preventDefault();
+      link.click();
+    }
+  });
+  const img = el('img', { height: '160', src: `/v1/resource/preview?id=${resource.ID}&height=160&v=${encodeURIComponent(hash)}`, alt: '', loading: 'lazy', decoding: 'async' });
+  const placeholder = el('span', { class: 'reduction-thumb-placeholder', 'data-testid': 'member-thumb-placeholder', hidden: true }, [
+    el('span', { class: 'reduction-thumb-type', text: resource.ContentType }),
+  ]);
+  img.addEventListener('error', () => {
+    img.hidden = true;
+    placeholder.hidden = false;
+  });
+  link.append(img, placeholder);
+  node.append(link);
+
+  node.append(el('p', { class: 'reduction-member-name' }, [
+    el('a', { class: 'reduction-member-link', href: `/resource?id=${resource.ID}`, title: resource.Name, text: resource.Name }),
+  ]));
+
+  const facts = el('ul', { class: 'reduction-facts', 'aria-label': `Details of ${resource.Name}` });
+  const addFact = (text) => facts.append(el('li', { text }));
+  if (resource.Width) addFact(`${resource.Width}×${resource.Height}`);
+  addFact(humanSize(resource.FileSize));
+  addFact(resource.ContentType);
+  const count = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
+  addFact(`${count(member.TagCount || 0, 'tag')}, ${count(member.NoteCount || 0, 'note')}, ${count(member.GroupCount || 0, 'group')}`);
+  node.append(facts);
+
+  const actions = el('div', { class: 'reduction-member-actions' });
+  const button = (testid, label, run) => {
+    const b = el('button', { type: 'button', 'data-testid': testid, class: 'reduction-btn reduction-btn--small' }, [
+      label,
+      el('span', { class: 'sr-only', text: ` (${resource.Name})` }),
+    ]);
+    b.addEventListener('click', run);
+    return b;
+  };
+  if (!isWinner && !ejected) {
+    const keep = button('member-promote', 'Keep this instead', () => store.act(clusterId, 'promote', rid));
+    if (fixedKeep) {
+      keep.disabled = true;
+      keep.setAttribute('aria-describedby', `cluster-${clusterId}-fixed-note`);
+    }
+    actions.append(keep, ' ', button('member-eject', "Don't remove", () => store.act(clusterId, 'eject', rid)));
+  } else if (ejected && member.inExtent !== false) {
+    actions.append(button('member-restore', 'Include again', () => store.act(clusterId, 'restore', rid)));
+  }
+  node.append(actions);
+  return node;
+}
+
 function cardFocus() {
   const region = document.querySelector(CLUSTERS);
   const active = document.activeElement;
@@ -143,6 +263,7 @@ export function registerReductionReviewStore(Alpine) {
     serverSettings: null,
     // The counts the apply banner reports, from the response or from the plan.
     applyCounts: null,
+    loadingMembers: false,
     // Set while the outcome of an apply is not known (a lost response).
     applyUnknown: '',
     // The reviewer sent the running dialog to the background.
@@ -620,6 +741,11 @@ export function registerReductionReviewStore(Alpine) {
       return `Applied ${plural(counts.applied, ...CLUSTER_NOUN)}, removed ${plural(counts.removed, ...COPIES)}.${changed}${errors}`;
     },
 
+    /** True when the apply response's lists stopped at their cap, so the report names only some Clusters. */
+    get applyListsCapped() {
+      return !!this.applyCounts?.more;
+    },
+
     async confirmApply() {
       if (this.busy || this.applying || !this.confirmed) return;
       // What the reviewer was shown, not what the store says now.
@@ -720,7 +846,16 @@ export function registerReductionReviewStore(Alpine) {
 
       if (outcome) {
         this.applyResult = outcome;
-        this.applyCounts = { applied: outcome.applied?.length || 0, removed: outcome.destroyed || 0, stale: outcome.stale?.length || 0, changed: outcome.changed || 0, errors: outcome.errors || 0 };
+        // The response's own totals: its lists stop at a cap, and "more" says so. An
+        // older response has no totals and its lists are complete.
+        this.applyCounts = {
+          applied: outcome.appliedCount || outcome.applied?.length || 0,
+          removed: outcome.destroyed || 0,
+          stale: outcome.staleCount || outcome.stale?.length || 0,
+          changed: outcome.changed || 0,
+          errors: outcome.errors || 0,
+          more: !!outcome.more,
+        };
         this._nameOutcomes(this.applyResult.stale);
       } else if (recovered?.record) {
         this.applyResult = null;
@@ -848,20 +983,75 @@ export function registerReductionReviewStore(Alpine) {
       }
     },
 
-    /** Name each refused Cluster by the copy it was keeping; "a Cluster" when that cannot be read. */
-    async _nameOutcomes(list) {
-      await Promise.all((list || []).slice(0, 20).map(async (item) => {
-        if (!item.winnerId) return;
-        try {
-          const response = await fetch(`/v1/resource?id=${item.winnerId}`, { headers: { Accept: 'application/json' } });
-          if (!response.ok) return;
-          const json = await response.json();
-          const name = json.Name || json.name;
-          if (name) item.label = name;
-        } catch {
-          // The generic label stays.
+    /**
+     * Name each refused Cluster by the copy it was keeping. The response carries
+     * a bounded winnerName on every entry, so nothing is fetched; "a Cluster"
+     * stays when the name is empty (the legacy path, or a copy the viewer may not read).
+     */
+    _nameOutcomes(list) {
+      for (const item of list || []) {
+        if (item.winnerName) item.label = item.winnerName;
+      }
+    },
+
+    /**
+     * Load the next page of a Cluster's members (GET /v1/reduction/members) and
+     * append them to its card. Focus lands on the first copy added, and a polite
+     * announcement says how many arrived. The button carries the cursor
+     * (data-members-after) and is removed when the server has no more.
+     */
+    async loadMoreMembers(clusterId, button) {
+      if (this.loadingMembers || !button) return;
+      const card = button.closest(CARD);
+      const list = card?.querySelector('.reduction-cluster-members');
+      if (!list) return;
+      this.loadingMembers = true;
+      button.setAttribute('aria-disabled', 'true');
+      button.disabled = true;
+      this.error = '';
+      try {
+        const url = new URL('/v1/reduction/members', window.location.origin);
+        url.searchParams.set('id', this.reductionId);
+        url.searchParams.set('cluster', clusterId);
+        const after = button.dataset.membersAfter || '';
+        if (after) url.searchParams.set('after', after);
+        const response = await fetch(url, { headers: { Accept: 'application/json' } });
+        if (response.status === 503) throw new Error(UPGRADING_MESSAGE);
+        if (!response.ok) throw new Error(await window.errorMessageFromResponse(response));
+        const page = await response.json();
+        const present = new Set([...list.querySelectorAll('[data-testid="reduction-member"]')].map((m) => m.dataset.resourceId));
+        const fixedKeep = card.dataset.clusterFixedKeep === 'true';
+        const added = [];
+        for (const member of page.members || []) {
+          if (present.has(String(member.resourceId))) continue;
+          const node = buildMemberNode(this, clusterId, member, fixedKeep);
+          list.append(node);
+          added.push(node);
         }
-      }));
+        const next = page.after || '';
+        const shown = list.querySelectorAll('[data-testid="reduction-member"]').length;
+        const total = Number(card.dataset.memberCount) || shown;
+        const note = card.querySelector('[data-testid="cluster-shown-count"]');
+        if (note) note.textContent = shown >= total ? `Showing all ${total} copies.` : `Showing ${shown} of ${total} copies.`;
+        window.mahAnnounce?.(added.length ? `Showed ${plural(added.length, 'more copy', 'more copies')}.` : 'No more copies to show.');
+        if (next) {
+          button.dataset.membersAfter = next;
+          button.removeAttribute('aria-disabled');
+          button.disabled = false;
+          (added[0] || button).focus();
+        } else {
+          button.closest('[data-testid="cluster-more-members-wrap"]')?.remove();
+          added[0]?.focus();
+        }
+      } catch (err) {
+        this.error = err.message;
+        this._announceError(`Could not load more copies: ${err.message}`);
+        button.removeAttribute('aria-disabled');
+        button.disabled = false;
+        button.focus();
+      } finally {
+        this.loadingMembers = false;
+      }
     },
 
     /** Close the running dialog without cancelling anything: the server keeps going. */
@@ -941,6 +1131,7 @@ export function registerReductionReviewStore(Alpine) {
 
     async _refresh(focus) {
       const response = await fetch(window.location.href, { headers: { Accept: 'text/html' } });
+      if (response.status === 503) throw new Error(UPGRADING_MESSAGE);
       if (!response.ok) throw new Error(`Could not refresh the Clusters: ${response.status}`);
 
       // An out-of-range page (one an action just emptied) is 302'd to the last
@@ -999,6 +1190,7 @@ export function registerReductionReviewStore(Alpine) {
 
 // Statuses a gateway answers with when it gave up on a request the server may
 // still be running; they say nothing about what the server did.
+const UPGRADING_MESSAGE = 'This Reduction is being upgraded, try again shortly.';
 const LOST_STATUSES = new Set([408, 502, 503, 504, 524]);
 const RECOVER_FIRST_MS = 1000;
 const RECOVER_MS = 2000;

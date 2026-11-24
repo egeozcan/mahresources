@@ -11,7 +11,7 @@
         {% if cluster.Merged %}Merged and removed.{% elif cluster.State == "stale" %}Removed elsewhere.{% else %}Resource unavailable.{% endif %}
     </p>
     {# A copy that is gone is left out of a stale Cluster the same way as one that is not: this reopens the rest for review. #}
-    {% if cluster.State == "stale" and not member.IsWinner and not member.Ejected and not cluster.WinnerChanged %}
+    {% if cluster.State == "stale" and cluster.StaleReason != "too large: compute again" and not member.IsWinner and not member.Ejected and not cluster.WinnerChanged %}
     <button type="button" data-testid="member-eject" class="reduction-btn reduction-btn--small"
             :disabled="$store.reductionReview.busy"
             @click="$store.reductionReview.act('{{ cluster.ID }}', 'eject', {{ member.ResourceID }})">Don't remove<span class="sr-only"> (the copy that was removed elsewhere)</span></button>
@@ -110,7 +110,7 @@
 
     <div class="reduction-member-actions">
     {% if cluster.State == "stale" %}
-        {% if not member.IsWinner and not member.Ejected and not cluster.WinnerChanged %}
+        {% if cluster.StaleReason != "too large: compute again" and not member.IsWinner and not member.Ejected and not cluster.WinnerChanged %}
         <button type="button" data-testid="member-eject" class="reduction-btn reduction-btn--small"
                 :disabled="$store.reductionReview.busy"
                 @click="$store.reductionReview.act('{{ cluster.ID }}', 'eject', {{ member.ResourceID }})">Don't remove<span class="sr-only"> ({{ member.Resource.Name }})</span></button>
@@ -118,7 +118,8 @@
     {% elif cluster.State != "applied" %}
         {% if not member.IsWinner and not member.Ejected %}
         <button type="button" data-testid="member-promote" class="reduction-btn reduction-btn--small"
-                :disabled="$store.reductionReview.busy"
+                {% if cluster.DecidedBy == "seed" %}aria-describedby="cluster-{{ cluster.ID }}-fixed-note"{% endif %}
+                :disabled="$store.reductionReview.busy{% if cluster.DecidedBy == "seed" %} || true{% endif %}"
                 @click="$store.reductionReview.act('{{ cluster.ID }}', 'promote', {{ member.ResourceID }})">Keep this instead<span class="sr-only"> ({{ member.Resource.Name }})</span></button>
         {% endif %}
         {% if member.IsLoser and cluster.Winner and not member.Ejected %}
