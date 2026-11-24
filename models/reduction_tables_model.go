@@ -19,7 +19,7 @@ import (
 
 // ReductionClusterRow is one Cluster of one generation of a Reduction's plan.
 type ReductionClusterRow struct {
-	ID          uint   `gorm:"primaryKey"`
+	ID          uint   `gorm:"primaryKey;index:idx_rc_batch,priority:5;index:idx_rc_bulk,priority:4"`
 	ReductionID uint   `gorm:"not null;default:0;uniqueIndex:ux_reduction_clusters_key,priority:1;index:idx_rc_position,priority:1;index:idx_rc_state,priority:1;index:idx_rc_members,priority:1;index:idx_rc_size,priority:1;index:idx_rc_batch,priority:1;index:idx_rc_outcome,priority:1;index:idx_rc_bulk,priority:1"`
 	Generation  string `gorm:"size:64;not null;default:'';uniqueIndex:ux_reduction_clusters_key,priority:2;index:idx_rc_position,priority:2;index:idx_rc_state,priority:2;index:idx_rc_members,priority:2;index:idx_rc_size,priority:2;index:idx_rc_batch,priority:2;index:idx_rc_outcome,priority:2;index:idx_rc_bulk,priority:2"`
 	// Key is the Cluster's address in the API and the DOM. On Postgres it is
@@ -27,7 +27,7 @@ type ReductionClusterRow struct {
 	Key string `gorm:"column:key;size:64;not null;default:'';uniqueIndex:ux_reduction_clusters_key,priority:3;index:idx_rc_members,priority:4;index:idx_rc_size,priority:4"`
 
 	// Position is plan order: carried Clusters first in their old order, then build order.
-	Position int64 `gorm:"not null;default:0;index:idx_rc_position,priority:3"`
+	Position int64 `gorm:"not null;default:0;index:idx_rc_position,priority:3;index:idx_rc_batch,priority:4"`
 
 	Tier         string `gorm:"size:20;not null;default:'';index:idx_rc_state,priority:4"`
 	State        string `gorm:"size:20;not null;default:'';index:idx_rc_state,priority:3"`
@@ -137,10 +137,10 @@ func (ReductionExtentRow) TableName() string { return "reduction_extent" }
 // ordered by the Winner Rule's byte key. KeyPrefix is the first 512 bytes of
 // SortKey (a Postgres btree row must stay under about 2.7 KB).
 type ReductionSeed struct {
-	ReductionID uint   `gorm:"primaryKey;autoIncrement:false"`
-	Generation  string `gorm:"primaryKey;size:64"`
+	ReductionID uint   `gorm:"primaryKey;autoIncrement:false;index:idx_rseed_order,priority:1"`
+	Generation  string `gorm:"primaryKey;size:64;index:idx_rseed_order,priority:2"`
 	ResourceID  uint   `gorm:"primaryKey;autoIncrement:false"`
-	KeyPrefix   []byte `gorm:"not null"`
+	KeyPrefix   []byte `gorm:"not null;index:idx_rseed_order,priority:3"`
 	SortKey     []byte `gorm:"not null"`
 }
 

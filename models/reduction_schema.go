@@ -76,18 +76,20 @@ func EnsureSimilarityDistanceIndexesOnOwnConnection(dsn string) error {
 // neighbour query is a sort over a hub's whole star.
 func SimilarityDistanceIndexesValid(db *gorm.DB) (bool, error) {
 	for _, index := range similarityDistanceIndexes {
-		var ok []bool
+		var defs []string
 		var err error
 		if db.Dialector.Name() == "postgres" {
-			err = db.Raw(`SELECT i.indisvalid FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
-				WHERE c.relname = ? AND i.indrelid = ?::regclass`, index.name, index.table).Scan(&ok).Error
+			// Valid, plain (not unique) and exactly the planned columns: an index with
+			// the planned name on other columns serves nothing.
+			err = db.Raw(`SELECT pg_get_indexdef(i.indexrelid) FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+				WHERE c.relname = ? AND i.indrelid = ?::regclass AND i.indisvalid AND NOT i.indisunique`, index.name, index.table).Scan(&defs).Error
 		} else {
-			err = db.Raw(`SELECT true FROM sqlite_master WHERE type = 'index' AND name = ? AND tbl_name = ?`, index.name, index.table).Scan(&ok).Error
+			err = db.Raw(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ? AND tbl_name = ?`, index.name, index.table).Scan(&defs).Error
 		}
 		if err != nil {
 			return false, err
 		}
-		if len(ok) != 1 || !ok[0] {
+		if len(defs) != 1 || !index.definitionMatches(defs[0]) {
 			return false, nil
 		}
 	}

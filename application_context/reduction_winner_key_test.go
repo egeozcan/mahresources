@@ -107,8 +107,12 @@ func TestWinnerSortKeyMissingValuesFallThrough(t *testing.T) {
 }
 
 func TestWinnerKeyPrefixIsTheFirst512Bytes(t *testing.T) {
-	key := bytes.Repeat([]byte{7}, 1000)
-	require.Len(t, winnerKeyPrefix(key), 512)
+	key := make([]byte, 1000)
+	for i := range key {
+		key[i] = byte(i % 251) // position-dependent, so the last 512 bytes differ from the first
+	}
+	require.Equal(t, key[:512], winnerKeyPrefix(key))
+	require.NotEqual(t, key[488:], winnerKeyPrefix(key))
 	require.Equal(t, []byte{1, 2}, winnerKeyPrefix([]byte{1, 2}))
 }
 
@@ -136,16 +140,18 @@ func testSeedKeysOrderAsBytesDo(t *testing.T, ctx *MahresourcesContext) {
 
 	var got []models.ReductionSeed
 	require.NoError(t, ctx.db.Where("reduction_id = 1 AND generation = 'g'").Order("key_prefix, sort_key, resource_id").Find(&got).Error)
+	// The reference order is the full keys' own bytes.Compare, not the stored columns'.
 	want := append([]models.ReductionSeed(nil), rows...)
 	sort.SliceStable(want, func(i, j int) bool {
-		if c := bytes.Compare(want[i].KeyPrefix, want[j].KeyPrefix); c != 0 {
-			return c < 0
-		}
 		if c := bytes.Compare(want[i].SortKey, want[j].SortKey); c != 0 {
 			return c < 0
 		}
 		return want[i].ResourceID < want[j].ResourceID
 	})
+	for _, r := range rows {
+		require.True(t, bytes.HasPrefix(r.SortKey, r.KeyPrefix), "the prefix is the front of the key")
+		require.LessOrEqual(t, len(r.KeyPrefix), 512)
+	}
 	require.Len(t, got, len(want))
 	for i := range want {
 		require.Equal(t, want[i].ResourceID, got[i].ResourceID, "position %d", i)

@@ -15,5 +15,8 @@ func AnalyzePerceptualHashTables(db *gorm.DB) error {
 	if db.Dialector.Name() != "postgres" {
 		return nil
 	}
-	return db.Exec("ANALYZE image_hashes, resource_similarities").Error
+	// resource_similarities is analyzed by the background index builder, after its
+	// CONCURRENTLY build: an ANALYZE here would wait on the SHARE UPDATE EXCLUSIVE
+	// lock another instance's build holds, and boot would wait with it.
+	return db.Exec("ANALYZE image_hashes").Error
 }

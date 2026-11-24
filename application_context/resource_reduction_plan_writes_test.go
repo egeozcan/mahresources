@@ -33,6 +33,7 @@ func TestEveryPlanWriteGoesThroughAKnownSite(t *testing.T) {
 		"recordStaleLocked":                 "the early stale outcome, under the Reduction row lock and the members' locks: decodes and re-encodes the whole plan",
 		"settleReductionClaims":             "settle-only: decodes the plan, reconciles claims, re-encodes it whole",
 		"OverwritePlanForTest":              "test seam",
+		"publishMigration":                  "the D12 migration, the one writer that nulls the plan column (design D12)",
 	}
 
 	files, err := filepath.Glob("*.go")

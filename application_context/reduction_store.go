@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"hash"
 	"sort"
 	"strconv"
 	"strings"
@@ -102,15 +104,29 @@ func lossyFieldCount(lossy []byte) int {
 	return len(names)
 }
 
+// tokenDigest streams the apply token: a fingerprint at a time, in key order, so
+// nothing is held but the hash state (300,000 eligible Clusters would otherwise
+// keep about 19 MB of fingerprints).
+type tokenDigest struct{ h hash.Hash }
+
+func newTokenDigest() *tokenDigest { return &tokenDigest{h: sha256.New()} }
+
+func (d *tokenDigest) add(fingerprint string) {
+	d.h.Write([]byte(fingerprint))
+	d.h.Write([]byte{'\n'})
+}
+
+// sum is the opaque token clients carry back: the first 32 hex digits.
+func (d *tokenDigest) sum() string { return hex.EncodeToString(d.h.Sum(nil))[:32] }
+
 // applyTokenOf is the digest an apply is bound to: the stored fingerprints of the
 // eligible Clusters, in key order (design D10). Opaque to clients.
 func applyTokenOf(fingerprints []string) string {
-	h := sha256.New()
+	d := newTokenDigest()
 	for _, fp := range fingerprints {
-		h.Write([]byte(fp))
-		h.Write([]byte{'\n'})
+		d.add(fp)
 	}
-	return hex.EncodeToString(h.Sum(nil))[:32]
+	return d.sum()
 }
 
 // insertCluster writes a Cluster and its members under the Reduction and
@@ -118,6 +134,9 @@ func applyTokenOf(fingerprints []string) string {
 // most reductionRowChunk rows per statement, in one transaction with the
 // Cluster row.
 func (s *reductionStore) insertCluster(r *models.ResourceReduction, generation string, c *storedCluster) error {
+	if len(c.Members) == 0 {
+		return errors.New("a Cluster is written with its members, and none was given")
+	}
 	c.Row.ID = 0
 	c.Row.ReductionID = r.ID
 	c.Row.Generation = generation
@@ -372,16 +391,16 @@ func (s *reductionStore) eligibleClusters(r *models.ResourceReduction, generatio
 
 // applyEligibility is the token over the eligible Clusters with their counts.
 func (s *reductionStore) applyEligibility(r *models.ResourceReduction, generation string) (token string, clusters, losers int, err error) {
-	var fingerprints []string
+	digest := newTokenDigest()
 	err = s.eligibleClusters(r, generation, func(rows []models.ReductionClusterRow) error {
 		for _, row := range rows {
-			fingerprints = append(fingerprints, row.Fingerprint)
+			digest.add(row.Fingerprint)
 			clusters++
 			losers += row.LoserCount
 		}
 		return nil
 	})
-	return applyTokenOf(fingerprints), clusters, losers, err
+	return digest.sum(), clusters, losers, err
 }
 
 // settleableClaims counts the Clusters settle-only could release for this

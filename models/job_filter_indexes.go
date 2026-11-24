@@ -1,7 +1,9 @@
 package models
 
 import (
+	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -18,6 +20,24 @@ type plannedIndex struct {
 	name    string
 	table   string
 	columns string
+}
+
+// definitionMatches reports whether a database's spelling of an index (a
+// pg_get_indexdef line or sqlite_master's sql) ends in this index's column list
+// and so has neither a WHERE nor other columns. The two databases respell an
+// expression (casts, extra parentheses, case), so both sides are reduced to
+// lower-case with spaces, parentheses, quotes and ::casts removed.
+func (p plannedIndex) definitionMatches(def string) bool {
+	return strings.HasSuffix(normalizeIndexDefinition(def), normalizeIndexDefinition(p.columns))
+}
+
+var indexCastPattern = regexp.MustCompile(`::[a-z_]+`)
+
+func normalizeIndexDefinition(s string) string {
+	s = strings.ToLower(s)
+	s = strings.NewReplacer(" ", "", "\n", "", "\t", "").Replace(s)
+	s = indexCastPattern.ReplaceAllString(s, "")
+	return strings.NewReplacer("(", "", ")", "", `"`, "").Replace(s)
 }
 
 // isExpression reports an index over an expression (its column list holds a
@@ -112,7 +132,11 @@ func ensurePlannedIndexes(db *gorm.DB, what string, lockKey int64, indexes []pla
 				return fmt.Errorf("inspect %s: %w", index.name, err)
 			}
 			if index.isExpression() {
-				if len(table) == 1 && table[0] == index.table {
+				var sqls []string
+				if err := db.Raw("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", index.name).Scan(&sqls).Error; err != nil {
+					return fmt.Errorf("inspect %s: %w", index.name, err)
+				}
+				if len(table) == 1 && table[0] == index.table && len(sqls) == 1 && index.definitionMatches(sqls[0]) {
 					continue
 				}
 				if err := db.Exec("DROP INDEX IF EXISTS " + index.name).Error; err != nil {
@@ -160,15 +184,35 @@ func ensurePlannedIndexes(db *gorm.DB, what string, lockKey int64, indexes []pla
 // server's build then wait on each other until Postgres aborts one as a
 // deadlock. Between polls the waiter has no statement running.
 func pollAdvisoryLock(conn *gorm.DB, key int64) error {
-	for {
+	return pollLockFor(func() (bool, error) {
 		var locked bool
-		if err := conn.Raw("SELECT pg_try_advisory_lock(?)", key).Scan(&locked).Error; err != nil {
+		err := conn.Raw("SELECT pg_try_advisory_lock(?)", key).Scan(&locked).Error
+		return locked, err
+	}, advisoryLockPoll, advisoryLockMaxWait)
+}
+
+// errAdvisoryLockTimeout says another server held the lock for the whole bounded
+// wait. The caller logs it, releases its connection and tries again later, so a
+// build that takes hours cannot pin a connection of this server's for as long.
+var errAdvisoryLockTimeout = errors.New("another instance is still building these indexes; giving up this wait")
+
+// advisoryLockMaxWait bounds one wait for the lock.
+const advisoryLockMaxWait = 2 * time.Minute
+
+func pollLockFor(try func() (bool, error), poll, max time.Duration) error {
+	deadline := time.Now().Add(max)
+	for {
+		locked, err := try()
+		if err != nil {
 			return err
 		}
 		if locked {
 			return nil
 		}
-		time.Sleep(advisoryLockPoll)
+		if time.Now().After(deadline) {
+			return errAdvisoryLockTimeout
+		}
+		time.Sleep(poll)
 	}
 }
 
@@ -257,7 +301,8 @@ func ensurePostgresPlannedIndex(conn *gorm.DB, index plannedIndex) error {
 	// (<columns>)".
 	shape := fmt.Sprintf(" USING btree (%s)", index.columns)
 	if len(found) == 1 && found[0].Valid && !strings.HasPrefix(found[0].Def, "CREATE UNIQUE") &&
-		(index.isExpression() || strings.HasSuffix(found[0].Def, shape)) && strings.Contains(found[0].Def, "."+index.table+" USING") {
+		(index.isExpression() && index.definitionMatches(found[0].Def) || !index.isExpression() && strings.HasSuffix(found[0].Def, shape)) &&
+		strings.Contains(found[0].Def, "."+index.table+" USING") {
 		return nil
 	}
 	if len(found) == 1 {

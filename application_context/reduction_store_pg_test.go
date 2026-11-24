@@ -92,3 +92,11 @@ func TestReductionSelectFromGroupPG(t *testing.T) {
 }
 
 func TestReductionLeasesPG(t *testing.T) { testReductionLeases(t, newReductionPGContext(t)) }
+
+func TestReductionDenyWithholdsEveryClusterPG(t *testing.T) {
+	testReductionDenyWithholdsEveryCluster(t, newReductionPGContext(t))
+}
+
+func TestReductionTokenOrdersByKeyAcrossChunksPG(t *testing.T) {
+	testReductionTokenOrdersByKeyAcrossChunks(t, newReductionPGContext(t))
+}

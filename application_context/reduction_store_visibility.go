@@ -75,7 +75,8 @@ func (s *reductionStore) withheld(c string) string {
 		return "EXISTS (SELECT 1 FROM reduction_members m WHERE m.cluster_id = " + c + ".id AND NOT " +
 			s.memberInScope("m") + " AND NOT " + s.mergedLoserVisible("m", c) + ")"
 	case scopeDeny:
-		return "EXISTS (SELECT 1 FROM reduction_members m WHERE m.cluster_id = " + c + ".id)"
+		// Unconditional: a rule that looks for members would let a Cluster with none through.
+		return "(1 = 1)"
 	}
 	return "(1 = 0)"
 }

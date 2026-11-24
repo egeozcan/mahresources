@@ -67,6 +67,12 @@ func assertAutoMigrateLeavesLegacyRowsAtSchemaZero(t *testing.T, db *gorm.DB) {
 	if len(rows) != 1 {
 		t.Fatalf("want the one legacy row, got %d", len(rows))
 	}
+	// Scan turns a NULL into 0, so ask the database itself: dropping the column's
+	// default would leave NULL here, which `= 0` does not match.
+	var legacy int64
+	if err := db.Raw("SELECT COUNT(*) FROM resource_reductions WHERE plan_schema = 0").Scan(&legacy).Error; err != nil || legacy != 1 {
+		t.Fatalf("rows with plan_schema = 0: %d (err %v), want the 1 legacy row", legacy, err)
+	}
 	if rows[0].PlanSchema != 0 {
 		t.Fatalf("plan_schema = %d after AutoMigrate on a legacy row, want 0", rows[0].PlanSchema)
 	}
