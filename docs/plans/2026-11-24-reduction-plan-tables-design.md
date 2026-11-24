@@ -1,6 +1,6 @@
 # Resource Reduction plan as tables: bounded memory at any library size
 
-Status: design v15 (closed for implementation). Review history: v1 pi 9 P0 / 4 P1, architect 3 / 18; v2 pi 9 / 7, architect 1 /
+Status: design v15, implemented: slices 1 to 4 are done (2026-11-24); the D14 results are at the end of this file. Review history: v1 pi 9 P0 / 4 P1, architect 3 / 18; v2 pi 9 / 7, architect 1 /
 12; v3 pi 9 / 2, architect 1 / 7; v4 pi 0 / 11, architect 0 / 5; v5 pi 0 / 9, architect 0 / 2; v6 pi 0 / 11, architect 0 / 1; v7 pi 0 / 10, architect 0 / 1; v8 pi 0 / 6, architect 0 / 3;
 v9 pi 0 / 7, architect 0 / 1; v10 pi 0 / 3, architect 0 / 0; v11 architect 0 / 1 (pi's run failed on a network error); v12 pi 0 / 4, architect 0 / 1; v13 pi 0 / 6, architect 0 / 1, all
 applied in v15. No P0 since v3. The design loop closes here: round 13's findings were all local
@@ -740,17 +740,17 @@ pre-existing race between a Group reparent and a scoped merge (below).
 Each is TDD, green on SQLite and Postgres, committed in reviewable commits, and pi-reviewed before
 the next.
 
-1. **Store and proofs.** Schema, collation statement, saved-SQL classification, `reductionColumns`,
+1. **Store and proofs** (done). Schema, collation statement, saved-SQL classification, `reductionColumns`,
    `reductionStore`, derived columns, subtree CTE use with its differential test, visibility
    fragments, the byte key with its property and database tests, the differential oracle.
    Nothing switched.
-2. **Cutover**, three commits that land together: (a) selections tables, migration, leases,
+2. **Cutover** (done), three commits that land together: (a) selections tables, migration, leases,
    readers and token, pagination window; (b) writers, deletion hook, apply, narrow merge; (c)
    compute lands through the store as a generation (fencing, sweep, keys) while still building
    Clusters in memory; test seams; plan-writes and projection guards. After this slice nothing
    reads or writes `plan`.
-3. **Streaming compute.** D5, D6, D7 in use.
-4. **Proof and records.** D14 at full scale, ADR 0011, docs-site, openapi, todo entry, full suite
+3. **Streaming compute** (done). D5, D6, D7 in use.
+4. **Proof and records** (done). D14 at full scale, ADR 0011, docs-site, openapi, todo entry, full suite
    (Go SQLite + Postgres, E2E browser + CLI on both).
 
 Also in this change: the review card layout fix for long Resource names and failed thumbnails
@@ -962,3 +962,85 @@ Also in this change: the review card layout fix for long Resource names and fail
 | spool key columns (arch 2) | D12 |
 | settle fence vs compute (arch 3) | D4 |
 | per-claim Extent probe cost (arch 4) | D5 |
+
+## D14 results (slice 4, 2026-11-24)
+
+Run with `MAHRES_SCALE_TESTS=1 go test --tags 'json1 fts5' ./application_context -run 'TestScale.*SQLite'` and the same with
+`--tags 'json1 fts5 postgres'` and `-run 'TestScale.*PG'` (`application_context/reduction_scale_test.go`; `MAHRES_SCALE_DIV`
+divides every size, default 1). Every figure below is at the sizes this design names; nothing was scaled down. SQLite is a
+file-backed WAL database; Postgres is the test container. Machine: Apple silicon laptop, one run each. Heap is `HeapInuse`
+above the post-GC baseline, sampled every 10 ms. The bounds asserted are 64 MB for a request and 128 MB for compute and
+migration; wall time and RSS are logged, not asserted.
+
+Compute, migration and the review pages also run at a quarter of the size, and the test requires the full-size peak to be
+within 16 MB of the quarter-size peak.
+
+| Scenario (full size) | SQLite peak heap, wall | Postgres peak heap, wall |
+|---|---|---|
+| Review page over 300,000 Clusters and 1,000,000 members, worst of 5 page shapes, unscoped | +3.0 MB (all shapes), 12 ms to 29 ms | +3.5 MB, 53 ms to 158 ms |
+| The same as a principal scoped to a 20,000 Group subtree (anti-join over every member) | under +3.1 MB, 60 ms to 100 ms | under +3.4 MB, 2.0 s to 4.5 s |
+| The same as a principal scoped to one Group | +0.1 MB | +0.2 MB, 0.7 s to 1.5 s |
+| List of 50 Reductions (50 x 6,000 Clusters) | +0.8 MB, 85 ms | +0.8 MB, 108 ms |
+| Bulk approve of every Identical Cluster (200,000 Clusters, one transaction) | +5.5 MB, 1.24 s | +6.4 MB, 14.3 s |
+| Apply stamp over those 200,000 Clusters (500,000 Losers) | +5.1 MB, 0.60 s | +5.8 MB, 23.5 s |
+| Apply of 2,000 Clusters (2,000 merges) | +6.3 MB, 7.7 s | +7.6 MB, 25.9 s |
+| Bulk delete of 10,000 ids, one Resource with 1,000,000 pairs | +27.7 MB, 3.5 s | +27.1 MB, 39.8 s |
+| Merge of 199 Losers into a Winner with 50 MB of backups | +4.6 MB, 12.5 s, RSS 693 MB | +11.2 MB, 22.9 s |
+| Compute over 2,270,006 Resources (2,000,000 unique hashes, 100,000 hashes held twice, 5 duplicates last in hash order, a 50,000 holder hash, a 20,000 spoke star) | +9.3 MB (quarter size +8.6 MB), 1 m 32 s | +11.4 MB (quarter size +9.9 MB), 5 m 46 s |
+| Migration of a 13 MB legacy plan (one 50,000 member Cluster, 50,000 small ones) | +8.0 MB (quarter size +7.6 MB), 18.8 s | +17.6 MB (quarter size +8.1 MB), 72.8 s |
+
+Notes on the figures:
+
+- The two sizes of the Postgres migration differ by 9.5 MB because the full-size run starts from a larger live heap (34 MB
+  against 23 MB: the test process still holds the previous run's buffers), and the collector lets garbage grow in proportion to
+  the live heap. The statement and chunk bounds do not change between the sizes.
+- A 200-member Cluster is a Winner and 199 Losers: the shared merge entry point refuses more than `MaxClusterMembers - 1`
+  Losers (D14b), so the merge fixture is the longest merge the system accepts.
+- Process RSS during compute and migration is logged per run in the test output. SQLite's own memory counts toward it: parsing
+  the 13 MB legacy plan, and the 50 MB `meta` of the merge, put the SQLite process near 700 MB while Go's heap stays under
+  20 MB. The migration's parse cost in the database is the one the design accepts (D12).
+- Binding a scoped principal (`WithPrincipal`) over the 20,000 Group subtree costs +1.6 MB and 10 ms on SQLite and +1.5 MB
+  and 8 ms on Postgres. That is the app-wide allow-list recorded in `docs/todo.md`; it is not a store cost.
+- The apply stamp and the bulk approve each run as one transaction of 500-row chunks. On SQLite their duration is the whole
+  writer-lock hold of the operation: 0.60 s to stamp 200,000 Clusters, 1.24 s to approve them. No other statement of any
+  scenario held the lock longer than one chunk.
+- The one statement allowed past a chunk is the migration spool, named as an exemption in the test (D12): 50,000 rows at
+  the quarter size and 200,000 at the full size, once per legacy plan.
+- The similarity distance indexes built over 1,000,000 stored pairs in 0.33 s on SQLite.
+
+### Plans asserted
+
+Both databases assert the plan of the statements captured while the compute runs, over a generation that already holds
+100,000 Clusters and a members table of one million unrelated rows:
+
+| Statement | SQLite | Postgres |
+|---|---|---|
+| Identical chunk (`SELECT hash FROM reduction_extent ... hash > ? ORDER BY hash LIMIT`) | `SEARCH ... USING COVERING INDEX idx_re_hash` | `Index Only Scan using idx_re_hash` |
+| Holders of a rare hash | `SEARCH r USING INDEX idx_resources_hash` | `Index Scan using idx_resources_hash`, anti-join by `idx_rm_resource_only` |
+| Neighbours of the hub | `SEARCH s USING COVERING INDEX idx_sim_r1_eff_dist`, no sort | `Index Scan using idx_sim_r1_eff_dist` under a nested-loop anti join |
+| Availability probe | `SEARCH am USING INDEX idx_rm_resource` | `Index Scan using idx_rm_resource_only` |
+
+Postgres is free to walk the primary key of `resources` for the holders of a hash that one Resource in forty holds (the
+50,000 holder hash): that finds a chunk of holders after a bounded number of rows, so the test asserts only that such a
+statement does not scan `resources` whole.
+
+### What the proofs found
+
+Four boundedness defects, each fixed test-first in this slice:
+
+1. **Resource delete, staged ids and claim renewal.** A 10,000 id delete purged `reduction_deleted_ids` and renewed the
+   manifest claim with one statement over every row of the operation, in the same transaction as the delete. Both now run a
+   chunk of rows per statement. Test: `TestBulkDeleteStatementsStayWithinAChunk` (SQLite and Postgres).
+2. **SQLite migration spool, quadratic in a Cluster's members.** `json_extract` reads its whole text argument on every call,
+   so each Cluster-level field of the per-member select re-read the Cluster. A 5,000 member Cluster spooled in 19.9 s, and the
+   50,000 member fixture was still running after 27 minutes (killed). The Cluster-level values are now read once per Cluster
+   into a CTE and the loser-owner and changed-member lookups are joins; the full-size migration takes 18.8 s. Test:
+   `TestMigrationOfALargeClusterIsLinear` (8,000 members, 15 s bound; 44 ms after the fix on SQLite, 0.2 s on Postgres).
+3. **Postgres hashed subplan over the staged Extent.** The in-Extent test of the neighbour and holder statements was a
+   correlated `EXISTS`, which Postgres plans as a hashed subplan that reads the whole generation's Extent once per statement
+   whenever it expects many rows. A hub of 4,000 pairs over a 60,000 row Extent read all 60,000 rows for each 400-row page. It
+   is now a scalar subquery with `LIMIT 1`, a key probe per returned row. Test:
+   `TestComputeNeighbourStatementDoesNotReadTheWholeExtentPG`.
+4. **Hub seeding order.** Not a defect: the first fixture put the star's hub behind its spokes in the Winner Rule's order, so
+   the hub was never a seed. The dense star fixture now makes the hub the largest file, and asserts a 200 member Cluster with
+   `fixed_seed` and the hub as Winner.
