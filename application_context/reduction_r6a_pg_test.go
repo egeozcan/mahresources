@@ -26,6 +26,7 @@ func TestR6OnlyManualEjectionReservesPG(t *testing.T) {
 func TestR6TieDiscoveryIsIncrementalPG(t *testing.T) {
 	testR6TieDiscoveryIsIncremental(t, newOpsPGContext(t))
 }
+
 // The summary predicate is dialect-specific (jsonb ->> on Postgres): the held-run
 // read must narrow to the Reduction there too.
 func TestPublicationReadsOnlyThatReductionsHeldComputesPG(t *testing.T) {
