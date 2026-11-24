@@ -245,7 +245,7 @@ func clusterColumns(row *models.ReductionClusterRow) map[string]any {
 	return map[string]any{
 		"state": row.State, "winner_id": row.WinnerID, "checked": row.Checked, "reviewed": row.Reviewed,
 		"decided_by": row.DecidedBy, "margin": row.Margin, "undecided": row.Undecided,
-		"keeps_smaller": row.KeepsSmaller, "lossy": lossy, "stale_reason": row.StaleReason,
+		"keeps_smaller": row.KeepsSmaller, "lossy": lossy, "stale_reason": models.BoundStaleReason(row.StaleReason),
 		"merged": row.Merged, "claim_id": row.ClaimID, "applied_at": row.AppliedAt, "restore_seq": row.RestoreSeq,
 		"member_count": row.MemberCount, "loser_count": row.LoserCount, "needs_attention": row.NeedsAttention,
 		"fingerprint": row.Fingerprint, "total_size": row.TotalSize, "gone_members": row.GoneMembers,

@@ -271,7 +271,7 @@ func (ctx *MahresourcesContext) storeDemote(reductionID uint, batch, key, claimI
 				}
 			default:
 				c.Row.State = models.ReductionClusterStale
-				c.Row.StaleReason = reason
+				c.Row.StaleReason = models.BoundStaleReason(reason)
 				c.Row.AppliedAt = nil
 				c.Row.Checked = false
 				c.Row.ClaimID = ""
@@ -452,7 +452,7 @@ func (ctx *MahresourcesContext) storeRecordStale(reductionID uint, batch, key, f
 			}
 			before := copyMembers(c.Members)
 			row.State = models.ReductionClusterStale
-			row.StaleReason = reason
+			row.StaleReason = models.BoundStaleReason(reason)
 			// Unchecked, so the next apply does not walk into the same refusal, and
 			// frozen, so a recompute leaves it where the reviewer can look at it.
 			row.Checked = false
@@ -586,7 +586,7 @@ func (s *reductionStore) reconcileChunk(reductionID uint, generation string, aft
 	}
 	prefix, where, args := s.base(&models.ResourceReduction{ID: reductionID}, generation)
 	var rows []models.ReductionClusterRow
-	if err = s.db.Raw(prefix+`SELECT c.* FROM reduction_clusters c WHERE `+where+` AND c.id IN ? AND c.state = 'applied' AND NOT c.merged ORDER BY c.id`,
+	if err = s.db.Raw(prefix+`SELECT `+reviewClusterColumns+` FROM reduction_clusters c WHERE `+where+` AND c.id IN ? AND c.state = 'applied' AND NOT c.merged ORDER BY c.id`,
 		append(args, ids)...).Scan(&rows).Error; err != nil {
 		return nil, 0, 0, 0, err
 	}

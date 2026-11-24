@@ -224,6 +224,16 @@ func reviewFilter(query *query_models.ResourceReductionReviewQuery) (string, []a
 
 // ---- reads ------------------------------------------------------------------------
 
+// reviewClusterColumns is every column of a Cluster row, with the stale reason read
+// as at most 1,024 characters: a row written before the write-side bound, or a
+// plugin veto reason, must not put a megabyte on each Cluster of a review page.
+// TestReviewClusterColumnsCoverTheModel keeps it equal to the model's columns.
+const reviewClusterColumns = `c.id, c.reduction_id, c.generation, c."key", c.position, c.tier, c.state, c.winner_id, c.checked,
+ c.reviewed, c.oversized, c.decided_by, c.margin, c.undecided, c.keeps_smaller, c.read_only, c.lossy,
+ SUBSTR(c.stale_reason, 1, 1024) AS stale_reason, c.merged, c.claim_id, c.applied_at, c.member_count, c.loser_count,
+ c.needs_attention, c.fingerprint, c.total_size, c.gone_members, c.truncated, c.restore_seq, c.apply_batch,
+ c.approved_winner, c.approved_seq, c.outcome_batch, c.bulk_op, c.seed_resource_id, c.fixed_seed`
+
 // pageClusters is one page of the review's Clusters: filtered, sorted and
 // paginated in SQL, with the total the filter matches. Sort is "copies" (the
 // default), "size" or "computed", ties by key, as sortReviewClusters orders them.
@@ -247,7 +257,7 @@ func (s *reductionStore) pageClusters(r *models.ResourceReduction, generation st
 	}
 	var rows []models.ReductionClusterRow
 	pageArgs := append(append([]any(nil), args...), limit, offset)
-	if err := s.db.Raw(prefix+"SELECT c.* FROM reduction_clusters c WHERE "+where+filter+" ORDER BY "+order+" LIMIT ? OFFSET ?", pageArgs...).Scan(&rows).Error; err != nil {
+	if err := s.db.Raw(prefix+"SELECT "+reviewClusterColumns+" FROM reduction_clusters c WHERE "+where+filter+" ORDER BY "+order+" LIMIT ? OFFSET ?", pageArgs...).Scan(&rows).Error; err != nil {
 		return nil, 0, err
 	}
 	return rows, int(total), nil
@@ -259,7 +269,7 @@ func (s *reductionStore) pageClusters(r *models.ResourceReduction, generation st
 func (s *reductionStore) loadCluster(r *models.ResourceReduction, generation, key string) (*storedCluster, error) {
 	prefix, where, args := s.base(r, generation)
 	var rows []models.ReductionClusterRow
-	if err := s.db.Raw(prefix+`SELECT c.* FROM reduction_clusters c WHERE `+where+` AND c."key" = ?`, append(args, key)...).Scan(&rows).Error; err != nil {
+	if err := s.db.Raw(prefix+`SELECT `+reviewClusterColumns+` FROM reduction_clusters c WHERE `+where+` AND c."key" = ?`, append(args, key)...).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	if len(rows) == 0 {

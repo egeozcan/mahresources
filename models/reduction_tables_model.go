@@ -1,7 +1,11 @@
 package models
 
 import (
+	"strings"
 	"time"
+	"unicode/utf8"
+
+	"gorm.io/gorm"
 
 	"mahresources/models/types"
 )
@@ -78,6 +82,29 @@ type ReductionClusterRow struct {
 }
 
 func (ReductionClusterRow) TableName() string { return "reduction_clusters" }
+
+// StaleReasonMaxBytes bounds a stored stale reason. A plugin veto reason can be a
+// megabyte, and a review page loads the reason of every Cluster on it.
+const StaleReasonMaxBytes = 1024
+
+// BoundStaleReason cuts a stale reason to StaleReasonMaxBytes at a rune boundary.
+func BoundStaleReason(s string) string {
+	if len(s) <= StaleReasonMaxBytes {
+		return s
+	}
+	cut := StaleReasonMaxBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return strings.ToValidUTF8(s[:cut], "")
+}
+
+// BeforeSave bounds the reason on every Create and Save; the map Updates paths
+// (clusterColumns) call BoundStaleReason themselves.
+func (r *ReductionClusterRow) BeforeSave(*gorm.DB) error {
+	r.StaleReason = BoundStaleReason(r.StaleReason)
+	return nil
+}
 
 // ReductionMemberRow is one Resource in a Cluster.
 type ReductionMemberRow struct {

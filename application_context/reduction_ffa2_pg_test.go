@@ -4,6 +4,10 @@ package application_context
 
 import "testing"
 
+func TestReductionStaleReasonIsBoundedPG(t *testing.T) {
+	testReductionStaleReasonIsBounded(t, newReductionPGContext(t))
+}
+
 func TestReductionDeleteRemovesItsSpoolPG(t *testing.T) {
 	testReductionDeleteRemovesItsSpool(t, newReductionPGContext(t))
 }
