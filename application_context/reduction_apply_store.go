@@ -551,7 +551,12 @@ func (ctx *MahresourcesContext) storeApplyOneCluster(r *models.ResourceReduction
 		// back (bookkeeping, still allowed for the same batch) and the loop stops.
 		settle.storeReleaseClaim(run.reductionID, run.batch, key, claimed.Row.ClaimID)
 		return clusterApplyOutcome{Omit: true}, true
-	case errors.Is(err, errMergeVisibilityLost), errors.Is(err, errAccountChanged),
+	case errors.Is(err, errAccountChanged):
+		// The account changed under the request: every later Cluster would say the same,
+		// so the loop stops, as it does when the claim itself notices.
+		settle.storeReleaseClaim(run.reductionID, run.batch, key, claimed.Row.ClaimID)
+		return clusterApplyOutcome{Omit: true}, true
+	case errors.Is(err, errMergeVisibilityLost),
 		ctx.isScopedPrincipal() && errors.Is(err, ErrMergeParticipantUnavailable):
 		settle.storeReleaseClaim(run.reductionID, run.batch, key, claimed.Row.ClaimID)
 		return clusterApplyOutcome{Omit: true}, false
@@ -579,7 +584,8 @@ func (ctx *MahresourcesContext) storeApplyOneCluster(r *models.ResourceReduction
 		// to record, and the loop stops as it does for any lost lease.
 		return clusterApplyOutcome{Omit: true}, true
 	case demoteHidden:
-		return clusterApplyOutcome{Omit: true}, false
+		// The account changed: as at the claim, every later Cluster would say the same.
+		return clusterApplyOutcome{Omit: true}, true
 	}
 	return clusterApplyOutcome{Changed: true}, false
 }

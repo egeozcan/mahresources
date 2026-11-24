@@ -310,3 +310,12 @@ func TestStoreMergeRenewHookPG(t *testing.T) { testStoreMergeRenewHook(t, newOps
 func TestStoreApplyReconcileErrorDoesNotFinishPG(t *testing.T) {
 	testStoreApplyReconcileErrorDoesNotFinish(t, newOpsPGContext(t))
 }
+
+func TestStoreApplyAccountChangeStopsTheLoopPG(t *testing.T) {
+	t.Run("merge", func(t *testing.T) { testStoreApplyAccountChangeStopsTheLoop(t, newOpsPGContext(t), false) })
+	t.Run("refused merge", func(t *testing.T) { testStoreApplyAccountChangeStopsTheLoop(t, newOpsPGContext(t), true) })
+}
+
+func TestOpsWithheldBeatsExpiredLeasePG(t *testing.T) {
+	testOpsWithheldBeatsExpiredLease(t, newOpsPGContext(t))
+}

@@ -15,7 +15,7 @@ import (
 )
 
 // Regression tests for the review of the table-backed apply writers. Each body
-// runs on SQLite here and on Postgres in reduction_ops_review_fixes_pg_test.go.
+// runs on SQLite here and on Postgres in reduction_ops_interleave_pg_test.go.
 
 // pinLeaseClock makes the clock fences read jump two hours ahead the moment a
 // writer has taken its locks, so a lease that was live at the fence is expired by
@@ -449,4 +449,75 @@ func testStoreApplyReconcileErrorDoesNotFinish(t *testing.T, ctx *MahresourcesCo
 
 func TestStoreApplyReconcileErrorDoesNotFinishSQLite(t *testing.T) {
 	testStoreApplyReconcileErrorDoesNotFinish(t, withSettings(newReductionSQLiteContext(t)))
+}
+
+// ---- 8: an account change stops the apply loop ----------------------------------
+//
+// After a claim, a merge that fails because the caller's account changed (or a refused
+// merge whose demote then finds the account changed) says the same to every later
+// Cluster, so the loop stops (lost=true) as it does when the claim itself notices.
+
+func testStoreApplyAccountChangeStopsTheLoop(t *testing.T, ctx *MahresourcesContext, alsoRefuseMerge bool) {
+	mine := &models.Group{Name: "mine"}
+	other := &models.Group{Name: "other"}
+	require.NoError(t, ctx.db.Create(mine).Error)
+	require.NoError(t, ctx.db.Create(other).Error)
+	account := accountPrincipal(t, ctx, "u", models.RoleUser, &mine.ID)
+	p := ctx.WithPrincipal(account)
+
+	r := applyReduction(t, ctx)
+	res := func(name string) uint { return makeResource(t, ctx.db, name, opsRes{Hash: "h", Owner: &mine.ID}) }
+	a, b := res("a"), res("b")
+	insertOps(t, ctx, r, "k", models.ReductionTierIdentical, a, opsMember(a, "h"), opsMember(b, "h"))
+	r = startBatch(t, ctx, r, "b1", time.Hour)
+	stamp(t, ctx, "b1", "k")
+	run := &applyRun{reductionID: r.ID, batch: "b1", generation: opsGen, startedAt: time.Now()}
+
+	reductionApplyAfterClaimHook = func() {
+		require.NoError(t, ctx.db.Exec("UPDATE users SET scope_group_id = ? WHERE id = ?", other.ID, account.UserID).Error)
+		if alsoRefuseMerge {
+			require.NoError(t, ctx.db.Exec("UPDATE resources SET hash = 'changed' WHERE id = ?", b).Error)
+		}
+	}
+	t.Cleanup(func() { reductionApplyAfterClaimHook = nil })
+
+	outcome, lost := p.storeApplyOneCluster(r, run, "k")
+	require.True(t, outcome.Omit, "nothing about the Cluster may be reported")
+	require.True(t, lost, "the account changed: every later Cluster would say the same, so the loop stops")
+}
+
+func TestStoreApplyAccountChangeStopsTheLoopSQLite(t *testing.T) {
+	t.Run("merge", func(t *testing.T) {
+		testStoreApplyAccountChangeStopsTheLoop(t, withSettings(newReductionSQLiteContext(t)), false)
+	})
+	t.Run("refused merge", func(t *testing.T) {
+		testStoreApplyAccountChangeStopsTheLoop(t, withSettings(newReductionSQLiteContext(t)), true)
+	})
+}
+
+// ---- 9: a withheld Cluster is hidden even when the lease ran out ----------------
+
+func testOpsWithheldBeatsExpiredLease(t *testing.T, ctx *MahresourcesContext) {
+	mine := &models.Group{Name: "mine"}
+	other := &models.Group{Name: "other"}
+	require.NoError(t, ctx.db.Create(mine).Error)
+	require.NoError(t, ctx.db.Create(other).Error)
+	account := accountPrincipal(t, ctx, "u", models.RoleUser, &mine.ID)
+	p := ctx.WithPrincipal(account)
+
+	r := newPlanReduction(t, ctx.db)
+	a := makeResource(t, ctx.db, "wa", opsRes{Hash: "h", Owner: &mine.ID})
+	b := makeResource(t, ctx.db, "wb", opsRes{Hash: "h", Owner: &other.ID})
+	insertOps(t, ctx, r, "w", models.ReductionTierIdentical, a, opsMember(a, "h"), opsMember(b, "h"))
+	r = startBatch(t, ctx, r, "b1", time.Hour)
+	stamp(t, ctx, "b1", "w")
+
+	pinLeaseClock(t)
+	require.Equal(t, staleHidden, p.storeRecordStale(r.ID, "b1", "w", rowOf(t, ctx, "w").Fingerprint, staleReasonHashChanged, nil),
+		"a Cluster the caller may not see is hidden, not counted as changed, whatever the lease says")
+	require.Equal(t, models.ReductionClusterOpen, rowOf(t, ctx, "w").State)
+}
+
+func TestOpsWithheldBeatsExpiredLeaseSQLite(t *testing.T) {
+	testOpsWithheldBeatsExpiredLease(t, withSettings(newReductionSQLiteContext(t)))
 }

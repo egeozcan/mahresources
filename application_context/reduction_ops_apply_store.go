@@ -428,14 +428,17 @@ func (ctx *MahresourcesContext) storeRecordStale(reductionID uint, batch, key, f
 			}
 			st := store.in(tx)
 			c, err := st.lockedCluster(&models.ResourceReduction{ID: reductionID}, generation, key)
+			// A withheld Cluster is hidden whatever the lease says: classified first, so
+			// an expired lease does not turn "not yours to see" into "changed".
+			if errors.Is(err, errClusterWithheld) {
+				outcome = staleHidden
+				return nil
+			}
 			if leaseErr := requireLeaseLive(tx, reductionID); leaseErr != nil {
 				return leaseErr
 			}
 			switch {
 			case errors.Is(err, gorm.ErrRecordNotFound):
-				return nil
-			case errors.Is(err, errClusterWithheld):
-				outcome = staleHidden
 				return nil
 			case err != nil:
 				return err
