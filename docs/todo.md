@@ -13965,8 +13965,6 @@ proves.
   the plan tables and is unchanged by them. Closing it means making the scope snapshot and the participant
   locks one atomic step, and it needs a Postgres test with an injected interleave (SQLite serializes
   writers and cannot reproduce it).
-- [ ] The Resource cleanup manifest is replayed only at startup. `ReplayResourceCleanupManifest` (called once
-  from `main.go`) drains rows a committed delete left behind when the process died or failed before the
-  drain, and every row is claimed so a second instance does not repeat it. A server that stays up after a
-  failed drain keeps the rows (and the files and hooks they name) until the next restart. Run the same claimed
-  replay on a timer, with a lease long enough that it never races a live drain.
+- [x] The Resource cleanup manifest is replayed on a timer, not only at startup.
+  `StartResourceManifestReplay` (started from `main.go`) runs the same claimed replay every minute, and every
+  drain write requires the drain's own live claim, so a replay never races a live drain.
