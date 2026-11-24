@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -182,4 +181,3 @@ func postgresBlockScrub(op string) blockScrubSQL {
 	return blockScrubSQL{gallery: gallery, calendar: calendar}
 }
 
-var _ = strings.TrimSpace
