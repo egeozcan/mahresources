@@ -41,7 +41,8 @@ func routeBodyLimit(path string) int64 {
 func withRouteBodyLimit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if limit := routeBodyLimit(r.URL.Path); limit > 0 && r.Body != nil && r.Method != http.MethodGet {
-			r.Body = api_handlers.BoundedBody{ReadCloser: http.MaxBytesReader(w, r.Body, limit)}
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+			r = api_handlers.MarkBodyBounded(r)
 		}
 		next.ServeHTTP(w, r)
 	})

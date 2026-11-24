@@ -1,6 +1,7 @@
 package api_handlers
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -67,9 +68,20 @@ func tryFillStructValuesFromRequestWithLimit(dst any, w http.ResponseWriter, req
 	return tryFillStructValuesFromRequest(dst, request)
 }
 
-// BoundedBody is a request body that was capped at a route's limit. A JSON decode of it
-// reads to the end of the body, so bytes after the value count against the cap too.
-type BoundedBody struct{ io.ReadCloser }
+type boundedBodyKey struct{}
+
+// MarkBodyBounded returns r marked as one whose body a route capped (design D14b). A JSON
+// decode of such a request reads to the end of the body, so bytes after the value count
+// against the cap too. The mark rides on the request's context rather than on a wrapper
+// type of the body, so a later wrapper (the global JSON cap) cannot hide it.
+func MarkBodyBounded(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), boundedBodyKey{}, true))
+}
+
+func bodyIsBounded(r *http.Request) bool {
+	b, _ := r.Context().Value(boundedBodyKey{}).(bool)
+	return b
+}
 
 func tryFillStructValuesFromRequest(dst any, request *http.Request) error {
 	contentTypeHeader := request.Header.Get("Content-type")
@@ -84,7 +96,7 @@ func tryFillStructValuesFromRequest(dst any, request *http.Request) error {
 		// The decoder stops at the end of the value. On a route with a limit, whatever
 		// follows must fit the limit too, or a valid value plus megabytes of whitespace
 		// commits past it; reading on reports the cap.
-		if _, bounded := request.Body.(BoundedBody); bounded {
+		if bodyIsBounded(request) {
 			if _, err := io.Copy(io.Discard, request.Body); err != nil {
 				return err
 			}
