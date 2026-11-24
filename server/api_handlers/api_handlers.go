@@ -123,6 +123,14 @@ func tryFillStructValuesFromRequest(dst any, request *http.Request) error {
 		if err := decoder.Decode(dst, request.PostForm); err != nil {
 			return err
 		}
+		// The parser stops at the closing boundary. On a route with a limit, an
+		// epilogue after it must fit the limit too, or a valid form plus megabytes
+		// of padding commits past it; reading on reports the cap.
+		if bodyIsBounded(request) {
+			if _, err := io.Copy(io.Discard, request.Body); err != nil {
+				return err
+			}
+		}
 		// gorilla/schema converter doesn't work for slice fields; parse manually
 		query_models.FillMetaQueryFromRequest(request, dst)
 		return nil
