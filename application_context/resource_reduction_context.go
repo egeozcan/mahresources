@@ -147,7 +147,9 @@ func (ctx *MahresourcesContext) createOrExtendResourceReductionOnce(creator *que
 			return err
 		}
 		if creator.OwnerId != 0 {
-			added, err := txCtx.addOwnedResourcesToExtent(store, row, creator.OwnerId, creator.IncludeDescendants)
+			// The expansion shares the request's cap with the ids it named itself.
+			added, err := txCtx.addOwnedResourcesToExtentWithin(store, row, creator.OwnerId, creator.IncludeDescendants,
+				reductionSelectionCap-len(resourceIDs)-len(groupIDs))
 			if err != nil {
 				return err
 			}
@@ -188,6 +190,12 @@ func (ctx *MahresourcesContext) withSelectionTransaction(fn func(txCtx *Mahresou
 // there). The root is checked first; the Resource insert applies the principal's
 // scope itself. The request as a whole stays within reductionSelectionCap.
 func (ctx *MahresourcesContext) addOwnedResourcesToExtent(store *reductionStore, row *models.ResourceReduction, ownerID uint, includeDescendants bool) (int, error) {
+	return ctx.addOwnedResourcesToExtentWithin(store, row, ownerID, includeDescendants, reductionSelectionCap)
+}
+
+// addOwnedResourcesToExtentWithin is addOwnedResourcesToExtent with the number of
+// Resources the expansion may add: the request's cap less its explicit ids.
+func (ctx *MahresourcesContext) addOwnedResourcesToExtentWithin(store *reductionStore, row *models.ResourceReduction, ownerID uint, includeDescendants bool, budget int) (int, error) {
 	visible, err := store.groupInScope(ownerID)
 	if err != nil {
 		return 0, err
@@ -198,11 +206,11 @@ func (ctx *MahresourcesContext) addOwnedResourcesToExtent(store *reductionStore,
 	// The subtree is joined inside the statements that insert, never listed in Go:
 	// a root with 20,000 empty descendants was 20,000 statements under SQLite's
 	// writer lock.
-	total, err := store.addExtentFromOwners(row, ownerID, includeDescendants)
+	total, err := store.addExtentFromOwners(row, ownerID, includeDescendants, budget)
 	if err != nil {
 		return 0, err
 	}
-	if total > reductionSelectionCap {
+	if total > budget {
 		return 0, ErrReductionSelectionTooLarge
 	}
 	return total, nil

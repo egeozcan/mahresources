@@ -112,7 +112,7 @@ func (s *reductionStore) insertIgnore(rows any) error {
 // addExtentFromGroupResources selects every Resource the Group owns that the
 // principal may see. See addExtentFromOwners.
 func (s *reductionStore) addExtentFromGroupResources(r *models.ResourceReduction, groupID uint) (int, error) {
-	return s.addExtentFromOwners(r, groupID, false)
+	return s.addExtentFromOwners(r, groupID, false, reductionSelectionCap)
 }
 
 // ownerTreeCTE names the Groups whose Resources are selected: the root alone, or
@@ -127,7 +127,14 @@ const (
 // id-keyset chunks, so no id list is held in Go and the number of statements does
 // not grow with the number of Groups. More than the cap refuses the whole request.
 // It returns how many Resources were selected (new or already there).
-func (s *reductionStore) addExtentFromOwners(r *models.ResourceReduction, rootID uint, descendants bool) (int, error) {
+//
+// budget is how many Resources this call may select: the per-request cap less what
+// the same request already named explicitly. It is judged on the count read before
+// the first insert and again on what this transaction has inserted.
+func (s *reductionStore) addExtentFromOwners(r *models.ResourceReduction, rootID uint, descendants bool, budget int) (int, error) {
+	if budget < 0 {
+		budget = 0
+	}
 	if s.scope.mode == scopeDeny {
 		return 0, nil
 	}
@@ -150,10 +157,10 @@ func (s *reductionStore) addExtentFromOwners(r *models.ResourceReduction, rootID
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		var count int64
 		if err := tx.Raw(prefix+`SELECT COUNT(*) FROM (SELECT 1 FROM resources WHERE`+owned+` LIMIT ?) capped`,
-			with(reductionSelectionCap+1)...).Scan(&count).Error; err != nil {
+			with(budget+1)...).Scan(&count).Error; err != nil {
 			return err
 		}
-		if count > reductionSelectionCap {
+		if count > int64(budget) {
 			return ErrReductionSelectionTooLarge
 		}
 		if selectionAfterPreflight != nil {
@@ -184,7 +191,7 @@ func (s *reductionStore) addExtentFromOwners(r *models.ResourceReduction, rootID
 			total += int(chunk)
 			// The preflight can be stale by now; the cap is judged on what this
 			// transaction has inserted, and refusing rolls all of it back.
-			if total > reductionSelectionCap {
+			if total > budget {
 				return ErrReductionSelectionTooLarge
 			}
 			after = hi
