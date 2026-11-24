@@ -136,6 +136,16 @@ func tryFillStructValuesFromRequest(dst any, request *http.Request) error {
 		return nil
 	}
 
+	// A content type no decoder above reads falls back to the query string and never
+	// touches the body. On a route with a limit the body must fit it anyway, or
+	// megabytes of padding ride along with a request that still commits; reading on
+	// reports the cap.
+	if bodyIsBounded(request) && request.Body != nil {
+		if _, err := io.Copy(io.Discard, request.Body); err != nil {
+			return err
+		}
+	}
+
 	if err := decoder.Decode(dst, request.URL.Query()); err != nil {
 		return err
 	}
