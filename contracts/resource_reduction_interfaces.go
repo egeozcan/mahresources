@@ -17,8 +17,16 @@ type ResourceReductionReader interface {
 	GetResourceReduction(id uint, ownerUserID *uint, ownerRestricted bool) (*models.ResourceReduction, error)
 	// GetReductionProgress counts each of the given Reductions' Clusters by state,
 	// over the Clusters the caller may fully see. The rows are the page the caller
-	// already loaded, so nothing outside it is read.
+	// already loaded, so nothing outside it is read. A Reduction whose plan is still
+	// the legacy document has Upgrading set and no counts.
 	GetReductionProgress(reductions []models.ResourceReduction) (map[uint]ReductionProgress, error)
+	// ListResourceReductions is one list page: its rows, the count under the same
+	// predicate and each row's progress, read in one snapshot so the three agree.
+	ListResourceReductions(offset, maxResults int, query *query_models.ResourceReductionQuery) ([]models.ResourceReduction, int64, map[uint]ReductionProgress, error)
+	// GetReductionClusterMembers is one page of a Cluster's members after a cursor
+	// (a ReductionClusterView's MembersAfter), for a Cluster the review page cut
+	// short. A Cluster the caller may not fully see answers as an unknown one.
+	GetReductionClusterMembers(id uint, ownerUserID *uint, ownerRestricted bool, clusterKey, after string) (*ReductionMembersPage, error)
 	// GetReductionReview is one page of a Reduction's plan with the Resources
 	// behind it, filtered by the caller's Cluster query. Filtering happens before
 	// pagination, so the page count and the ClusterCount in the review describe

@@ -3176,6 +3176,21 @@ func registerDownloadRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.RouteInfo{
+		Method:      http.MethodGet,
+		Path:        "/v1/reduction/members",
+		OperationID: "listResourceReductionClusterMembers",
+		Summary:     "List more members of a Resource Reduction Cluster",
+		Description: "Returns up to 200 members of one Cluster after a cursor, for a review card the page cut short (the page's member budget, or a Cluster over 200 members). `after` is the `membersAfter` cursor the review gave; empty starts from the first member. A Cluster the caller may not fully see answers as an unknown one.",
+		Tags:        []string{"reductions"},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "id", Type: "integer", Required: true, Description: "The Reduction's id."},
+			{Name: "cluster", Type: "string", Required: true, Description: "The Cluster's key."},
+			{Name: "after", Type: "string", Description: "The cursor to continue from; empty starts at the first member."},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
 		Method:                 http.MethodPost,
 		Path:                   "/v1/reduction",
 		OperationID:            "createResourceReduction",

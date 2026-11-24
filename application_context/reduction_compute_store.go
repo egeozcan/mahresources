@@ -596,6 +596,9 @@ func stagingGuard(x string) string {
 // deletes them. Only a test sets it, to start a compute in between.
 var sweepBetweenReadAndDeleteHook func()
 
+// SweepReductionGenerations is the startup entry to the sweep.
+func (ctx *MahresourcesContext) SweepReductionGenerations() error { return ctx.sweepReductionGenerations() }
+
 // sweepReductionGenerations deletes every generation of plan rows nobody owns, and
 // the staging rows of any compute that is not running. Generations are discovered
 // through the (reduction_id, generation) indexes one distinct pair at a time, then
@@ -711,7 +714,10 @@ func (ctx *MahresourcesContext) storeDeleteReduction(r *models.ResourceReduction
 		if res.RowsAffected == 0 {
 			return ErrReductionNotFound
 		}
-		return nil
+		// The migration's own row goes with its Reduction, in the same small
+		// transaction (the Reduction row first, then this one: the order
+		// publication takes them in).
+		return tx.Exec(`DELETE FROM reduction_migrations WHERE reduction_id = ?`, r.ID).Error
 	})
 	if err != nil {
 		return err

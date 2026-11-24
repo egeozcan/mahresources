@@ -81,6 +81,27 @@ type ReductionClusterView struct {
 	KeptDimensions   string
 	LargerDimensions string
 	LargestMemberID  uint
+
+	// MemberCount is every member the Cluster stores, MembersShown how many this
+	// view carries. They differ when the page's member budget or the 200-member
+	// card cap left some out, and then MoreMembers is true and MembersAfter is the
+	// cursor GET /v1/reduction/members takes ("" starts from the first member).
+	MemberCount  int    `json:"memberCount"`
+	MembersShown int    `json:"membersShown"`
+	MoreMembers  bool   `json:"moreMembers,omitempty"`
+	MembersAfter string `json:"membersAfter,omitempty"`
+	// Truncated counts eligible copies the compute's member cap left out. It is
+	// always zero for a scoped viewer: omitted copies may lie outside their scope,
+	// and a count would say so.
+	Truncated int `json:"truncated,omitempty"`
+}
+
+// ReductionMembersPage is one page of a Cluster's members, hydrated the way the
+// review card shows them.
+type ReductionMembersPage struct {
+	Members []ReductionMemberView
+	// After is the cursor for the next page, and "" when there is none.
+	After string
 }
 
 // ReductionTabCounts is how many Clusters each review tab holds, over the
@@ -299,6 +320,10 @@ type ReductionProgress struct {
 	// Applied is confirmed merges only; Merging is claimed and not yet confirmed.
 	Applied int
 	Merging int
+	// Upgrading is true for a Reduction whose plan is still the legacy document the
+	// background migration has not moved to tables yet: it has no counts, and the
+	// list renders it as being upgraded instead of failing the page.
+	Upgrading bool
 }
 
 // ReductionNamedRef is an entity's id and name.

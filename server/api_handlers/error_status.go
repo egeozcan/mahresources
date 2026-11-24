@@ -113,8 +113,17 @@ func statusCodeForError(err error, fallback int) int {
 	if errors.Is(err, application_context.ErrReductionNotFound) {
 		return http.StatusNotFound
 	}
+	// Being upgraded or still building its indexes is the deployment's state, and it
+	// lifts by itself: 503, not a conflict the caller could resolve.
+	if errors.Is(err, application_context.ErrReductionUpgrading) ||
+		errors.Is(err, application_context.ErrReductionIndexesBuilding) {
+		return http.StatusServiceUnavailable
+	}
 	if errors.Is(err, application_context.ErrReductionConflict) ||
 		errors.Is(err, application_context.ErrReductionBusy) ||
+		errors.Is(err, application_context.ErrReductionLeaseLost) ||
+		errors.Is(err, application_context.ErrReductionClusterReadOnly) ||
+		errors.Is(err, application_context.ErrReductionClusterFixedSeed) ||
 		errors.Is(err, application_context.ErrReductionClusterSettled) ||
 		errors.Is(err, application_context.ErrReductionCountMismatch) ||
 		errors.Is(err, application_context.ErrReductionApplyFiguresChanged) ||
@@ -131,6 +140,8 @@ func statusCodeForError(err error, fallback int) int {
 		errors.Is(err, application_context.ErrReductionRestoreUnpaired) ||
 		errors.Is(err, application_context.ErrReductionRestoreOutsider) ||
 		errors.Is(err, application_context.ErrReductionBulkTarget) ||
+		errors.Is(err, application_context.ErrReductionBulkTooMany) ||
+		errors.Is(err, application_context.ErrReductionSelectionTooLarge) ||
 		errors.Is(err, application_context.ErrReductionBulkNeedsCount) {
 		return http.StatusBadRequest
 	}

@@ -11,7 +11,6 @@ import (
 	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
-	"mahresources/models/types"
 
 	"gorm.io/gorm"
 )
@@ -178,7 +177,7 @@ func (a *reductionComputeAdapter) Dispatch(ctx context.Context, execution jobs.E
 
 	entry, found := a.ctx.queueEntryFor(execution.JobID)
 	if !found {
-		entry, err = a.start(execution, input)
+		entry, err = a.start(ctx, execution, input)
 		if err != nil {
 			if errors.Is(err, ErrReductionBusy) {
 				return a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, "reduction-busy")
@@ -277,15 +276,20 @@ func reductionOwnerFilter(principal *auth.Principal) (*uint, bool) {
 // does not resurrect a claim the deadline already retired, and a newer run that took
 // the row in the meantime is what this one is superseded by rather than what it
 // overwrites.
-func (a *reductionComputeAdapter) start(execution jobs.Execution, input *reductionComputeJobInput) (*download_queue.DownloadJob, error) {
-	reduction, err := a.ctx.loadReductionForUpdate(input.ReductionID, nil, false)
+func (a *reductionComputeAdapter) start(ctx context.Context, execution jobs.Execution, input *reductionComputeJobInput) (*download_queue.DownloadJob, error) {
+	// A Reduction the migration has not moved to tables yet is waited for, not
+	// refused: the Job stays claimed and runs once the plan is published (design D12).
+	reduction, err := a.awaitUpgrade(ctx, input.ReductionID)
 	if err != nil {
 		return nil, err
 	}
 	if EffectiveReductionStatus(reduction) == models.ReductionStatusComputing {
 		return nil, ErrReductionBusy
 	}
-	generation, err := a.ctx.beginReductionCompute(reduction.ID, reduction.Version)
+	if err := a.ctx.requireSimilarityIndexes(); err != nil {
+		return nil, err
+	}
+	nonce, generation, err := a.ctx.beginReductionComputeStore(reduction.ID, reduction.Version)
 	if err != nil {
 		return nil, err
 	}
@@ -297,10 +301,34 @@ func (a *reductionComputeAdapter) start(execution jobs.Execution, input *reducti
 		legacyID = download_queue.NewJobID()
 	}
 	return a.ctx.startReductionComputeQueueJob(
-		reduction.ID, generation, legacyID,
+		reduction.ID, nonce, generation, legacyID,
 		jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
 		a.ctx.jobOwnerFor(execution.JobID),
 	)
+}
+
+// reductionUpgradePoll is how often a deferred compute looks again at a Reduction
+// the migration has not published.
+var reductionUpgradePoll = 2 * time.Second
+
+// awaitUpgrade loads the Reduction a queued compute names, waiting while its plan is
+// still the legacy document. The wait ends when the migration publishes, the
+// Reduction is deleted, or the run is cancelled.
+func (a *reductionComputeAdapter) awaitUpgrade(ctx context.Context, reductionID uint) (*models.ResourceReduction, error) {
+	for {
+		reduction, err := a.ctx.loadReductionForUpdate(reductionID, nil, false)
+		if err != nil {
+			return nil, err
+		}
+		if reduction.PlanSchema != 0 {
+			return reduction, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(reductionUpgradePoll):
+		}
+	}
 }
 
 func (a *reductionComputeAdapter) publishOutcome(execution jobs.Execution, input *reductionComputeJobInput, snap *download_queue.DownloadJob) error {
@@ -330,7 +358,7 @@ func (a *reductionComputeAdapter) publishOutcome(execution jobs.Execution, input
 		// and its required output have committed. A crash between those writes is
 		// still recoverable: migration resolves the same durable handle on startup.
 		var reduction models.ResourceReduction
-		if err := a.ctx.db.First(&reduction, input.ReductionID).Error; err == nil {
+		if err := a.ctx.db.Select(reductionColumns).First(&reduction, input.ReductionID).Error; err == nil {
 			if err := a.ctx.recordDualPublishedReduction(reduction, time.Now().UTC()); err != nil {
 				a.ctx.Logger().Warning(models.LogActionSystem, "resource_reduction", nil, fmt.Sprint(input.ReductionID), "canonical source mapping could not be refreshed", nil)
 			}
@@ -473,7 +501,7 @@ func (ctx *MahresourcesContext) reductionComputableOn(deps jobs.Deps, reductionI
 		return false
 	}
 	var reduction models.ResourceReduction
-	if err := deps.DB.First(&reduction, reductionID).Error; err != nil {
+	if err := deps.DB.Select(reductionColumns).First(&reduction, reductionID).Error; err != nil {
 		return false
 	}
 	return EffectiveReductionStatus(&reduction) == models.ReductionStatusFailed
@@ -513,47 +541,11 @@ func (a *reductionComputeAdapter) ExecuteCommand(_ context.Context, execution jo
 	return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: "cancelling"}, nil
 }
 
-// beginReductionCompute takes one Reduction's `computing` claim under a fresh
-// generation, and returns the generation the queue job must claim.
-//
-// It is the one place the claim is taken, so the request path and a Retry cannot
-// disagree about what taking it means. The version is the caller's compare-and-set
-// guard: a request made from a page that predates somebody else's decisions is
-// refused rather than discarding them.
-func (ctx *MahresourcesContext) beginReductionCompute(reductionID uint, version uint) (string, error) {
-	now := time.Now()
-	deadline := now.Add(ReductionComputeDeadline)
-	// A nonce written before the job exists, and swapped for the job's own id when
-	// the worker starts. Without it the worker's claim asks only "is the slot
-	// empty", which a run delayed past its deadline answers yes to — taking the slot
-	// of the newer run that replaced it, and then computing under the subtree scope
-	// it captured an hour ago while the accepted recompute is turned away as
-	// superseded.
-	generation := "pending:" + string(types.NewUUIDv7())
-	// The caller's version, not the one just read. Recompute replaces the plan, so a
-	// request made from a page that predates somebody else's decisions would discard
-	// them without their author ever seeing a refusal — and "every write is a
-	// compare-and-set" has to mean this write too.
-	ok, err := ctx.casReduction(reductionID, version, map[string]any{
-		"status":               models.ReductionStatusComputing,
-		"computing_started_at": now,
-		"compute_deadline":     deadline,
-		"compute_job_id":       generation,
-		"compute_error":        "",
-	})
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		return "", ErrReductionConflict
-	}
-	return generation, nil
-}
-
 // startReductionComputeQueueJob submits one clustering run's queue entry, with the
 // generation its worker must claim and the durable identity it publishes into.
 func (ctx *MahresourcesContext) startReductionComputeQueueJob(
 	reductionID uint,
+	nonce string,
 	generation string,
 	legacyID string,
 	ref jobs.ExecutionRef,
@@ -578,21 +570,21 @@ func (ctx *MahresourcesContext) startReductionComputeQueueJob(
 		// empty — read that as "a newer job owns this row", discard its own finished
 		// plan, and leave the Reduction at `computing` with nothing alive to move it
 		// off.
-		if claimErr := ctx.claimReductionComputeJob(reductionID, generation, j.ID); claimErr != nil {
+		if claimErr := ctx.claimReductionComputeJob(reductionID, nonce, j.ID); claimErr != nil {
 			// A superseded run leaves the row alone: the newer request owns it and will
 			// report its own outcome. Every other failure has to be recorded here,
 			// because nothing downstream will — this run never reached
 			// runReductionCompute, and an unrecorded refusal leaves the Reduction at
 			// `computing` with nothing alive to move it until its deadline.
 			if !errors.Is(claimErr, ErrReductionComputeSuperseded) {
-				if writeErr := ctx.recordReductionComputeFailure(reductionID, generation, claimErr); writeErr != nil {
+				if writeErr := ctx.storeFailCompute(reductionID, nonce, generation, claimErr); writeErr != nil {
 					ctx.Logger().Warning(models.LogActionUpdate, "resource_reduction", &reductionID, "",
 						"Could not record a clustering job that failed to claim its slot: "+writeErr.Error(), nil)
 				}
 			}
 			return claimErr
 		}
-		return ctx.runReductionCompute(jobCtx, reductionID, j.ID, p)
+		return ctx.runReductionCompute(jobCtx, reductionID, j.ID, generation, p)
 	}
 	if ref.JobID == "" {
 		return ctx.downloadManager.SubmitJobWithOptions(opts, runFn)

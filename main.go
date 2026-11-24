@@ -828,6 +828,18 @@ func main() {
 		return
 	}
 
+	// Resource Reductions written by the previous release keep their plan as one JSON
+	// document until the background migration moves it to tables. On SQLite, where a
+	// write holds the whole database's writer lock, the one statement that parses
+	// each document runs now, before any request is served; on Postgres it runs
+	// online with the rest of the migration after start. A Reduction that fails to
+	// spool keeps its legacy plan and answers "being upgraded" until a later run.
+	if db.Dialector.Name() != "postgres" {
+		if err := context.SpoolReductionMigrations(); err != nil {
+			log.Printf("Warning: reduction plan spool: %v", err)
+		}
+	}
+
 	// Migrate existing resources to versioning system in background (skip with -skip-version-migration flag)
 	if !*skipVersionMigration {
 		go func() {
@@ -1017,6 +1029,18 @@ func main() {
 	serveErr := make(chan error, 1)
 	go func() {
 		serveErr <- srv.ListenAndServe()
+	}()
+
+	// After the server is up: sweep the plan generations nobody owns (a compute that
+	// died, a landing that crashed before its staging rows were removed), then move
+	// every legacy Reduction plan to tables. Both are chunked and restartable.
+	go func() {
+		if err := context.SweepReductionGenerations(); err != nil {
+			log.Printf("Warning: reduction generation sweep: %v", err)
+		}
+		if err := context.MigrateReductionPlans(); err != nil {
+			log.Printf("Warning: reduction plan migration: %v", err)
+		}
 	}()
 
 	quit := make(chan os.Signal, 1)

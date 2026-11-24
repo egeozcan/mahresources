@@ -531,6 +531,11 @@ func (c *caller) reductionPreview(args map[string]any) string {
 	page := &Operation{ID: "reductionPage", Method: http.MethodGet, Path: "/reduction.json",
 		Params: []Param{{Name: "id", In: "query", Required: true}}}
 	resp, err := dispatch(c.h.opts.Dispatch, c.readOnly(), page, map[string]any{"id": json.Number(id[0])}, c.h.opts.MaxResponse)
+	if err == nil && resp.Status == http.StatusServiceUnavailable {
+		// The Reduction's plan is still being moved to tables; applying it would be
+		// refused the same way.
+		return "Reduction: being upgraded, try again shortly\n"
+	}
 	if err != nil || resp.Truncated || resp.Status >= 300 {
 		return "Reduction: not found or not visible\n"
 	}

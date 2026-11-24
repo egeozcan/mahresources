@@ -8,13 +8,15 @@ import (
 // ResourceReduction is a named, durable proposal to collapse Clusters of
 // Identical and Near-Identical Resources down to one Winner each.
 //
-// The whole feature lives in this one row: the Extent it considers, the plan its
-// clustering job computed, and every decision the reviewer has made about that
-// plan. ADR 0003 records why, in one line: group import's file-backed plan keeps
-// its decisions in an Alpine object that a reload destroys, and derives its
-// authorization from an in-memory job record that is swept an hour after the job
-// finishes. A Reduction is named, accumulated over several sittings and applied
-// in parts, so both of those properties are disqualifying.
+// The row carries the Reduction's identity, settings, status and version; its
+// Extent and its plan (every Cluster, member and decision) are rows of their own
+// tables (ADR 0011), so memory per request stays bounded however large the
+// library is. ADR 0003 records why the work is durable rather than file-backed:
+// group import's plan keeps its decisions in an Alpine object that a reload
+// destroys, and derives its authorization from an in-memory job record that is
+// swept an hour after the job finishes. A Reduction is named, accumulated over
+// several sittings and applied in parts, so both of those properties are
+// disqualifying.
 //
 // It never expires. There is no retention sweep on this table, deliberately —
 // this is domain data someone named and curated, not an artifact like an export
@@ -58,16 +60,6 @@ type ResourceReduction struct {
 	// Winner, stored as a JSON array of criterion tokens.
 	WinnerRule types.JSON `gorm:"type:json" json:"-"`
 
-	// Extent is the ResourceReductionExtent: an explicit Resource set, a Group
-	// set expanded through descendants at compute time, or both. Never flattened
-	// into a URL, and never expanded at rest — a Group's descendants change.
-	Extent types.JSON `gorm:"type:json" json:"-"`
-
-	// Plan is the ResourceReductionPlan: the computed Clusters together with
-	// every decision made about them. One document, three independent writers
-	// (recompute, override, apply), which is what Version is for.
-	Plan types.JSON `gorm:"type:json" json:"-"`
-
 	// ComputedAt is when the plan in this row was produced. Nil before the first
 	// successful compute.
 	ComputedAt *time.Time `json:"computedAt,omitempty"`
@@ -96,9 +88,12 @@ type ResourceReduction struct {
 	Version uint `gorm:"not null;default:0" json:"version"`
 
 	// The columns below belong to the plan-as-tables design (docs/plans/
-	// 2026-11-24-reduction-plan-tables-design.md). Until the cutover that stops
-	// reading Plan and Extent, PlanSchema stays 0 (a legacy JSON row) and nothing
-	// reads them. None is part of the API.
+	// 2026-11-24-reduction-plan-tables-design.md): the plan is rows of
+	// reduction_clusters and reduction_members, the Extent is rows of the selection
+	// tables. A row written by the previous release still holds both as JSON
+	// documents in `plan` and `extent` columns this model does not name, so no
+	// ordinary load can read them; the background migration alone does, through its
+	// own SQL. None of these is part of the API.
 
 	// PlanSchema is 0 for a legacy JSON plan and 1 for one in tables. AutoMigrate's
 	// backfill of the default marks every existing row legacy; the migration is the

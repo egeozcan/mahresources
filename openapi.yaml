@@ -12059,6 +12059,36 @@ paths:
             summary: Change a Resource Reduction's settings
             tags:
                 - reductions
+    /v1/reduction/members:
+        get:
+            description: Returns up to 200 members of one Cluster after a cursor, for a review card the page cut short (the page's member budget, or a Cluster over 200 members). `after` is the `membersAfter` cursor the review gave; empty starts from the first member. A Cluster the caller may not fully see answers as an unknown one.
+            operationId: listResourceReductionClusterMembers
+            parameters:
+                - description: The Reduction's id.
+                  in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+                - description: The Cluster's key.
+                  in: query
+                  name: cluster
+                  required: true
+                  schema:
+                    type: string
+                - description: The cursor to continue from; empty starts at the first member.
+                  in: query
+                  name: after
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: List more members of a Resource Reduction Cluster
+            tags:
+                - reductions
     /v1/reductions:
         get:
             description: Returns the Resource Reductions the caller may see. Administrators see every one; every other principal sees only the ones it created.

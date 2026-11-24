@@ -2,6 +2,7 @@ package api_handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -120,6 +121,31 @@ func GetResourceReductionListHandler(ctx ResourceReductionContext) func(http.Res
 			"reductions": reductions,
 			"count":      count,
 			"page":       page,
+		})
+	}
+}
+
+// GetResourceReductionMembersHandler handles GET /v1/reduction/members: one page of
+// a Cluster's members after a cursor, for a review card the page cut short. The
+// Reduction is checked against the caller's owner predicate and the Cluster against
+// their subtree, so a Cluster they may not fully see is an unknown one.
+func GetResourceReductionMembersHandler(ctx ResourceReductionContext) func(http.ResponseWriter, *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		id, err := strconv.ParseUint(request.URL.Query().Get("id"), 10, 64)
+		if err != nil || id == 0 {
+			http_utils.HandleError(errors.New("id is required"), writer, request, http.StatusBadRequest)
+			return
+		}
+		owner, restricted := reductionScope(auth.PrincipalFromContext(request.Context()))
+		page, err := ctx.GetReductionClusterMembers(uint(id), owner, restricted, request.URL.Query().Get("cluster"), request.URL.Query().Get("after"))
+		if err != nil {
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+			return
+		}
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"members": page.Members,
+			"after":   page.After,
 		})
 	}
 }
@@ -261,6 +287,10 @@ func GetResourceReductionApplyHandler(ctx ResourceReductionContext) func(http.Re
 			"changed":   result.Changed,
 			"errors":    result.Errors,
 			"destroyed": result.DestroyedCount(),
+			// The totals the capped lists above stop short of (design D10).
+			"appliedCount": result.AppliedCount,
+			"staleCount":   result.StaleCount,
+			"more":         result.More,
 		})
 	}
 }

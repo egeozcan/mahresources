@@ -61,7 +61,7 @@ func (ctx *MahresourcesContext) copyReductionsBatch(cursor string, limit int, no
 		after = parsed
 	}
 	var rows []models.ResourceReduction
-	if err := ctx.db.Where("id > ?", after).Order("id ASC").Limit(limit).Find(&rows).Error; err != nil {
+	if err := ctx.db.Select(reductionColumns).Where("id > ?", after).Order("id ASC").Limit(limit).Find(&rows).Error; err != nil {
 		return false, cursor, errors.New("resource reduction source scan failed")
 	}
 	for _, row := range rows {
@@ -196,7 +196,7 @@ func (ctx *MahresourcesContext) verifyReductionsBatch(cursor string, limit int, 
 			return false, cursor, errors.New("resource reduction mapping id is invalid")
 		}
 		var row models.ResourceReduction
-		if err := ctx.db.First(&row, uint(id)).Error; err != nil || !provableReductionExecution(row) {
+		if err := ctx.db.Select(reductionColumns).First(&row, uint(id)).Error; err != nil || !provableReductionExecution(row) {
 			return false, mapping.SourceID, migrationBlocker(jobMigrationReduction, mapping.SourceID, "source-row-no-longer-provable")
 		}
 		if hashReductionExecution(row) != mapping.SourceHash {

@@ -1,12 +1,14 @@
 package template_context_providers
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/flosch/pongo2/v4"
 	"github.com/gorilla/schema"
+	"mahresources/application_context"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
 	"reflect"
@@ -35,7 +37,11 @@ func addErrContext(err error, ctx pongo2.Context) pongo2.Context {
 	errMsg := err.Error()
 	surface, hasSurface := surfaceForPath(requestPathFromContext(ctx))
 
-	if strings.Contains(errMsg, "record not found") {
+	if errors.Is(err, application_context.ErrReductionUpgrading) {
+		// A Reduction whose plan the background migration has not moved to tables
+		// yet: the deployment's state, and it lifts by itself.
+		statusCode = http.StatusServiceUnavailable
+	} else if strings.Contains(errMsg, "record not found") {
 		statusCode = http.StatusNotFound
 		if hasSurface {
 			errMsg = surface.notFoundMessage()
