@@ -100,7 +100,7 @@ describe('apply during a migration', () => {
       ok: false,
       status: 503,
       headers: { get: (name: string) => (name.toLowerCase() === 'content-type' ? 'application/json' : null) },
-      text: async () => JSON.stringify({ error: 'upgrading' }),
+      text: async () => JSON.stringify({ error: 'this Resource Reduction is being upgraded; try again shortly' }),
     });
     (window as any).errorMessageFromResponse = async () => 'upgrading';
 
@@ -110,6 +110,46 @@ describe('apply during a migration', () => {
     expect(store._recoverApply).not.toHaveBeenCalled();
     expect(store.error).toMatch(/being upgraded/);
     expect(store.applyUnknown).toBe('');
+  });
+
+  test('a JSON 503 from a proxy, not carrying the app\'s own refusal, is still a lost response', async () => {
+    document.body.innerHTML = '<div data-reduction-live="body"></div>';
+    const store = makeStore();
+    store.confirmed = { checked: 1, figures: {} };
+    store.refresh = vi.fn(async () => {});
+    store._recoverApply = vi.fn(async () => ({ message: 'polled' }));
+    stubApply({
+      ok: false,
+      status: 503,
+      headers: { get: (name: string) => (name.toLowerCase() === 'content-type' ? 'application/json' : null) },
+      text: async () => JSON.stringify({ error: 'upstream connect error or disconnect/reset before headers' }),
+    });
+    (window as any).errorMessageFromResponse = async () => 'upstream connect error';
+
+    await store.confirmApply();
+
+    expect(store._recoverApply).toHaveBeenCalled();
+    expect(store.error).not.toMatch(/Nothing was applied/);
+    expect(store.error).not.toMatch(/being upgraded/);
+  });
+
+  test('a 503 saying the indexes are still building is also the app answering', async () => {
+    document.body.innerHTML = '<div data-reduction-live="body"></div>';
+    const store = makeStore();
+    store.confirmed = { checked: 1, figures: {} };
+    store.refresh = vi.fn(async () => {});
+    store._recoverApply = vi.fn(async () => ({ message: 'polled' }));
+    stubApply({
+      ok: false,
+      status: 503,
+      headers: { get: (name: string) => (name.toLowerCase() === 'content-type' ? 'application/json' : null) },
+      text: async () => JSON.stringify({ error: 'indexes are still being built; try again shortly' }),
+    });
+
+    await store.confirmApply();
+
+    expect(store._recoverApply).not.toHaveBeenCalled();
+    expect(store.error).toMatch(/being upgraded|still being built/);
   });
 
   test('a gateway 503 (not the server answering) is still treated as a lost response', async () => {

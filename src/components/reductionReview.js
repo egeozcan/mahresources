@@ -896,9 +896,11 @@ export function registerReductionReviewStore(Alpine) {
               } catch {
                 result.lost = true;
               }
-            } else if (response.status === 503 && /json/i.test(response.headers?.get?.('Content-Type') || '')) {
-              // The server itself answered (its refusals are JSON; a gateway's is not):
-              // the Reduction is being upgraded and nothing was applied.
+            } else if (response.status === 503 && (await isOwnUnavailableRefusal(response))) {
+              // The app itself answered with one of its two 503 refusals (the Reduction
+              // is being upgraded, or its indexes are still building): it refuses
+              // before anything is applied. A JSON 503 from a proxy in front of an
+              // upstream that accepted the request is not this, and falls through.
               throw new Error(UPGRADING_MESSAGE);
             } else if (LOST_STATUSES.has(response.status)) {
               // A gateway gave up on a request the server may still be running.
@@ -1350,6 +1352,24 @@ export function registerReductionReviewStore(Alpine) {
 
 // Statuses a gateway answers with when it gave up on a request the server may
 // still be running; they say nothing about what the server did.
+// The two refusals the server answers 503 for before it starts (error_status.go:
+// ErrReductionUpgrading, ErrReductionIndexesBuilding). HandleError's JSON body is
+// {"error": message} with no code, so the message is what identifies them.
+const OWN_UNAVAILABLE_ERRORS = [
+  'this Resource Reduction is being upgraded; try again shortly',
+  'indexes are still being built; try again shortly',
+];
+
+async function isOwnUnavailableRefusal(response) {
+  if (!/json/i.test(response.headers?.get?.('Content-Type') || '')) return false;
+  try {
+    const body = JSON.parse(await response.text());
+    return typeof body?.error === 'string' && OWN_UNAVAILABLE_ERRORS.includes(body.error);
+  } catch {
+    return false;
+  }
+}
+
 const UPGRADING_MESSAGE = 'This Reduction is being upgraded, try again shortly.';
 const LOST_STATUSES = new Set([408, 502, 503, 504, 524]);
 const RECOVER_FIRST_MS = 1000;
