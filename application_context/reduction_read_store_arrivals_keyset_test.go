@@ -26,7 +26,7 @@ func countArrivals(t *testing.T, ctx *MahresourcesContext, r *models.ResourceRed
 	}
 	done := make(chan result, 1)
 	go func() {
-		n, err := ctx.reductionStore().enteredSince(r, since)
+		n, _, err := ctx.reductionStore().enteredSince(r, since)
 		done <- result{n, err}
 	}()
 	select {
@@ -100,7 +100,7 @@ func testStoreArrivalMembershipIsCorrelated(t *testing.T, ctx *MahresourcesConte
 	capture := &rowsCapture{}
 	spy := *ctx
 	spy.db = ctx.db.Session(&gorm.Session{Logger: capture})
-	n, err := spy.reductionStore().enteredSince(r, time.Now().Add(-time.Hour))
+	n, _, err := spy.reductionStore().enteredSince(r, time.Now().Add(-time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
 

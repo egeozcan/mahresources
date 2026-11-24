@@ -202,6 +202,9 @@ func ResourceReductionContextProvider(context ResourceReductionPageContext) func
 				"groupCount":    review.SelectedGroups,
 				"resolvedSize":  review.ExtentSize,
 				"enteredSince":  review.EnteredSinceCompute,
+				// The count stopped at the report's bound: it is a floor ("N+"), and
+				// with none counted it says only that a great many arrived.
+				"enteredSinceCapped": review.EnteredSinceCapped,
 			},
 			"winnerCriteria":  allWinnerCriteria(),
 			"winnerRuleSlots": winnerRuleSlots(application_context.DecodeWinnerRule(reduction.WinnerRule)),

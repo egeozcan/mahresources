@@ -225,6 +225,9 @@ type ReductionReview struct {
 	// than surprising them with it.
 	ExtentSize          int
 	EnteredSinceCompute int
+	// EnteredSinceCapped is true when the count stopped at a bound: more Resources
+	// arrived than the report examines, and EnteredSinceCompute is a floor.
+	EnteredSinceCapped bool
 	// ExtentAll is true for a whole-library Reduction: everything the caller can
 	// access, with no named Resources or Groups.
 	ExtentAll bool

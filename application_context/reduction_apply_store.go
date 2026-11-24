@@ -120,7 +120,25 @@ type applyCollector struct {
 	result *contracts.ReductionApplyResult
 }
 
+// clipReductionReason cuts an outcome's reason to reductionReasonBytes at a rune
+// boundary. A plugin veto can be a megabyte long; the stored copy is clipped by the
+// database, and the response keeps no more than that.
+func clipReductionReason(reason string) string {
+	if len(reason) <= reductionReasonBytes {
+		return reason
+	}
+	cut := reductionReasonBytes
+	for cut > 0 && !utf8.RuneStart(reason[cut]) {
+		cut--
+	}
+	return reason[:cut]
+}
+
+// reductionReasonBytes bounds the reason an outcome entry carries, as the stored one is.
+const reductionReasonBytes = 1024
+
 func (c *applyCollector) addApplied(o contracts.ReductionApplyOutcome) {
+	o.Reason = clipReductionReason(o.Reason)
 	c.result.AppliedCount++
 	c.result.Destroyed += len(o.LoserIDs)
 	if len(c.result.Applied) < reductionApplyOutcomeCap {
@@ -130,6 +148,7 @@ func (c *applyCollector) addApplied(o contracts.ReductionApplyOutcome) {
 }
 
 func (c *applyCollector) addStale(o contracts.ReductionApplyOutcome) {
+	o.Reason = clipReductionReason(o.Reason)
 	c.result.StaleCount++
 	if len(c.result.Stale) < reductionApplyOutcomeCap {
 		o.WinnerName = c.ctx.storeWinnerName(o.WinnerID)
@@ -158,11 +177,23 @@ func (ctx *MahresourcesContext) storeWinnerName(id uint) string {
 	if ctx.db.Dialector.Name() == "postgres" {
 		cut = fmt.Sprintf("SUBSTRING(convert_to(name, 'UTF8') FROM 1 FOR %d)", reductionWinnerNameBytes)
 	}
+	// Read through the store, which re-evaluates the principal's subtree in the
+	// statement itself: the request's Group allow-list was fixed when it started, and
+	// a merge since may have moved the Winner out of the caller's scope.
+	store := ctx.reductionStore()
+	if store.scope.mode == scopeDeny {
+		return ""
+	}
+	visible := ""
+	if store.scope.mode == scopeSubtree {
+		visible = " AND owner_id IN " + subtreeIDs
+	}
+	prefix, args := store.with()
 	var rows []struct {
 		ID    uint
 		Bytes []byte
 	}
-	if err := ctx.db.Model(&models.Resource{}).Select("id, "+cut+" AS bytes").Where("resources.id = ?", id).Find(&rows).Error; err != nil || len(rows) == 0 {
+	if err := store.db.Raw(prefix+"SELECT id, "+cut+" AS bytes FROM resources WHERE id = ?"+visible, append(args, id)...).Scan(&rows).Error; err != nil || len(rows) == 0 {
 		return ""
 	}
 	b := rows[0].Bytes

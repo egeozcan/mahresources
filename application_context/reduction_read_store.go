@@ -237,9 +237,9 @@ func (ctx *MahresourcesContext) storeReviewInSnapshot(id uint, ownerUserID *uint
 	if err != nil {
 		return nil, nil, err
 	}
-	entered := 0
+	entered, enteredCapped := 0, false
 	if reduction.ComputedAt != nil {
-		if entered, err = store.enteredSince(reduction, *reduction.ComputedAt); err != nil {
+		if entered, enteredCapped, err = store.enteredSince(reduction, *reduction.ComputedAt); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -304,6 +304,7 @@ func (ctx *MahresourcesContext) storeReviewInSnapshot(id uint, ownerUserID *uint
 		SelectedGroups:      sel.groups,
 		ExtentSize:          extentSize,
 		EnteredSinceCompute: entered,
+		EnteredSinceCapped:  enteredCapped,
 		ExtentAll:           reduction.ExtentAll,
 		TabCounts:           tabs,
 		ApplyFigures:        figures.Apply,
@@ -398,22 +399,30 @@ func (s *reductionStore) selectionSummary(r *models.ResourceReduction) (*reducti
 // instant, the drift figure: the explicit ones, the ones a selected Group (or any
 // descendant) owns or is related to, or everything for a whole-library Reduction,
 // each once and only as the principal may see it.
-func (s *reductionStore) enteredSince(r *models.ResourceReduction, since time.Time) (int, error) {
+func (s *reductionStore) enteredSince(r *models.ResourceReduction, since time.Time) (int, bool, error) {
+	return s.enteredSinceWithin(r, since, reductionArrivalCap)
+}
+
+// enteredSinceWithin is enteredSince examining at most limit arrivals. Past it the
+// count is a floor, not a figure: capped is true and n is how many of the first limit
+// arrivals belong to the selection.
+func (s *reductionStore) enteredSinceWithin(r *models.ResourceReduction, since time.Time, limit int) (int, bool, error) {
 	if s.scope.mode == scopeDeny {
-		return 0, nil
+		return 0, false, nil
 	}
 	prefix, args := s.with()
-	where := "x.created_at > ?"
-	queryArgs := []any{since}
+	scopeCond := ""
 	if s.scope.mode == scopeSubtree {
-		where += " AND x.owner_id IN " + subtreeIDs
+		scopeCond = " AND x.owner_id IN " + subtreeIDs
 	}
+	where := "x.created_at > ?" + scopeCond
+	queryArgs := []any{since}
 	if r.ExtentAll {
 		var n int64
 		if err := s.db.Raw(prefix+"SELECT COUNT(*) FROM resources x WHERE "+where, append(args, queryArgs...)...).Scan(&n).Error; err != nil {
-			return 0, err
+			return 0, false, err
 		}
-		return int(n), nil
+		return int(n), false, nil
 	}
 
 	// Walk the arrivals (an indexed range on created_at) in keyset chunks and test each
@@ -448,49 +457,72 @@ func (s *reductionStore) enteredSince(r *models.ResourceReduction, since time.Ti
 	if !s.postgres() {
 		cursorColumns = "CAST(x.created_at AS TEXT) AS raw"
 	}
-	total := 0
+	total, walked := 0, 0
 	var cursor *arrival
 	for iteration := 0; ; iteration++ {
 		if iteration > reductionArrivalMaxChunks {
-			return 0, fmt.Errorf("the arrivals walk exceeded %d chunks", reductionArrivalMaxChunks)
+			return 0, false, fmt.Errorf("the arrivals walk exceeded %d chunks", reductionArrivalMaxChunks)
 		}
-		scan := where
-		scanArgs := append([]any{}, queryArgs...)
+		// The first chunk starts after the instant; every later one seeks straight
+		// past the cursor on (created_at, id) and states nothing else about created_at,
+		// because a second range bound on the leading column lets the planner range
+		// over everything after the instant and discard the rows before the cursor,
+		// which is quadratic in the arrivals.
+		scan := "x.created_at > ?" + scopeCond
+		scanArgs := []any{since}
 		if cursor != nil {
-			scan += " AND (x.created_at, x.id) > (?, ?)"
+			scan = "(x.created_at, x.id) > (?, ?)" + scopeCond
 			if s.postgres() {
-				scanArgs = append(scanArgs, cursor.Time, cursor.ID)
+				scanArgs = []any{cursor.Time, cursor.ID}
 			} else {
-				scanArgs = append(scanArgs, cursor.Raw, cursor.ID)
+				scanArgs = []any{cursor.Raw, cursor.ID}
 			}
 		}
+		// One past the cap is read so a library with exactly the cap is not called over it.
+		rows := min(reductionArrivalChunk, limit-walked+1)
 		var chunk []arrival
 		if err := s.db.Raw(prefix+"SELECT x.id AS id, "+cursorColumns+" FROM resources x WHERE "+scan+" ORDER BY x.created_at, x.id LIMIT ?",
-			append(append(append([]any{}, args...), scanArgs...), reductionArrivalChunk)...).Scan(&chunk).Error; err != nil {
-			return 0, err
+			append(append(append([]any{}, args...), scanArgs...), rows)...).Scan(&chunk).Error; err != nil {
+			return 0, false, err
 		}
 		if len(chunk) == 0 {
-			return total, nil
-		}
-		ids := make([]uint, len(chunk))
-		for i, row := range chunk {
-			ids[i] = row.ID
-		}
-		var n int64
-		if err := s.db.Raw(memberPrefix+"SELECT COUNT(*) FROM resources x WHERE x.id IN ?"+member, append(append([]any{}, memberArgs...), ids, r.ID)...).Scan(&n).Error; err != nil {
-			return 0, err
-		}
-		total += int(n)
-		if len(chunk) < reductionArrivalChunk {
-			return total, nil
+			return total, false, nil
 		}
 		last := chunk[len(chunk)-1]
+		over := walked+len(chunk) > limit
+		if over {
+			chunk = chunk[:limit-walked]
+		}
+		if len(chunk) > 0 {
+			ids := make([]uint, len(chunk))
+			for i, row := range chunk {
+				ids[i] = row.ID
+			}
+			var n int64
+			if err := s.db.Raw(memberPrefix+"SELECT COUNT(*) FROM resources x WHERE x.id IN ?"+member, append(append([]any{}, memberArgs...), ids, r.ID)...).Scan(&n).Error; err != nil {
+				return 0, false, err
+			}
+			total += int(n)
+		}
+		walked += len(chunk)
+		if over {
+			return total, true, nil
+		}
+		if rows < reductionArrivalChunk || len(chunk) < rows {
+			return total, false, nil
+		}
 		if cursor != nil && last.ID == cursor.ID && last.Raw == cursor.Raw && last.Time.Equal(cursor.Time) {
-			return 0, fmt.Errorf("the arrivals walk did not advance past resource %d", last.ID)
+			return 0, false, fmt.Errorf("the arrivals walk did not advance past resource %d", last.ID)
 		}
 		cursor = &last
 	}
 }
+
+// reductionArrivalCap is how many arrivals the drift report examines. Each chunk tests
+// membership against the Extent, whose Group subtree can be tens of thousands of rows,
+// so a library that took a million uploads since the plan was computed would pay that
+// per chunk. Past the cap the page says "N+" instead of a figure.
+var reductionArrivalCap = 10000
 
 // reductionArrivalMaxChunks bounds the walk: a chunk that never advances fails loudly
 // instead of spinning. A var so a test can lower it.

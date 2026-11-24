@@ -46,7 +46,7 @@ func testStoreArrivalsDoNotReadRelationshipHistory(t *testing.T, ctx *Mahresourc
 	capture := &rowsCapture{}
 	spy := *ctx
 	spy.db = ctx.db.Session(&gorm.Session{Logger: capture})
-	n, err := spy.reductionStore().enteredSince(r, computed)
+	n, _, err := spy.reductionStore().enteredSince(r, computed)
 	require.NoError(t, err)
 	assert.Equal(t, 2, n, "the owned arrival and the related one; the stranger and the old copies are not arrivals")
 
