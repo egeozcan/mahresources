@@ -257,6 +257,15 @@ func (s *reductionStore) largestLoser(clusterID, winnerID uint) (*models.Resourc
 	return &models.Resource{ID: rows[best].ID, Width: rows[best].Width, Height: rows[best].Height}, nil
 }
 
+// hasMorePixels reports whether a has more pixels than b, compared as 128-bit
+// products: a width and height of 2^32 each multiply to 2^64, which wraps a uint64
+// to zero.
+func hasMorePixels(a, b *models.Resource) bool {
+	aHi, aLo := bits.Mul64(uint64(a.Width), uint64(a.Height))
+	bHi, bLo := bits.Mul64(uint64(b.Width), uint64(b.Height))
+	return aHi > bHi || (aHi == bHi && aLo > bLo)
+}
+
 // clusterOfRow is the JSON plan's view of a Cluster row, with the unscoped reading
 // of a pending Cluster whose member was deleted: stale, with the reason, and
 // unchecked (the effective state every count and filter uses).
@@ -472,7 +481,7 @@ func (ctx *MahresourcesContext) hydrateReviewPage(store *reductionStore, r *mode
 				if err != nil {
 					return nil, nil, err
 				}
-				if largest != nil && pixelsOf(largest) > pixelsOf(kept) {
+				if largest != nil && hasMorePixels(largest, kept) {
 					view.KeptDimensions = fmt.Sprintf("%d×%d", kept.Width, kept.Height)
 					view.LargerDimensions = fmt.Sprintf("%d×%d", largest.Width, largest.Height)
 					view.LargestMemberID = largest.ID

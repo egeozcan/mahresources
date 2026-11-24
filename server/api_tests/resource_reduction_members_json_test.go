@@ -47,3 +47,22 @@ func TestMembersEndpointAlwaysSaysWhetherACopyIsInTheSelection(t *testing.T) {
 	assert.Equal(t, false, byID[float64(outside.ID)]["inExtent"])
 	assert.Equal(t, true, byID[float64(twin.ID)]["inExtent"])
 }
+
+// A kept-copy id past 32 bits is a whole number; it names no copy of the Cluster, so the
+// page is a conflict, not a malformed request.
+func TestMembersEndpointParsesAWinnerPast32Bits(t *testing.T) {
+	tc := SetupTestEnv(t)
+	a := addImage(t, tc, "a.jpg", 400, 400)
+	b := addImage(t, tc, "b.jpg", 200, 200)
+	require.NoError(t, tc.DB.Model(&models.Resource{}).Where("id IN ?", []uint{a.ID, b.ID}).Update("hash", "shared").Error)
+	response := tc.MakeRequest(http.MethodPost, "/v1/reduction", query_models.ResourceReductionCreator{Name: "Wide", ResourceIds: []uint{a.ID, b.ID}})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var created struct{ ID uint }
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &created))
+	plan := computeReduction(t, tc, created.ID)
+	require.Len(t, plan.Clusters, 1)
+
+	url := "/v1/reduction/members?id=" + strconv.Itoa(int(created.ID)) + "&cluster=" + plan.Clusters[0].ID + "&winner=4294967297"
+	response = tc.MakeRequest(http.MethodGet, url, nil)
+	assert.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+}

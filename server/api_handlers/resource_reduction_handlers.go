@@ -144,7 +144,7 @@ func GetResourceReductionMembersHandler(ctx ResourceReductionContext) func(http.
 			if raw == "" {
 				continue
 			}
-			n, err := strconv.ParseUint(raw, 10, 32)
+			n, err := strconv.ParseUint(raw, 10, 64)
 			if err != nil {
 				http_utils.HandleError(fmt.Errorf("%s must be a whole number", name), writer, request, http.StatusBadRequest)
 				return

@@ -276,6 +276,8 @@ func onOwnConnection(dsn, what string, ensure func(*gorm.DB) error) error {
 //     page of its largest owner.
 var resourceListIndexes = []plannedIndex{
 	{"idx_resources_owner_created", "resources", "owner_id, created_at"},
+	// The arrivals walk of the Reduction drift count seeks a (created_at, id) cursor.
+	{"idx_resources_created_at_id", "resources", "created_at, id"},
 }
 
 // resourceListIndexLockKey is the PostgreSQL advisory lock one server holds

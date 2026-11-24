@@ -3,6 +3,7 @@ package application_context
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -425,23 +426,39 @@ func (s *reductionStore) enteredSince(r *models.ResourceReduction, since time.Ti
 	}
 	const member = ` AND (x.id IN (SELECT resource_id FROM reduction_extent_resources WHERE reduction_id = ?)
 		OR x.owner_id IN (SELECT id FROM ext_tree)
-		OR x.id IN (SELECT grr.resource_id FROM groups_related_resources grr WHERE grr.group_id IN (SELECT id FROM ext_tree)))`
+		OR EXISTS (SELECT 1 FROM groups_related_resources grr WHERE grr.resource_id = x.id AND grr.group_id IN (SELECT id FROM ext_tree)))`
 
+	// The cursor is the arrival's created_at as the database holds it. SQLite keeps a time
+	// as text and compares text, so a cursor scanned into a time.Time and bound back is
+	// rewritten (10:00+01:00 returns as 09:00+00:00) and sorts before the stored value:
+	// the same chunk would come back forever. The text is read and bound as stored.
 	type arrival struct {
-		CreatedAt time.Time
-		ID        uint
+		ID   uint
+		Raw  string
+		Time time.Time
+	}
+	cursorColumns := "x.created_at AS time"
+	if !s.postgres() {
+		cursorColumns = "CAST(x.created_at AS TEXT) AS raw"
 	}
 	total := 0
 	var cursor *arrival
-	for {
+	for iteration := 0; ; iteration++ {
+		if iteration > reductionArrivalMaxChunks {
+			return 0, fmt.Errorf("the arrivals walk exceeded %d chunks", reductionArrivalMaxChunks)
+		}
 		scan := where
 		scanArgs := append([]any{}, queryArgs...)
 		if cursor != nil {
 			scan += " AND (x.created_at, x.id) > (?, ?)"
-			scanArgs = append(scanArgs, cursor.CreatedAt, cursor.ID)
+			if s.postgres() {
+				scanArgs = append(scanArgs, cursor.Time, cursor.ID)
+			} else {
+				scanArgs = append(scanArgs, cursor.Raw, cursor.ID)
+			}
 		}
 		var chunk []arrival
-		if err := s.db.Raw(prefix+"SELECT x.id AS id, x.created_at AS created_at FROM resources x WHERE "+scan+" ORDER BY x.created_at, x.id LIMIT ?",
+		if err := s.db.Raw(prefix+"SELECT x.id AS id, "+cursorColumns+" FROM resources x WHERE "+scan+" ORDER BY x.created_at, x.id LIMIT ?",
 			append(append(append([]any{}, args...), scanArgs...), reductionArrivalChunk)...).Scan(&chunk).Error; err != nil {
 			return 0, err
 		}
@@ -461,9 +478,16 @@ func (s *reductionStore) enteredSince(r *models.ResourceReduction, since time.Ti
 			return total, nil
 		}
 		last := chunk[len(chunk)-1]
+		if cursor != nil && last.ID == cursor.ID && last.Raw == cursor.Raw && last.Time.Equal(cursor.Time) {
+			return 0, fmt.Errorf("the arrivals walk did not advance past resource %d", last.ID)
+		}
 		cursor = &last
 	}
 }
+
+// reductionArrivalMaxChunks bounds the walk: a chunk that never advances fails loudly
+// instead of spinning. A var so a test can lower it.
+var reductionArrivalMaxChunks = 1 << 24
 
 // reductionArrivalChunk is how many arrivals one membership test covers. A variable so a
 // test can cross chunk boundaries with a few rows.

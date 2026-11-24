@@ -105,6 +105,29 @@ func testStoreLargestLoserIsExactPastInt64(t *testing.T, ctx *MahresourcesContex
 	assert.Equal(t, b.ID, review.Clusters[0].LargestMemberID, "4,000,000,000 x 4,000,000,000 is one pixel more than 3,999,999,999 x 4,000,000,001")
 }
 
+// A product of exactly 2^64 wraps a uint64 to zero: the larger-copy warning must still
+// compare it as the larger one, not as zero pixels.
+func testStoreLargerCopyWarningSurvivesUint64Wrap(t *testing.T, ctx *MahresourcesContext) {
+	kept := &models.Resource{Name: "kept", Hash: "h", Width: 10, Height: 10}
+	huge := &models.Resource{Name: "huge", Hash: "h", Width: 1 << 32, Height: 1 << 32}
+	for _, res := range []*models.Resource{kept, huge} {
+		require.NoError(t, ctx.db.Create(res).Error)
+	}
+	r := tableReduction(t, ctx)
+	require.NoError(t, ctx.reductionStore().insertCluster(r, "gen", &storedCluster{
+		Row: models.ReductionClusterRow{Key: "k", Tier: "near", State: "open", WinnerID: kept.ID, KeepsSmaller: true}, Members: memberRows(kept.ID, huge.ID)}))
+
+	review, _, err := ctx.storeGetReductionReview(r.ID, nil, false, 1, nil)
+	require.NoError(t, err)
+	require.Len(t, review.Clusters, 1)
+	assert.Equal(t, huge.ID, review.Clusters[0].LargestMemberID)
+	assert.Equal(t, "4294967296×4294967296", review.Clusters[0].LargerDimensions)
+}
+
+func TestStoreLargerCopyWarningSurvivesUint64WrapSQLite(t *testing.T) {
+	testStoreLargerCopyWarningSurvivesUint64Wrap(t, newReductionSQLiteContext(t))
+}
+
 func TestStoreLargestLoserIsExactPastInt64SQLite(t *testing.T) {
 	testStoreLargestLoserIsExactPastInt64(t, newReductionSQLiteContext(t))
 }
