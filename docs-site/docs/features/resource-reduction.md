@@ -273,7 +273,7 @@ Two actions are refused:
 
 ### Large Clusters
 
-A Cluster holds at most 200 copies (`reductionMemberCap` in `application_context/reduction_store.go`). A Cluster with more copies than a page of the review can carry shows the first 200 and a line "Showing 200 of 340 copies." above a **Show more members** button. The button loads the next copies from `GET /v1/reduction/members` and adds them to the card. Focus moves to the first copy added, and a screen reader hears "Showed N more copies." Clusters of 12 copies or fewer always render in full, and larger ones share a budget of 2,000 copies per page. A Cluster beyond that budget shows its kept copy and the button until you ask for the rest.
+A new Cluster never holds more than 200 copies (`reductionMemberCap` in `application_context/reduction_store.go`); a compute that finds more eligible copies leaves the rest out (see below). Clusters of 12 copies or fewer always render in full, and larger ones share a budget of 2,000 copies per page. A Cluster beyond that budget shows its kept copy and a **Show more members** button until you ask for the rest. The button loads the next copies from `GET /v1/reduction/members` and adds them to the card, focus moves to the first copy added, and a screen reader hears "Showed N more copies." Only a Cluster stored before the cap existed can hold more than 200 copies: it shows the first 200 and a line "Showing 200 of 340 copies." (it is read-only, see below).
 
 When the compute found more eligible copies than the cap, the card says so and nothing outside the shown copies is merged:
 
