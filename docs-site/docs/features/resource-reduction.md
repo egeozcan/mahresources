@@ -94,13 +94,19 @@ Reductions are listed at `/reductions`, most recently updated first. They never 
 | **Ready** with none open | The counts line, or "No duplicates found." | **View** |
 | **Failed** | Finding duplicates did not finish. | **Try again** |
 
+While a Reduction made before the plan moved to the current storage is being upgraded in the background, its card reads "Being upgraded to the new storage. Its Clusters appear here when that finishes.", shows no progress bar and has a **Being upgraded** label in place of a button. The review page and the review endpoints answer such a Reduction with `503` ("this Resource Reduction is being upgraded; try again shortly") until the upgrade finishes, which needs no action. A page that was open when this happened shows "This Reduction is being upgraded, try again shortly." instead of refreshing.
+
+:::warning Rolling back after the upgrade
+Once the upgrade publishes a Reduction's plan to the new storage, it clears the old plan and selection from the Reduction record. An older binary cannot read the new storage and cannot recover what was cleared. To roll back to an older version after the upgrade, restore a database backup taken before you upgraded.
+:::
+
 **Find duplicates** and **Try again** start the job from the card. The counts are computed from the plan each time the page renders, over the Clusters you can see.
 
 ## The selection (Extent)
 
 The set of Resources a Reduction considers is its **Extent**: the Resources you named, plus every Resource owned by or related to the Groups you named and all of their descendants. A whole-library Reduction has every Resource you can access.
 
-Group IDs are stored rather than their expansion, so a Group's contents are resolved fresh every time the Reduction is computed. Files added afterwards enter the Extent on the next **Recompute**. The review page tells you how many Resources were added since the last run.
+Group IDs are stored rather than their expansion, so a Group's contents are resolved fresh every time the Reduction is computed. Files added afterwards enter the Extent on the next **Recompute**. The review page tells you how many Resources were added since the last run. For a selection of Groups it checks at most the first 10,000 uploads after the last run, in the order they arrived; past that it shows "N+" (a floor), or a notice without a number when none of the checked ones belong to the selection.
 
 **About this Reduction**, a collapsed section at the bottom of the review page, lists the selected Groups and Resources by name, the first 20 of each followed by "and N more". Items you cannot see are left out and not counted. A whole-library Reduction reads "Everything you can access."
 
@@ -117,7 +123,11 @@ While the job runs, the page shows a progress bar and text such as "Comparing…
 | **Not computed** | Created, but the Clusters have never been computed |
 | **Computing** | A clustering job is in flight |
 | **Ready** | The Clusters are computed and waiting for review |
-| **Failed** | The last compute failed, or its deadline passed while it was still running |
+| **Failed** | The last compute failed, or its lease ran out while it was still running |
+
+A compute holds a lease on the Reduction. The running job renews it every 30 seconds and each renewal pushes it 10 minutes ahead, so a large compute is not cut off after any fixed time such as an hour. A run that stops renewing (the process died) loses the lease within 10 minutes and the Reduction reads as failed. No run holds a lease for more than 24 hours from its start: that is the ceiling, and its lease ends there (`leaseCeiling`, `leaseWindow` and `leaseRenewEvery` in `application_context/reduction_store_lease.go`).
+
+While a compute is in flight, the Reduction refuses review decisions, bulk approval, apply, settings changes and changes to the selection with `409` ("this Resource Reduction is still computing"), because the compute will replace the plan (`reductionEditable` in `application_context/reduction_ops_store.go`).
 
 Before the first compute the page shows only the status and one sentence: "Finds copies of the same file and near-identical images in this selection. Nothing changes until you review and apply."
 
@@ -228,7 +238,7 @@ Each tab is a link with a count over the Clusters you can see. The counts ignore
 | Control | Options |
 |---------|---------|
 | Chips | **Identical**, **Near-Identical**, **Approved**, **Not approved**, **Needs attention**, and **Clear filters** while any is on |
-| **Sort** | **Most copies first** (default), **Largest files first** (total member file size), **Computed order** |
+| **Sort** | **Most copies first** (default), **Largest files first** (total member file size as recorded when the plan was computed), **Computed order** |
 | **Per page** | 20 (default), 50, 100 |
 
 **Needs attention** matches Clusters whose merge would discard fields, Clusters that are oversized, and Clusters that keep a lower-resolution copy. Sort ties break by Cluster id, so pages stay stable across refreshes. Everything is a query parameter on `/reduction?id=N`, so a filtered view is a link you can bookmark.
@@ -265,6 +275,21 @@ Two actions are refused:
 - **Demoting a Winner that sits outside the selection.** Such a Resource may win, so you can keep the better copy that lives elsewhere, but a Reduction that was not asked to consider it may never merge it away
 - **Ejecting the Winner**, which would leave the Cluster with nothing to merge into. Promote another copy first
 
+### Large Clusters
+
+A new Cluster never holds more than 200 copies (`reductionMemberCap` in `application_context/reduction_store.go`); a compute that finds more eligible copies leaves the rest out (see below). Clusters of 12 copies or fewer always render in full, and larger ones share a budget of 2,000 copies per page. A Cluster beyond that budget shows its kept copy and a **Show more members** button until you ask for the rest. The button loads the next copies from `GET /v1/reduction/members` and adds them to the card, focus moves to the first copy added, and a screen reader hears "Showed N more copies." The request carries the Reduction `version` and the `winner` (the kept copy's id) the card was rendered with, and the server answers `409` if either no longer matches, so copies fetched for one render of a card are never added to another. The page also drops a response that arrives after the card was re-rendered, and aborts the request. Every copy in the response carries `inExtent`, `false` included. Only a Cluster stored before the cap existed can hold more than 200 copies: it shows the first 200 and a line "Showing 200 of 340 copies." (it is read-only, see below).
+
+When the compute found more eligible copies than the cap, the card says so and nothing outside the shown copies is merged:
+
+- Identical: "Showing 200 copies; 5 more were left out. Apply this Cluster, then compute again for the rest."
+- Near-Identical: "Showing 200 copies; there are more. Apply this Cluster, then compute again for the rest." The card gives no count, because the number of further matches is only a lower bound.
+
+A viewer confined to a Group's subtree never sees the omitted count or this note, because the omitted copies may lie outside their subtree (`Truncated` is zero for them).
+
+A Near-Identical Cluster is a full star when the search for the seed's matches inside the selection reaches 199 copies (`insiderCap` in `buildStar`, `application_context/reduction_compute_near_store.go`). The other copies were each matched to one copy, the seed, and the Cluster cannot grow past it: no copy outside the selection may join, and the seed is the kept copy for good. The count is of matches inside the selection, not the size of the Cluster. A seed with 198 matches inside the selection and a better copy outside it is not full, because that copy may win. Its justification reads `Keeping "name" (kept: the copy the others were matched to).` The kept copy is fixed. **Keep this instead** and **Keep the larger copy instead** are disabled, with the note "This Cluster is at the size limit; its kept copy is fixed, so another copy cannot be kept instead." The server refuses the same promotion with `409` ("this Cluster is at the size limit; its kept copy is fixed").
+
+A Cluster stored before the cap existed and holding more than 200 copies is read-only. If it was already applied, it stays on the Applied tab as history. Otherwise it is stale with the reason "too large: compute again", and its card says "This Cluster is read-only" with no actions at all. Any change to it is refused with `409` ("this Cluster is too large to act on; compute again"). Compute again to review those copies in Clusters of up to 200.
+
 ### Keeping a lower-resolution copy
 
 When the kept copy has fewer pixels (width times height) than a copy being removed, the card shows a note: "The kept copy has a lower resolution than a copy being removed (800×533 vs 1600×1066)." The dimensions are the kept copy and the largest copy being removed. The **Keep the larger copy instead** button promotes that largest copy.
@@ -287,7 +312,7 @@ A large Identical Cluster is not treated as suspicious: fifty copies of one file
 
 ### Persistence
 
-Clusters paginate; members within a Cluster do not. Every decision lives in the Reduction's row, so it survives paging, a reload, closing the tab and a server restart.
+Clusters paginate; members within a Cluster load in pages of up to 200 (see Large Clusters). Every decision is stored with the Reduction's plan, so it survives paging, a reload, closing the tab and a server restart.
 
 ### Notices
 
@@ -295,7 +320,7 @@ These appear above the tabs when they apply:
 
 | Notice | When |
 |--------|------|
-| "N Resources added since the last run. Recompute to include them." | Resources entered the selection after the last compute |
+| "N Resources added since the last run. Recompute to include them." | Resources entered the selection after the last compute. "N+" means the page stopped checking at 10,000 uploads since the last run, so N is a minimum. When none of those checked belong to the selection, the notice says that more Resources were added than the page checks and some may belong to it |
 | "Settings changed since the last run. Recompute to apply them to Clusters you have not acted on." with **Recompute** | The matching mode, the Winner Rule or **Only keep copies from this selection** differs from what the last compute used. Keep-as-version flags are not compared, because they act at apply. A plan computed before this notice existed shows nothing |
 | "N resources are missing a perceptual hash, so Near-Identical results may be incomplete." with a **Recompute similarity** link | Coverage is poor and the matching mode includes the Near-Identical tier |
 
@@ -371,7 +396,7 @@ You may eject a member while a batch runs and it will be spared. A Cluster that 
 
 ### The result
 
-When the response arrives, a banner at the top reads "Applied N Cluster(s), removed N cop(ies)." and "This does not free disk space." If any Cluster could not be applied, it adds a link to the **Stale** tab and lists each one by its kept copy's name with its reason. Approved Clusters that another decision moved before the batch reached them (unchecked, skipped or changed in another tab) are not stale; they are counted as changed (`changed` in the response) and are not on the Stale tab. A Cluster the batch could not even read because of a database failure is counted in `errors` and stays approved.
+When the response arrives, a banner at the top reads "Applied N Cluster(s), removed N cop(ies)." and "This does not free disk space." The numbers come from the response's totals: `appliedCount`, `staleCount` and `destroyed`. The `applied` and `stale` lists in the response stop at a cap, and `more` is `true` when they did; the banner then adds "This report names only some Clusters. The full list is in the Applied and Stale tabs." If any Cluster could not be applied, it adds a link to the **Stale** tab and lists each listed one by its kept copy's name (the entry's `winnerName`, cut to a bounded length) with its reason. The page does not fetch the Resources to name them. A Cluster refused because a copy it would remove left the selection after the compute reads "left the selection". Approved Clusters that another decision moved before the batch reached them (unchecked, skipped or changed in another tab) are not stale; they are counted as changed (`changed` in the response) and are not on the Stale tab. A Cluster the batch could not even read because of a database failure is counted in `errors` and stays approved.
 
 ### The last apply record
 
@@ -381,9 +406,11 @@ The Reduction stores a record of its last apply: when it started and finished, h
 |-------|---------|
 | Finished | "Last apply, 2026-11-23 16:40: applied 18 Clusters and removed 34 copies." plus "N could not be applied; they are on the Stale tab." when there are any |
 | Running | "An apply started at 16:40 is running. Reload to see the result." **Apply** is disabled |
-| Interrupted | "The last apply was interrupted. Applied Clusters are on the Applied tab; the rest are still approved." Shown when a running record is older than the 30 minute ceiling |
+| Interrupted | "The last apply was interrupted. Applied Clusters are on the Applied tab; the rest are still approved." Shown when the record has no finish time and the apply lease has run out |
 
-A Cluster withheld from you is left untouched by your apply and does not appear in its result, so you cannot learn how many existed. The record keeps the ids of the Clusters its counts are about. An account whose access has since narrowed is shown the counts only while it can still see every one of those Clusters; otherwise the record shows its times and state without numbers (`countsHidden`). An unrestricted account always sees them.
+An apply holds a lease on the Reduction, renewed every 30 seconds and pushed 10 minutes ahead each time, including while it settles claims an earlier apply left unfinished. A batch whose server stopped therefore reads as running for up to 10 minutes after its last renewal, and as interrupted once the lease has run out. A batch that loses its lease before it starts merging records no finish time and is shown as interrupted, instead of as a finished apply that applied nothing.
+
+A Cluster withheld from you is left untouched by your apply and does not appear in its result, so you cannot learn how many existed. The record names its apply with a batch id, and each Cluster that apply decided carries that id. The counts (applied, removed and stale) are shown only when exactly as many Clusters carry the id as the counts add up to (applied plus stale) and none of them is withheld from the viewer. An account whose access has since narrowed therefore loses the numbers once it can no longer see one of those Clusters, and the record shows its times and state without them (`countsHidden`). An administrator loses them too when the Clusters cannot be accounted for: a record that counted Clusters but holds no batch id (an apply recorded before the ids existed, which a migrated Reduction can carry, even when it recorded merges), or one whose id is carried by a different number of Clusters than the counts. A record that counted nothing and holds no batch id has nothing to hide.
 
 The apply request can carry `applyToken`, the digest the review page exposes over the exact approved proposals (each Cluster id, Winner, Losers and their reviewed hashes). When it is sent and the proposals visible at apply time differ in any way, the apply is refused with 409 and nothing is claimed. It can also carry `requestId`, an opaque id of up to 64 characters that is stored in the record so a client that lost the response can tell its own apply from another tab's.
 
@@ -462,9 +489,18 @@ The plan snapshot means an apply never deletes bytes that changed **since** you 
 | `POST` | `/v1/reduction/compute` | Start the background clustering job. Refused with `409` while a run is in flight |
 | `POST` | `/v1/reduction/cluster` | Record one review decision (`clusterId`, `action`, `resourceId`) |
 | `POST` | `/v1/reduction/clusters` | Approve or clear many Clusters at once (see below) |
-| `POST` | `/v1/reduction/apply` | Merge and delete every approved Cluster's Losers. Responds with `applied`, `stale` and `destroyed` |
+| `GET` | `/v1/reduction/members` | The next copies of a Cluster the review page cut short (`id`, `cluster`, `after`). Responds with `members` and `after`, the cursor for the next call (empty at the end). Start with no `after` |
+| `POST` | `/v1/reduction/apply` | Merge and delete every approved Cluster's Losers. Responds with `applied`, `stale`, `changed`, `errors`, `appliedCount`, `staleCount`, `destroyed` and `more` |
 
 Every write carries a `version` field: the optimistic-concurrency counter the caller last saw. A request carrying a stale one is refused with **409 Conflict** rather than merged, because merging two judgements about which files to delete cannot be done safely. Read the current value from the Reduction before each write. Create, edit and bulk responses carry the new `version`.
+
+### Request caps
+
+| Request | Cap | Over the cap |
+|---------|-----|--------------|
+| `clusterIds` in a bulk approval | 500 Clusters (`reductionBulkIDCap`) | `400` |
+| `resourceIds` and `groupIds` together when creating or extending a Reduction | 10,000 in total, Resource ids and Group ids counted together in one request. Creating from a Group's own Resources (`ownerId`) takes at most 10,000 Resources (`reductionSelectionCap`) | `400` |
+| Resource ids in one bulk delete (`POST /v1/resources/delete`) | 10,000 (`MaxBulkDeleteResources`) | `400` |
 
 ### Create: whole library
 
@@ -472,7 +508,7 @@ Every write carries a `version` field: the optimistic-concurrency counter the ca
 
 ### Single decisions
 
-`POST /v1/reduction/cluster` accepts these `action` values: `promote`, `eject`, `restore`, `skip`, `reopen`, `check` and `uncheck`. Approving an unusually large Near-Identical Cluster additionally requires `acknowledgeOversized`.
+`POST /v1/reduction/cluster` accepts these `action` values: `promote`, `eject`, `restore`, `skip`, `reopen`, `check` and `uncheck`. Approving an unusually large Near-Identical Cluster additionally requires `acknowledgeOversized`. The review page also sends `membersSeen`, the number of copies it had rendered: when the field is sent, `0` included, and its value is not equal to the copy count of an unusually large Cluster, the approval is refused with `400`. Leaving the field out lets the acknowledgement alone stand. The page also sends `winnerId`, the kept copy it showed; when it is sent and the Cluster keeps a different copy, the approval is refused with `409`.
 
 ### Bulk approval
 
@@ -491,7 +527,7 @@ The response is `{"id", "version", "changed", "needsReview"}`: the new version, 
 
 Errors:
 
-- `400`: neither or both of `clusterIds` and `allIdentical`, a bad `action`, or `allIdentical` without `expectedCount`
+- `400`: neither or both of `clusterIds` and `allIdentical`, more than 500 `clusterIds`, a bad `action`, or `allIdentical` without `expectedCount`
 - `409`: a stale `version`, an `expectedCount` mismatch, a named Cluster that is not open, or a Reduction that is still computing
 
 An unknown id, or one you may not fully see, refuses the whole request with the same error as one unknown Cluster. Nothing is written on any error.

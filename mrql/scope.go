@@ -171,12 +171,17 @@ func (e *ScopeError) Error() string { return e.Message }
 // use it, so they cannot disagree. UNION, not UNION ALL, deduplicates inside
 // the recursion, so a group-tree cycle (which write-time guards prevent, but
 // a direct DB edit or an import could introduce) terminates.
-const SubtreeCTE = `WITH RECURSIVE scope_tree(id) AS (
+const SubtreeCTE = SubtreeCTEDefinition + ` SELECT id FROM scope_tree`
+
+// SubtreeCTEDefinition is SubtreeCTE's WITH clause alone, for a statement that
+// names the subtree more than once and wants it bound once: put it first,
+// reference `(SELECT id FROM scope_tree)` wherever the subtree is needed.
+const SubtreeCTEDefinition = `WITH RECURSIVE scope_tree(id) AS (
 	SELECT id FROM groups WHERE id = ?
 	UNION
 	SELECT g.id FROM groups g
 	INNER JOIN scope_tree st ON g.owner_id = st.id
-) SELECT id FROM scope_tree`
+)`
 
 const scopeCTE = SubtreeCTE
 

@@ -1,5 +1,7 @@
 # Cluster Near-Identical Resources by greedy star, not connected components
 
+> **Amended by [0011](0011-reduction-clusters-live-in-tables.md)** with the member cap (200), the outsider rule (the better copy outside the Extent is chosen among the 200 nearest, and a full star admits none) and the byte-key seed order. The pair-justification guarantee below is unchanged.
+
 Perceptual similarity is not transitive. `resource_similarities` stores pairs, and A≈B with B≈C says nothing about A≈C, so taking connected components over that edge list lets one chain drag unrelated images into a single Cluster — and every deletion it proposed would rest on transitive inference rather than on a stored pair. We instead sort candidates best-first by the Winner Rule and walk the list: the first unclaimed Resource becomes a Winner and claims every unclaimed Resource within threshold *of itself*.
 
 The property this buys is that **every proposed deletion is justified by a stored pair between that exact Loser and that exact Winner**. No transitive step ever deletes anything. It also costs one indexed probe per seed rather than a traversal, and it lets the Winner Rule serve as the seed order, so the best copy claims its neighbours instead of an arbitrary one doing so.

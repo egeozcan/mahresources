@@ -142,6 +142,8 @@ export interface StartServerOptions {
   pluginCommandPath?: string;
   /** IANA zone the server runs in (its TZ); the machine's zone when unset. */
   timezone?: string;
+  /** Extra environment variables for the server process, over the harness's own. */
+  env?: Record<string, string>;
 }
 
 /**
@@ -286,6 +288,7 @@ function startServerProcessWithDatabase(port: number, sharePort: number, opts: S
   if (opts.timezone) {
     childEnv.TZ = opts.timezone;
   }
+  Object.assign(childEnv, opts.env);
   for (const key of Object.keys(childEnv)) {
     if (key.startsWith('FILE_ALT_NAME_') || key.startsWith('FILE_ALT_PATH_')) {
       delete childEnv[key];

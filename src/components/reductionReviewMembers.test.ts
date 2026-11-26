@@ -1,0 +1,427 @@
+// @vitest-environment happy-dom
+
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { registerReductionReviewStore } from './reductionReview.js';
+
+// The pieces of the review store that read and write the Cluster card in place: the
+// "Show more members" paging, and the oversized-approval gate that depends on it.
+
+type Store = Record<string, any>;
+
+function makeStore(): Store {
+  let store: Store = {};
+  registerReductionReviewStore({ store: (_name: string, value: Store) => { store = value; } });
+  store.reductionId = 7;
+  return store;
+}
+
+function cardHtml(opts: { rendered?: number; memberCount?: number; readOnly?: boolean; stale?: boolean } = {}): string {
+  const rendered = opts.rendered ?? 1;
+  const members = Array.from({ length: rendered }, (_, i) =>
+    `<div class="reduction-member" tabindex="-1" data-testid="reduction-member" data-resource-id="${i + 1}"></div>`).join('');
+  return `
+    <article data-cluster-id="c1" tabindex="-1" data-member-count="${opts.memberCount ?? 5}" data-cluster-state="${opts.stale ? 'stale' : 'open'}">
+      <h3 id="cluster-c1-heading">Near-Identical</h3>
+      ${opts.readOnly ? '<div data-testid="cluster-stale-reason" data-cluster-read-only="true"></div>' : ''}
+      <div class="reduction-cluster-members">${members}</div>
+      <div data-testid="cluster-more-members-wrap">
+        <p data-testid="cluster-shown-count">Showing ${rendered} of ${opts.memberCount ?? 5} copies.</p>
+        <button type="button" data-testid="cluster-more-members" data-members-after="">Show more members</button>
+      </div>
+      <button type="button" id="elsewhere">elsewhere</button>
+    </article>`;
+}
+
+function member(resourceId: number, resource: object | null = { ID: resourceId, Name: `r${resourceId}`, FileSize: 10, ContentType: 'image/png' }) {
+  return { resourceId, Resource: resource, IsWinner: false, TagCount: 0, NoteCount: 0, GroupCount: 0 };
+}
+
+// A members endpoint that answers when the test says so.
+function slowMembers(page: { members: unknown[]; after?: string }) {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  vi.stubGlobal('fetch', vi.fn(async () => {
+    await gate;
+    return { ok: true, status: 200, json: async () => page };
+  }));
+  return release;
+}
+
+beforeEach(() => {
+  document.body.innerHTML = '';
+  (window as any).mahAnnounce = vi.fn();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe('Show more members focus', () => {
+  test('leaves focus alone when the reviewer tabbed elsewhere during the request', async () => {
+    document.body.innerHTML = cardHtml();
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const elsewhere = document.getElementById('elsewhere')!;
+    trigger.focus();
+    const release = slowMembers({ members: [member(2), member(3)], after: 'next' });
+
+    const pending = store.loadMoreMembers('c1', trigger);
+    elsewhere.focus();
+    release();
+    await pending;
+
+    expect(document.activeElement).toBe(elsewhere);
+  });
+
+  test('moves focus to the first added copy when it is still on the trigger', async () => {
+    document.body.innerHTML = cardHtml();
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    trigger.focus();
+    const release = slowMembers({ members: [member(2), member(3)], after: 'next' });
+
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+
+    expect((document.activeElement as HTMLElement).dataset.resourceId).toBe('2');
+  });
+
+  test('lands on the first appended focusable thing when the trigger goes and the first copy is a placeholder', async () => {
+    document.body.innerHTML = cardHtml();
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    trigger.focus();
+    const release = slowMembers({ members: [member(2, null), member(3)] });
+
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+
+    expect(document.activeElement).not.toBe(trigger);
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement!.isConnected).toBe(true);
+    expect(document.querySelector('article')!.contains(document.activeElement)).toBe(true);
+    expect(document.querySelector('[data-testid="cluster-more-members"]')).toBeNull();
+  });
+});
+
+describe('appended copies of a Cluster that takes no decisions', () => {
+  test('a read-only Cluster gets no Keep this instead or Not-removing buttons', async () => {
+    document.body.innerHTML = cardHtml({ readOnly: true });
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members: [member(2), member(3)] });
+
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+
+    expect(document.querySelectorAll('[data-testid="reduction-member"]').length).toBe(3);
+    expect(document.querySelector('[data-testid="member-promote"]')).toBeNull();
+    expect(document.querySelector('[data-testid="member-eject"]')).toBeNull();
+  });
+
+  test('an open Cluster still gets them', async () => {
+    document.body.innerHTML = cardHtml();
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members: [member(2)] });
+
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+
+    expect(document.querySelector('[data-testid="member-promote"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="member-eject"]')).not.toBeNull();
+  });
+});
+
+describe('appended copies of a stale Cluster', () => {
+  function staleCard(winnerChanged: boolean): string {
+    return cardHtml({ stale: true }).replace('data-cluster-state="stale"', `data-cluster-state="stale" data-cluster-winner-changed="${winnerChanged}"`);
+  }
+
+  test('a copy that was deleted can be left out, as on the server-rendered card', async () => {
+    document.body.innerHTML = staleCard(false);
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members: [member(2, null)] });
+
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+
+    const gone = document.querySelector('[data-testid="reduction-member-withheld"]')!;
+    expect(gone.textContent).toContain('Removed elsewhere.');
+    const eject = gone.querySelector<HTMLButtonElement>('[data-testid="member-eject"]')!;
+    expect(eject).not.toBeNull();
+    const act = vi.fn();
+    store.act = act;
+    eject.click();
+    expect(act).toHaveBeenCalledWith('c1', 'eject', 2);
+  });
+
+  test('offers nothing when the kept copy is the one that changed', async () => {
+    document.body.innerHTML = staleCard(true);
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members: [member(2, null), member(3)] });
+
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+
+    expect(document.querySelector('[data-testid="member-eject"]')).toBeNull();
+  });
+
+  test('a deleted winner or an already left out copy gets no button', async () => {
+    document.body.innerHTML = staleCard(false);
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members: [{ ...member(2, null), ejected: true }, { ...member(3, null), IsWinner: true }] });
+
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+
+    expect(document.querySelector('[data-testid="member-eject"]')).toBeNull();
+  });
+});
+
+describe('a deleted kept copy that is already shown as a placeholder', () => {
+  test('a later page does not add a second placeholder for it', async () => {
+    document.body.innerHTML = staleCardWithGoneWinner();
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members: [{ ...member(1, null), IsWinner: true }, member(2, null), member(2, null), member(3)] });
+
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+
+    const placeholders = [...document.querySelectorAll('[data-testid="reduction-member-withheld"]')];
+    expect(placeholders.map((p) => (p as HTMLElement).dataset.goneResourceId).sort()).toEqual(['1', '2']);
+    expect(document.querySelectorAll('[data-testid="reduction-member"]').length).toBe(1);
+  });
+});
+
+function staleCardWithGoneWinner(): string {
+  return cardHtml({ stale: true, rendered: 0 }).replace('<div class="reduction-cluster-members">',
+    '<div class="reduction-cluster-members"><div class="reduction-member--gone" data-testid="reduction-member-withheld" data-gone-resource-id="1" tabindex="-1"></div>');
+}
+
+describe('appended copies of a Near-Identical Cluster', () => {
+  test('a loser carries its distance badge and a Compare link to the kept copy', async () => {
+    document.body.innerHTML = cardHtml().replace('<div class="reduction-cluster-members">',
+      '<div class="reduction-cluster-members"><div data-testid="reduction-member" data-winner="true" data-resource-id="1" tabindex="-1"></div>')
+      .replace('<div class="reduction-member" tabindex="-1" data-testid="reduction-member" data-resource-id="1"></div>', '');
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members: [{ ...member(2), IsLoser: true, distance: 5 }, { ...member(3), IsLoser: true, distance: 1 }] });
+
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+
+    const badges = [...document.querySelectorAll('[data-testid="member-distance"]')];
+    expect(badges.map((b) => b.textContent)).toEqual(['Close (perceptual distance 5)', 'Very close (perceptual distance 1)']);
+    expect(badges[0].getAttribute('title')).toBe('perceptual distance 5');
+    const compare = document.querySelector<HTMLAnchorElement>('[data-testid="member-compare"]')!;
+    expect(compare).not.toBeNull();
+    expect(compare.getAttribute('href')).toBe('/resource/compare?r1=1&r2=2&from=reduction:7');
+    // The click records which Cluster the reviewer came from, as the server-rendered link does.
+    compare.addEventListener('click', (event) => event.preventDefault());
+    compare.click();
+    expect(compare.getAttribute('href')).toContain('fa=c1');
+  });
+
+  test('an Identical copy has neither a distance nor a Compare link without a loser flag', async () => {
+    document.body.innerHTML = cardHtml();
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members: [member(2)] });
+
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+
+    expect(document.querySelector('[data-testid="member-distance"]')).toBeNull();
+    expect(document.querySelector('[data-testid="member-compare"]')).toBeNull();
+  });
+});
+
+describe('approving a large Cluster whose copies are not all on the page', () => {
+  test('stays unavailable until Show more has rendered every copy, and then names how many it showed', async () => {
+    document.body.innerHTML = cardHtml({ rendered: 1, memberCount: 3 });
+    const store = makeStore();
+    store.expand('c1');
+
+    // Expanded, but only the kept copy is on the page.
+    expect(store.isReviewable('c1', true, true)).toBe(false);
+    // A Cluster whose copies were all rendered, or one that is not large, is not held back.
+    expect(store.isReviewable('c1', true, false)).toBe(true);
+    expect(store.isReviewable('c1', false, true)).toBe(true);
+
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members: [member(2), member(3)] });
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+    expect(store.isReviewable('c1', true, true)).toBe(true);
+
+    const act = vi.fn();
+    store.act = act;
+    const button = document.createElement('button');
+    button.setAttribute('aria-pressed', 'false');
+    store.toggleApproval('c1', true, { currentTarget: button });
+    expect(act).toHaveBeenCalledWith('c1', 'check', 0, { acknowledgeOversized: true, membersSeen: 3 });
+  });
+
+  test('a page refresh that morphs the appended copies away makes the Cluster unavailable again', () => {
+    document.body.innerHTML = cardHtml({ rendered: 1, memberCount: 3 });
+    const store = makeStore();
+    store.expand('c1');
+    store.allMembersShown = { c1: true };
+    store.forgetShownMembers();
+    expect(store.isReviewable('c1', true, true)).toBe(false);
+  });
+});
+
+describe('a members response that outlives a refresh', () => {
+  test('is discarded when the card was re-rendered while it was in flight', async () => {
+    document.body.innerHTML = cardHtml();
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members: [member(2), { ...member(3), IsWinner: true }], after: '' });
+
+    const pending = store.loadMoreMembers('c1', trigger);
+    // Another tab promoted a different copy; the refresh re-rendered the card and
+    // called forgetShownMembers, as _refresh does after every morph.
+    store.forgetShownMembers();
+    release();
+    await pending;
+
+    expect(document.querySelectorAll('[data-testid="reduction-member"]').length).toBe(1);
+    expect(store.allMembersShown.c1).toBeUndefined();
+    expect(document.querySelector('[data-testid="cluster-more-members"]')).not.toBeNull();
+  });
+
+  test('aborts the request itself on a refresh', async () => {
+    document.body.innerHTML = cardHtml();
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: RequestInit) => {
+      signal = init.signal as AbortSignal;
+      return new Promise(() => {});
+    }));
+    void store.loadMoreMembers('c1', trigger);
+    store.forgetShownMembers();
+    expect(signal?.aborted).toBe(true);
+  });
+
+  test('sends the version and the kept copy the card showed', async () => {
+    document.body.innerHTML = cardHtml().replace('data-resource-id="1"', 'data-resource-id="1" data-winner="true"');
+    const store = makeStore();
+    store.version = 12;
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ members: [] }) }));
+    vi.stubGlobal('fetch', fetchMock);
+    await store.loadMoreMembers('c1', trigger);
+    const url = new URL(String((fetchMock.mock.calls[0] as unknown[])[0]));
+    expect(url.searchParams.get('version')).toBe('12');
+    expect(url.searchParams.get('winner')).toBe('1');
+  });
+});
+
+describe('a paged copy carries the same cues as a rendered one', () => {
+  const keptAttrs = 'data-winner="true" data-kept-width="400" data-kept-height="400" data-kept-size="1000" data-kept-type="image/jpeg" data-kept-added="2024-01-02" data-kept-tags="1" data-kept-notes="0" data-kept-groups="0"';
+
+  async function pagedNode(extra: object, resource: object) {
+    document.body.innerHTML = cardHtml().replace('data-resource-id="1"', `data-resource-id="1" ${keptAttrs}`);
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members: [{ ...member(2), Resource: { ID: 2, Name: 'r2', ...resource }, IsLoser: true, ...extra }] });
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+    return document.querySelector<HTMLElement>('[data-resource-id="2"]')!;
+  }
+
+  test('shows when the copy was added, and marks what differs from the kept copy', async () => {
+    const node = await pagedNode({}, { Width: 200, Height: 200, FileSize: 500, ContentType: 'image/png', CreatedAt: '2025-03-04T10:00:00+01:00' });
+    const facts = [...node.querySelectorAll('.reduction-facts li')];
+    const added = facts.find((li) => li.textContent!.includes('Added'))!;
+    expect(added.textContent).toContain('Added 2025-03-04');
+    expect(added.classList.contains('reduction-fact--differs')).toBe(true);
+    expect(added.textContent).toContain('differs from the kept copy');
+    expect(facts.filter((li) => li.classList.contains('reduction-fact--differs')).length).toBeGreaterThanOrEqual(4);
+  });
+
+  test('leaves a fact that matches the kept copy unmarked', async () => {
+    const node = await pagedNode({}, { Width: 400, Height: 400, FileSize: 1000, ContentType: 'image/jpeg', CreatedAt: '2024-01-02T09:00:00+01:00' });
+    const differing = [...node.querySelectorAll('.reduction-facts li.reduction-fact--differs')];
+    expect(differing.length).toBe(1);
+    expect(differing[0].textContent).toContain('0 tags');
+  });
+
+  test('an ejected copy outside the selection gets no Include again', async () => {
+    const node = await pagedNode({ ejected: true, inExtent: false }, { Width: 1, Height: 1, FileSize: 1, ContentType: 'image/png', CreatedAt: '2024-01-02T09:00:00+01:00' });
+    expect(node.querySelector('[data-testid="member-restore"]')).toBeNull();
+    expect(node.textContent).toContain('Outside the selection');
+  });
+});
+
+describe('appended copies of an applied Cluster', () => {
+  function appliedCard(merged: boolean): string {
+    return cardHtml().replace('data-cluster-state="open"', `data-cluster-state="applied" data-cluster-merged="${merged}"`);
+  }
+
+  async function page(members: unknown[]) {
+    const store = makeStore();
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="cluster-more-members"]')!;
+    const release = slowMembers({ members });
+    const pending = store.loadMoreMembers('c1', trigger);
+    release();
+    await pending;
+  }
+
+  test('a paged copy gets no controls, as the server-rendered card gives none', async () => {
+    document.body.innerHTML = appliedCard(true);
+    await page([{ ...member(2), ejected: true, inExtent: true }, { ...member(3), IsLoser: true }]);
+    expect(document.querySelector('[data-testid="member-restore"]')).toBeNull();
+    expect(document.querySelector('[data-testid="member-eject"]')).toBeNull();
+    expect(document.querySelector('[data-testid="member-promote"]')).toBeNull();
+  });
+
+  test('a merged-away copy says it was merged and removed', async () => {
+    document.body.innerHTML = appliedCard(true);
+    await page([member(2, null)]);
+    expect(document.querySelector('[data-testid="reduction-member-withheld"]')!.textContent).toContain('Merged and removed.');
+  });
+
+  test('a deleted Winner of an applied Cluster says it was removed elsewhere, not merged away', async () => {
+    document.body.innerHTML = appliedCard(true);
+    await page([{ ...member(2, null), IsWinner: true }]);
+    const gone = document.querySelector('[data-testid="reduction-member-withheld"]')!;
+    expect(gone.textContent).toContain('Removed elsewhere.');
+    expect(gone.textContent).not.toContain('Merged and removed.');
+  });
+
+  test('a placeholder of an applied Cluster carries its id, so a later page does not add it twice', async () => {
+    document.body.innerHTML = appliedCard(true).replace(
+      '<div class="reduction-cluster-members">',
+      '<div class="reduction-cluster-members"><div class="reduction-member reduction-member--gone" data-testid="reduction-member-withheld" data-gone-resource-id="2"><p>Removed elsewhere.</p></div>');
+    await page([{ ...member(2, null), IsWinner: true }, member(3, null)]);
+    const placeholders = document.querySelectorAll('[data-testid="reduction-member-withheld"]');
+    expect(placeholders).toHaveLength(2);
+    expect([...placeholders].map((p) => p.getAttribute('data-gone-resource-id'))).toEqual(['2', '3']);
+  });
+
+  test('an unconfirmed apply keeps the unavailable wording', async () => {
+    document.body.innerHTML = appliedCard(false);
+    await page([member(2, null)]);
+    expect(document.querySelector('[data-testid="reduction-member-withheld"]')!.textContent).toContain('Resource unavailable.');
+  });
+});

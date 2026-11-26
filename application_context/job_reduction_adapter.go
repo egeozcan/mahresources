@@ -11,7 +11,6 @@ import (
 	"mahresources/download_queue"
 	"mahresources/jobs"
 	"mahresources/models"
-	"mahresources/models/types"
 
 	"gorm.io/gorm"
 )
@@ -178,8 +177,28 @@ func (a *reductionComputeAdapter) Dispatch(ctx context.Context, execution jobs.E
 
 	entry, found := a.ctx.queueEntryFor(execution.JobID)
 	if !found {
-		entry, err = a.start(execution, input)
+		entry, err = a.start(ctx, execution, input)
 		if err != nil {
+			var refused *reductionStartRefusal
+			if errors.As(err, &refused) {
+				if reductionBeforeHoldHook != nil {
+					reductionBeforeHoldHook(refused.reason)
+				}
+				if berr := a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, refused.reason); berr != nil {
+					return berr
+				}
+				// The condition may have cleared between the check that refused and the
+				// block just written, when its resumer found nothing held: look again,
+				// and resume now rather than leave the Job held for good.
+				a.ctx.resumeIfHoldCleared(refused.reason, input.ReductionID)
+				return nil
+			}
+			if errors.Is(err, errReductionStartCancelled) {
+				return a.ctx.finishQueueJob(execution, jobs.StateCancelled, nil, nil)
+			}
+			if errors.Is(err, errDispatchAccountDeleted) {
+				return a.ctx.answerDispatchCheck(execution, err)
+			}
 			if errors.Is(err, ErrReductionBusy) {
 				return a.ctx.blockQueueJob(execution.JobID, execution.ExecutionToken, "reduction-busy")
 			}
@@ -277,17 +296,63 @@ func reductionOwnerFilter(principal *auth.Principal) (*uint, bool) {
 // does not resurrect a claim the deadline already retired, and a newer run that took
 // the row in the meantime is what this one is superseded by rather than what it
 // overwrites.
-func (a *reductionComputeAdapter) start(execution jobs.Execution, input *reductionComputeJobInput) (*download_queue.DownloadJob, error) {
-	reduction, err := a.ctx.loadReductionForUpdate(input.ReductionID, nil, false)
+func (a *reductionComputeAdapter) start(ctx context.Context, execution jobs.Execution, input *reductionComputeJobInput) (*download_queue.DownloadJob, error) {
+	// A Reduction the migration has not moved to tables yet is waited for, not
+	// refused: the Job stays claimed and runs once the plan is published (design D12).
+	reduction, err := a.awaitUpgrade(ctx, execution, input.ReductionID)
 	if err != nil {
 		return nil, err
 	}
 	if EffectiveReductionStatus(reduction) == models.ReductionStatusComputing {
 		return nil, ErrReductionBusy
 	}
-	generation, err := a.ctx.beginReductionCompute(reduction.ID, reduction.Version)
+	// The Postgres similarity indexes build CONCURRENTLY beside the server, so a
+	// compute queued before they finish waits for them like it waits for the
+	// upgrade; failing at dispatch would end the Job for a condition that passes.
+	if err := a.awaitSimilarityIndexes(ctx, execution); err != nil {
+		return nil, err
+	}
+	// Both waits can run for many minutes, and the authorization Dispatch made
+	// before them is not a standing permission: an administrator may have disabled,
+	// demoted or re-scoped the account meanwhile. Ask again, against the account as
+	// it stands now, immediately before the claim, and run under that binding.
+	if a.ctx.executionCancelled(execution) {
+		return nil, errReductionStartCancelled
+	}
+	if err := a.ctx.accountStillBound(a.ctx.db); err != nil {
+		if errors.Is(err, errAccountChanged) {
+			return nil, &reductionStartRefusal{reason: "account-changed"}
+		}
+		return nil, err
+	}
+	fresh, err := a.forExecution(execution)
 	if err != nil {
 		return nil, err
+	}
+	a = fresh
+	reason, err := a.refusalReason(execution, input)
+	if err != nil {
+		return nil, err
+	}
+	if reason != "" {
+		return nil, &reductionStartRefusal{reason: reason}
+	}
+	nonce, generation, err := a.ctx.beginReductionComputeStoreAs(reduction.ID, reduction.Version, reduction.CreatedByUserId)
+	if err != nil {
+		return nil, err
+	}
+	if reductionStartAfterClaimHook != nil {
+		reductionStartAfterClaimHook(execution)
+	}
+	// A cancel recorded after the check above and before this claim has no queue
+	// entry to stop and nothing else to read it, so the intent is asked once more
+	// under the claim. The claim is released as a failed run, the way a cancelled
+	// compute leaves a row, and the Job ends cancelled.
+	if a.ctx.executionCancelled(execution) {
+		if writeErr := a.ctx.storeFailCompute(reduction.ID, nonce, generation, errReductionStartCancelled); writeErr != nil {
+			return nil, writeErr
+		}
+		return nil, errReductionStartCancelled
 	}
 	legacyID, err := a.ctx.jobHandleFor(execution.JobID, ReductionComputeHandleNamespace)
 	if err != nil {
@@ -296,11 +361,142 @@ func (a *reductionComputeAdapter) start(execution jobs.Execution, input *reducti
 	if legacyID == "" {
 		legacyID = download_queue.NewJobID()
 	}
-	return a.ctx.startReductionComputeQueueJob(
-		reduction.ID, generation, legacyID,
+	entry, err := a.ctx.startReductionComputeQueueJob(
+		reduction.ID, nonce, generation, legacyID,
 		jobs.ExecutionRef{JobID: execution.JobID, ExecutionToken: execution.ExecutionToken},
 		a.ctx.jobOwnerFor(execution.JobID),
+		reduction.CreatedByUserId,
 	)
+	if err != nil {
+		return nil, err
+	}
+	// A cancel recorded between the read above and the entry's existence found no
+	// entry to stop. The intent is durable before this read and the entry exists
+	// before it, so either that cancel reached the entry or this read sees the
+	// intent; the entry's context is cancelled before the run can land.
+	if a.ctx.executionCancelled(execution) {
+		_ = a.ctx.downloadManager.Cancel(entry.ID)
+	}
+	return entry, nil
+}
+
+// reductionStartAfterClaimHook runs once a start holds its claim and before it
+// submits the queue entry. Only a test sets it, to record a cancel in that window.
+var reductionStartAfterClaimHook func(execution jobs.Execution)
+
+// reductionBeforeHoldHook runs between the refusal of a start and the block that
+// records it. Only a test sets it, to publish the migration in that window.
+var reductionBeforeHoldHook func(reason string)
+
+// reductionStartRefusal is a start that must end the Job blocked with a reason.
+type reductionStartRefusal struct {
+	reason string
+	// cause is the condition the run is held for, when one is waiting to clear.
+	cause error
+}
+
+func (r *reductionStartRefusal) Error() string {
+	if r.cause != nil {
+		return "the clustering run may not start: " + r.reason + ": " + r.cause.Error()
+	}
+	return "the clustering run may not start: " + r.reason
+}
+
+func (r *reductionStartRefusal) Unwrap() error { return r.cause }
+
+// Reasons a run is held for a condition that clears on its own. Each has a
+// resumer: the migration's publication, and the index build's completion.
+const (
+	reductionHoldMigrationPending = "migration-pending"
+	reductionHoldIndexesBuilding  = "indexes-building"
+)
+
+// errReductionStartCancelled ends a start whose Job was cancelled while it waited.
+var errReductionStartCancelled = errors.New("the clustering run was cancelled before it started")
+
+// executionCancelled reports whether the durable Job carries a cancel intent. A
+// queued run has no queue entry to cancel while it waits for the migration or the
+// indexes, so the intent recorded on the Job is the only signal it will ever get.
+func (ctx *MahresourcesContext) executionCancelled(execution jobs.Execution) bool {
+	service := ctx.JobService()
+	if service == nil || execution.JobID == "" {
+		return false
+	}
+	current, err := service.Get(ctx.jobDeps(), jobs.Access{Administrator: true}, execution.JobID)
+	if err != nil {
+		return false
+	}
+	return current.ControlIntent == jobs.ControlIntentCancel
+}
+
+// reductionUpgradePoll is how often a start that waits in the worker looks again.
+var reductionUpgradePoll = 2 * time.Second
+
+// reductionUpgradeMaxWait is how long a start waits in the worker for the migration
+// before it holds the Job as "migration-pending". It is zero: a wait inside the
+// worker occupies an execution slot, up to the deployment's budget, for a condition
+// that has nothing to do with the work the slot is for. The Job is held at once
+// (blocked, the slot released) and the migration's publication resumes it
+// (resumeBlockedReductionComputes). A test sets it to exercise the wait itself.
+var reductionUpgradeMaxWait = time.Duration(0)
+
+// awaitUpgrade loads the Reduction a queued compute names. A plan that is still the
+// legacy document is waited for up to reductionUpgradeMaxWait, then held. The wait
+// ends when the migration publishes, the limit passes, the Reduction is deleted, or
+// the run is cancelled.
+func (a *reductionComputeAdapter) awaitUpgrade(ctx context.Context, execution jobs.Execution, reductionID uint) (*models.ResourceReduction, error) {
+	deadline := time.Now().Add(reductionUpgradeMaxWait)
+	for {
+		if a.ctx.executionCancelled(execution) {
+			return nil, errReductionStartCancelled
+		}
+		reduction, err := a.ctx.loadReductionForUpdate(reductionID, nil, false)
+		if err != nil {
+			return nil, err
+		}
+		if reduction.PlanSchema != 0 {
+			return reduction, nil
+		}
+		if !time.Now().Before(deadline) {
+			// The migration is slow, not the compute wrong: the Job is held, not failed
+			// (design D12), and its Resume runs it once the plan is published.
+			return nil, &reductionStartRefusal{reason: reductionHoldMigrationPending}
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(reductionUpgradePoll):
+		}
+	}
+}
+
+// reductionIndexMaxWait is how long a start waits in the worker for the similarity
+// distance indexes, zero for the reason reductionUpgradeMaxWait is.
+var reductionIndexMaxWait = time.Duration(0)
+
+// awaitSimilarityIndexes returns once both similarity distance indexes read valid.
+// Only ErrReductionIndexesBuilding is held for; past the limit the Job is held as
+// "indexes-building" (the build's completion resumes it), and a cancelled run stops
+// at once.
+func (a *reductionComputeAdapter) awaitSimilarityIndexes(ctx context.Context, execution jobs.Execution) error {
+	deadline := time.Now().Add(reductionIndexMaxWait)
+	for {
+		if a.ctx.executionCancelled(execution) {
+			return errReductionStartCancelled
+		}
+		err := a.ctx.requireSimilarityIndexes()
+		if !errors.Is(err, ErrReductionIndexesBuilding) {
+			return err
+		}
+		if !time.Now().Before(deadline) {
+			return &reductionStartRefusal{reason: reductionHoldIndexesBuilding, cause: err}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(reductionUpgradePoll):
+		}
+	}
 }
 
 func (a *reductionComputeAdapter) publishOutcome(execution jobs.Execution, input *reductionComputeJobInput, snap *download_queue.DownloadJob) error {
@@ -330,7 +526,7 @@ func (a *reductionComputeAdapter) publishOutcome(execution jobs.Execution, input
 		// and its required output have committed. A crash between those writes is
 		// still recoverable: migration resolves the same durable handle on startup.
 		var reduction models.ResourceReduction
-		if err := a.ctx.db.First(&reduction, input.ReductionID).Error; err == nil {
+		if err := a.ctx.db.Select(reductionColumns).First(&reduction, input.ReductionID).Error; err == nil {
 			if err := a.ctx.recordDualPublishedReduction(reduction, time.Now().UTC()); err != nil {
 				a.ctx.Logger().Warning(models.LogActionSystem, "resource_reduction", nil, fmt.Sprint(input.ReductionID), "canonical source mapping could not be refreshed", nil)
 			}
@@ -448,6 +644,12 @@ func (a *reductionComputeAdapter) Commands(_ context.Context, commandContext job
 		Confirmation: "Stop clustering? The Reduction keeps the plan it had.",
 	}}
 	state := commandContext.Snapshot.State
+	if state == jobs.StateBlocked {
+		// A run held for the migration (or a busy Reduction) goes back to the queue
+		// by Resume: the dispatch that blocked it asks its questions again.
+		commands = append(commands, jobs.Command{Key: jobs.CommandResume, Label: "Resume"})
+		return commands, nil
+	}
 	if state != jobs.StateFailed && state != jobs.StateCancelled && state != jobs.StateInterrupted {
 		return commands, nil
 	}
@@ -473,7 +675,7 @@ func (ctx *MahresourcesContext) reductionComputableOn(deps jobs.Deps, reductionI
 		return false
 	}
 	var reduction models.ResourceReduction
-	if err := deps.DB.First(&reduction, reductionID).Error; err != nil {
+	if err := deps.DB.Select(reductionColumns).First(&reduction, reductionID).Error; err != nil {
 		return false
 	}
 	return EffectiveReductionStatus(&reduction) == models.ReductionStatusFailed
@@ -489,6 +691,11 @@ func isReductionGone(err error) bool {
 func (a *reductionComputeAdapter) ExecuteCommand(_ context.Context, execution jobs.CommandExecution) (jobs.CommandOutcome, error) {
 	if a.ctx == nil || a.ctx.downloadManager == nil {
 		return jobs.CommandOutcome{}, errors.New("the download queue is not available")
+	}
+	if execution.Key == jobs.CommandResume {
+		// A held run has no worker: the host returns the Job to the queue, and the
+		// dispatch that follows starts it inside a fresh claim.
+		return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: "queued to start again"}, nil
 	}
 	if execution.Key != jobs.CommandCancel {
 		return jobs.CommandOutcome{}, fmt.Errorf("%w: %s", jobs.ErrCommandNotAdvertised, execution.Key)
@@ -513,51 +720,16 @@ func (a *reductionComputeAdapter) ExecuteCommand(_ context.Context, execution jo
 	return jobs.CommandOutcome{Status: jobs.CommandStatusSucceeded, Message: "cancelling"}, nil
 }
 
-// beginReductionCompute takes one Reduction's `computing` claim under a fresh
-// generation, and returns the generation the queue job must claim.
-//
-// It is the one place the claim is taken, so the request path and a Retry cannot
-// disagree about what taking it means. The version is the caller's compare-and-set
-// guard: a request made from a page that predates somebody else's decisions is
-// refused rather than discarding them.
-func (ctx *MahresourcesContext) beginReductionCompute(reductionID uint, version uint) (string, error) {
-	now := time.Now()
-	deadline := now.Add(ReductionComputeDeadline)
-	// A nonce written before the job exists, and swapped for the job's own id when
-	// the worker starts. Without it the worker's claim asks only "is the slot
-	// empty", which a run delayed past its deadline answers yes to — taking the slot
-	// of the newer run that replaced it, and then computing under the subtree scope
-	// it captured an hour ago while the accepted recompute is turned away as
-	// superseded.
-	generation := "pending:" + string(types.NewUUIDv7())
-	// The caller's version, not the one just read. Recompute replaces the plan, so a
-	// request made from a page that predates somebody else's decisions would discard
-	// them without their author ever seeing a refusal — and "every write is a
-	// compare-and-set" has to mean this write too.
-	ok, err := ctx.casReduction(reductionID, version, map[string]any{
-		"status":               models.ReductionStatusComputing,
-		"computing_started_at": now,
-		"compute_deadline":     deadline,
-		"compute_job_id":       generation,
-		"compute_error":        "",
-	})
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		return "", ErrReductionConflict
-	}
-	return generation, nil
-}
-
 // startReductionComputeQueueJob submits one clustering run's queue entry, with the
 // generation its worker must claim and the durable identity it publishes into.
 func (ctx *MahresourcesContext) startReductionComputeQueueJob(
 	reductionID uint,
+	nonce string,
 	generation string,
 	legacyID string,
 	ref jobs.ExecutionRef,
 	ownerUserID *uint,
+	claimOwner *uint,
 ) (*download_queue.DownloadJob, error) {
 	if ctx == nil || ctx.downloadManager == nil {
 		return nil, errors.New("the download queue is not available")
@@ -578,21 +750,21 @@ func (ctx *MahresourcesContext) startReductionComputeQueueJob(
 		// empty — read that as "a newer job owns this row", discard its own finished
 		// plan, and leave the Reduction at `computing` with nothing alive to move it
 		// off.
-		if claimErr := ctx.claimReductionComputeJob(reductionID, generation, j.ID); claimErr != nil {
+		if claimErr := ctx.claimReductionComputeJob(reductionID, nonce, j.ID); claimErr != nil {
 			// A superseded run leaves the row alone: the newer request owns it and will
 			// report its own outcome. Every other failure has to be recorded here,
 			// because nothing downstream will — this run never reached
 			// runReductionCompute, and an unrecorded refusal leaves the Reduction at
 			// `computing` with nothing alive to move it until its deadline.
 			if !errors.Is(claimErr, ErrReductionComputeSuperseded) {
-				if writeErr := ctx.recordReductionComputeFailure(reductionID, generation, claimErr); writeErr != nil {
+				if writeErr := ctx.storeFailCompute(reductionID, nonce, generation, claimErr); writeErr != nil {
 					ctx.Logger().Warning(models.LogActionUpdate, "resource_reduction", &reductionID, "",
 						"Could not record a clustering job that failed to claim its slot: "+writeErr.Error(), nil)
 				}
 			}
 			return claimErr
 		}
-		return ctx.runReductionCompute(jobCtx, reductionID, j.ID, p)
+		return ctx.runReductionComputeOwned(jobCtx, reductionID, j.ID, generation, p, claimOwner, true)
 	}
 	if ref.JobID == "" {
 		return ctx.downloadManager.SubmitJobWithOptions(opts, runFn)

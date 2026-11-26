@@ -8,7 +8,9 @@
                         <a href="/reduction?id={{ entity.ID }}" title="{{ entity.Name }}">{{ entity.Name }}</a>
                     </h2>
                     <p class="mt-1 text-sm text-stone-700" data-testid="reduction-counts">
-                        {% if entity.StatusEffective == "draft" %}
+                        {% if entity.Upgrading %}
+                            Being upgraded to the new storage. Its Clusters appear here when that finishes.
+                        {% elif entity.StatusEffective == "draft" %}
                             Not computed yet. Nothing is removed until you review and apply.
                         {% elif entity.StatusEffective == "computing" %}
                             Finding duplicates…
@@ -39,6 +41,11 @@
                             {{ entity.ActionLabel }}<span class="sr-only"> in {{ entity.Name }}</span>
                         </button>
                     </div>
+                    {% elif entity.ActionKind == "upgrading" %}
+                    <span data-testid="reduction-action" data-action-kind="upgrading"
+                          class="inline-flex items-center justify-center min-h-[2.75rem] py-1.5 px-3 border border-stone-300 shadow-sm text-sm font-mono font-medium rounded-md text-stone-700 bg-stone-50">
+                        {{ entity.ActionLabel }}<span class="sr-only"> : {{ entity.Name }}</span>
+                    </span>
                     {% else %}
                     <a href="/reduction?id={{ entity.ID }}" data-testid="reduction-action" data-action-kind="{{ entity.ActionKind }}"
                        class="inline-flex items-center justify-center min-h-[2.75rem] py-1.5 px-3 border shadow-sm text-sm font-mono font-medium rounded-md focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 {% if entity.ActionKind == "continue" %}border-transparent text-white bg-amber-700 hover:bg-amber-800{% else %}border-stone-300 text-stone-700 bg-white hover:bg-stone-50{% endif %}">

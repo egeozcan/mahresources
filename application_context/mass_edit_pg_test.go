@@ -40,7 +40,7 @@ func newMassEditPGContextWithDSN(t *testing.T) (*MahresourcesContext, string) {
 		&models.Category{}, &models.ResourceCategory{}, &models.Series{},
 		&models.ResourceVersion{}, &models.Preview{}, &models.NoteType{}, &models.TemplateRevision{},
 		&models.GroupRelation{}, &models.GroupRelationType{}, &models.ImageHash{},
-		&models.ResourceSimilarity{}, &models.LogEntry{}, &models.NoteBlock{},
+		&models.ResourceSimilarity{}, &models.ResourceReduction{}, &models.ReductionClusterRow{}, &models.ReductionMemberRow{}, &models.ReductionDeletedID{}, &models.ResourceCleanupManifest{}, &models.ReductionMigration{}, &models.Job{}, &models.JobResourceReceipt{}, &models.LogEntry{}, &models.NoteBlock{},
 		&models.PluginKV{}, &models.Query{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)

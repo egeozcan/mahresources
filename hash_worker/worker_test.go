@@ -23,6 +23,8 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		&models.Resource{},
 		&models.ImageHash{},
 		&models.ResourceSimilarity{},
+		&models.ResourceReduction{}, &models.ReductionClusterRow{}, &models.ReductionMemberRow{}, &models.ReductionDeletedID{}, &models.ResourceCleanupManifest{}, &models.ReductionMigration{},
+		&models.Job{}, &models.JobResourceReceipt{},
 	); err != nil {
 		t.Fatalf("Failed to migrate: %v", err)
 	}

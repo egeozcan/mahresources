@@ -29,7 +29,7 @@ func newSeriesPostgresContext(t *testing.T) *MahresourcesContext {
 		&models.Query{}, &models.Resource{}, &models.Note{}, &models.Tag{},
 		&models.Group{}, &models.Category{}, &models.NoteType{}, &models.TemplateRevision{}, &models.Preview{},
 		&models.GroupRelation{}, &models.GroupRelationType{}, &models.ImageHash{},
-		&models.ResourceSimilarity{}, &models.LogEntry{}, &models.ResourceCategory{},
+		&models.ResourceSimilarity{}, &models.ResourceReduction{}, &models.ReductionClusterRow{}, &models.ReductionMemberRow{}, &models.ReductionDeletedID{}, &models.ResourceCleanupManifest{}, &models.ReductionMigration{}, &models.Job{}, &models.JobResourceReceipt{}, &models.LogEntry{}, &models.ResourceCategory{},
 		&models.Series{}, &models.NoteBlock{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)

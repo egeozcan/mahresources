@@ -40,8 +40,7 @@ func GeneratePagination(baseUrl string, numResults int64, pageSize int, currentP
 		},
 	}
 	numPages := int(math.Ceil(float64(numResults) / float64(pageSize)))
-	paginationEntries := make([]paginationEntry, 0, numPages)
-	lastIsThreeDots := false
+	paginationEntries := make([]paginationEntry, 0, 14)
 
 	if currentPage > 1 && numPages > 1 {
 		q := parsedBaseUrl.Query()
@@ -67,30 +66,38 @@ func GeneratePagination(baseUrl string, numResults int64, pageSize int, currentP
 		}
 	}
 
-	for i := 1; i <= numPages; i++ {
-		if i > 2 && math.Abs(float64(i-currentPage)) > 2 && numPages-i > 2 {
-			if i > 1 && !lastIsThreeDots {
-				paginationEntries = append(paginationEntries, paginationEntry{
-					Display:  "...",
-					Selected: false,
-					Link:     "",
-				})
-
-				lastIsThreeDots = true
-			}
-
+	// Only the displayed window is built: the first two pages, the two either side
+	// of the current one and the last two, with "..." for each hidden run between
+	// them. A page count is not a loop bound, so nothing here grows with it.
+	shown := 0 // the last page already emitted
+	windows := [][2]int{
+		{1, min(2, numPages)},
+		{max(1, currentPage-2), min(numPages, currentPage+2)},
+		{max(1, numPages-2), numPages},
+	}
+	if windows[2][0] < windows[1][0] {
+		windows[1], windows[2] = windows[2], windows[1] // a current page past the last pages
+	}
+	for _, window := range windows {
+		lo, hi := max(window[0], shown+1), window[1]
+		if lo > hi {
 			continue
 		}
-		lastIsThreeDots = false
-		q := parsedBaseUrl.Query()
-		q.Set("page", strconv.FormatInt(int64(i), 10))
-		parsedBaseUrl.RawQuery = q.Encode()
+		if lo > shown+1 {
+			paginationEntries = append(paginationEntries, paginationEntry{Display: "..."})
+		}
+		for i := lo; i <= hi; i++ {
+			q := parsedBaseUrl.Query()
+			q.Set("page", strconv.FormatInt(int64(i), 10))
+			parsedBaseUrl.RawQuery = q.Encode()
 
-		paginationEntries = append(paginationEntries, paginationEntry{
-			Display:  fmt.Sprintf("%d", i),
-			Selected: i == currentPage,
-			Link:     parsedBaseUrl.String(),
-		})
+			paginationEntries = append(paginationEntries, paginationEntry{
+				Display:  fmt.Sprintf("%d", i),
+				Selected: i == currentPage,
+				Link:     parsedBaseUrl.String(),
+			})
+		}
+		shown = hi
 	}
 
 	res.Entries = &paginationEntries

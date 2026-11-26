@@ -115,7 +115,7 @@ func newPostgresOwnershipFixture(t *testing.T, concurrency int) (*MahresourcesCo
 		&models.PluginKV{}, &models.PluginState{}, &models.RuntimeSetting{},
 		&models.DownloadHistoryEntry{}, &models.ScheduledDownload{},
 		&models.Query{}, &models.SavedMRQLQuery{}, &models.SavedSearch{}, &models.UserSetting{},
-		&models.Session{}, &models.ApiToken{}, &models.TemplatePartial{}, &models.ResourceSimilarity{},
+		&models.Session{}, &models.ApiToken{}, &models.TemplatePartial{}, &models.ResourceSimilarity{}, &models.ResourceReduction{}, &models.ReductionClusterRow{}, &models.ReductionMemberRow{}, &models.ReductionDeletedID{}, &models.ResourceCleanupManifest{}, &models.ReductionMigration{}, &models.Job{}, &models.JobResourceReceipt{},
 		&models.PluginSchedule{}, &models.PluginCommandRun{}, &models.PluginCommandImport{}, &models.PluginCommandImportMap{},
 		&models.ResourceReduction{},
 		&models.Job{}, &models.JobResourceReceipt{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},

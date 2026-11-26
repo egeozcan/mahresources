@@ -64,6 +64,7 @@ the code wins. For how the system is actually put together see
 - [2026-11-15-builtin-mcp-server.md](2026-11-15-builtin-mcp-server.md)
 - [2026-11-23-resource-reduction-ux-contract.md](2026-11-23-resource-reduction-ux-contract.md)
 - [2026-11-23-resource-reduction-ux.md](2026-11-23-resource-reduction-ux.md)
+- [2026-11-24-reduction-plan-tables-design.md](2026-11-24-reduction-plan-tables-design.md)
 - [2026-11-24-shortcode-adjacent.md](2026-11-24-shortcode-adjacent.md)
 - [2026-11-24-shortcode-calc.md](2026-11-24-shortcode-calc.md)
 - [2026-11-24-shortcode-calendar.md](2026-11-24-shortcode-calendar.md)

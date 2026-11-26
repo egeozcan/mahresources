@@ -46,17 +46,15 @@ func jobOfKindForTest(t *testing.T, ctx *MahresourcesContext, kind string) jobs.
 	return jobs.Snapshot{}
 }
 
-// createReductionRowForTest stores one Resource Reduction. The Extent is empty so a
-// clustering run over it is real — it resolves, measures, clusters and stores a plan —
-// and fast; the plan document is the caller's, so a test can make the run fail by
-// handing it one nothing can read.
-func createReductionRowForTest(t *testing.T, ctx *MahresourcesContext, plan, status string) *models.ResourceReduction {
+// createReductionRowForTest stores one Resource Reduction. Its selection is empty so a
+// clustering run over it is real — it resolves, measures, clusters and lands a plan —
+// and fast.
+func createReductionRowForTest(t *testing.T, ctx *MahresourcesContext, status string) *models.ResourceReduction {
 	t.Helper()
 	reduction := &models.ResourceReduction{
-		Name:   "workflow-test",
-		Status: status,
-		Extent: []byte(`{"resourceIds":[]}`),
-		Plan:   []byte(plan),
+		Name:       "workflow-test",
+		Status:     status,
+		PlanSchema: 1,
 	}
 	if err := ctx.db.Create(reduction).Error; err != nil {
 		t.Fatalf("create Reduction: %v", err)
@@ -92,7 +90,7 @@ func advertisedForTest(t *testing.T, ctx *MahresourcesContext, jobID string) []j
 // and what it computed is published as a typed output pointing at the Reduction.
 func TestAReductionComputeAcceptsADurableJobAndPublishesItsReduction(t *testing.T) {
 	ctx := newWorkflowJobContext(t)
-	reduction := createReductionRowForTest(t, ctx, `{"clusters":[]}`, models.ReductionStatusFailed)
+	reduction := createReductionRowForTest(t, ctx, models.ReductionStatusFailed)
 
 	if _, err := ctx.RequestReductionCompute(reduction.ID, reduction.Version, nil, false, nil); err != nil {
 		t.Fatalf("request the compute: %v", err)
@@ -137,9 +135,14 @@ func TestAReductionComputeAcceptsADurableJobAndPublishesItsReduction(t *testing.
 // another run owns is refused by the row's compare-and-set.
 func TestAReductionJobsRetryIsGovernedByTheRowsOwnState(t *testing.T) {
 	ctx := newWorkflowJobContext(t)
-	// An unreadable plan makes the run fail deterministically, which is what gives the
-	// Job an unsuccessful outcome to advertise a Retry on.
-	reduction := createReductionRowForTest(t, ctx, `{not-json`, models.ReductionStatusFailed)
+	// A Reduction that changes while its run is landing makes the run fail
+	// deterministically (the landing is refused rather than rebased), which is what
+	// gives the Job an unsuccessful outcome to advertise a Retry on.
+	reduction := createReductionRowForTest(t, ctx, models.ReductionStatusFailed)
+	reductionLandHook = func() {
+		_ = ctx.db.Exec(`UPDATE resource_reductions SET version = version + 1 WHERE id = ?`, reduction.ID).Error
+	}
+	t.Cleanup(func() { reductionLandHook = nil })
 
 	if _, err := ctx.RequestReductionCompute(reduction.ID, reduction.Version, nil, false, nil); err != nil {
 		t.Fatalf("request the compute: %v", err)
@@ -149,7 +152,7 @@ func TestAReductionJobsRetryIsGovernedByTheRowsOwnState(t *testing.T) {
 		return s.State.Terminal()
 	})
 	if snap.State != jobs.StateFailed {
-		t.Fatalf("a run with an unreadable plan ended %s, want failed", snap.State)
+		t.Fatalf("a run whose Reduction changed under it ended %s, want failed", snap.State)
 	}
 
 	// The executor recorded the failure on the row, so the row is computable again and
@@ -244,20 +247,19 @@ func TestAQueuedClusteringRunIsClusteredAsItsActorNotAsTheProcess(t *testing.T) 
 	insideToo := hashedResourceForTest(t, first, "inside-too.txt", "shared-hash", mine)
 	outside := hashedResourceForTest(t, first, "outside.txt", "shared-hash", theirs)
 
-	extent, err := json.Marshal(models.ResourceReductionExtent{
-		ResourceIDs: []uint{inside.ID, insideToo.ID, outside.ID},
-	})
-	if err != nil {
-		t.Fatalf("encode the extent: %v", err)
-	}
 	reduction := &models.ResourceReduction{
 		Name:            "confined",
 		Status:          models.ReductionStatusFailed,
-		Extent:          extent,
+		PlanSchema:      1,
 		CreatedByUserId: &reviewer.ID,
 	}
 	if err := first.db.Create(reduction).Error; err != nil {
 		t.Fatalf("create the Reduction: %v", err)
+	}
+	for _, id := range []uint{inside.ID, insideToo.ID, outside.ID} {
+		if err := first.db.Create(&models.ReductionExtentResource{ReductionID: reduction.ID, ResourceID: id}).Error; err != nil {
+			t.Fatalf("select resource %d: %v", id, err)
+		}
 	}
 
 	// The deployment's one slot, held, so the run is admitted for later rather than
@@ -292,12 +294,8 @@ func TestAQueuedClusteringRunIsClusteredAsItsActorNotAsTheProcess(t *testing.T) 
 		t.Fatalf("the redispatched clustering run ended %s (%+v)", finished.State, finished.Failure)
 	}
 
-	var stored models.ResourceReduction
-	if err := other.db.First(&stored, reduction.ID).Error; err != nil {
-		t.Fatalf("reload the Reduction: %v", err)
-	}
-	var plan models.ResourceReductionPlan
-	if err := json.Unmarshal(stored.Plan, &plan); err != nil {
+	plan, err := other.PlanForTest(reduction.ID)
+	if err != nil {
 		t.Fatalf("read the plan the run stored: %v", err)
 	}
 	if plan.Coverage.ExtentSize != 2 {
@@ -324,16 +322,15 @@ func TestARedispatchedClusteringRunIsRefusedForAPrincipalItIsNotFor(t *testing.T
 	owner, mine, _ := scopedReviewerForTest(t, ctx, "reduction-owner")
 	other, _, _ := scopedReviewerForTest(t, ctx, "somebody-else")
 
-	extent, err := json.Marshal(models.ResourceReductionExtent{GroupIDs: []uint{mine}})
-	if err != nil {
-		t.Fatalf("encode the extent: %v", err)
-	}
 	reduction := &models.ResourceReduction{
-		Name: "owned", Status: models.ReductionStatusFailed, Extent: extent,
+		Name: "owned", Status: models.ReductionStatusFailed, PlanSchema: 1,
 		CreatedByUserId: &owner.ID,
 	}
 	if err := ctx.db.Create(reduction).Error; err != nil {
 		t.Fatalf("create the Reduction: %v", err)
+	}
+	if err := ctx.db.Create(&models.ReductionExtentGroup{ReductionID: reduction.ID, GroupID: mine}).Error; err != nil {
+		t.Fatalf("select the Group: %v", err)
 	}
 
 	input, err := json.Marshal(reductionComputeJobInput{ReductionID: reduction.ID, Version: reduction.Version})

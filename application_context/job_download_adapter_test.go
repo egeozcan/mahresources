@@ -80,6 +80,7 @@ func newJobHarnessContext(t *testing.T, withRuntime bool) *MahresourcesContext {
 		&models.PluginKV{}, &models.PluginState{}, &models.RuntimeSetting{}, &models.DownloadHistoryEntry{}, &models.ScheduledDownload{},
 		&models.Query{}, &models.SavedMRQLQuery{}, &models.SavedSearch{}, &models.UserSetting{}, &models.Session{}, &models.ApiToken{}, &models.TemplatePartial{}, &models.ResourceSimilarity{},
 		&models.PluginSchedule{}, &models.PluginCommandRun{}, &models.PluginCommandImport{}, &models.ResourceReduction{},
+		&models.ReductionClusterRow{}, &models.ReductionMemberRow{}, &models.ReductionExtentResource{}, &models.ReductionExtentGroup{}, &models.ReductionExtentRow{}, &models.ReductionSeed{}, &models.ReductionDeletedID{}, &models.ResourceCleanupManifest{}, &models.ReductionMigrationRow{}, &models.ReductionMigration{},
 		&models.Job{}, &models.JobResourceReceipt{}, &models.JobEvent{}, &models.JobEventSequence{}, &models.JobLink{},
 		&models.JobOutput{}, &models.JobReplayEnvelope{}, &models.JobClaim{},
 		&models.JobCapacityLease{}, &models.JobPreference{}, &models.JobPinGuard{},
@@ -90,6 +91,10 @@ func newJobHarnessContext(t *testing.T, withRuntime bool) *MahresourcesContext {
 	}
 	if err := models.EnsureJobWriterEpoch(db); err != nil {
 		t.Fatalf("seed writer epoch: %v", err)
+	}
+	// A compute is refused until the similarity distance indexes exist.
+	if err := models.EnsureSimilarityDistanceIndexes(db); err != nil {
+		t.Fatalf("similarity distance indexes: %v", err)
 	}
 
 	// One plugin the deferred tests can schedule through: a deferred download

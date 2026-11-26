@@ -2,6 +2,8 @@ package api_handlers
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -104,12 +106,11 @@ func GetResourceReductionListHandler(ctx ResourceReductionContext) func(http.Res
 		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * reductionPageSize
 
-		reductions, err := ctx.GetResourceReductions(int(offset), reductionPageSize, &query)
-		if err != nil {
-			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
-			return
-		}
-		count, err := ctx.GetResourceReductionCount(&query)
+		// Rows, count and each row's progress from one snapshot, as the HTML list reads
+		// them: a Reduction that finishes between separate reads cannot be on the page
+		// and missing from the count. A Reduction still holding the legacy plan comes
+		// back with progress.upgrading set and no counts.
+		reductions, count, progress, err := ctx.ListResourceReductions(int(offset), reductionPageSize, &query)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
@@ -120,6 +121,46 @@ func GetResourceReductionListHandler(ctx ResourceReductionContext) func(http.Res
 			"reductions": reductions,
 			"count":      count,
 			"page":       page,
+			"progress":   progress,
+		})
+	}
+}
+
+// GetResourceReductionMembersHandler handles GET /v1/reduction/members: one page of
+// a Cluster's members after a cursor, for a review card the page cut short. The
+// Reduction is checked against the caller's owner predicate and the Cluster against
+// their subtree, so a Cluster they may not fully see is an unknown one.
+func GetResourceReductionMembersHandler(ctx ResourceReductionContext) func(http.ResponseWriter, *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		id, err := strconv.ParseUint(request.URL.Query().Get("id"), 10, 64)
+		if err != nil || id == 0 {
+			http_utils.HandleError(errors.New("id is required"), writer, request, http.StatusBadRequest)
+			return
+		}
+		owner, restricted := reductionScope(auth.PrincipalFromContext(request.Context()))
+		var expect contracts.ReductionMembersExpect
+		for name, target := range map[string]**uint{"version": &expect.Version, "winner": &expect.WinnerID} {
+			raw := request.URL.Query().Get(name)
+			if raw == "" {
+				continue
+			}
+			n, err := strconv.ParseUint(raw, 10, 64)
+			if err != nil {
+				http_utils.HandleError(fmt.Errorf("%s must be a whole number", name), writer, request, http.StatusBadRequest)
+				return
+			}
+			v := uint(n)
+			*target = &v
+		}
+		page, err := ctx.GetReductionClusterMembersChecked(uint(id), owner, restricted, request.URL.Query().Get("cluster"), request.URL.Query().Get("after"), expect)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+			return
+		}
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"members": membersWithExtent(page.Members),
+			"after":   page.After,
 		})
 	}
 }
@@ -261,6 +302,10 @@ func GetResourceReductionApplyHandler(ctx ResourceReductionContext) func(http.Re
 			"changed":   result.Changed,
 			"errors":    result.Errors,
 			"destroyed": result.DestroyedCount(),
+			// The totals the capped lists above stop short of (design D10).
+			"appliedCount": result.AppliedCount,
+			"staleCount":   result.StaleCount,
+			"more":         result.More,
 		})
 	}
 }
@@ -273,6 +318,22 @@ func actingUserID(p *auth.Principal) *uint {
 	}
 	id := p.UserID
 	return &id
+}
+
+// memberWithExtent is a members-page entry that always carries inExtent. The stored
+// member omits a false inExtent from its JSON, so a copy outside the selection would
+// read as one inside; the page needs the false to withhold "Include again" from it.
+type memberWithExtent struct {
+	contracts.ReductionMemberView
+	InExtent bool `json:"inExtent"`
+}
+
+func membersWithExtent(members []contracts.ReductionMemberView) []memberWithExtent {
+	out := make([]memberWithExtent, len(members))
+	for i, m := range members {
+		out[i] = memberWithExtent{ReductionMemberView: m, InExtent: m.ReductionMember != nil && m.ReductionMember.InExtent}
+	}
+	return out
 }
 
 func reductionURL(id uint) string {

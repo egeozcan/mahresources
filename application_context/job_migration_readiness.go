@@ -351,7 +351,7 @@ func retiredSourceNeedsScrub(db *gorm.DB, kind, sourceID string) (bool, bool, er
 			return false, false, errors.New("invalid source id")
 		}
 		var row models.ResourceReduction
-		err = db.First(&row, uint(id)).Error
+		err = db.Select(reductionColumns).First(&row, uint(id)).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return false, false, nil
 		}
@@ -436,7 +436,7 @@ func retiredSourceMatchesScrub(db *gorm.DB, mapping models.JobSourceMapping) (bo
 			return false, false, nil
 		}
 		var row models.ResourceReduction
-		err = db.First(&row, uint(id)).Error
+		err = db.Select(reductionColumns).First(&row, uint(id)).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return false, false, nil
 		}
@@ -630,7 +630,7 @@ func verifyRestoredMigrationSource(ctx *MahresourcesContext, tx *gorm.DB, kind s
 			return "", false, errors.New("invalid source id")
 		}
 		var row models.ResourceReduction
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, uint(id)).Error; err != nil {
+		if err := tx.Select(reductionColumns).Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, uint(id)).Error; err != nil {
 			return "", false, err
 		}
 		if err := verifyReductionJob(tx, ctx.JobService(), ctx.jobDepsWithDB(tx), mapping.JobID, row, false); err != nil {
