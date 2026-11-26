@@ -56,24 +56,27 @@ type adjacentEnv struct {
 // otherwise hold several navigation landmarks with one name.
 type adjacentLabels struct {
 	mu   sync.Mutex
-	seen map[string]int
+	used map[string]bool
 }
 
-// unique returns label the first time and "label (n)" for its nth use.
+// unique returns label when the render has not emitted it yet, and otherwise
+// "label (n)" with the smallest n no emitted name holds, an author's own
+// "Chapters (2)" included.
 func (l *adjacentLabels) unique(label string) string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.seen[label]++
-	if n := l.seen[label]; n > 1 {
-		return label + " (" + strconv.Itoa(n) + ")"
+	name := label
+	for n := 2; l.used[name]; n++ {
+		name = label + " (" + strconv.Itoa(n) + ")"
 	}
-	return label
+	l.used[name] = true
+	return name
 }
 
 // WithAdjacentResolver returns a context carrying r for [adjacent]. Install it
 // once per render: the landmark names are unique within it.
 func WithAdjacentResolver(ctx context.Context, r AdjacentResolver) context.Context {
-	return context.WithValue(ctx, adjacentResolverKey{}, adjacentEnv{resolve: r, labels: &adjacentLabels{seen: map[string]int{}}})
+	return context.WithValue(ctx, adjacentResolverKey{}, adjacentEnv{resolve: r, labels: &adjacentLabels{used: map[string]bool{}}})
 }
 
 func adjacentEnvFrom(ctx context.Context) (adjacentEnv, bool) {

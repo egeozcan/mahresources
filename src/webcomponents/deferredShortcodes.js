@@ -116,36 +116,12 @@ function supersedes(incoming, current) {
 }
 
 function hydrate(container) {
-  uniqueAdjacentLabels(container);
   if (window.Alpine && typeof window.Alpine.initTree === 'function') {
     try {
       window.Alpine.initTree(container);
     } catch (e) {
       /* a failed hydration must never break the page */
     }
-  }
-}
-
-// [adjacent] numbers a repeated landmark name within one server render, but a
-// deferred body is a render of its own, so its <nav> can repeat a name the page
-// already holds. Number the newcomers against the rest of the document.
-export function uniqueAdjacentLabels(container) {
-  if (typeof document === 'undefined' || typeof container?.querySelectorAll !== 'function') return;
-  const added = container.querySelectorAll('nav.shortcode-adjacent[aria-label]');
-  if (added.length === 0) return;
-  const used = new Set();
-  for (const nav of document.querySelectorAll('nav.shortcode-adjacent[aria-label]')) {
-    if (!container.contains(nav)) used.add(nav.getAttribute('aria-label'));
-  }
-  for (const nav of added) {
-    const label = nav.getAttribute('aria-label');
-    if (used.has(label)) {
-      const base = label.replace(/ \(\d+\)$/, '');
-      let n = 2;
-      while (used.has(`${base} (${n})`)) n++;
-      nav.setAttribute('aria-label', `${base} (${n})`);
-    }
-    used.add(nav.getAttribute('aria-label'));
   }
 }
 

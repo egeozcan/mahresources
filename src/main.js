@@ -78,6 +78,7 @@ import { registerGenerationDisclosureStore } from './components/generationDisclo
 import { registerComparePixelDiffStore } from './components/comparePixelDiffStore.js';
 import { setupHoverCard } from './components/hoverCard.js';
 import { startCustomCSSHoist } from './utils/customCssHoist.js';
+import { startAdjacentLabels } from './utils/adjacentLabels.js';
 import { multiSort } from './components/multiSort.js';
 import { jobCenter } from './components/jobCenter.js';
 import { jobPanel } from './components/jobPanel.js';
@@ -290,6 +291,7 @@ window.mahSelectors = { mountSingle: mountSingleEntitySelector };
 // Keep every category stylesheet in the head once it arrives, before Alpine renders anything
 // that could carry or replace one.
 startCustomCSSHoist();
+startAdjacentLabels();
 
 // Start Alpine
 Alpine.start();

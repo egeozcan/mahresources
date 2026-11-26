@@ -434,6 +434,11 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 	// [autorefresh] can be asked for again here, but [lazy]/[details] stay
 	// inline: no deferred signer is installed on this path.
 	if appCtx != nil {
+		// One query budget and render-data cache across every slot of the
+		// response, as the process_shortcodes tag gives an HTML page; without
+		// them each query shortcode here would run unbudgeted and uncached.
+		reqCtx = application_context.WithMRQLRenderDataCache(reqCtx)
+		reqCtx = shortcodes.WithQueryBudget(reqCtx, appCtx.MRQLPageQueryBudget())
 		reqCtx = shortcodes.WithRefreshSigner(reqCtx, func(entityType string, entityID uint, body string, untrusted bool) string {
 			return deferredtoken.SealWithTrust(appCtx.DeferredSigningKey(), entityType, entityID, body, untrusted)
 		})

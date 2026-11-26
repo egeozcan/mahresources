@@ -7,6 +7,7 @@ import (
 	"html"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -335,4 +336,24 @@ func TestInspectRegionNamesAreUniqueAcrossPanels(t *testing.T) {
 	}
 	assert.True(t, seen["Meta paths"], "the first panel keeps the plain names")
 	assert.True(t, seen["Meta paths, panel 2"])
+}
+
+// Renders sharing one preview context may overlap; the panel cap and the
+// panel numbers hold (run with -race).
+func TestInspectPanelCountIsSafeForConcurrentRenders(t *testing.T) {
+	reqCtx := WithInspect(context.Background())
+	ctx := inspectCtx(`{"a":1}`)
+	var wg sync.WaitGroup
+	outs := make([]string, 8)
+	for i := range outs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			outs[i] = Process(reqCtx, `[inspect][inspect]`, ctx, nil, nil)
+		}(i)
+	}
+	wg.Wait()
+	all := strings.Join(outs, "")
+	assert.Equal(t, maxInspectPanels, strings.Count(all, `<details class="inspect-shortcode">`))
+	assert.Equal(t, 1, strings.Count(all, `aria-label="Meta paths"`))
 }

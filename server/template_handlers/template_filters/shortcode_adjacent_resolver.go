@@ -29,9 +29,10 @@ type adjacentCacheKey struct {
 }
 
 // BuildAdjacentResolver returns the [adjacent] resolver for one page render.
-// Identical lookups on the page are served from a small cache, locked because
-// the slots of one page may render concurrently against one context; each
-// other lookup takes one unit of the page query budget and runs
+// Identical lookups on the page are served from a small cache. The slots of
+// one page may render concurrently against one context, so a lookup holds the
+// lock from the cache check to the store: an identical lookup waits for the
+// first one's result rather than spending budget on a second. Each other lookup takes one unit of the page query budget and runs
 // under the MRQL query timeout. Only successes are cached.
 func BuildAdjacentResolver(appCtx AdjacentContext) shortcodes.AdjacentResolver {
 	var mu sync.Mutex
@@ -39,9 +40,8 @@ func BuildAdjacentResolver(appCtx AdjacentContext) shortcodes.AdjacentResolver {
 	return func(reqCtx context.Context, q shortcodes.AdjacentQuery) (shortcodes.AdjacentResult, error) {
 		key := adjacentCacheKey{q.EntityType, q.EntityID, q.Series}
 		mu.Lock()
-		cached, ok := cache[key]
-		mu.Unlock()
-		if ok {
+		defer mu.Unlock()
+		if cached, ok := cache[key]; ok {
 			return cached, nil
 		}
 		if budget := shortcodes.QueryBudgetFrom(reqCtx); budget != nil && !budget.Allow() {
@@ -63,9 +63,7 @@ func BuildAdjacentResolver(appCtx AdjacentContext) shortcodes.AdjacentResolver {
 				map[string]interface{}{"entityType": q.EntityType, "entityId": q.EntityID, "series": q.Series})
 			return shortcodes.AdjacentResult{}, err
 		}
-		mu.Lock()
 		cache[key] = result
-		mu.Unlock()
 		return result, nil
 	}
 }

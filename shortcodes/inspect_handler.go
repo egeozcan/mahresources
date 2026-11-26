@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -28,7 +29,8 @@ type inspectKey struct{}
 
 // inspectState counts the panels one preview request has rendered. It is a
 // pointer in the context so every nested render of the request shares it.
-type inspectState struct{ panels int }
+// It is atomic because renders sharing one context may overlap.
+type inspectState struct{ panels atomic.Int64 }
 
 // WithInspect returns a context in which [inspect] renders its panel. Without
 // it [inspect] renders the empty string — not a comment, not a marker — so a
@@ -70,14 +72,14 @@ func renderInspectGated(reqCtx context.Context, sc Shortcode, ctx MetaShortcodeC
 	if withinReloadFace(reqCtx) {
 		return shortcodeErrorMarker("inspect", "[inspect] cannot be used inside a [reload] button face")
 	}
-	state.panels++
+	panel := int(state.panels.Add(1))
 	switch {
-	case state.panels == maxInspectPanels+1:
+	case panel == maxInspectPanels+1:
 		return `<p class="inspect-shortcode__note">Further &#91;inspect] panels omitted (limit ` + strconv.Itoa(maxInspectPanels) + ` per preview).</p>`
-	case state.panels > maxInspectPanels+1:
+	case panel > maxInspectPanels+1:
 		return ""
 	}
-	return renderInspectPanel(ctx, sc, elem, hasElem, state.panels)
+	return renderInspectPanel(ctx, sc, elem, hasElem, panel)
 }
 
 // inspectEscape escapes s for HTML text or a quoted attribute value, and writes

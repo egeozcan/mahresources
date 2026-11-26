@@ -92,6 +92,23 @@ func TestAdjacentResolverIsSafeForConcurrentRenders(t *testing.T) {
 	f := &fakeAdjacentContext{MahresourcesContext: appCtx, timeout: time.Minute}
 	resolve := BuildAdjacentResolver(f)
 
+	// Identical lookups racing each other run once and spend one unit.
+	budgeted := shortcodes.WithQueryBudget(context.Background(), 1)
+	var same sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		same.Add(1)
+		go func() {
+			defer same.Done()
+			if res, err := resolve(budgeted, shortcodes.AdjacentQuery{EntityType: "group", EntityID: 50}); err != nil || res.Next == nil {
+				t.Errorf("identical concurrent lookup: %+v, %v", res, err)
+			}
+		}()
+	}
+	same.Wait()
+	if len(f.calls) != 1 {
+		t.Fatalf("identical concurrent lookups ran %d times, want 1", len(f.calls))
+	}
+
 	var wg sync.WaitGroup
 	for i := 0; i < 16; i++ {
 		wg.Add(1)

@@ -318,3 +318,38 @@ func TestSimilarShortcode_HiddenTargetNeverReachesDistances(t *testing.T) {
 		t.Fatalf("distance = %v, want 1", d)
 	}
 }
+
+// The JSON render (the lightbox's /resource.json) shares one page query budget
+// across every slot, as the HTML page does: a distinct query past it renders
+// the budget error instead of running, and an identical one is still free.
+func TestSimilarShortcode_JSONRenderHonoursThePageBudget(t *testing.T) {
+	tc := setupTestEnvWithConfig(t, func(c *application_context.MahresourcesConfig) { c.MRQLPageQueryBudget = 1 })
+	f := buildSimilarOrderFixture(t, tc)
+	if err := tc.DB.Model(f.rc).Updates(map[string]any{
+		"custom_header":  `[similar]`,
+		"custom_sidebar": `[similar]`,
+		"custom_summary": `[similar max-distance="5"]`,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	rr := doReq(tc, http.MethodGet, fmt.Sprintf("/resource.json?id=%d", f.target.ID), map[string]string{"Accept": "application/json"}, nil, nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resource.json: %d %s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		Resource struct {
+			ResourceCategory map[string]any `json:"resourceCategory"`
+		} `json:"resource"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	slot := func(field string) string { s, _ := body.Resource.ResourceCategory[field].(string); return s }
+	if !strings.Contains(slot("CustomHeader"), "similar-strip") || !strings.Contains(slot("CustomSidebar"), "similar-strip") {
+		t.Fatalf("the first query and its identical repeat should render: header %q, sidebar %q", slot("CustomHeader"), slot("CustomSidebar"))
+	}
+	if s := slot("CustomSummary"); !strings.Contains(s, "inline query budget exceeded") {
+		t.Fatalf("a distinct query past the budget should render the budget error, got %q", s)
+	}
+}

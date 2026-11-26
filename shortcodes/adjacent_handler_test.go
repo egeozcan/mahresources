@@ -177,6 +177,13 @@ func TestAdjacent_LandmarkNamesAreUniquePerRender(t *testing.T) {
 	assert.Contains(t, card, `aria-label="Previous and next (3)">`)
 	assert.Contains(t, card, `aria-label="Chapters (2)">`)
 
+	// An author's own numbered label is never handed out again.
+	mixed := Process(WithAdjacentResolver(context.Background(), f.resolve),
+		`[adjacent label="Chapters"][adjacent label="Chapters (2)"][adjacent label="Chapters"]`, adjacentCtx("resource", 12), nil, nil)
+	assert.Contains(t, mixed, `aria-label="Chapters">`)
+	assert.Contains(t, mixed, `aria-label="Chapters (2)">`)
+	assert.Contains(t, mixed, `aria-label="Chapters (3)">`)
+
 	// A new render starts the names again.
 	fresh := renderAdjacent(t, f, `[adjacent]`, adjacentCtx("resource", 12))
 	assert.Contains(t, fresh, `aria-label="Previous and next">`)
