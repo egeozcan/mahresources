@@ -1516,7 +1516,7 @@ A day is a calendar date on the server's local clock, the clock `START_OF_MONTH(
 
 Prev and Next buttons swap the month in place, without a page load, through the same endpoint `[lazy]` and `[reload]` use. Focus stays on the button that was pressed, and the new month is announced. The buttons carry a sealed copy of the shortcode with the adjacent month, so the filter cannot be changed from the browser.
 
-- They render on display pages, cards, the lightbox and deferred bodies. Share pages, the live template preview and list headers show the authored month without them.
+- They render on display pages, cards, the lightbox and deferred bodies. Share pages, hover cards, the live template preview and list headers show the authored month without them.
 - There is no Prev at 1000-01 and no Next at 9999-12.
 - A `[reload]` around a calendar, or a `[lazy]` it sits in, re-renders the authored month, not the one navigated to.
 

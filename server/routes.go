@@ -612,8 +612,8 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	// scoped context so a group-limited user cannot preview entities outside its
 	// subtree (fail-closed: out-of-scope IDs resolve to a "Preview unavailable"
 	// fragment). GET → capRead via the shared authorization middleware.
-	// The card is a tooltip the keyboard cannot enter, so [adjacent]'s links
-	// would be unreachable there; it renders its unavailable comment instead.
+	// The card is a tooltip the keyboard cannot enter, so [adjacent]'s links and
+	// [calendar]'s month buttons would be unreachable there; they are left out.
 	hoverCard := template_handlers.RenderTemplate("partials/hovercard.tpl", func(request *http.Request) pongo2.Context {
 		sc := scopedCtx(appContext, request)
 		return wrapContextWithPlugins(sc, template_context_providers.HoverCardContextProvider(sc))(request)
@@ -621,7 +621,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).
 		Path("/hovercard").
 		HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-			hoverCard(w, request.WithContext(shortcodes.WithoutAdjacent(request.Context())))
+			hoverCard(w, request.WithContext(shortcodes.WithinTooltip(request.Context())))
 		})
 
 	router.Methods(http.MethodGet).Path("/").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

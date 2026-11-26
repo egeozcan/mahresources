@@ -386,3 +386,15 @@ func TestAdjacentLabelWhitespaceIsOneName(t *testing.T) {
 	assert.Contains(t, out, `aria-label="Meetings (2)">`)
 	assert.Contains(t, out, `aria-label="Previous and next">`)
 }
+
+// A copied snippet reads back the key it was made for, even one that looks
+// like an HTML entity.
+func TestInspectSnippetRoundTripsAmpersands(t *testing.T) {
+	out := inspectOn(`[inspect]`, inspectCtx(`{"a&amp;b":1}`))
+	m := regexp.MustCompile(`value="([^"]*)"`).FindStringSubmatch(out)
+	require.NotNil(t, m)
+	snippet := html.UnescapeString(m[1]) // what the reader copies
+	parsed := Parse(snippet)
+	require.Len(t, parsed, 1)
+	assert.Equal(t, "a&amp;b", parsed[0].Attrs["path"])
+}

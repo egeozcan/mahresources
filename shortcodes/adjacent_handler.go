@@ -79,17 +79,22 @@ func WithAdjacentResolver(ctx context.Context, r AdjacentResolver) context.Conte
 	return context.WithValue(ctx, adjacentResolverKey{}, adjacentEnv{resolve: r, labels: &adjacentLabels{used: map[string]bool{}}})
 }
 
-type adjacentOffKey struct{}
+type tooltipKey struct{}
 
-// WithoutAdjacent marks a render whose output cannot hold navigation, such as
-// a hover card (a tooltip the keyboard cannot enter): [adjacent] renders its
-// unavailable comment there even when a resolver is installed.
-func WithoutAdjacent(ctx context.Context) context.Context {
-	return context.WithValue(ctx, adjacentOffKey{}, true)
+// WithinTooltip marks a render whose output the keyboard cannot enter, such as
+// a hover card: the shortcodes this package adds controls for leave them out
+// there. [adjacent] renders its unavailable comment and [calendar] renders
+// without its Prev/Next buttons, even when a resolver or signer is installed.
+func WithinTooltip(ctx context.Context) context.Context {
+	return context.WithValue(ctx, tooltipKey{}, true)
+}
+
+func withinTooltip(ctx context.Context) bool {
+	return ctx != nil && ctx.Value(tooltipKey{}) != nil
 }
 
 func adjacentEnvFrom(ctx context.Context) (adjacentEnv, bool) {
-	if ctx == nil || ctx.Value(adjacentOffKey{}) != nil {
+	if ctx == nil || withinTooltip(ctx) {
 		return adjacentEnv{}, false
 	}
 	env, ok := ctx.Value(adjacentResolverKey{}).(adjacentEnv)

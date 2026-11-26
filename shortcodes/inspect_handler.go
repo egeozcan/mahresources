@@ -344,9 +344,9 @@ func inspectJSONRow(p string, v any, addressable bool, snippet func(path string,
 
 func inspectMetaSnippet(p string, v any) string {
 	if _, isArr := v.([]any); isArr {
-		return `[each path="` + p + `"][item][/each]`
+		return `[each path="` + snippetAttr(p) + `"][item][/each]`
 	}
-	return `[meta path="` + p + `"]`
+	return `[meta path="` + snippetAttr(p) + `"]`
 }
 
 // inspectMetaRows lists the Meta tree, or the subtree at path. empty is the
@@ -387,8 +387,14 @@ func inspectMetaRows(ctx MetaShortcodeContext, path string, budget *inspectRows)
 	return rows, ""
 }
 
+// snippetAttr writes a path as shortcode source: the parser unescapes HTML
+// entities in attributes, so "&" is written "&amp;" to read back as itself.
+func snippetAttr(p string) string {
+	return strings.ReplaceAll(p, "&", "&amp;")
+}
+
 func inspectItemSnippet(p string, _ any) string {
-	return `[item path="` + p + `"]`
+	return `[item path="` + snippetAttr(p) + `"]`
 }
 
 // inspectElementRows lists the current [each] element: its position, then the

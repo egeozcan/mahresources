@@ -312,3 +312,27 @@ func TestCalendarShortcode_ScopedPrincipal(t *testing.T) {
 	}
 	postDeferredToken(t, tc, scoped, html.UnescapeString(outsideNext[1]), http.StatusNotFound)
 }
+
+// A hover card is a tooltip the keyboard cannot enter: the calendar renders
+// there without its Prev/Next buttons, while the page keeps them.
+func TestCalendarShortcode_HoverCardHasNoNavigation(t *testing.T) {
+	tc := SetupTestEnv(t)
+	f := buildCalendarFixture(t, tc)
+	cat := &models.Category{Name: "cal-cat", CustomHeader: calendarMarchTpl, CustomHoverCard: calendarMarchTpl}
+	mkSim(t, tc, cat)
+	if err := tc.DB.Model(f.root).Update("category_id", cat.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	page := getHTML(t, tc, "", fmt.Sprintf("/group?id=%d", f.root.ID))
+	if !strings.Contains(page, `data-calendar-nav="next"`) {
+		t.Fatalf("the page calendar should have navigation")
+	}
+	card := getHTML(t, tc, "", fmt.Sprintf("/hovercard?type=group&id=%d", f.root.ID))
+	if !strings.Contains(card, "<calendar-shortcode") {
+		t.Fatalf("the hover card should render the calendar: %s", card)
+	}
+	if strings.Contains(card, "data-calendar-nav") || strings.Contains(card, "data-next-token") {
+		t.Errorf("the hover card calendar has navigation: %s", card)
+	}
+}

@@ -66,6 +66,17 @@ describe('calendar-shortcode', () => {
     expect(reloadInto.mock.calls[0][2]).toBe('next-of-March 2026');
   });
 
+  it('treats a page morph that rewrote the tokens as staleness', async () => {
+    const host = mount();
+    landing(calendar('April 2026'));
+    host.querySelector<HTMLButtonElement>('[data-calendar-nav="next"]')!.click();
+    await settle();
+    const isStale = reloadInto.mock.calls[0][3] as () => boolean;
+    expect(isStale()).toBe(false);
+    host.setAttribute('data-next-token', 'next-of-a-morphed-month');
+    expect(isStale()).toBe(true);
+  });
+
   it('replaces itself with the new month, keeps focus on the same button and announces the caption', async () => {
     const host = mount();
     landing(calendar('April 2026'));

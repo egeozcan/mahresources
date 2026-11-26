@@ -70,6 +70,26 @@ describe('collisions with other navigation landmarks', () => {
   });
 });
 
+describe('names from aria-labelledby and later landmarks', () => {
+  it('counts a landmark named by aria-labelledby', () => {
+    document.body.innerHTML = '<h2 id="t">Pages</h2><nav aria-labelledby="t"></nav>' + nav('Pages');
+    uniqueAdjacentLabels();
+    expect(labels()).toEqual(['Pages (2)']);
+  });
+
+  it('renames an existing [adjacent] when a plain landmark with its name is inserted', async () => {
+    document.body.innerHTML = nav('Pages') + '<div id="slot"></div>';
+    const observer = startAdjacentLabels();
+    try {
+      document.getElementById('slot')!.innerHTML = '<nav aria-label="Pages"></nav>';
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(labels()).toEqual(['Pages (2)']);
+    } finally {
+      observer.disconnect();
+    }
+  });
+});
+
 describe('startAdjacentLabels', () => {
   it('renumbers a nav that any insertion path adds, such as a hover card', async () => {
     document.body.innerHTML = nav('Previous and next') + '<div id="popover"></div>';

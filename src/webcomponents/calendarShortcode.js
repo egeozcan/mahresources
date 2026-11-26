@@ -42,7 +42,11 @@ export class CalendarShortcode extends HTMLElement {
     let saved = null;
     let applied;
     try {
-      applied = await reloadInto(this, this, token, undefined, () => {
+      // A page morph keeps this host but rewrites its tokens and month; the
+      // response for the old month must not land over the new one.
+      const attr = direction === 'prev' ? 'data-prev-token' : 'data-next-token';
+      const isStale = () => this.getAttribute(attr) !== token;
+      applied = await reloadInto(this, this, token, isStale, () => {
         saved = Array.from(this.childNodes);
       });
     } catch (e) {

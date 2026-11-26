@@ -386,7 +386,7 @@ func RenderCalendarShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShort
 // carrier context the deferred endpoint cannot load, there is no navigation.
 func calendarNavTokens(reqCtx context.Context, sc Shortcode, ctx MetaShortcodeContext, first time.Time) (prev, next string) {
 	signer := refreshSignerFrom(reqCtx)
-	if signer == nil || !isDeferrableEntity(ctx) {
+	if signer == nil || !isDeferrableEntity(ctx) || withinTooltip(reqCtx) {
 		return "", ""
 	}
 	seal := func(month time.Time) string {
