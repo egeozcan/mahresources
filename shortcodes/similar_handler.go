@@ -181,9 +181,10 @@ func RenderSimilarShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortc
 		ctx.EntityID, html.EscapeString(opts.label), items.String())
 }
 
-// similarFocus is the focus ring both links carry: amber-500 stays above 3:1
-// on the white page and on the lightbox's stone-900 panel.
-const similarFocus = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500"
+// similarFocus is the focus ring both links carry: amber-700, as [calendar]
+// uses, is 5:1 on the white page and 3.4:1 on the lightbox's stone-900 panel
+// (amber-500 is 2.2:1 on white).
+const similarFocus = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-700"
 
 func writeSimilarItem(b *strings.Builder, item QueryResultItem, targetID uint, targetName string, size similarSize) {
 	name := readStringField(item.Entity, "Name")

@@ -28,44 +28,74 @@ type adjacentCacheKey struct {
 	series     bool
 }
 
+// adjacentCall is one lookup of the page cache: done closes when result and
+// err are set.
+type adjacentCall struct {
+	done   chan struct{}
+	result shortcodes.AdjacentResult
+	err    error
+}
+
 // BuildAdjacentResolver returns the [adjacent] resolver for one page render.
-// Identical lookups on the page are served from a small cache. The slots of
-// one page may render concurrently against one context, so a lookup holds the
-// lock from the cache check to the store: an identical lookup waits for the
-// first one's result rather than spending budget on a second. Each other lookup takes one unit of the page query budget and runs
-// under the MRQL query timeout. Only successes are cached.
+// Identical lookups on the page are served from a small cache, and each other
+// lookup takes one unit of the page query budget and runs under the MRQL query
+// timeout. The slots of one page may render concurrently against one context:
+// distinct lookups run in parallel, and an identical lookup waits for the one
+// in flight (or its own context) rather than spending budget on a second.
+// Only successes are cached.
 func BuildAdjacentResolver(appCtx AdjacentContext) shortcodes.AdjacentResolver {
 	var mu sync.Mutex
-	cache := map[adjacentCacheKey]shortcodes.AdjacentResult{}
+	calls := map[adjacentCacheKey]*adjacentCall{}
 	return func(reqCtx context.Context, q shortcodes.AdjacentQuery) (shortcodes.AdjacentResult, error) {
 		key := adjacentCacheKey{q.EntityType, q.EntityID, q.Series}
 		mu.Lock()
-		defer mu.Unlock()
-		if cached, ok := cache[key]; ok {
-			return cached, nil
-		}
-		if budget := shortcodes.QueryBudgetFrom(reqCtx); budget != nil && !budget.Allow() {
-			if budget.MarkExceeded() {
-				logPageQueryBudgetExceeded(appCtx, budget.Limit())
+		if c, ok := calls[key]; ok {
+			mu.Unlock()
+			select {
+			case <-c.done:
+				return c.result, c.err
+			case <-reqCtx.Done():
+				return shortcodes.AdjacentResult{}, reqCtx.Err()
 			}
-			return shortcodes.AdjacentResult{}, fmt.Errorf(
-				"%w: inline query budget exceeded (%d per page); refine templates or raise -mrql-page-query-budget",
-				shortcodes.ErrAdjacentBudget, budget.Limit())
 		}
-		// WithTimeout keeps an earlier parent deadline, such as the deferred
-		// endpoint's.
-		bounded, cancel := context.WithTimeout(reqCtx, appCtx.MRQLQueryTimeout())
-		defer cancel()
-		result, err := appCtx.AdjacentEntities(bounded, q)
-		if err != nil {
-			appCtx.Logger().Warning(models.LogActionSystem, "shortcode", nil, "",
-				fmt.Sprintf("[adjacent] lookup for %s %d failed: %v", q.EntityType, q.EntityID, err),
-				map[string]interface{}{"entityType": q.EntityType, "entityId": q.EntityID, "series": q.Series})
-			return shortcodes.AdjacentResult{}, err
+		c := &adjacentCall{done: make(chan struct{})}
+		calls[key] = c
+		mu.Unlock()
+
+		c.result, c.err = lookupAdjacent(reqCtx, appCtx, q)
+		if c.err != nil {
+			mu.Lock()
+			delete(calls, key)
+			mu.Unlock()
 		}
-		cache[key] = result
-		return result, nil
+		close(c.done)
+		return c.result, c.err
 	}
+}
+
+// lookupAdjacent spends one unit of the page budget and runs one lookup under
+// the MRQL query timeout.
+func lookupAdjacent(reqCtx context.Context, appCtx AdjacentContext, q shortcodes.AdjacentQuery) (shortcodes.AdjacentResult, error) {
+	if budget := shortcodes.QueryBudgetFrom(reqCtx); budget != nil && !budget.Allow() {
+		if budget.MarkExceeded() {
+			logPageQueryBudgetExceeded(appCtx, budget.Limit())
+		}
+		return shortcodes.AdjacentResult{}, fmt.Errorf(
+			"%w: inline query budget exceeded (%d per page); refine templates or raise -mrql-page-query-budget",
+			shortcodes.ErrAdjacentBudget, budget.Limit())
+	}
+	// WithTimeout keeps an earlier parent deadline, such as the deferred
+	// endpoint's.
+	bounded, cancel := context.WithTimeout(reqCtx, appCtx.MRQLQueryTimeout())
+	defer cancel()
+	result, err := appCtx.AdjacentEntities(bounded, q)
+	if err != nil {
+		appCtx.Logger().Warning(models.LogActionSystem, "shortcode", nil, "",
+			fmt.Sprintf("[adjacent] lookup for %s %d failed: %v", q.EntityType, q.EntityID, err),
+			map[string]interface{}{"entityType": q.EntityType, "entityId": q.EntityID, "series": q.Series})
+		return shortcodes.AdjacentResult{}, err
+	}
+	return result, nil
 }
 
 // WithAdjacentResolverFor installs the [adjacent] resolver on reqCtx when

@@ -101,13 +101,13 @@ func TestSimilarMarkup(t *testing.T) {
 	assert.Equal(t, 2, strings.Count(out, "<li "))
 	assert.Less(t, strings.Index(out, "id=17"), strings.Index(out, "id=18"), "items keep the executor's order")
 
-	assert.Contains(t, out, `<a href="/resource?id=17" class="block rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500">`)
+	assert.Contains(t, out, `<a href="/resource?id=17" class="block rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-700">`)
 	assert.Contains(t, out, `src="/v1/resource/preview?id=17&amp;width=96&amp;height=96&amp;v=ab%26c%22d"`)
 	assert.Contains(t, out, `width="96" height="96"`)
 	assert.Contains(t, out, `loading="lazy" decoding="async"`)
 	assert.Contains(t, out, `class="rounded object-cover h-24 w-24 bg-stone-100"`)
 	assert.Contains(t, out, `alt="Beach sunset (2), near-certain duplicate, distance 1"`)
-	assert.Contains(t, out, `<a href="/resource/compare?r1=42&amp;r2=17" class="text-xs underline inline-flex items-center min-h-6 px-1 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500">Compare<span class="sr-only"> Beach sunset (2) with Beach sunset</span></a>`)
+	assert.Contains(t, out, `<a href="/resource/compare?r1=42&amp;r2=17" class="text-xs underline inline-flex items-center min-h-6 px-1 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-700">Compare<span class="sr-only"> Beach sunset (2) with Beach sunset</span></a>`)
 	assert.Contains(t, out, `alt="Dunes, similar, distance 5"`)
 
 	// The rendered box matches the requested pixels: Tailwind's h-48 is 192px.

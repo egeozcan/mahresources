@@ -4146,7 +4146,8 @@ details.inspect-shortcode > summary:focus-visible {
   width: 100%;
   min-width: 14rem;
   box-sizing: border-box;
-  border: 1px solid #a8a29e;
+  /* stone-500: 4.6:1 on the field, so the control's edge passes 1.4.11. */
+  border: 1px solid #78716c;
   border-radius: 0.25rem;
   padding: 0.125rem 0.25rem;
   background: #fafaf9;

@@ -19,6 +19,7 @@ import (
 type fakeAdjacentContext struct {
 	*application_context.MahresourcesContext
 	mu       sync.Mutex
+	gate     func() // when set, runs first, outside mu
 	timeout  time.Duration
 	err      error
 	calls    []shortcodes.AdjacentQuery
@@ -26,6 +27,9 @@ type fakeAdjacentContext struct {
 }
 
 func (f *fakeAdjacentContext) AdjacentEntities(ctx context.Context, q shortcodes.AdjacentQuery) (shortcodes.AdjacentResult, error) {
+	if f.gate != nil {
+		f.gate()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, q)
@@ -123,6 +127,48 @@ func TestAdjacentResolverIsSafeForConcurrentRenders(t *testing.T) {
 		}(uint(i%8 + 1))
 	}
 	wg.Wait()
+}
+
+// Distinct lookups do not queue behind each other, and a waiter for an
+// identical lookup gives up with its own context.
+func TestAdjacentResolverRunsDistinctLookupsInParallel(t *testing.T) {
+	appCtx, _ := setupExecutorTestContext(t)
+	entered, release := make(chan struct{}, 2), make(chan struct{})
+	f := &fakeAdjacentContext{MahresourcesContext: appCtx, timeout: time.Minute, gate: func() {
+		entered <- struct{}{}
+		<-release
+	}}
+	resolve := BuildAdjacentResolver(f)
+
+	var wg sync.WaitGroup
+	for _, id := range []uint{1, 2} {
+		wg.Add(1)
+		go func(id uint) {
+			defer wg.Done()
+			_, _ = resolve(context.Background(), shortcodes.AdjacentQuery{EntityType: "note", EntityID: id})
+		}(id)
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			close(release)
+			t.Fatal("the second distinct lookup waited for the first")
+		}
+	}
+
+	// An identical lookup now waits on the one in flight; its own deadline
+	// ends the wait.
+	short, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := resolve(short, shortcodes.AdjacentQuery{EntityType: "note", EntityID: 1}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("a waiter past its deadline: err = %v", err)
+	}
+	close(release)
+	wg.Wait()
+	if len(f.calls) != 2 {
+		t.Fatalf("got %d lookups, want 2", len(f.calls))
+	}
 }
 
 func TestAdjacentResolverLogsAndDoesNotCacheFailures(t *testing.T) {

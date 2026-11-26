@@ -207,7 +207,7 @@ func BuildAdjacentResolver(appCtx AdjacentContext) shortcodes.AdjacentResolver
 ```
 
 The closure:
-- keeps a per-page cache keyed by `(type, id, series)`. *Final version:* the slots of one page may render concurrently, so a lookup holds a mutex from the cache check to the store, and an identical concurrent lookup waits for the first result instead of spending budget.
+- keeps a per-page cache keyed by `(type, id, series)`. *Final version:* the slots of one page may render concurrently, so the cache holds one in-flight entry per key: distinct lookups run in parallel, and an identical concurrent lookup waits for the first result (or its own context) instead of spending budget.
 - on a cache miss, checks `shortcodes.QueryBudgetFrom(reqCtx)`. When a budget is present and `Allow()` refuses, it calls `MarkExceeded()`, calls `logPageQueryBudgetExceeded` once, and returns the wrapped `ErrAdjacentBudget`.
 - runs the lookup as `bounded, cancel := context.WithTimeout(reqCtx, appCtx.MRQLQueryTimeout()); defer cancel()`, then `AdjacentEntities(bounded, q)`. `WithTimeout` keeps any earlier parent deadline, such as the deferred endpoint's.
 - logs any other error at Warning, with entity type "shortcode", and caches only successes.
