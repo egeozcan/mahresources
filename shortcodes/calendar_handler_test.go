@@ -118,13 +118,16 @@ func TestCalendarComposeQueries(t *testing.T) {
 	assert.Contains(t, q.List, `created >= "2026-12-01" AND created < "2027-01-01"`)
 	assert.Equal(t, `(type = "note") AND created >= "2026-12-31" AND created < "2027-01-01"`, q.Day(time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)))
 
-	// December 9999 has no upper bound: "10000-01-01" sorts before every
-	// 9999 date, so the bound would empty the month.
+	// December 9999 cannot be bounded by "10000-01-01", which sorts before
+	// every 9999 date: a Meta string is capped past the last day instead.
 	q, err = composeCalendarQueries(`type = "note"`, "meta.due", time.Date(9999, 12, 1, 0, 0, 0, 0, time.UTC))
 	require.NoError(t, err)
-	assert.Equal(t, `(type = "note") AND meta.due >= "9999-12-01"`+guard+` ORDER BY meta.due ASC`, q.List)
-	assert.Equal(t, `(type = "note") AND meta.due >= "9999-12-31"`+guard, q.Day(time.Date(9999, 12, 31, 0, 0, 0, 0, time.UTC)))
+	assert.Equal(t, `(type = "note") AND meta.due >= "9999-12-01" AND meta.due < "9999-12-32"`+guard+` ORDER BY meta.due ASC`, q.List)
+	assert.Equal(t, `(type = "note") AND meta.due >= "9999-12-31" AND meta.due < "9999-12-32"`+guard, q.Day(time.Date(9999, 12, 31, 0, 0, 0, 0, time.UTC)))
 	assert.Equal(t, `(type = "note") AND meta.due >= "9999-12-30" AND meta.due < "9999-12-31"`+guard, q.Day(time.Date(9999, 12, 30, 0, 0, 0, 0, time.UTC)))
+	q, err = composeCalendarQueries(`type = "note"`, "", time.Date(9999, 12, 1, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	assert.Equal(t, `(type = "note") AND created >= "9999-12-01" ORDER BY created ASC`, q.List)
 }
 
 // The parentheses are transparent to ExtractEntityType, and an OR inside the

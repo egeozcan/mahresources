@@ -115,7 +115,7 @@ Attrs:
 
 Rules:
 
-- A Meta string counts only when it is wholly a decimal number (`"12.50"` yes, `"12,5"` no). Missing, null, boolean, object, array, division by zero and overflow give no value, which renders `default` unless `coalesce` catches it: `coalesce(meta.discount, 0)`, `coalesce(meta.a / meta.b, 0)`.
+- A Meta string counts only when it is wholly a decimal number of at most 64 bytes (`"12.50"` yes, `"12,5"` no). Missing, null, boolean, object, array, division by zero and overflow give no value, which renders `default` unless `coalesce` catches it: `coalesce(meta.discount, 0)`, `coalesce(meta.a / meta.b, 0)`.
 - Syntax errors, unknown names (`qty` without `meta.`), unknown functions, wrong arity, a bad `decimals`/`format`, or an expression past 512 bytes / 128 tokens / 32 levels / 32 references render the `⚠ calc` marker; the linter flags them.
 - Only Meta keys of ASCII letters, digits and `_`, not starting with a digit, can be referenced (`meta.unit-price` is `meta.unit - price`). Design the schema with `snake_case` keys for anything `[calc]` reads.
 - Output is a bare number, so it works inside attributes (`<meter value="[calc …]">`). Inside `[each]`, `item` is visible only at the top level of the body, as for `[item]`.

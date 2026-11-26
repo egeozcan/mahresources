@@ -372,7 +372,7 @@ There is no `raw`, `hide-empty`, `editable` or `layout`: the output is always a 
 
 | Operand | Reads | Counts as a number when |
 |---------|-------|-------------------------|
-| `meta.<path>` | The entity's Meta at a dot path, e.g. `meta.price.net` | It is a JSON number, or a string that is wholly a decimal number after trimming spaces (`"12.50"`, `" 3 "`, `"1e3"`). `"12,5"`, `"0x10"`, `"NaN"`, `"1_000"`, `""` and a string longer than 64 characters are not numbers. |
+| `meta.<path>` | The entity's Meta at a dot path, e.g. `meta.price.net` | It is a JSON number, or a string that is wholly a decimal number after trimming spaces (`"12.50"`, `" 3 "`, `"1e3"`). `"12,5"`, `"0x10"`, `"NaN"`, `"1_000"`, `""` and a string longer than 64 bytes are not numbers. |
 | `property.<Path>` | An entity field, the same traversal as `[property]` (e.g. `property.Width`, `property.Tags.0.ID`) | It is an integer or floating-point field. Strings, booleans, times and structs are never numbers. A nil pointer (an ownerless entity's `OwnerId`) has no value. Credential fields are withheld exactly as in `[property]`. |
 | `item`, `item.<path>` | The current `[each]` element, or a dot path into it | As for `meta.`. See [Inside `[each]`](#inside-each). |
 | `12`, `0.5` | A literal | Always. Literals are plain decimals: no exponent, no leading `.`, at most 32 characters. |

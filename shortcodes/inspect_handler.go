@@ -320,8 +320,11 @@ func inspectMetaRows(ctx MetaShortcodeContext, path string, budget *inspectRows)
 	for _, seg := range strings.Split(path, ".") {
 		addressable = addressable && inspectKeyAddressable(seg)
 	}
+	segments := len(strings.Split(path, "."))
 	obj, isObj := v.(map[string]any)
-	if !isObj {
+	// A path already at the depth limit lists itself, not its children, so no
+	// row is ever deeper than inspectMaxDepth segments.
+	if !isObj || segments >= inspectMaxDepth {
 		if budget.take() {
 			rows = append(rows, inspectJSONRow(path, v, addressable, inspectMetaSnippet))
 		}
@@ -330,7 +333,7 @@ func inspectMetaRows(ctx MetaShortcodeContext, path string, budget *inspectRows)
 	if len(obj) == 0 {
 		return nil, `The object at path "` + path + `" is empty.`
 	}
-	walkInspectJSON(obj, path, len(strings.Split(path, ".")), addressable, budget, inspectMetaSnippet, &rows)
+	walkInspectJSON(obj, path, segments, addressable, budget, inspectMetaSnippet, &rows)
 	return rows, ""
 }
 

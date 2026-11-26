@@ -157,6 +157,14 @@ func TestInspectMetaDepthIsBounded(t *testing.T) {
 	out := inspectOn(`[inspect]`, ctx)
 	assert.Contains(t, out, `<code>a.b.c.d.e.f</code>`)
 	assert.NotContains(t, out, `<code>a.b.c.d.e.f.g</code>`)
+
+	// Narrowing with path= does not reach past the limit either.
+	out = inspectOn(`[inspect path="a.b.c.d.e.f"]`, ctx)
+	assert.Contains(t, out, `<code>a.b.c.d.e.f</code>`)
+	assert.NotContains(t, out, `<code>a.b.c.d.e.f.g</code>`)
+	out = inspectOn(`[inspect path="a.b.c.d.e"]`, ctx)
+	assert.Contains(t, out, `<code>a.b.c.d.e.f</code>`)
+	assert.NotContains(t, out, `<code>a.b.c.d.e.f.g</code>`)
 }
 
 func TestInspectEscapesValuesAndSnippets(t *testing.T) {

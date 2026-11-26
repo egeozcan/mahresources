@@ -134,11 +134,16 @@ func composeCalendarQueries(filter, date string, first time.Time) (calendarQueri
 		guard = " AND " + field + ` ~ "????-??-??*"`
 	}
 	window := func(from, to time.Time) string {
-		upper := ""
-		// A bound in year 10000 would not compare as a date ("10000-01-01"
-		// sorts before "9999-…"), and no stored date passes 9999-12-31 anyway.
-		if to.Year() <= 9999 {
-			upper = ` AND ` + field + ` < "` + to.Format("2006-01-02") + `"`
+		// A bound in year 10000 would not compare as a date: "10000-01-01"
+		// sorts before "9999-…". A Meta string is capped just past the last
+		// day instead, which also keeps out date-shaped text such as
+		// "9999-13-01"; a timestamp cannot pass 9999-12-31, so it needs none.
+		upper := ` AND ` + field + ` < "` + to.Format("2006-01-02") + `"`
+		if to.Year() > 9999 {
+			upper = ""
+			if isMeta {
+				upper = ` AND ` + field + ` < "9999-12-32"`
+			}
 		}
 		return "(" + filter + ") AND " + field + ` >= "` + from.Format("2006-01-02") + `"` + upper + guard
 	}

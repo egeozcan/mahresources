@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 // fakeAdjacentContext answers the lookup itself and keeps the real logger.
 type fakeAdjacentContext struct {
 	*application_context.MahresourcesContext
+	mu       sync.Mutex
 	timeout  time.Duration
 	err      error
 	calls    []shortcodes.AdjacentQuery
@@ -24,6 +26,8 @@ type fakeAdjacentContext struct {
 }
 
 func (f *fakeAdjacentContext) AdjacentEntities(ctx context.Context, q shortcodes.AdjacentQuery) (shortcodes.AdjacentResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, q)
 	if d, ok := ctx.Deadline(); ok {
 		f.deadline = append(f.deadline, time.Until(d))
@@ -79,6 +83,29 @@ func TestAdjacentResolverCachesBudgetsAndBounds(t *testing.T) {
 	if rows := logRows(t, db, "mrql"); len(rows) != 1 {
 		t.Fatalf("the exhausted budget is logged once per page, got %d rows", len(rows))
 	}
+}
+
+// The slots of one page can render concurrently against one context; the
+// page cache must hold up (run with -race).
+func TestAdjacentResolverIsSafeForConcurrentRenders(t *testing.T) {
+	appCtx, _ := setupExecutorTestContext(t)
+	f := &fakeAdjacentContext{MahresourcesContext: appCtx, timeout: time.Minute}
+	resolve := BuildAdjacentResolver(f)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func(id uint) {
+			defer wg.Done()
+			for j := 0; j < 2; j++ {
+				res, err := resolve(context.Background(), shortcodes.AdjacentQuery{EntityType: "note", EntityID: id})
+				if err != nil || res.Next == nil || res.Next.ID != id+1 {
+					t.Errorf("note %d: %+v, %v", id, res, err)
+				}
+			}
+		}(uint(i%8 + 1))
+	}
+	wg.Wait()
 }
 
 func TestAdjacentResolverLogsAndDoesNotCacheFailures(t *testing.T) {
