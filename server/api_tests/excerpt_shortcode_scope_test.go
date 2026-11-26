@@ -125,6 +125,28 @@ func TestExcerptShortcode_DeferredAndMRQLRenderAreScoped(t *testing.T) {
 	}
 }
 
+func TestExcerptShortcode_HoverCardOmitsMoreLinkFromCustomSummary(t *testing.T) {
+	tc := SetupTestEnv(t)
+	nt := &models.NoteType{Name: "Hover Excerpt", CustomSummary: `<p class="ex-summary">[excerpt words="2" more="Read more"]</p>`}
+	if err := tc.DB.Create(nt).Error; err != nil {
+		t.Fatal(err)
+	}
+	note := &models.Note{Name: "Hover note", Description: "first second third", NoteTypeId: &nt.ID}
+	if err := tc.DB.Create(note).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	card := getHTML(t, tc, "", fmt.Sprintf("/notes?noteTypeId=%d", nt.ID))
+	wantLink := fmt.Sprintf(`<p class="ex-summary">first second… <a href="/note?id=%d" class="underline" aria-label="Read more: Hover note">Read more</a></p>`, note.ID)
+	if !strings.Contains(card, wantLink) {
+		t.Fatal("normal card lacks the CustomSummary excerpt with its link")
+	}
+	hover := getHTML(t, tc, "", fmt.Sprintf("/hovercard?type=note&id=%d", note.ID))
+	if !strings.Contains(hover, `<p class="ex-summary">first second…</p>`) || strings.Contains(hover, `>Read more</a>`) {
+		t.Errorf("hover card must inherit the CustomSummary excerpt without its link: %s", hover)
+	}
+}
+
 func TestExcerptShortcode_SharePageHasNoMoreLink(t *testing.T) {
 	tc := SetupTestEnv(t)
 	nt := &models.NoteType{Name: "Shared Excerpt", ApplyTemplatesToShares: true,

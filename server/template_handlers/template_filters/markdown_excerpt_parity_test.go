@@ -47,6 +47,16 @@ func TestExcerptMatchesTheVisibleTextOfMarkdown2(t *testing.T) {
 	}
 }
 
+func TestExcerptDropsNestedHTMLTemplateContents(t *testing.T) {
+	// Unlike the parity corpus, the expected visible text is specified
+	// independently: a tokenizer alone does not know that templates are inert.
+	const src = `Before <template><div>draft <template>nested</template> still hidden</div></template> after`
+	ctx := shortcodes.MetaShortcodeContext{Entity: &models.Note{Description: src}}
+	if got := shortcodes.Process(context.Background(), `[excerpt]`, ctx, nil, nil); got != "Before after" {
+		t.Errorf("excerpt = %q, want %q", got, "Before after")
+	}
+}
+
 // visibleTextForParity is the text of rendered HTML as [excerpt] reads it: raw
 // text elements and tags dropped, block boundaries a space, whitespace
 // collapsed, then escaped.

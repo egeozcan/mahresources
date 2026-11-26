@@ -428,6 +428,10 @@ func lintText(input string, opts LintOptions) []LintIssue {
 				seen[msg] = true
 				add(tk.start, tk.end, SeverityWarning, msg)
 			}
+			if tk.name == "excerpt" && strings.TrimSpace(tk.attrs["more"]) != "" &&
+				(valueContexts[tk.start].attr != "" || valueContextsOff[tk.start].attr != "") {
+				add(tk.start, tk.end, SeverityError, "[excerpt] more= cannot be used in an attribute: it can emit link markup")
+			}
 			// The scripting-disabled reading, for the occurrences whose two
 			// browser readings differ. Its warnings carry the scripting-mode
 			// qualifier; identical strings are not repeated.
