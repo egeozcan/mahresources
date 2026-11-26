@@ -465,7 +465,7 @@ There is no `raw`, `hide-empty`, `editable` or `layout`: the output is always a 
 |---------|-------|-------------------------|
 | `meta.<path>` | The entity's Meta at a dot path, e.g. `meta.price.net` | It is a JSON number, or a string that is wholly a decimal number after trimming spaces (`"12.50"`, `" 3 "`, `"1e3"`). `"12,5"`, `"0x10"`, `"NaN"`, `"1_000"`, `""` and a string longer than 64 bytes are not numbers. |
 | `property.<Path>` | An entity field, the same traversal as `[property]` (e.g. `property.Width`, `property.Tags.0.ID`) | It is an integer or floating-point field. Strings, booleans, times and structs are never numbers. A nil pointer (an ownerless entity's `OwnerId`) has no value. Credential fields are withheld exactly as in `[property]`. |
-| `item`, `item.<path>` | The current `[each]` element, or a dot path into it | As for `meta.`. See [Inside `[each]`](#inside-each). |
+| `item`, `item.<path>` | The current `[each]` element or `[relations]` edge, or a dot path into it | As for `meta.`. See [Inside a loop](#inside-a-loop). |
 | `12`, `0.5` | A literal | Always. Literals are plain decimals: no exponent, no leading `.`, at most 32 characters. |
 
 Names are case-sensitive. A bare name (`qty`), any other root (`entity.x`) or any other function (`sqrt`) is a syntax error.
@@ -502,9 +502,9 @@ The output is bare text with no wrapper element: digits, an optional leading `-`
 
 Because the output is plain text, `[calc]` can sit inside an HTML attribute: `style="width: [calc expr='meta.done / meta.total * 100' decimals='0' default='0']%"`.
 
-### Inside `[each]`
+### Inside a loop
 
-At the top level of an `[each]` body, `item` is the current element:
+At the top level of the item branch of `[each]` or `[relations]`, `item` is the current array element or relation edge:
 
 ```
 [each path="lines"]
@@ -512,7 +512,7 @@ At the top level of an `[each]` body, `item` is the current element:
 [/each]
 ```
 
-The same rules as for `[item]` apply. A `[calc]` inside another block within the body (`[conditional]`, `[lazy]`, `[details]`, `[autorefresh]`, `[using]`) cannot see the element, so its `item` operands have no value; `meta.` and `property.` still read the entity. A nested `[each]` binds its own element. Outside any `[each]`, `item` has no value and the linter warns.
+The same rules as for `[item]` apply. In `[else]` or inside a nested block (such as `[conditional]`, `[tabs]`, or `[using]`), `item` operands have no value, though `coalesce` can supply one. `meta.` and `property.` still read the entity. A nested `[each]` or `[relations]` binds its own item. The linter warns when the expression uses `item` where it has no value.
 
 ### Limits
 
@@ -1046,11 +1046,11 @@ Renders its inner content once per element of an array meta value.
 
 ### How It Works
 
-`[each]` is a block shortcode. Reference the current element with `[item]` inside the block. A non-array or empty value renders the `[else]` branch, or nothing when there is no `[else]`. `[else]` is a divider with no closing tag; end the block with `[/each]`. Inner `[meta]`, `[conditional]`, `[mrql]`, and `[property]` shortcodes run against the **parent entity**, not the element -- use `[item]` for element data.
+`[each]` is a block shortcode. Reference the current element with `[item]` directly in the item branch, before `[else]`. A non-array or empty value renders the `[else]` branch, or nothing when there is no `[else]`. `[else]` is a divider with no closing tag; end the block with `[/each]`. Inner `[meta]`, `[conditional]`, `[mrql]`, and `[property]` shortcodes run against the **parent entity**, not the element -- use `[item]` for element data.
 
 ### `[item]`
 
-`[item]` renders the current element inside an `[each]` block (or the current relation inside a [`[relations]`](#relations----group-relations) block). It uses the same `format`, `layout`, and `default` helpers as `[property]`, and is HTML-escaped unless `raw="true"`. Outside an `[each]` block it renders nothing.
+`[item]` renders the current `[each]` element or [`[relations]`](#relations----group-relations) edge. It uses the same `format`, `layout`, and `default` helpers as `[property]`, and is HTML-escaped unless `raw="true"`. It binds only at the top level of the item branch (before `[else]`). In `[else]`, in another nested block (including eager and lazy tabs), or outside a loop, it renders nothing. A nested loop binds its own item.
 
 | Attribute | Required | Default | Description |
 |-----------|----------|---------|-------------|
@@ -1091,8 +1091,6 @@ For an array of objects, `[item path="..."]` reads a field of each element. Inne
 [/each]
 ```
 
-`[item]` binds to the nearest enclosing `[each]`; `[item]` tokens inside a nested `[each]` belong to that inner loop.
-
 ## `[relations]` -- Group relations
 
 `[relations]` lists the current group's typed [relations](../concepts/relationships.md) to other groups, grouped by relation type, each entry a link to the group at the far end. Use it to show "depends on X, Y" on the cards of a list or an MRQL result, to show only one type of relation, or to place relations in a slot of your own.
@@ -1123,10 +1121,10 @@ A relation is directed: "Backend API **Depends on** Auth Service" is outgoing fr
 
 ```html
 <div class="relations-shortcode" data-direction="out">
-  <ul class="relations-shortcode__types">
+  <ul class="relations-shortcode__types" role="list">
     <li class="relations-shortcode__type">
       <span class="relations-shortcode__label">Depends on</span>
-      <ul class="relations-shortcode__list">
+      <ul class="relations-shortcode__list" role="list">
         <li class="relations-shortcode__entry"><a href="/group?id=12">Auth Service</a> <span class="relations-shortcode__category">(Service)</span></li>
       </ul>
     </li>
@@ -1135,7 +1133,7 @@ A relation is directed: "Backend API **Depends on** Auth Service" is outgoing fr
 ```
 
 - One list per relation type, in type-name order, and within a type in the order the relations were created.
-- The markup is nested native lists, so a screen reader announces each type's label and then its list with the number of items. It has no headings and no IDs, so it fits any slot and any number of cards on one page.
+- The markup is nested native lists with explicit list roles (for Safari/VoiceOver when bullets are hidden), so a screen reader announces each type's label and then its list with the number of items. It has no headings and no IDs, so it fits any slot and any number of cards on one page.
 - The far group's category is shown in parentheses when it has one. A group with a blank name is shown as "Group 12". All text is HTML-escaped.
 - The `relations-shortcode__*` classes are hooks for `CustomCSS`.
 - In a hover card, which the keyboard cannot enter, the names are plain text rather than links.
@@ -1143,7 +1141,7 @@ A relation is directed: "Backend API **Depends on** Auth Service" is outgoing fr
 
 ### Block form
 
-As a block, each relation renders the body instead of the default entry, inside its own list item. `[item]` reads the relation:
+As a block, each relation renders the body instead of the default entry, inside its own list item. `[item]` reads the relation directly in the item branch, not inside a nested shortcode block or `[else]`:
 
 | `[item path=…]` | Value |
 |---|---|
@@ -1171,20 +1169,21 @@ As a block, each relation renders the body instead of the default entry, inside 
 - Attributes are not expanded, so `[using type="group" id="[item path='GroupID']"]` does not work.
 - In an `href`, write `/group?id=[item path='GroupID']` rather than `[item path='GroupURL']`: the linter cannot tell that a bare `[item]` holds a safe URL and warns about it.
 - Values are spliced in after the body renders, so a relation named `[property path="Name"]` shows that text literally and never runs it.
-- `[calc]` reads the relation too, e.g. `[calc expr="item.GroupMeta.cost * 2"]`.
+- `[calc]` reads the relation in the same position, e.g. `[calc expr="item.GroupMeta.cost * 2"]`.
+- `raw="true"` opts into **unsanitized** output. Do not use it for far-group `GroupDescription` or `GroupMeta` unless you trust what other users may put into those fields.
 
 ### Scoping
 
-A relation is listed only when the viewer may see **both** of its groups. A group-confined user or guest therefore sees only relations inside their subtree, and a relation to a group outside it is left out without a trace: no count of hidden relations is shown, since that would tell them such groups exist. A guest whose account has no scope group sees none.
+A relation is listed only when the viewer may see **both** of its groups. A group-confined user or guest therefore sees only relations inside their subtree, and relations to groups outside it are omitted. No count of hidden relations is shown. A guest whose account has no scope group sees none.
 
-For a confined viewer, `[relations]` reads up to 500 of the group's relations in one direction (after the `type` filter), drops the hidden ones, and then applies `limit`. Only a group with more than 500 relations in one direction, most of them hidden, can therefore list fewer than `limit` visible ones.
+The visibility filter uses the same group scope as other reads on the page and is applied before `limit`. Hidden edges do not take any of the visible slots.
 
 ### Cost
 
-- One query per `[relations]`, which counts one unit of the [per-page query budget](#per-page-query-budget). A block body that reads `GroupDescription` or `GroupMeta` runs a second, small query by primary key and counts a second unit. An identical `[relations]` repeated on the same page is free. Past the budget it renders an error marker.
+- One query per `[relations]`, which counts one unit of the [per-page query budget](#per-page-query-budget). A block body that reads `GroupDescription` or `GroupMeta` runs a second, small query by primary key and counts a second unit. An identical `[relations]` repeated on the same page is free. Unavailable lookups and invisible carriers do not spend budget. Past the budget it renders an error marker.
 - In a per-card slot it runs once per card: a group list page shows at most 50 cards, so an inline `[relations]` in `CustomSummary` spends 50 of the default 200 units, leaving 150 for `[mrql]` and the rest. Raise `-mrql-page-query-budget` if a dense page needs more.
 - Each lookup is bounded by the MRQL query timeout (`-mrql-query-timeout`), and one that runs out of time renders "lookup timed out".
-- `direction="out"` reads the relation table's unique index; `direction="in"` reads `idx__group_relations__to_group_id`, which is built at startup.
+- `direction="out"` reads the relation table's unique index; `direction="in"` uses `idx__group_relations__to_group_id`. PostgreSQL builds it concurrently on a dedicated connection and serves correct (possibly slower) results while it builds; SQLite builds it before serving, under the writer lock on first build.
 
 ### Hiding the built-in panel
 
@@ -1194,7 +1193,7 @@ A group page already shows Relations and Reverse Relations panels. When a catego
 
 `[relations]` works only on groups; on a resource or note it renders `<!-- mr:relations: only groups have relations -->`. To list the relations of a group a resource or note refers to, wrap it in [`[using]`](#using----switch-to-another-entity), e.g. `[using rel="owner"][relations][/using]`.
 
-It renders on display pages and their list cards, the lightbox, hover cards, deferred `[lazy]`/`[details]`/`[autorefresh]` bodies, MRQL results and the template and description previews. Everywhere else it renders `<!-- mr:relations unavailable in this context -->`: share pages, the entity picker and the AI template generation tools. The MRQL result API also renders that comment for a group-confined viewer, because it is bound to run MRQL only and has no subtree to check relations against.
+It renders on display pages and their list cards, the lightbox, hover cards, deferred `[lazy]`/`[details]`/`[autorefresh]` bodies, MRQL results and the template and description previews. Everywhere else it renders `<!-- mr:relations unavailable in this context -->`: share pages, the entity picker and the AI template generation tools. For group-confined viewers, MRQL `render=list` cards can list relations, but `render=1` gets the unavailable comment: that path has no ORM subtree binding.
 
 `[relations]` cannot be used inside a `[reload]` button face.
 
@@ -1314,7 +1313,7 @@ On each `[tab]`:
 
 A tab without `lazy="true"` renders with the page, whether it is open or not, so its queries run on every page view. Put `lazy="true"` on every tab after the first that holds an `[mrql]`, a gallery or a plugin data view. A lazy tab costs nothing until a reader opens it, and then one request to the same endpoint `[lazy]` uses, under the same scope checks. A lazy first tab is open on load, so it loads right after the page does.
 
-A lazy tab's body renders against the entity, so an `[item]` from an enclosing `[each]` is not available inside it, the same as in `[lazy]`. On share pages, in the live preview and in list headers, lazy tabs render inline. See [Where deferral applies](#where-deferral-applies).
+Neither eager nor lazy tabs can read `[item]` from an enclosing `[each]` or `[relations]`: only the direct item branch of a loop binds it. On share pages, in the live preview and in list headers, lazy tabs render inline. See [Where deferral applies](#where-deferral-applies).
 
 ### Keyboard and screen readers
 
@@ -2142,7 +2141,7 @@ Owned by [using rel="owner"]<a href="[link]">[property path="Name"]</a>[else]no 
 - **Closing a divider.** `[/else]` and `[/elseif]` are not closers. They render as literal text. Only `[/conditional]`, `[/each]` and the other block closers take a `[/name]` tag.
 - **Unquoted values with spaces.** The value stops at the first space and the rest is dropped without an error. Quote it (see [Quoting](#quoting)).
 - **`value=` with a block body.** The body is ignored at render time, and the linter reports it as an error.
-- **`[item]` outside its loop.** `[item]` renders nothing outside an `[each]`. An `[item]` from an enclosing `[each]` is not available inside any other block shortcode, including `[conditional]`, `[mrql]`, `[using]`, `[lazy]` and `[details]`.
+- **`[item]` outside its item branch.** `[item]` renders only directly in the item branch of `[each]` or `[relations]`. It renders nothing in `[else]` or inside another block shortcode such as `[conditional]`, `[mrql]`, `[using]`, `[tabs]`, `[lazy]` or `[details]`.
 - **Counting with `value="count"`.** It counts returned rows, capped by `limit`. Use `{total}` for the real number.
 - **Per-card queries on a list page.** Every card runs an entity-scoped `[mrql]` in `CustomSummary`. Wrap it in `[lazy]` so the query runs only for cards on screen.
 - **Per-card values in CSS.** A `CustomCSS` slot is rendered once per category per page, so on a list page its `[meta]` values come from the first entity of that category in the list.

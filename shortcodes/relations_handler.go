@@ -157,7 +157,7 @@ func RenderRelationsShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShor
 	var b strings.Builder
 	b.WriteString(`<div class="relations-shortcode" data-direction="`)
 	b.WriteString(direction)
-	b.WriteString(`"><ul class="relations-shortcode__types">`)
+	b.WriteString(`"><ul class="relations-shortcode__types" role="list">`)
 	for i, e := range entries {
 		if i == 0 || e.Direction != entries[i-1].Direction || e.Type != entries[i-1].Type {
 			if i > 0 {
@@ -165,7 +165,7 @@ func RenderRelationsShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShor
 			}
 			b.WriteString(`<li class="relations-shortcode__type"><span class="relations-shortcode__label">`)
 			b.WriteString(html.EscapeString(relationsLabel(e)))
-			b.WriteString(`</span><ul class="relations-shortcode__list">`)
+			b.WriteString(`</span><ul class="relations-shortcode__list" role="list">`)
 		}
 		b.WriteString(`<li class="relations-shortcode__entry">`)
 		if sc.IsBlock {

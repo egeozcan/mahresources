@@ -307,12 +307,11 @@ func lintText(input string, opts LintOptions) []LintIssue {
 	// counting [else] dividers.
 	condInner := conditionalInnerRanges(input, tokens)
 
-	// Inner byte spans of every block that binds [item] to an element: [each]
-	// to an array element, [relations] to an edge. [item] outside all of them
-	// is flagged.
-	elementSpans := append(namedBlockSpans(tokens, "each"), namedBlockSpans(tokens, "relations")...)
+	bindings := lintElementBindings(w, lm, input, tokens)
+	if !w.ok() {
+		return nil
+	}
 	reloadSpans := namedBlockSpans(tokens, "reload")
-	usingSpans := namedBlockSpans(tokens, "using")
 
 	// --- Structural checks over the token stream ---
 	for _, tk := range tokens {
@@ -445,12 +444,8 @@ func lintText(input string, opts LintOptions) []LintIssue {
 		// Name-specific semantic checks.
 		switch tk.name {
 		case "item":
-			if !insideSpans(tk.start, elementSpans) {
-				add(tk.start, tk.end, SeverityWarning,
-					"[item] is only meaningful inside an [each] or [relations] block")
-			} else if innermostSpanStart(tk.start, usingSpans) > innermostSpanStart(tk.start, elementSpans) {
-				add(tk.start, tk.end, SeverityWarning,
-					"[item] inside a [using] block renders nothing: [using] switches to another entity, so the [each] or [relations] element is not available there")
+			if !bindings[tk.start] {
+				add(tk.start, tk.end, SeverityWarning, "[item] is only bound at "+elementBindingPlacement)
 			}
 		case "using":
 			lintUsing(w, tk, add)
@@ -470,7 +465,7 @@ func lintText(input string, opts LintOptions) []LintIssue {
 		case "action":
 			lintAction(tk, reloadSpans, actionExists, add)
 		case "calc":
-			lintCalc(tk, opts, otherContext, elementSpans, usingSpans, add)
+			lintCalc(tk, opts, otherContext, bindings[tk.start], add)
 		case "excerpt":
 			lintExcerpt(tk, opts, otherContext, reloadSpans, add)
 		case "relations":
@@ -844,19 +839,6 @@ func lintUsing(w *schemaWork, tk token, add func(start, end int, severity, msg s
 	}
 }
 
-// innermostSpanStart returns the start of the innermost span containing i, or
-// -1 when none does. Spans of one block name nest, so the innermost is the one
-// that starts last.
-func innermostSpanStart(i int, spans [][2]int) int {
-	best := -1
-	for _, s := range spans {
-		if i >= s[0] && i < s[1] && s[0] > best {
-			best = s[0]
-		}
-	}
-	return best
-}
-
 // knownAttr reports whether attrName is a recognized attribute on known,
 // honoring wildcard prefix families (e.g. "param-tag" matches "param-").
 func knownAttr(known KnownShortcode, attrName string) bool {
@@ -1032,9 +1014,9 @@ func conditionalInnerRanges(input string, tokens []token) map[int]string {
 }
 
 // namedBlockSpans returns the inner-content byte ranges [openerEnd, closerStart)
-// of every block with the given name, pairing openers with closers by depth over
-// the token stream. Used to place a token relative to a block: [item] tokens
-// sitting outside any [each], [reload] tokens sitting inside another [reload].
+// of every block with the given name, pairing openers with closers by depth
+// over the token stream. Used to place a token relative to a block, e.g. a
+// [reload] token sitting inside another [reload].
 // (Distinct from blockInnerSpans in split_else.go, which scans raw text for any
 // block rather than the token stream for one name.)
 func namedBlockSpans(tokens []token, name string) [][2]int {
@@ -1141,8 +1123,8 @@ func lintStrayCloseTags(w *schemaWork, lm *renderMeter, input string, tokens []t
 
 // lintCalc checks a [calc] opener with the parser the renderer uses: every
 // error here is one RenderCalcShortcode renders as its error marker, and every
-// warning a reference that renders the default.
-func lintCalc(tk token, opts LintOptions, otherContext, elementSpans, usingSpans [][2]int, add func(start, end int, severity, msg string)) {
+// warning a reference that has no value.
+func lintCalc(tk token, opts LintOptions, otherContext [][2]int, itemBound bool, add func(start, end int, severity, msg string)) {
 	if _, _, err := calcOptions(tk.attrs); err != nil {
 		add(tk.start, tk.end, SeverityError, "[calc] "+err.Error())
 	}
@@ -1171,16 +1153,73 @@ func lintCalc(tk token, opts LintOptions, otherContext, elementSpans, usingSpans
 			}
 		}
 	}
-	if !usesItem {
-		return
-	}
-	if !insideSpans(tk.start, elementSpans) {
+	if usesItem && !itemBound {
 		add(tk.start, tk.end, SeverityWarning,
-			"[calc] uses item outside an [each] or [relations] block; it renders the default")
-	} else if innermostSpanStart(tk.start, usingSpans) > innermostSpanStart(tk.start, elementSpans) {
-		add(tk.start, tk.end, SeverityWarning,
-			"[calc] inside a [using] block cannot read item: [using] switches to another entity, so the [each] or [relations] element is not available there and it renders the default")
+			"[calc] item operands have no value here: item is only bound at "+elementBindingPlacement)
 	}
+}
+
+const elementBindingPlacement = "the top level of the item branch of [each] or [relations], before [else]"
+
+// lintElementBindings uses the same branch split and top-level parser as
+// markItems. An unrelated nested block has no binding of its own, but it can
+// contain another loop that binds its own item.
+func lintElementBindings(w *schemaWork, lm *renderMeter, input string, tokens []token) map[int]bool {
+	hasLoop, hasItem := false, false
+	for _, tk := range tokens {
+		if !tk.closing {
+			hasLoop = hasLoop || tk.matched && (tk.name == "each" || tk.name == "relations")
+			hasItem = hasItem || tk.name == "item" || tk.name == "calc"
+		}
+	}
+	if !hasLoop || !hasItem {
+		return nil
+	}
+
+	bound := map[int]bool{}
+	var walk func(body string, offset int, itemBranch bool)
+	walk = func(body string, offset int, itemBranch bool) {
+		if !w.charge(1 + len(body)/8) {
+			return
+		}
+		blocks := parseWithBlocksM(lm, body)
+		if lm.Err() != nil {
+			w.fail()
+			return
+		}
+		for _, sc := range blocks {
+			if !w.step() {
+				return
+			}
+			if itemBranch && (sc.Name == "item" || sc.Name == "calc") {
+				bound[offset+sc.Start] = true
+				continue
+			}
+			if !sc.IsBlock {
+				continue
+			}
+			inner := sc.InnerContent
+			start := offset + sc.End - len("[/"+sc.Name+"]") - len(inner)
+			if sc.Name != "each" && sc.Name != "relations" {
+				walk(inner, start, false)
+				continue
+			}
+			if !w.charge(1 + len(inner)/8) {
+				return
+			}
+			items, empty := splitElseM(lm, inner)
+			if lm.Err() != nil {
+				w.fail()
+				return
+			}
+			walk(items, start, true)
+			if empty != "" {
+				walk(empty, start+len(items)+len(elseTag), false)
+			}
+		}
+	}
+	walk(input, 0, false)
+	return bound
 }
 
 // lintRelations checks a [relations] opener against what
