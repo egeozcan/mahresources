@@ -16,6 +16,7 @@ var (
 	_ PartialResolverContext = (*application_context.MahresourcesContext)(nil)
 	_ QueryExecutorContext   = (*application_context.MahresourcesContext)(nil)
 	_ MetaScopeResolver      = (*application_context.MahresourcesContext)(nil)
+	_ RelationListerContext  = (*application_context.MahresourcesContext)(nil)
 )
 
 // PartialResolverContext resolves [partial] references by name.
@@ -69,6 +70,7 @@ type PageRenderContext interface {
 	QueryExecutorContext
 	PartialResolverContext
 	MetaScopeResolver
+	RelationListerContext
 }
 
 func pageRenderContext(value any) PageRenderContext {

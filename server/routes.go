@@ -439,6 +439,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 		// them each query shortcode here would run unbudgeted and uncached.
 		reqCtx = application_context.WithMRQLRenderDataCache(reqCtx)
 		reqCtx = shortcodes.WithQueryBudget(reqCtx, appCtx.MRQLPageQueryBudget())
+		reqCtx = shortcodes.WithRelationLister(reqCtx, template_filters.BuildRelationLister(appCtx))
 		reqCtx = shortcodes.WithRefreshSigner(reqCtx, func(entityType string, entityID uint, body string, untrusted bool) string {
 			return deferredtoken.SealWithTrust(appCtx.DeferredSigningKey(), entityType, entityID, body, untrusted)
 		})
