@@ -93,16 +93,56 @@ func BuildActionResolver(pm *plugin_system.PluginManager, access auth.PluginAcce
 		if action.Entity != ctx.EntityType || ctx.EntityID == 0 {
 			return shortcodes.ActionButton{}, shortcodes.ErrActionUnavailable
 		}
-		if plugin_system.ActionHasEntityFilters(action) &&
-			!plugin_system.ActionMatchesEntityData(action, ActionEntityData(ctx.Entity, ctx.EntityType)) {
-			return shortcodes.ActionButton{}, shortcodes.ErrActionUnavailable
+		var entityData map[string]any
+		if plugin_system.ActionHasEntityFilters(action) {
+			entityData = ActionEntityData(ctx.Entity, ctx.EntityType)
+			if !plugin_system.ActionMatchesEntityData(action, entityData) {
+				return shortcodes.ActionButton{}, shortcodes.ErrActionUnavailable
+			}
 		}
 		params, err := actionTemplateParams(action, attrs, ctx.EntityID)
 		if err != nil {
 			return shortcodes.ActionButton{}, err
 		}
+		for _, p := range action.Params {
+			// Without an override the trigger ref inherits the action filter,
+			// which the same entity has already passed above.
+			if p.Filters == nil || !actionParamUsesTrigger(p, action.Entity) {
+				continue
+			}
+			if _, visible := params[p.Name]; !visible {
+				continue
+			}
+			if entityData == nil {
+				entityData = ActionEntityData(ctx.Entity, ctx.EntityType)
+			}
+			if !actionTriggerMatchesParamFilter(p, entityData) {
+				return shortcodes.ActionButton{}, shortcodes.ErrActionUnavailable
+			}
+		}
 		return shortcodes.ActionButton{Label: action.Label, Confirm: action.Confirm, Async: action.Async, Params: params}, nil
 	}
+}
+
+func actionParamUsesTrigger(p plugin_system.ActionParam, entityType string) bool {
+	def, _ := p.Default.(string)
+	return p.Type == "entity_ref" && p.Entity == entityType && (def == "trigger" || def == "both")
+}
+
+func actionTriggerMatchesParamFilter(p plugin_system.ActionParam, entityData map[string]any) bool {
+	// EntityRefReader checks only the fields that belong to the reference's
+	// entity type, unlike the action's primary filter predicate.
+	var filter plugin_system.ActionFilter
+	switch p.Entity {
+	case "resource":
+		filter.ContentTypes = p.Filters.ContentTypes
+		filter.CategoryIDs = p.Filters.CategoryIDs
+	case "group":
+		filter.CategoryIDs = p.Filters.CategoryIDs
+	case "note":
+		filter.NoteTypeIDs = p.Filters.NoteTypeIDs
+	}
+	return plugin_system.ActionMatchesEntityData(plugin_system.ActionRegistration{Filters: filter}, entityData)
 }
 
 // actionTemplateParams builds the params a template button posts: the
@@ -120,12 +160,8 @@ func actionTemplateParams(action plugin_system.ActionRegistration, attrs map[str
 		case "info":
 			// Help text with no value.
 		case "entity_ref":
-			def, _ := p.Default.(string)
-			if def == "selection" && p.Required {
-				return nil, fmt.Errorf("%s: needs a bulk selection and cannot run from a template", p.Name)
-			}
 			var ids []any
-			if (def == "trigger" || def == "both") && p.Entity == action.Entity {
+			if actionParamUsesTrigger(p, action.Entity) {
 				ids = append(ids, float64(entityID))
 			}
 			switch {
@@ -169,6 +205,12 @@ func actionTemplateParams(action plugin_system.ActionRegistration, attrs map[str
 	}
 
 	plugin_system.StripHiddenParams(action, params)
+	for _, p := range action.Params {
+		def, _ := p.Default.(string)
+		if _, visible := params[p.Name]; visible && p.Type == "entity_ref" && def == "selection" && p.Required {
+			return nil, fmt.Errorf("%s: needs a bulk selection and cannot run from a template", p.Name)
+		}
+	}
 	if errs := plugin_system.ValidateActionParams(action, params); len(errs) > 0 {
 		return nil, fmt.Errorf("%s: %s", errs[0].Field, errs[0].Message)
 	}

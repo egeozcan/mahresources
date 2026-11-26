@@ -1488,7 +1488,7 @@ The button starts from the action's own defaults, the way the action dialog does
 
 The result then goes through the action's own checks (required fields, `min`/`max`, options, `show_when`), and the first failure becomes the marker's text, so a mistake shows on the page rather than as a refusal on every click. The marker is only shown to viewers who could run the action. Values are literal: a shortcode written inside an attribute value is not expanded. Parameter values are visible in the page source, as the defaults are in the action dialog.
 
-An action that needs a bulk selection (an `entity_ref` parameter with `default = "selection"` and `required = true`) cannot run from a template and renders the marker "needs a bulk selection and cannot run from a template".
+An action with a visible, required `entity_ref` parameter whose default is `selection` needs a bulk selection and cannot run from a template. It renders the marker "needs a bulk selection and cannot run from a template". A parameter hidden by `show_when` after template overrides does not impose that requirement.
 
 ### Who sees the button
 
@@ -1496,23 +1496,23 @@ The button is drawn only where the click could succeed. Every other case renders
 
 - **Guests and other accounts that cannot write.** Running an action is a write.
 - **Group-limited accounts, for a plugin the operator has not opened to them.**
-- **An entity the action does not apply to:** the action's `entity` is a different type, or its `filters` (content types, categories, note types) exclude this entity. In an `[mrql]` result, only the rows the filters match get a button.
+- **An entity the action does not apply to:** the action's `entity` is a different type, its `filters` (content types, categories, note types) exclude this entity, or the filters of a visible `entity_ref` exclude the trigger it would receive. In an `[mrql]` result, only matching rows get a button.
 - **A missing or disabled plugin or action.**
 - **A Description or note text block when login is on.** That text may be written by a user-role account, and a button there would run with the rights of whoever clicks it, behind a confirmation text its author chose. Category, Resource Category and Note Type templates are written by admins and editors and are not affected.
-- **Surfaces that cannot run it:** share pages, the live template preview, the description preview, hover cards, `CustomListHeader` and `CustomListFooter` (they render a category, not an entity), `CustomMRQLResult` cards on `/mrql`, the entity picker, and template generation tools.
+- **Surfaces that cannot run it:** share pages, the live template preview, the description preview, hover cards, `CustomListHeader` and `CustomListFooter` (they render a category, not an entity), the direct MRQL API render (`render=1`), the entity picker, and template generation tools.
 
-The button works on display pages (every slot), list cards, `[mrql]` and `[using]` results, `[lazy]`, `[details]` and `[autorefresh]` bodies, and the lightbox. The run endpoint checks everything again on the click: a button for an entity outside a group-limited account's subtree gets the endpoint's 403, as a hand-made request would.
+The button works on display pages, list cards (including `CustomMRQLResult` cards on `/mrql`, which use `render=list`), `[mrql]` and `[using]` results, `[lazy]`, `[details]` and `[autorefresh]` bodies, and the lightbox. The run endpoint checks everything again on the click: a button for an entity outside a group-limited account's subtree gets the endpoint's 403, as a hand-made request would.
 
 `placement` does not matter here. It decides where the actions menu lists an action, and the run endpoint never checks it, so `[action]` accepts any registered action whose entity type matches.
 
 ### What happens on a click
 
-- With a confirmation, the app's confirmation dialog asks first; declining does nothing.
+- The app asks for confirmation first when required. Declining does nothing. If a refresh removes the button or changes what it would run while the dialog is open, accepting the old confirmation does nothing either.
 - While the run is in flight the button is marked `aria-disabled="true"` (it keeps focus) and further clicks are ignored. The text next to the button reads "Running…".
-- A synchronous action shows its message (or "Done") next to the button and announces it. A refusal, a validation error or a failed request shows and announces the reason instead, and changes nothing else.
-- An `async` action starts a Job; the button reads "Started" and then follows the Job every 2 seconds until it finishes, for at most 5 minutes, and reports how it ended. A Job that is still running after that reads "Still running. Follow it in the Jobs panel." The Jobs panel is never opened for you.
-- An action that answers with a redirect navigates there.
-- After a successful run, the `[autorefresh]` blocks for this entity and the one the button sits in re-render, exactly as after an inline edit. The page is never reloaded, so wrap what the action changes in `[autorefresh]`:
+- A synchronous action shows its message (or "Done") next to the button and announces it. A refusal, a validation error or a failed request shows and announces the reason instead; a Job handle returned with a refusal is not followed.
+- An `async` action starts a Job; the button reads "Started" and then follows the Job every 2 seconds until it finishes, the button is removed, or 5 minutes pass. At the deadline it reads "Still running. Follow it in the Jobs panel." The Jobs panel is never opened for you, and stopping the watcher does not cancel the Job.
+- An action that answers with a redirect navigates there unless it refused the run.
+- After a successful run, the `[autorefresh]` blocks for the submitted entity re-render, along with the enclosing block if the button still represents that run. The page is never reloaded, so wrap what the action changes in `[autorefresh]`:
 
 ```
 [autorefresh]
