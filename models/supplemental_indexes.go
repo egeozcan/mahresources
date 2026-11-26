@@ -16,6 +16,10 @@ func EnsureSupplementalIndexes(db *gorm.DB) error {
 		"CREATE INDEX IF NOT EXISTS idx__resource_tags__tag_id ON resource_tags(tag_id)",
 		"CREATE INDEX IF NOT EXISTS idx__note_tags__tag_id ON note_tags(tag_id)",
 		"CREATE INDEX IF NOT EXISTS idx__group_tags__tag_id ON group_tags(tag_id)",
+		// The incoming relations of one group (the [relations direction="in"]
+		// shortcode, the reverse-relations panel). unique_rel leads with
+		// from_group_id, so it serves only the outgoing side.
+		"CREATE INDEX IF NOT EXISTS idx__group_relations__to_group_id ON group_relations(to_group_id)",
 	}
 	if db.Dialector.Name() == "postgres" {
 		queries = append(queries, "CREATE INDEX IF NOT EXISTS idx__groups_related_resources__resource_id___hash ON groups_related_resources USING HASH (resource_id)")
