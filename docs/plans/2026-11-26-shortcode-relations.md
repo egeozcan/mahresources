@@ -257,6 +257,13 @@ E2E (`e2e/tests/112-relations-shortcode.spec.ts`): group page shows label, link,
 5. **Small checks.** `handler_interfaces.go` line 106 untouched; only `mrqlRenderContext` embeds the interface. The type-name-across-categories rule is in the attribute table of the docs-site page, the builtin docs and the skill reference, and `runRelationsForTemplateListing` pins it.
 6. **A11y check named.** `e2e/tests/accessibility/relations-shortcode-a11y.spec.ts` runs `checkA11y` (axe, WCAG A/AA tags) on the group detail page, the group list page and the `/mrql` results page, and asserts the nested list roles; all pass.
 
+### Validation
+- `go test --tags 'json1 fts5' ./... -count=1 -timeout 40m`: 48 packages ok, `application_context` failed once on `TestAPauseAskedOfAnotherProcessIsDeliveredToTheTransfer` (a download-pause timing test this change does not touch; 5/5 in isolation) and then passed in a full package re-run.
+- The new `EnsureSupplementalIndexes` entry broke `TestSuggestedTags_LargePopulationQueryPlan`, whose fixture migrated no `group_relations`; the fixture now migrates it.
+- Postgres: `go test --tags 'json1 fts5 postgres' ./application_context/ -run 'RelationsForTemplate.*_Postgres|RelatedGroupStagingProbesPerResourcePG|HolderCursorIsServedByTheHashIDIndexPG|TestAdjacentScope_Postgres'` ok.
+- `go vet --tags 'json1 fts5' ./...` reports one pre-existing issue, in `application_context/job_download_progress_test.go` (untouched here).
+- `./scripts/css-scan-test.sh` passes; E2E `112-relations-shortcode.spec.ts` and `relations-shortcode-a11y.spec.ts` 7/7; neighbouring specs (adjacent, panel-summary-slot, template-preview, category-template-authoring a11y, adjacent a11y) 34/34.
+
 ### Not verified
 - The HTTP-level tests (`server/api_tests/relations_shortcode_scope_test.go`) run on SQLite only; Postgres parity is at the application-context level (listing, scope, large allow-list).
 - No Postgres `EXPLAIN` for the `in` index: on a fixture-sized table the planner seq-scans, and a meaningful plan needs a seeded large table. The SQLite plan is pinned.
