@@ -140,7 +140,7 @@ func KnownFromBuiltins() KnownShortcodes {
 var conditionalOperators = []string{"eq", "neq", "gt", "lt", "gte", "lte", "in", "contains", "matches", "empty", "not-empty"}
 
 // builtinBaseNames is used for near-miss detection of misspelled shortcodes.
-var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "calc", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "similar", "calendar", "inspect", "adjacent", "comment"}
+var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "calc", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "similar", "calendar", "inspect", "adjacent", "comment", "tabs"}
 
 // looseBracketPattern finds bracket expressions that lead with an identifier,
 // used to detect shortcode-looking brackets that did not parse as real
@@ -647,6 +647,7 @@ func lintText(input string, opts LintOptions) []LintIssue {
 	}
 
 	lintStrayCloseTags(w, lm, input, tokens, add)
+	lintTabs(w, lm, input, tokens, opts.CSSMode, add)
 	if opts.CheckHTMLBalance && !opts.CSSMode {
 		lintUnbalancedHTML(w, input, tokens, add)
 	}
@@ -675,7 +676,8 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			continue
 		}
 		name := input[m[2]:m[3]]
-		if name == "else" || name == "elseif" {
+		// [tab] is [tabs]' slot tag, which lintTabs reports where it is literal.
+		if name == "else" || name == "elseif" || name == "tab" {
 			continue
 		}
 		if strings.HasPrefix(name, "plugin:") {
