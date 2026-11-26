@@ -1605,7 +1605,7 @@ Using a field the entity does not have, such as `shared` on a resource, is refus
 
 ### What a cell holds
 
-- **Equal values share a row or column.** Values that differ only in ASCII letter case (`Open` and `open`) are one row, because MRQL's `=` compares text that way. So are a Meta number and the same digits written as a string (`3` and `"3"`), and two related groups with the same name: the result carries a group's name, not its ID, so the table cannot tell them apart. The spelling with the most items is shown.
+- **Equal values share a row or column.** Values that differ only in ASCII letter case (`Open` and `open`) are one row, because MRQL's `=` compares text that way. So are a Meta number and the same digits written as a string (`3` and `"3"`), and two related groups with the same name: the result carries a group's name, not its ID, so the table cannot tell them apart. The spelling shown is the one in the combination with the most items.
 - **Booleans in Meta** show as `1` and `0` on SQLite (merged with the numbers 1 and 0 and the strings "1" and "0") and as `true` and `false` on PostgreSQL (merged with the strings "true" and "false").
 - **Missing values** go in a `(none)` row or column, shown last: a missing Meta key, an entity with no owner or no tags, or an owner the viewer cannot see. An empty string is `(empty)`.
 - **Sums** add numbers. How other Meta values count depends on the database. PostgreSQL adds a string only when it is wholly a plain decimal (`"2"`, `"-1.5"`) and skips everything else. SQLite reads the number a string starts with (`"2"` and `"2 hours"` both add 2, `"x"` adds nothing) and adds a JSON `true` as 1. A cell with no number to add shows 0.
