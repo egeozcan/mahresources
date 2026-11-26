@@ -38,8 +38,9 @@ type DocExample struct {
 }
 
 // BuiltinDoc documents one built-in shortcode (meta, datetime, pills,
-// property, calc, mrql, conditional, link, each, item, partial, lazy, details,
-// reload, using, inspect, adjacent, similar, calendar, relations, comment).
+// property, excerpt, calc, mrql, conditional, link, each, item, partial, lazy,
+// details, tabs, reload, autorefresh, action, using, inspect, adjacent,
+// similar, calendar, pivot, relations, comment).
 type BuiltinDoc struct {
 	Name        string          `json:"name"`
 	Syntax      string          `json:"syntax"`

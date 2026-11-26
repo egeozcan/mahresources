@@ -70,6 +70,11 @@ the code wins. For how the system is actually put together see
 - [2026-11-24-shortcode-calendar.md](2026-11-24-shortcode-calendar.md)
 - [2026-11-24-shortcode-inspect.md](2026-11-24-shortcode-inspect.md)
 - [2026-11-24-shortcode-similar.md](2026-11-24-shortcode-similar.md)
+- [2026-11-26-shortcode-action.md](2026-11-26-shortcode-action.md)
+- [2026-11-26-shortcode-excerpt.md](2026-11-26-shortcode-excerpt.md)
+- [2026-11-26-shortcode-pivot.md](2026-11-26-shortcode-pivot.md)
+- [2026-11-26-shortcode-relations.md](2026-11-26-shortcode-relations.md)
+- [2026-11-26-shortcode-tabs.md](2026-11-26-shortcode-tabs.md)
 
 ## Archive
 
