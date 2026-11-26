@@ -303,12 +303,13 @@ class LazyShortcode extends HTMLElement {
     this._observeOrReveal();
   }
 
+  // A morph lands here first, before refreshFromMorph: every server render
+  // seals a fresh token, so the attribute changes on each one.
   attributeChangedCallback(name, oldValue, newValue) {
     if (name !== 'data-token' || oldValue === newValue || !this._init) return;
     this._token = newValue || '';
     this._resetContent();
-    if (this._revealed) this._reveal();
-    else this._observeOrReveal();
+    this._rearmOrReveal(this._revealed);
   }
 
   disconnectedCallback() {

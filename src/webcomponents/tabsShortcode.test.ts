@@ -287,9 +287,13 @@ describe('lazy panels', () => {
     expect(panel.hasAttribute('tabindex')).toBe(false);
   });
 
-  it('a morph re-arms a visited lazy panel that is hidden instead of re-fetching it', async () => {
-    const html = serverTabs(THREE);
-    const host = mount(html);
+  // The server seals a fresh token on every render, so a real morph changes
+  // data-token (attributeChangedCallback) as well as calling refreshFromMorph.
+  it.each([
+    ['the same token', 'tok-3'],
+    ['a freshly sealed token', 'tok-3b'],
+  ])('a morph with %s re-arms a visited lazy panel that is hidden instead of re-fetching it', async (_, next) => {
+    const host = mount(serverTabs(THREE));
     const lazy = host.querySelector('lazy-shortcode') as any;
     tabsOf(host)[2].click();
     intersect(lazy);
@@ -297,7 +301,7 @@ describe('lazy panels', () => {
     expect(fetches).toEqual(['tok-3']);
 
     tabsOf(host)[0].click();
-    morphTo(html);
+    morphTo(serverTabs({ ...THREE, Three: { lazy: next } }));
     await microtask();
     await settle();
     expect(fetches).toEqual(['tok-3']);
@@ -308,7 +312,7 @@ describe('lazy panels', () => {
     tabsOf(host)[2].click();
     intersect(lazy);
     await settle();
-    expect(fetches).toEqual(['tok-3', 'tok-3']);
+    expect(fetches).toEqual(['tok-3', next]);
   });
 
   it('a morph re-fetches the visible lazy panel at once, as plain [lazy] does', async () => {
