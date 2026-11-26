@@ -75,6 +75,12 @@ func metaSchemaProperties(schema string) []string {
 // declare. Metadata may hold undeclared keys, which [meta] still shows, so
 // this is a likely typo rather than a certain one.
 func metaPathIssue(path string, props []string) string {
+	return metaPathIssueFor("[meta]", "it renders empty", path, props)
+}
+
+// metaPathIssueFor is metaPathIssue for the shortcode named by label, which
+// leads the message; typo says what a mistyped path does to that shortcode.
+func metaPathIssueFor(label, typo, path string, props []string) string {
 	path = strings.TrimSpace(path)
 	if len(props) == 0 || path == "" {
 		return ""
@@ -92,8 +98,8 @@ func metaPathIssue(path string, props []string) string {
 	if len(shown) > 12 {
 		shown = append(append([]string{}, shown[:12]...), "…")
 	}
-	return `[meta] path "` + path + `": "` + first + `" is not declared in the metadata schema (declared: ` +
-		strings.Join(shown, ", ") + `); if it is a typo, it renders empty`
+	return label + ` path "` + path + `": "` + first + `" is not declared in the metadata schema (declared: ` +
+		strings.Join(shown, ", ") + `); if it is a typo, ` + typo
 }
 
 func withinSpans(pos int, spans [][2]int) bool {

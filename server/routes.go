@@ -434,6 +434,11 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 	// [autorefresh] can be asked for again here, but [lazy]/[details] stay
 	// inline: no deferred signer is installed on this path.
 	if appCtx != nil {
+		// One query budget and render-data cache across every slot of the
+		// response, as the process_shortcodes tag gives an HTML page; without
+		// them each query shortcode here would run unbudgeted and uncached.
+		reqCtx = application_context.WithMRQLRenderDataCache(reqCtx)
+		reqCtx = shortcodes.WithQueryBudget(reqCtx, appCtx.MRQLPageQueryBudget())
 		reqCtx = shortcodes.WithRefreshSigner(reqCtx, func(entityType string, entityID uint, body string, untrusted bool) string {
 			return deferredtoken.SealWithTrust(appCtx.DeferredSigningKey(), entityType, entityID, body, untrusted)
 		})
@@ -607,12 +612,17 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	// scoped context so a group-limited user cannot preview entities outside its
 	// subtree (fail-closed: out-of-scope IDs resolve to a "Preview unavailable"
 	// fragment). GET → capRead via the shared authorization middleware.
+	// The card is a tooltip the keyboard cannot enter, so [adjacent]'s links and
+	// [calendar]'s month buttons would be unreachable there; they are left out.
+	hoverCard := template_handlers.RenderTemplate("partials/hovercard.tpl", func(request *http.Request) pongo2.Context {
+		sc := scopedCtx(appContext, request)
+		return wrapContextWithPlugins(sc, template_context_providers.HoverCardContextProvider(sc))(request)
+	})
 	router.Methods(http.MethodGet).
 		Path("/hovercard").
-		HandlerFunc(template_handlers.RenderTemplate("partials/hovercard.tpl", func(request *http.Request) pongo2.Context {
-			sc := scopedCtx(appContext, request)
-			return wrapContextWithPlugins(sc, template_context_providers.HoverCardContextProvider(sc))(request)
-		}))
+		HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			hoverCard(w, request.WithContext(shortcodes.WithinTooltip(request.Context())))
+		})
 
 	router.Methods(http.MethodGet).Path("/").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		http.Redirect(writer, request, "/dashboard", http.StatusMovedPermanently)

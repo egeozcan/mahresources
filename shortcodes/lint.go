@@ -140,7 +140,7 @@ func KnownFromBuiltins() KnownShortcodes {
 var conditionalOperators = []string{"eq", "neq", "gt", "lt", "gte", "lte", "in", "contains", "matches", "empty", "not-empty"}
 
 // builtinBaseNames is used for near-miss detection of misspelled shortcodes.
-var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "comment"}
+var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "calc", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "similar", "calendar", "inspect", "adjacent", "comment"}
 
 // looseBracketPattern finds bracket expressions that lead with an identifier,
 // used to detect shortcode-looking brackets that did not parse as real
@@ -431,6 +431,19 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			}
 		case "using":
 			lintUsing(w, tk, add)
+		case "similar":
+			// The renderer's own validation, so lint and page say the same thing.
+			if _, problem := parseSimilarAttrs(tk.attrs); problem != "" {
+				add(tk.start, tk.end, SeverityError, problem)
+			}
+			if insideSpans(tk.start, reloadSpans) {
+				add(tk.start, tk.end, SeverityError,
+					"[similar] cannot be used inside a [reload] button face")
+			}
+		case "calendar":
+			lintCalendar(tk, reloadSpans, add)
+		case "calc":
+			lintCalc(tk, opts, otherContext, eachSpans, usingSpans, add)
 		case "reload":
 			// A <button> may not contain another button. The renderer refuses the
 			// whole thing rather than emit invalid interactive nesting, so say so
@@ -448,9 +461,14 @@ func lintText(input string, opts LintOptions) []LintIssue {
 				add(tk.start, tk.end, SeverityError,
 					"[autorefresh] cannot be used inside a [reload] button face")
 			}
-		case "lazy", "details":
-			// Both emit a block, and a button takes phrasing content only. The
+		case "lazy", "details", "inspect", "adjacent":
+			// Each emits a block, and a button takes phrasing content only. The
 			// renderer refuses them here for the same reason.
+			if tk.name == "adjacent" {
+				if v, set := tk.attrs["series"]; set && strings.TrimSpace(v) != "true" && strings.TrimSpace(v) != "false" {
+					add(tk.start, tk.end, SeverityError, `[adjacent] series must be "true" or "false"`)
+				}
+			}
 			if insideSpans(tk.start, reloadSpans) {
 				add(tk.start, tk.end, SeverityError,
 					"["+tk.name+"] cannot be used inside a [reload] button face")
@@ -584,6 +602,11 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			case "using":
 				start, end := attrOffsetW(w, tk, "query")
 				check(tk.attrs["query"], MRQLCheckOptions{Params: sharedParams, Limit: 1}, start, end, "query")
+			case "calendar":
+				start, end := attrOffsetW(w, tk, "mrql")
+				for _, q := range calendarLintQueries(tk.attrs) {
+					check(q.query, q.opts, start, end, "mrql")
+				}
 			case "conditional":
 				forEachConditionalQuery(tk.attrs, func(attr, suffix string) {
 					start, end := attrOffsetW(w, tk, attr)
@@ -661,6 +684,11 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			continue
 		}
 		if suggestion := nearMissBuiltin(name); suggestion != "" {
+			if suggestion == name && attachedToWord(input, pos) {
+				// A CSS arbitrary value such as max-w-[calc(100%-1rem)]: the
+				// name is followed by neither whitespace nor "]", so it is text.
+				continue
+			}
 			if suggestion == name {
 				add(pos, m[1], SeverityInfo,
 					"["+name+"…] looks like an incomplete or malformed shortcode")
@@ -855,9 +883,9 @@ func attrOffsetW(w *schemaWork, tk token, attr string) (int, int) {
 // nearMissBuiltin returns a suggested built-in name for a misspelled bracket
 // identifier, or "" if none is close. An exact match returns the name itself
 // (signaling a malformed-but-recognizable bracket). Names that contain a
-// built-in as a prefix never reach here — the shortcode regex parses them as a
-// real shortcode (the extra characters become attributes) — so the reachable
-// near-misses are proper abbreviations of a built-in or single-character typos.
+// built-in as a prefix ("[metas]", "[calculated]") reach here too: the
+// shortcode regex ends a name at whitespace or "]", so they are literal text,
+// and a one-character extension is reported as a typo.
 func nearMissBuiltin(name string) string {
 	for _, base := range builtinBaseNames {
 		if name == base {
@@ -878,6 +906,16 @@ func nearMissBuiltin(name string) string {
 		}
 	}
 	return ""
+}
+
+// attachedToWord reports whether the bracket at pos directly follows an
+// identifier or class-name character, as in a Tailwind arbitrary value.
+func attachedToWord(input string, pos int) bool {
+	if pos == 0 {
+		return false
+	}
+	c := input[pos-1]
+	return c == '-' || c == '_' || c == ':' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }
 
 // editDistanceAtMost1 reports whether a and b differ by at most one single-
@@ -1058,5 +1096,49 @@ func lintStrayCloseTags(w *schemaWork, lm *renderMeter, input string, tokens []t
 				}
 			}
 		}
+	}
+}
+
+// lintCalc checks a [calc] opener with the parser the renderer uses: every
+// error here is one RenderCalcShortcode renders as its error marker, and every
+// warning a reference that renders the default.
+func lintCalc(tk token, opts LintOptions, otherContext, eachSpans, usingSpans [][2]int, add func(start, end int, severity, msg string)) {
+	if _, _, err := calcOptions(tk.attrs); err != nil {
+		add(tk.start, tk.end, SeverityError, "[calc] "+err.Error())
+	}
+	expr := tk.attrs["expr"]
+	if strings.TrimSpace(expr) == "" {
+		return // the missing required attribute is already reported
+	}
+	prog, err := parseCalcExpr(expr)
+	if err != nil {
+		add(tk.start, tk.end, SeverityError, "[calc] expr: "+err.Error())
+		return
+	}
+	usesItem := false
+	seen := map[string]bool{}
+	for _, ref := range prog.refs {
+		switch ref.root {
+		case "item":
+			usesItem = true
+		case "meta":
+			if seen[ref.path] || withinSpans(tk.start, otherContext) {
+				continue
+			}
+			seen[ref.path] = true
+			if msg := metaPathIssueFor("[calc]", "it has no value, so the expression falls back to coalesce or the default attribute", ref.path, opts.metaProps); msg != "" {
+				add(tk.start, tk.end, SeverityWarning, msg)
+			}
+		}
+	}
+	if !usesItem {
+		return
+	}
+	if !insideSpans(tk.start, eachSpans) {
+		add(tk.start, tk.end, SeverityWarning,
+			"[calc] uses item outside an [each] block; it renders the default")
+	} else if innermostSpanStart(tk.start, usingSpans) > innermostSpanStart(tk.start, eachSpans) {
+		add(tk.start, tk.end, SeverityWarning,
+			"[calc] inside a [using] block cannot read item: [using] switches to another entity, so the [each] element is not available there and it renders the default")
 	}
 }

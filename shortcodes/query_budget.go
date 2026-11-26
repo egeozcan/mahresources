@@ -203,8 +203,8 @@ func budgetCacheKeyMetered(m *renderMeter, query string, opts QueryOptions) (str
 	if m != nil {
 		// %q writes up to four bytes per byte (\x00), so reserve the quoted
 		// worst case, not the raw length.
-		// The fixed part is five numbers of at most 20 digits, six separators,
-		// the booleans and four pairs of quotes: well under 160.
+		// The fixed part is five numbers of at most 20 digits, seven
+		// separators, two booleans and four pairs of quotes: well under 160.
 		size := 4*int64(len(query)+len(opts.SavedName)) + 160
 		for k, v := range opts.Params {
 			size += 4*int64(len(k)+len(v)) + 16
@@ -214,8 +214,8 @@ func budgetCacheKeyMetered(m *renderMeter, query string, opts QueryOptions) (str
 		}
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%q|%q|%d|%d|%d|%d|%t",
-		query, opts.SavedName, opts.ScopeGroupID, opts.Limit, opts.Buckets, len(opts.Params), opts.WantTotal)
+	fmt.Fprintf(&b, "%q|%q|%d|%d|%d|%d|%t|%t",
+		query, opts.SavedName, opts.ScopeGroupID, opts.Limit, opts.Buckets, len(opts.Params), opts.WantTotal, opts.WantSimilarityDistance)
 	if len(opts.Params) > 0 {
 		keys := make([]string, 0, len(opts.Params))
 		for k := range opts.Params {

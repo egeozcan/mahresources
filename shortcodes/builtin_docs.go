@@ -38,8 +38,8 @@ type DocExample struct {
 }
 
 // BuiltinDoc documents one built-in shortcode (meta, datetime, pills,
-// property, mrql, conditional, link, each, item, partial, lazy, details,
-// reload, using, comment).
+// property, calc, mrql, conditional, link, each, item, partial, lazy, details,
+// reload, using, inspect, adjacent, similar, calendar, comment).
 type BuiltinDoc struct {
 	Name        string          `json:"name"`
 	Syntax      string          `json:"syntax"`
@@ -130,6 +130,24 @@ func BuiltinDocs() []BuiltinDoc {
 				{Title: "Entity name", Code: `[property path="Name"]`},
 				{Title: "Related field", Code: `[property path="Owner.Name" default="Unassigned"]`},
 				{Title: "Formatted date", Code: `[property path="CreatedAt" format="date"]`},
+			},
+		},
+		{
+			Name:        "calc",
+			Syntax:      `[calc expr="..."]`,
+			Description: "Computes a number from this entity's Meta (meta.<path>), its numeric fields (property.<Path>) and, at the top level of an [each] block, the current element (item or item.<path>), with + - * / % and parentheses and the functions min, max, abs, round(x[, digits]) and coalesce(a, b, …). It renders the bare number, so it works in text, table cells and attributes such as <meter value=\"…\">. A Meta string counts only when it is wholly a decimal number of at most 64 bytes; a missing or non-numeric operand, division by zero or overflow gives no value, which renders the default unless coalesce catches it. A syntax error, an unknown name or a bad decimals/format renders an error marker. It never runs a query. Only Meta keys of ASCII letters, digits and _ that do not start with a digit can be referenced. Limits: 512 bytes, 128 tokens, 32 levels of nesting, 32 references.",
+			IsBlock:     BlockNo,
+			Attrs: []DocAttr{
+				{Name: "expr", Type: "string", Required: true, Description: "The expression, e.g. meta.qty * meta.unit_price. Names are case-sensitive; numbers are plain decimals with no exponent. An item operand has no value outside [each] or inside another block within it."},
+				{Name: "decimals", Type: "number", Description: "A whole number from 0 to 10: round half away from zero to exactly that many fraction digits, keeping trailing zeros (10 gives 10.00). Unset, the result is rounded to 10 digits and trailing zeros are dropped."},
+				{Name: "format", Type: "enum", Default: "number", Description: "number is a plain decimal (1234567.89); grouped puts a comma between every three integer digits (1,234,567.89, not locale-aware); percent multiplies by 100 and appends % (0.256 gives 25.6%).", Enum: []string{"number", "grouped", "percent"}},
+				{Name: "default", Type: "string", Description: "Text rendered, HTML-escaped, when the expression has no numeric result. Empty by default. Prefer words such as \"not set\" over a lone dash where the reader needs to know why the value is missing."},
+			},
+			Examples: []DocExample{
+				{Title: "Line total", Code: `[calc expr="meta.qty * meta.unit_price" decimals="2"]`},
+				{Title: "Optional discount", Code: `[calc expr="meta.qty * meta.unit_price * (1 - coalesce(meta.discount, 0))" decimals="2" default="not set"]`},
+				{Title: "Inside [each]", Code: "<table>\n  <caption>Invoice lines</caption>\n  <tr><th scope=\"col\">Item</th><th scope=\"col\">Total</th></tr>\n  [each path=\"lines\"]\n  <tr><td>[item path=\"name\"]</td><td>[calc expr=\"item.qty * item.price\" decimals=\"2\"]</td></tr>\n  [/each]\n</table>"},
+				{Title: "Percent in a meter", Code: `<meter min="0" max="1" value="[calc expr='meta.spent / meta.budget' default='0']" aria-label="Budget used">[calc expr='meta.spent / meta.budget' format='percent' decimals='0' default='unknown']</meter>`, Notes: "The aria-label names the meter and the fallback text carries the value, so the number is not conveyed by the bar alone."},
 			},
 		},
 		{
@@ -321,6 +339,67 @@ func BuiltinDocs() []BuiltinDoc {
 				{Title: "The owning group", Code: "[using rel=\"owner\"]\n  <h3>[link][property path=\"Name\"][/link]</h3>\n  Status: [meta path=\"status\" inline=\"true\"]\n[else]\n  <p>No owner.</p>\n[/using]"},
 				{Title: "An ID stored in Meta", Code: "[using type=\"group\" id-path=\"client\"]\n  Client: [property path=\"Name\"]\n[/using]"},
 				{Title: "First result of a query", Code: "[using query='type = note AND name = $name ORDER BY created DESC' param-name=\"Index\"]\n  [property path=\"Description\"]\n[/using]"},
+			},
+		},
+		{
+			Name:        "inspect",
+			Syntax:      `[inspect path="..."]`,
+			Description: "An author aid for the template editor's live preview: a collapsed, keyboard-operable panel listing what this point of the template can read. It shows every Meta path with its JSON type, a sample value and a ready-to-copy shortcode; the entity's own fields for [property] (associations such as Owner or Tags are named but never read, and credential fields are left out); and, at the top level of an [each] body, the first element's [item] paths. Inside [mrql], [using] or a CustomMRQLResult it shows the switched entity. It renders only in the live preview: on display pages, share pages, deferred bodies, query results and every other surface it renders nothing at all, so a template saved with it left in is harmless. It runs no query. Limits: 200 rows per panel, 10 panels per preview, samples cut at 80 characters, Meta walked 6 levels deep.",
+			IsBlock:     BlockNo,
+			Attrs: []DocAttr{
+				{Name: "path", Type: "string", Description: "A Meta dot-path, written as for [meta path=]. Limits the Meta section to the subtree at that path; the other sections are unaffected. Empty lists all of Meta."},
+			},
+			Examples: []DocExample{
+				{Title: "Everything in context", Code: `[inspect]`},
+				{Title: "One Meta subtree", Code: `[inspect path="project"]`},
+				{Title: "Inside a loop", Code: "[each path=\"steps\"]\n  [inspect]\n  [item path=\"title\"]\n[/each]", Notes: "Only the first element gets a panel. An [inspect] nested in another block inside the loop shows the entity, as [item] renders empty there."},
+			},
+		},
+		{
+			Name:        "adjacent",
+			Syntax:      `[adjacent]`,
+			Description: "Previous and next links to this entity's siblings, in creation order (created_at, then id, so the order is total and editing a row never moves it). With series=\"true\" a resource steps through the members of its Series, whatever their owner or category. Otherwise siblings are the entities of the same type with the same owner (or, for an ownerless entity, the other ownerless ones) and the same category, resource category or note type (a note or group with none pairs with the others that have none). It renders a <nav> landmark with a rel=\"prev\" and a rel=\"next\" link; a side with no sibling is left out, and with neither it renders nothing. Siblings are read as the viewer, so a group-confined user only ever sees siblings inside their subtree, and an entity the viewer cannot see renders nothing. Each [adjacent] costs one unit of the page query budget and is bounded by the MRQL query timeout. It renders on display pages (their slots and list cards), deferred bodies and the template and description previews; elsewhere (MRQL render API, share pages, the lightbox, hover cards, the entity picker, generation-run tools) it renders an \"unavailable\" comment. Put it in CustomHeader or CustomSidebar rather than a per-card slot.",
+			IsBlock:     BlockNo,
+			Attrs: []DocAttr{
+				{Name: "series", Type: "boolean", Default: "false", Description: "Resources only. true takes the siblings from the resource's Series; a resource with no Series renders nothing. On a group or note, true renders an error marker.", Enum: []string{"true", "false"}},
+				{Name: "label", Type: "string", Default: "Previous and next", Description: "The accessible name (aria-label) of the <nav> landmark. A name already used on the page gets a number, e.g. \"Previous and next (2)\"; a label of your own reads better."},
+			},
+			Examples: []DocExample{
+				{Title: "Owner and category siblings", Code: `[adjacent]`},
+				{Title: "Pages of a Series", Code: `[adjacent series="true" label="Pages"]`},
+			},
+		},
+		{
+			Name:        "similar",
+			Syntax:      `[similar]`,
+			Description: "Thumbnails of the resources that look like this one, from the perceptual-hash pairs the hash worker stores, nearest first. Each thumbnail links to its resource and shows a tier badge with the distance: Duplicate for a distance of 2 or less (a near-certain duplicate), Similar above that, the same cut-off as the resource page's Similar Resources panel. Its alt text gives the name, tier and distance, and a Compare link under it opens the side-by-side compare page. It works only on a resource; to show the lookalikes of another resource, such as a group's cover, wrap it in [using type=\"resource\" …]. With no stored pairs within the distance it renders nothing; it never hashes images at render time. Lookalikes are read as the viewer, so a group-confined user only sees resources inside their subtree. Each [similar] costs one unit of the page query budget. It renders on display pages, deferred bodies, the lightbox and the template previews; on share pages it renders an \"unavailable\" comment. Put it in CustomSidebar, CustomLightbox or CustomDetailFooter rather than a per-card slot.",
+			IsBlock:     BlockNo,
+			Attrs: []DocAttr{
+				{Name: "max-distance", Type: "number", Description: "The largest perceptual distance shown, a whole number from 0 to 11. Unset, the hash similarity threshold from the settings applies, the one the Similar Resources panel uses."},
+				{Name: "limit", Type: "number", Default: "8", Description: "The most thumbnails shown, a whole number from 1 to 24."},
+				{Name: "size", Type: "enum", Default: "md", Description: "Thumbnail edge: sm is 48 px, md 96 px, lg 200 px.", Enum: []string{"sm", "md", "lg"}},
+				{Name: "label", Type: "string", Default: "Similar resources", Description: "The visible caption, which is also the strip's accessible name. Blank means the default."},
+			},
+			Examples: []DocExample{
+				{Title: "Lookalikes of this resource", Code: `[similar]`},
+				{Title: "Only near-certain duplicates", Code: `[similar max-distance="2" limit="12" size="sm" label="Possible duplicates"]`},
+				{Title: "A group's cover image", Code: `[using type="resource" id-path="cover"][similar label="Lookalikes of the cover"][/using]`, Notes: "The strip belongs to the cover resource; a cover the viewer cannot see renders nothing."},
+			},
+		},
+		{
+			Name:        "calendar",
+			Syntax:      `[calendar mrql='type = "note"' date="meta.due"]`,
+			Description: "One month as an accessible grid, Monday first, of the entities an MRQL filter matches, placed by a date field. Each day shows its count, links to the day's full list on the MRQL page, and lists up to 3 linked titles followed by a \"+k more\" link. Prev/Next buttons swap the month in place on display pages, cards, the lightbox and deferred bodies; share pages, the live preview and list headers show the month without them. A month of up to 100 entities costs one query of the page query budget and its titles and counts come from the same rows; a denser month costs two and shows counts only, with a note. A day is a date on the server's local clock; a Meta date counts only when it is a string starting YYYY-MM-DD (a JSON-Schema date or an RFC3339 date-time), and its day is the date as written. Counts are read as the viewer, so a group-confined user only sees their subtree. Put it in CustomSidebar or CustomHeader rather than a per-card slot, where every card runs its own queries.",
+			IsBlock:     BlockNo,
+			Attrs: []DocAttr{
+				{Name: "mrql", Type: "string", Required: true, Description: "An MRQL filter naming exactly one entity type through a top-level type = …. No GROUP BY, ORDER BY, LIMIT, OFFSET, SCOPE or $parameters: the calendar adds its own month range and order."},
+				{Name: "date", Type: "string", Default: "created", Description: "The date field that places an entity on a day: created, updated, or meta.<path> (letters, digits and underscores, dot-separated)."},
+				{Name: "month", Type: "string", Default: "current", Description: "current (the server's current month) or YYYY-MM, year 1000 to 9999."},
+				{Name: "scope", Type: "string", Description: "Group scope, as on [mrql]: global, parent, root or a group ID. Unset, or any other value, is the entity's own group."},
+			},
+			Examples: []DocExample{
+				{Title: "Notes by due date", Code: `[calendar mrql='type = "note"' date="meta.due"]`, Notes: "Notes whose meta.due is not a YYYY-MM-DD string are left out."},
+				{Title: "Uploads in one month, everywhere", Code: `[calendar mrql='type = "resource"' date="created" month="2026-03" scope="global"]`},
 			},
 		},
 		{

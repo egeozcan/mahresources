@@ -99,11 +99,24 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 		// and overall deadline.
 		reqCtx, cancel := buildMRQLAPIRenderContext(request.Context(), ctx, false)
 		defer cancel()
+		reqCtx = template_filters.WithAdjacentResolverFor(reqCtx, ctx)
 
 		renderer := previewPluginRenderer(reqCtx, ctx)
 		executor := cappedQueryExecutor(template_filters.BuildQueryExecutor(ctx), previewMRQLLimitCap)
 
-		html := shortcodes.Process(reqCtx, req.Content, *metaCtx, renderer, executor)
+		// [inspect] renders its context panel here and nowhere else. This is the
+		// only production setter of WithInspect: the preview routes are gated at
+		// the capability that saves the template, so the reader is the author,
+		// and the panel reads only what loadPreviewEntity and the scoped
+		// executor already loaded. Every other surface leaves the flag unset and
+		// [inspect] renders nothing there. Not for a stylesheet: the CustomCSS
+		// slot sends its CSS as Content, and the css buffer is CSS, where a panel
+		// is not something that can be shown.
+		htmlCtx := reqCtx
+		if !strings.HasSuffix(req.Slot, "CSS") {
+			htmlCtx = shortcodes.WithInspect(reqCtx)
+		}
+		html := shortcodes.Process(htmlCtx, req.Content, *metaCtx, renderer, executor)
 		css := ""
 		if req.CSS != "" {
 			css = shortcodes.Process(reqCtx, req.CSS, *metaCtx, renderer, executor)

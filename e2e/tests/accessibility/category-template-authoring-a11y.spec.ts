@@ -4,6 +4,7 @@
  */
 import { test, expect } from '../../fixtures/a11y.fixture';
 import { openTemplateSectionsOnLoad } from '../../helpers/template-sections';
+import { previewEntityChip } from '../../helpers/template-preview-entity';
 
 // These tests work inside the template sections, which load collapsed.
 test.beforeEach(async ({ page }) => { await openTemplateSectionsOnLoad(page); });
@@ -15,6 +16,27 @@ test.describe('Category template authoring accessibility', () => {
     await page.locator('.cm-editor').first().waitFor({ state: 'visible', timeout: 15000 });
     await checkA11y();
   });
+
+  for (const [path, panelId] of [
+    ['/category/new', '#cat-template-docs-panel'],
+    ['/resourceCategory/new', '#rc-template-docs-panel'],
+    ['/noteType/new', '#nt-template-docs-panel'],
+  ]) {
+    test(`the open Reference panel on ${path} has no a11y violations`, async ({ page, checkComponentA11y }) => {
+      await page.goto(path);
+      await page.waitForLoadState('load');
+      await page.getByRole('button', { name: 'Reference' }).click();
+      await expect(page.locator(panelId)).toBeVisible();
+      // x-collapse animates the height with overflow hidden and clears the
+      // overflow when it ends. axe skips the contrast of anything clipped, so
+      // scan only once the panel has settled.
+      await page.waitForFunction((sel) => {
+        const el = document.querySelector<HTMLElement>(sel);
+        return !!el && el.style.overflow !== 'hidden';
+      }, panelId);
+      await checkComponentA11y(panelId);
+    });
+  }
 
   test('preview controls are labelled', async ({ page }) => {
     await page.goto('/category/new');
@@ -47,6 +69,34 @@ test.describe('Category template authoring accessibility', () => {
     await dialog.getByTestId('slot-history-rev-1').check();
     await expect(dialog.getByTestId('slot-history-unified-CustomHeader')).toBeVisible();
     await checkA11y();
+  });
+
+  test('an expanded [inspect] panel in the slot preview has no a11y violations', async ({ page, apiClient, checkComponentA11y }) => {
+    const stamp = Date.now();
+    const cat = await apiClient.createCategory(`A11y Inspect ${stamp}`);
+    const group = await apiClient.createGroup({
+      name: `A11y Inspect Target ${stamp}`,
+      categoryId: cat.ID,
+      meta: JSON.stringify({ project: { name: 'Apollo', tags: ['a', 'b'] }, 'odd.key': 1 }),
+    });
+    await page.goto(`/category/edit?id=${cat.ID}`);
+    await page.locator('.cm-editor').first().waitFor({ state: 'visible', timeout: 15000 });
+    await expect(previewEntityChip(page)).toHaveAttribute('aria-label', `Remove ${group.Name}`, { timeout: 10000 });
+    await page.locator('.cm-content[aria-label="Custom Header"]').fill('<div>[inspect]</div>');
+
+    const preview = page.locator('[data-slot-preview="CustomHeader"]');
+    await preview.scrollIntoViewIfNeeded();
+    const panel = page.frameLocator('[data-slot-preview="CustomHeader"] iframe').locator('details.inspect-shortcode');
+    await expect(panel).toHaveCount(1, { timeout: 10000 });
+    await panel.locator('summary').press('Enter');
+    await expect(panel).toHaveAttribute('open', '');
+    // The frame holds one slot's fragment, not a page: on the real page the
+    // slot sits inside <main> under the page's <h1>. The three document-level
+    // rules are about that page, so they are off; every rule about the panel
+    // itself (names, table structure, contrast, focusable regions) runs.
+    await checkComponentA11y('[data-slot-preview="CustomHeader"]', {
+      disableRules: ['landmark-one-main', 'page-has-heading-one', 'region'],
+    });
   });
 
   test('note type create form has no critical a11y violations', async ({ page, checkA11y }) => {

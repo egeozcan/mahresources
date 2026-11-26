@@ -177,6 +177,12 @@ func executeMRQLForShortcode(reqCtx context.Context, appCtx mrqlShortcodeRunner,
 		return nil, err
 	}
 
+	if opts.WantSimilarityDistance {
+		if err := attachSimilarityDistances(reqCtx, appCtx, parsed, qr); err != nil {
+			return nil, err
+		}
+	}
+
 	// A true total (ignoring limit) is only needed when the template references
 	// {total}; it runs a second COUNT query over the same WHERE/scope.
 	if opts.WantTotal {
@@ -188,6 +194,44 @@ func executeMRQLForShortcode(reqCtx context.Context, appCtx mrqlShortcodeRunner,
 	}
 
 	return qr, nil
+}
+
+// attachSimilarityDistances sets each resource item's distance to the query's
+// single SIMILAR TO target ([similar] asks for it). The target comes from the
+// parsed query, never from the caller, and the IDs are the rows the
+// principal-scoped query just returned, so the pair lookup cannot reach a
+// resource the viewer may not see. A query with no or several SIMILAR TO
+// predicates has no one distance and gets none.
+func attachSimilarityDistances(reqCtx context.Context, appCtx mrqlShortcodeRunner, parsed *mrql.Query, qr *shortcodes.QueryResult) error {
+	if qr.EntityType != mrql.EntityResource.String() || len(qr.Items) == 0 {
+		return nil
+	}
+	target, ok := mrql.SimilarToTarget(parsed)
+	if !ok || target <= 0 {
+		return nil
+	}
+	ids := make([]uint, 0, len(qr.Items))
+	for _, it := range qr.Items {
+		if it.EntityType == "resource" {
+			ids = append(ids, it.EntityID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	distances, err := appCtx.SimilarityDistancesTo(reqCtx, uint(target), ids)
+	if err != nil {
+		return err
+	}
+	for i := range qr.Items {
+		if qr.Items[i].EntityType != "resource" {
+			continue
+		}
+		if d, ok := distances[qr.Items[i].EntityID]; ok {
+			qr.Items[i].SimilarityDistance = &d
+		}
+	}
+	return nil
 }
 
 // shortcodeParamsToAny converts a string-valued shortcode params map into the

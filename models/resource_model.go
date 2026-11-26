@@ -1,6 +1,7 @@
 package models
 
 import (
+	"mahresources/constants"
 	"mahresources/models/types"
 	"mime"
 	"path/filepath"
@@ -70,7 +71,7 @@ func (r *Resource) SimilarityTier() string {
 	if r.SimilarityDistance == nil {
 		return ""
 	}
-	if *r.SimilarityDistance <= 2 {
+	if *r.SimilarityDistance <= constants.SimilarityDuplicateMaxDistance {
 		return "duplicate"
 	}
 	return "similar"

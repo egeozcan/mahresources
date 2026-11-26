@@ -42,7 +42,7 @@ func TestOwnerFilteredResourcePageReadsTheOwnerIndexInOrder(t *testing.T) {
 		t.Cleanup(func() { _ = sqlDB.Close() })
 	}
 	for _, statement := range []string{
-		"CREATE TABLE resources (id integer primary key, name text, owner_id integer, created_at datetime)",
+		"CREATE TABLE resources (id integer primary key, name text, owner_id integer, resource_category_id integer, created_at datetime)",
 		"CREATE INDEX idx_resources_created_at ON resources(created_at)",
 		"CREATE INDEX idx_resources_owner_id ON resources(owner_id)",
 	} {

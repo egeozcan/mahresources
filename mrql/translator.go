@@ -323,6 +323,22 @@ func findSimilarTarget(node Node) *SimilarToExpr {
 	return nil
 }
 
+// SimilarToTarget returns the target resource ID of a query whose WHERE holds
+// exactly one SIMILAR TO predicate. ok is false for none or more than one (an
+// OR of two targets has no single distance to report). Callers that enrich
+// results with the pair distance take the target from here, from the parsed
+// query, never from their own input.
+func SimilarToTarget(q *Query) (int64, bool) {
+	if q == nil {
+		return 0, false
+	}
+	target := findSimilarTarget(q.Where)
+	if target == nil {
+		return 0, false
+	}
+	return target.TargetID, true
+}
+
 // collectSimilarToExprs returns all SimilarToExpr nodes in an expression tree.
 func collectSimilarToExprs(node Node) []*SimilarToExpr {
 	switch n := node.(type) {

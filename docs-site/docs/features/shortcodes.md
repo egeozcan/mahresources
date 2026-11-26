@@ -15,7 +15,7 @@ Shortcodes are bracket-delimited expressions embedded in the custom template slo
 
 The parser recognizes these patterns:
 
-- **Built-in inline:** `[meta ...]`, `[datetime ...]`, `[pills ...]`, `[property ...]`, `[item ...]`, `[partial ...]`
+- **Built-in inline:** `[meta ...]`, `[datetime ...]`, `[pills ...]`, `[property ...]`, `[item ...]`, `[partial ...]`, `[calendar ...]`, `[calc ...]`, `[similar ...]`, `[adjacent ...]`, `[inspect ...]`
 - **Built-in block:** `[conditional ...]...[/conditional]`, `[each ...]...[/each]`, `[lazy]...[/lazy]`, `[details ...]...[/details]`, `[autorefresh ...]...[/autorefresh]`, `[using ...]...[/using]`, `[comment]...[/comment]`
 - **Built-in inline or block:** `[mrql ...]` or `[mrql ...]...[/mrql]`, `[link ...]` or `[link ...]...[/link]`, `[reload ...]` or `[reload ...]...[/reload]`
 - **Plugin:** `[plugin:plugin-name:shortcode-name ...]`, inline or as a block closed by `[/plugin:plugin-name:shortcode-name]`
@@ -43,6 +43,7 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 | `[pills]` | Inline | Pill selector with schema enum or manual options |
 | `[datetime]` | Inline | Display/edit a date/time Meta field, preserving its format |
 | `[property]` | Inline | Render a scalar field or dot-path from the current entity |
+| `[calc]` | Inline | Compute a number from Meta, entity fields or [each] elements |
 | `[mrql]` | Inline or block | Run an MRQL query and render results, a scalar value, or a custom item template |
 | `[conditional]` | Block | Render the first matching branch from a meta, field, or MRQL condition |
 | `[link]` | Inline or block | Resolve a detail-page URL or wrap content in a link |
@@ -54,6 +55,10 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 | `[reload]` | Inline or block | Re-render the nearest deferred block or custom-content slot on demand |
 | `[autorefresh]` | Block | Re-render the body after an inline editor saves |
 | `[using]` | Block | Render the body with another group, resource or note as the entity |
+| `[adjacent]` | Inline | Previous/next links to the entity's siblings or Series |
+| `[similar]` | Inline | Thumbnails of perceptually similar resources, with tier, distance and a compare link |
+| `[calendar]` | Inline | Month grid of entities by a date field, with titles, day links and month navigation |
+| `[inspect]` | Inline | Live preview only: list the Meta paths, fields and `[each]` element paths available at that point |
 | `[comment]` | Block | Remove a section on the server so it never runs or renders |
 
 ### Block Syntax
@@ -341,6 +346,125 @@ The exception is a credential field: a note's `ShareToken` (and `TokenHash`, `Cs
 **Resource:** `ID`, `Name`, `Description`, `CreatedAt`, `UpdatedAt`, `ContentType`, `OriginalName`, `OriginalLocation`, `FileSize`, `Width`, `Height`, `Hash`, `ResourceCategoryId`, `OwnerId`, `Meta`
 
 **Note:** `ID`, `Name`, `Description`, `CreatedAt`, `UpdatedAt`, `NoteTypeId`, `OwnerId`, `StartDate`, `EndDate`, `Meta`
+
+## `[calc]` -- Arithmetic over Fields
+
+Computes a number from values the page already holds: the entity's Meta, its numeric fields and, inside `[each]`, the current element. Use it for derived values that would go stale if stored, such as a line total, a discounted price, a remaining budget or a resource's megapixels.
+
+```
+[calc expr="meta.qty * meta.unit_price * (1 - coalesce(meta.discount, 0))" decimals="2" default="-"]
+```
+
+`[calc]` is inline only. It never runs a query and never calls a plugin, so it works everywhere `[meta inline="true"]` works (share pages, Custom MRQL Result cards, the live preview) and shows nothing the reader could not already see on the page. For totals across many entities, use an aggregate `[mrql value=…]` over a `GROUP BY` instead.
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `expr` | Yes | -- | The expression. It never contains quotes, so either attribute quoting works. A blank `expr` renders nothing. |
+| `decimals` | No | unset | A whole number from 0 to 10. The result is rounded half away from zero to exactly that many fraction digits, keeping trailing zeros (`10` with `decimals="2"` renders `10.00`). Unset, the result is rounded to 10 fraction digits and trailing zeros are dropped, so `0.1 + 0.2` renders `0.3` and `1 / 3` renders `0.3333333333`. |
+| `format` | No | `number` | `number` is a plain decimal (`1234567.89`). `grouped` puts a `,` between every three integer digits and uses `.` as the decimal point (`1,234,567.89`); it is not locale-aware. `percent` multiplies by 100, applies `decimals` and appends `%` (`0.256` renders `25.6%`). |
+| `default` | No | empty | Text rendered, HTML-escaped, when the expression has no numeric result. |
+
+There is no `raw`, `hide-empty`, `editable` or `layout`: the output is always a number or the escaped default.
+
+### Operands
+
+| Operand | Reads | Counts as a number when |
+|---------|-------|-------------------------|
+| `meta.<path>` | The entity's Meta at a dot path, e.g. `meta.price.net` | It is a JSON number, or a string that is wholly a decimal number after trimming spaces (`"12.50"`, `" 3 "`, `"1e3"`). `"12,5"`, `"0x10"`, `"NaN"`, `"1_000"`, `""` and a string longer than 64 bytes are not numbers. |
+| `property.<Path>` | An entity field, the same traversal as `[property]` (e.g. `property.Width`, `property.Tags.0.ID`) | It is an integer or floating-point field. Strings, booleans, times and structs are never numbers. A nil pointer (an ownerless entity's `OwnerId`) has no value. Credential fields are withheld exactly as in `[property]`. |
+| `item`, `item.<path>` | The current `[each]` element, or a dot path into it | As for `meta.`. See [Inside `[each]`](#inside-each). |
+| `12`, `0.5` | A literal | Always. Literals are plain decimals: no exponent, no leading `.`, at most 32 characters. |
+
+Names are case-sensitive. A bare name (`qty`), any other root (`entity.x`) or any other function (`sqrt`) is a syntax error.
+
+**Only Meta keys made of ASCII letters, digits and `_`, not starting with a digit, can be referenced.** Keys containing `-`, spaces, dots or non-ASCII letters cannot. `meta.unit-price` reads as `meta.unit - price`, and `price` is an unknown name, so it is a syntax error. Rename the key (`unit_price`) to use it in `[calc]`.
+
+### Operators and functions
+
+- `+ - * /` as usual; `%` is the remainder and takes the sign of the dividend (`-7 % 3` is `-1`).
+- Unary `-` and `+`, then `* / %`, then `+ -`; all left-associative. Parentheses group.
+- `min(a, …)` and `max(a, …)` take 1 to 8 arguments.
+- `abs(x)`.
+- `round(x)` and `round(x, digits)` round half away from zero (`round(2.5)` is `3`, `round(-2.5)` is `-3`, `round(2.675, 2)` is `2.68`). `digits` must be a whole number from 0 to 10, otherwise the call has no value.
+- `coalesce(a, b, …)` (1 to 8 arguments) returns the first argument that has a value. Arguments are evaluated left to right and evaluation stops at the first hit.
+
+### Missing values and `coalesce`
+
+A missing key, `null`, a boolean, an object, an array or a non-numeric string has no value. So has division or remainder by zero and any overflow. No value spreads through every operator and function except `coalesce`, and when the whole expression has no value `[calc]` renders `default`.
+
+```
+[calc expr="meta.qty * meta.unit_price" default="not set"]
+[calc expr="coalesce(meta.spent / meta.budget, 0)" format="percent"]
+```
+
+The second line renders `0%` when the budget is zero or missing, instead of the default.
+
+A mistake in the template itself renders the `⚠ calc` [failure marker](#failure-markers), with the reason in its tooltip: a syntax error, an unknown name or function, a wrong argument count, an expression past the limits below, or a `decimals` or `format` value outside the lists above. The editor's linter reports the same mistakes. Template generation, which lints against the category's Meta Schema, also warns about a `meta.` key the schema does not declare.
+
+### Formatting and rounding
+
+The output is bare text with no wrapper element: digits, an optional leading `-`, `.`, the `,` of `grouped` and the `%` of `percent`. It never uses exponent notation, and a result that rounds to zero renders `0` (or `0.00`), never `-0`. Rounding works on the shortest decimal form of the number, so `1.005` with `decimals="2"` renders `1.01`, as written, rather than the `1.00` that binary floating point would give.
+
+`[calc]` computes in double-precision floating point, which holds about 15 significant digits exactly. An integer beyond 9,007,199,254,740,992 (2^53), such as a 19-digit ID, is rounded before any arithmetic, so it does not render as stored. Store such identifiers as JSON strings and show them with `[meta]`.
+
+Because the output is plain text, `[calc]` can sit inside an HTML attribute: `style="width: [calc expr='meta.done / meta.total * 100' decimals='0' default='0']%"`.
+
+### Inside `[each]`
+
+At the top level of an `[each]` body, `item` is the current element:
+
+```
+[each path="lines"]
+  [item path="name"]: [calc expr="item.qty * item.price" decimals="2"]
+[/each]
+```
+
+The same rules as for `[item]` apply. A `[calc]` inside another block within the body (`[conditional]`, `[lazy]`, `[details]`, `[autorefresh]`, `[using]`) cannot see the element, so its `item` operands have no value; `meta.` and `property.` still read the entity. A nested `[each]` binds its own element. Outside any `[each]`, `item` has no value and the linter warns.
+
+### Limits
+
+An expression may be at most 512 bytes, 128 tokens, 32 levels deep (parentheses, calls and unary signs together) and 32 references, with at most 8 arguments per call. Past any of them it renders the failure marker. Each `[calc]` is a few microseconds of work, and the entity's Meta is decoded once per render however many references there are.
+
+### Accessibility
+
+- Put a derived number where its meaning is clear: a table cell under a header cell (`<th scope="col">`), or a sentence such as "Total due: …". A number on its own tells a screen-reader user nothing.
+- When a value drives a bar, use `<meter>` or `<progress>` with an accessible name, and put the value in the fallback text so it does not rely on the bar or on colour alone:
+
+  ```
+  <meter min="0" max="1" value="[calc expr='meta.spent / meta.budget' default='0']" aria-label="Budget used">[calc expr='meta.spent / meta.budget' format='percent' decimals='0' default='unknown']</meter>
+  ```
+
+- Give `default` words (`not set`, `unknown`) where the reader needs to know why the value is absent. A `-` is fine in a table cell.
+
+### Examples
+
+An invoice table:
+
+```
+<table>
+  <caption>Invoice lines</caption>
+  <tr><th scope="col">Item</th><th scope="col">Qty</th><th scope="col">Price</th><th scope="col">Total</th></tr>
+  [each path="lines"]
+  <tr><td>[item path="name"]</td><td>[item path="qty"]</td><td>[item path="price"]</td><td>[calc expr="item.qty * item.price" decimals="2" format="grouped"]</td></tr>
+  [/each]
+</table>
+<p>Total due: [calc expr="meta.qty * meta.unit_price * (1 - coalesce(meta.discount, 0))" decimals="2" format="grouped" default="not set"]</p>
+```
+
+A budget:
+
+```
+<p>Remaining: [calc expr="meta.budget - meta.spent" decimals="2" default="not set"]</p>
+<meter min="0" max="1" value="[calc expr='meta.spent / meta.budget' default='0']" aria-label="Budget used">[calc expr='meta.spent / meta.budget' format='percent' decimals='0' default='unknown']</meter>
+```
+
+A resource's size in megapixels (in a Resource Category template):
+
+```
+[calc expr="property.Width * property.Height / 1000000" decimals="1" default="unknown"] MP
+```
 
 ## `[mrql]` -- Inline Query Results
 
@@ -1146,6 +1270,292 @@ A lookup by `id`, `id-path`, `id-prop` or `rel` searches globally: the `[mrql]` 
   No index note yet.
 [/using]
 ```
+
+## `[inspect]` -- Context Explorer (preview only)
+
+`[inspect]` is an aid for writing templates. Put it anywhere in a slot and the editor's live preview shows a collapsed panel listing what that point of the template can read, each row with a shortcode ready to copy. Remove it when you are done; if you forget, it does no harm, because **it renders nothing outside the live preview**.
+
+```
+[inspect]
+[inspect path="project"]
+
+[each path="steps"]
+  [inspect]
+  [item path="title"]
+[/each]
+```
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `path` | No | (all of Meta) | A Meta dot-path, written as for `[meta path=]`. Limits the Meta section to the subtree at that path. The other sections are unaffected. |
+
+`[inspect]` is inline only. A closing `[/inspect]` is a lint error.
+
+### What the panel shows
+
+The summary names the entity in context, for example `Inspect: group #42`. It adds `inside [using]` when a `[using]` block switched the entity. Opening the panel shows up to three tables:
+
+- **Current [each] element**, only at the top level of an `[each]` body: the element's position (`[item index="true"]`) and every path in the element (`[item path="..."]`), or `[item]` when the element is a plain value. Only the first element gets a panel.
+- **Meta**: every key, depth-first in sorted order down to 6 levels, with its JSON type (`string`, `number`, `boolean`, `null`, `object (n keys)`, `array (n items)`), a sample value and a snippet: `[meta path="..."]`, or `[each path="..."][item][/each]` for an array. A key containing `.`, a quote or a bracket cannot be written as a path, so it is listed as "not addressable by path=".
+- **Properties**: the entity's own fields for `[property]`, with a sample and a snippet. Time fields get `format="date"`, and `FileSize` gets `format="filesize"`. Association fields such as `Owner`, `Tags` or `Category` are listed by name and kind (`relation`, `list`) only. The panel never reads values through them, so it shows nothing about entities outside what the preview loaded. Credential fields such as a note's share token are always left out. `Meta` itself is covered by the Meta section.
+
+Inside an `[mrql]` block body, a `CustomMRQLResult` template or a `[using]` block, the panel describes the result item or target entity, because that is what the context has switched to.
+
+An `[inspect]` nested in another block inside a loop (for example in a `[conditional]` within an `[each]`) is not at the loop's top level. It shows the entity only, just as an `[item]` there renders empty.
+
+### Copying a snippet
+
+Each snippet is a read-only text field. Press Tab to reach it, then Ctrl+A (Cmd+A) and Ctrl+C (Cmd+C) to copy it. The preview frame is sandboxed, so there is no copy button. The panel is a native disclosure: Enter or Space on its summary opens it, and screen readers announce whether it is open.
+
+### Where it renders
+
+Only in the template editor's live preview (`POST /v1/{category,resourceCategory,noteType}/previewTemplate`), which requires the same rights as saving the template. That includes the MCP preview tools (`previewCategoryTemplate` and its siblings), which call the same route for the same caller; the panel shows them nothing that a `[meta]` in the same preview would not. Everywhere else (entity pages, list cards, hover cards, the lightbox, share pages, deferred `[lazy]`/`[details]` bodies, MRQL API renders and the AI template tools) `[inspect]` renders as the empty string, not a comment. The page reads exactly as if it were absent. It never runs a query.
+
+### Limits
+
+- 200 rows per panel across its sections. Past that, a note says how many paths were not shown; narrow the panel with `path=`.
+- 10 panels per preview. An `[inspect]` inside an `[mrql]` body runs once per result, so later panels are replaced by one note.
+- Samples are cut at 80 characters.
+- `[inspect]` cannot be used inside a `[reload]` button face.
+
+## `[adjacent]` -- Previous and next
+
+`[adjacent]` adds a Previous and a Next link to the entity's neighbours, so a reader can step through a scanned book's pages, a photo set, a run of meeting notes or a client's invoices without going back to the list.
+
+```
+[adjacent series="true" label="Pages"]
+[adjacent label="Meetings"]
+```
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `series` | No | `false` | `true` or `false`. Resources only: `true` steps through the other members of the resource's [Series](../user-guide/managing-resources.md), whatever their owner or category. |
+| `label` | No | `Previous and next` | The accessible name of the navigation landmark. A name already used on the page gets a number (`Previous and next (2)`), so repeated or per-card `[adjacent]`s stay distinct; a label of your own reads better. |
+
+`[adjacent]` is inline only. A closing `[/adjacent]` is a lint error, and so is a `series` value other than `true` or `false`.
+
+### Which entities are siblings
+
+- **Series mode** (`series="true"`, resources only). The resources in the same Series. A resource with no Series renders nothing. On a group or a note, `series="true"` renders an error marker.
+- **Default mode.** Entities of the same type with the same owner and the same category column: the resource category for resources, the note type for notes and the category for groups. A group's owner is its parent group.
+  - An entity with no owner pairs with the other ownerless entities of the same category, which covers top-level groups and an unowned inbox.
+  - A note or group with no type or category pairs with the others that have none.
+
+### Order
+
+Siblings are always in creation order: `created_at`, then `id` to break ties. The order is total and stable, and editing an entity never moves it.
+
+There is no name order: names sort as text, so "Chapter 10" would come before "Chapter 2". For a curated order, put the items in a Series and create them in reading order, or create them in the order you want to read them.
+
+### Output
+
+```html
+<nav class="shortcode-adjacent ..." aria-label="Pages">
+  <a href="/resource?id=12" rel="prev" ...><span aria-hidden="true">←</span> Previous: Page 1</a>
+  <a href="/resource?id=14" rel="next" ...>Next: Page 3 <span aria-hidden="true">→</span></a>
+</nav>
+```
+
+- Each link's accessible name is its visible text; the arrows are hidden from assistive technology. Previous comes first in both reading and Tab order.
+- With only one neighbour only that link renders, and Next stays right-aligned. With neither, `[adjacent]` renders nothing at all, not an empty landmark.
+- A sibling with a blank name is shown as its type and ID, for example "Resource 14". Names are always HTML-escaped.
+- Inside `[using]` or an `[mrql]` item template, it navigates the entity the context switched to.
+
+### Scoping
+
+Siblings are read as the viewer. A group-confined user or guest only ever sees siblings inside their subtree:
+
+- The group at the root of their subtree, and every top-level group, has no visible siblings and renders nothing.
+- A Series member outside the subtree is skipped, and the next visible member is linked.
+- Unowned resources and notes are outside every subtree.
+- An entity the viewer cannot see and one that does not exist both render nothing, so `[adjacent]` cannot be used to probe for IDs.
+
+Only the ID and name of a visible sibling reach the page.
+
+### Cost
+
+- Each `[adjacent]` runs at most three small queries: the current row by primary key and one seek in each direction. In default mode each seek is a single index probe, so its cost does not grow with the number of siblings; Series mode is the exception below.
+- It counts one unit of the [per-page query budget](#per-page-query-budget); an identical `[adjacent]` repeated on the same page is free. Past the budget it renders an error marker.
+- Each lookup is bounded by the MRQL query timeout (`-mrql-query-timeout`), and a lookup that runs out of time renders "lookup timed out".
+- Put it in CustomHeader or CustomSidebar. In a per-card slot (CustomSummary, CustomMRQLResult) it costs one budget unit per card.
+- Default mode reads three composite indexes (`idx_resources_adjacent_created`, `idx_notes_adjacent_created`, `idx_groups_adjacent_created`), which add a small write cost on inserts and on changes of owner, category or creation time. On SQLite a large library builds them once at startup, before serving. On PostgreSQL they are built concurrently in the background, and `[adjacent]` is correct but slower until they exist.
+- Series mode uses the Series index and sorts that Series' members, so its cost grows with the size of the Series (typically tens of rows).
+
+### Where it renders
+
+On entity display pages (their slots and list cards), in deferred `[lazy]`/`[details]`/`[autorefresh]` bodies, and in the template editor's and the description editor's live previews. Everywhere else it renders the HTML comment `<!-- mr:adjacent unavailable in this context -->`: the MRQL render API, share pages, the lightbox, hover cards (a tooltip the keyboard cannot enter), the entity picker, the AI template generation tools and the CLI.
+
+`[adjacent]` cannot be used inside a `[reload]` button face.
+
+## `[similar]` -- Lookalike Thumbnails
+
+`[similar]` shows the resources that look like the current one: duplicates, re-exports, crops and light edits. It reads the perceptual-hash pairs the hash worker has already stored, the same pairs behind the resource page's Similar Resources panel and MRQL's `SIMILAR TO`. Use it where that panel is not: the lightbox, the sidebar, the detail footer, or a group page through `[using]`.
+
+```
+[similar]
+[similar max-distance="2" limit="12" size="sm" label="Possible duplicates"]
+```
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `max-distance` | No | the hash similarity threshold | The largest perceptual distance shown, a whole number from 0 to 11. Unset, the threshold from the settings applies, the one the Similar Resources panel uses. |
+| `limit` | No | `8` | The most thumbnails shown, a whole number from 1 to 24. The nearest come first; equal distances are in ID order. |
+| `size` | No | `md` | Thumbnail edge: `sm` is 48 px, `md` 96 px, `lg` 200 px. |
+| `label` | No | `Similar resources` | The visible caption, which is also the strip's accessible name. Blank means the default. |
+
+`[similar]` is inline only and has no `id` attribute: it always shows the lookalikes of the current resource. An invalid `max-distance`, `limit` or `size` renders an error marker, and the linter reports the same message.
+
+### Tiers
+
+Each thumbnail carries a badge with its tier and distance, with the same cut-off as the Similar Resources panel:
+
+| Distance | Badge | Meaning |
+|----------|-------|---------|
+| 0 to 2 | `Duplicate · d` | A near-certain duplicate |
+| 3 and above | `Similar · d` | Visually similar |
+
+### Output
+
+```html
+<figure class="similar-strip my-2" data-similar-for="42">
+  <figcaption class="text-xs font-semibold mb-1">Similar resources</figcaption>
+  <ul class="flex flex-wrap gap-2" role="list">
+    <li class="flex flex-col items-center gap-0.5">
+      <a href="/resource?id=17" ...><img src="/v1/resource/preview?id=17&amp;width=96&amp;height=96&amp;v=..." width="96" height="96"
+           loading="lazy" alt="Beach sunset (2), near-certain duplicate, distance 1" ...></a>
+      <span ... aria-hidden="true">Duplicate · 1</span>
+      <a href="/resource/compare?r1=42&amp;r2=17" ...>Compare<span class="sr-only"> Beach sunset (2) with Beach sunset</span></a>
+    </li>
+  </ul>
+</figure>
+```
+
+- The caption names the strip. Each image's alt text gives the name, the tier and the distance, so the badge is hidden from assistive technology. A resource with a blank name is shown as "Resource 17".
+- The Compare link opens the side-by-side compare page. Its accessible name starts with the visible word "Compare" and names both resources.
+- The badges carry their own background, and the caption and links take the slot's text colour, so the strip reads on the white page and on the dark lightbox panel.
+- Names are always HTML-escaped and are never expanded as shortcodes.
+
+### When it renders nothing
+
+- With no stored pairs within the distance, or when the viewer may see none of them, `[similar]` renders nothing. It never hashes images while a page renders, and it does not fall back to exact hash matches. A resource that is not an image has no pairs.
+- On a group or a note it renders an error marker. Use `[using]` to point it at a resource.
+- On share pages it renders `<!-- mr:similar unavailable in this context -->`.
+
+### Another resource: `[using]`
+
+```
+[using type="resource" id-path="cover"][similar label="Lookalikes of the cover"][/using]
+```
+
+Inside `[using]` the strip belongs to the resolved resource: its Compare links compare against that resource and name it. A cover the viewer cannot see resolves to no target, so the block renders its `[else]` branch or nothing.
+
+### Scoping and cost
+
+- Lookalikes are read as the viewer. A group-confined user or guest only sees resources inside their subtree, and an unowned resource is outside every subtree. "No lookalikes" and "lookalikes you may not see" look the same.
+- Each `[similar]` counts one unit of the [per-page query budget](#per-page-query-budget), and an identical one on the same page is free. It runs one indexed `SIMILAR TO` query and one lookup of at most 24 pair rows, so its cost follows the size of the resource's lookalike cluster, not of the library.
+- Put it in `CustomSidebar`, `CustomLightbox` or `CustomDetailFooter`. In a per-card slot it costs one budget unit per card.
+
+### In the lightbox
+
+The lightbox renders `CustomLightbox` (or, when that is empty, `CustomSidebar`) when it opens a resource, so `[similar]` shows the image's lookalikes next to it. Its links are ordinary links: following one leaves the lightbox for the resource or compare page, like the lightbox's own "Open resource page" link.
+
+`[similar]` cannot be used inside a `[reload]` button face.
+
+`similar` is now a reserved shortcode name: text written as `[similar …]` in an existing template renders the strip (or an error marker on a group or note) instead of showing as text.
+
+## `[calendar]` -- Month grid of dated entities
+
+`[calendar]` shows one month as a grid of the entities an MRQL filter matches, placed on days by a date field. Use it for event, journal, task and deadline categories: a group sidebar that shows the month's notes by due date, or a daily-log calendar.
+
+```
+[calendar mrql='type = "note"' date="meta.due"]
+[calendar mrql='type = "resource"' date="created" month="2026-03" scope="global"]
+[calendar mrql='type = "note" AND noteType = "Task"' date="meta.due" scope="parent"]
+```
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `mrql` | Yes | | An MRQL **filter**, naming exactly one entity type through a top-level `type = …` (`type = "note" OR type = "group"` names none). It cannot carry `GROUP BY`, `ORDER BY`, `LIMIT`, `OFFSET`, `SCOPE` or `$parameters`: the calendar adds its own month range, order and limits. |
+| `date` | No | `created` | The field that places an entity on a day: `created`, `updated`, or `meta.<path>` (letters, digits and underscores, dot-separated, such as `meta.event.start`). |
+| `month` | No | `current` | `current`, the server's current month, or `YYYY-MM` with a year from 1000 to 9999. |
+| `scope` | No | the entity's group | As on [`[mrql]`](#mrql----inline-query-results): `global`, `parent`, `root` or a group ID. Any other value, `entity` included, is the entity's own group. |
+
+`[calendar]` is inline only; a `[/calendar]` closer is a lint error. An invalid attribute renders an error marker, and the linter reports the same message. The linter also checks the two queries the calendar runs.
+
+### What a month shows
+
+- The week starts on Monday. Days of the neighbouring months are empty cells.
+- Each day with entities shows its count as a link to that day's list on the MRQL page, and up to 3 linked titles. A day with more has a "+k more" link to the same list. The day link carries the same filter, date range and scope as the grid, so it lists exactly what the cell counted.
+- The caption names the month and the total, such as "March 2026 (12 items)".
+- Today's cell is highlighted and marked `aria-current="date"`.
+
+**Items mode and counts mode.** A month of up to 100 entities is listed in one query, and its titles and counts come from the same rows. A month with more than 100 runs a second, per-day count query and shows counts only, with the note "Showing counts only: more than 100 items this month." That count query returns at most 1000 distinct date values, earliest first; past that the grid adds "Counts may be incomplete".
+
+### Meta dates
+
+A Meta value counts only when it is a JSON string that starts `YYYY-MM-DD`: a JSON-Schema `format: date` value such as `"2026-03-04"`, or an RFC3339 date-time such as `"2026-03-04T23:30:00-05:00"`, which is how `[datetime]` stores one. Its day is the date **as written**, the first ten characters, whatever zone the time carries. Numbers, booleans and other strings are not counted, not listed and not in the day links. Each query carries the guard `meta.<path> ~ "????-??-??*"` for this.
+
+### Which day an entity is on
+
+A day is a calendar date on the server's local clock, the clock `START_OF_MONTH()` and `[datetime]` use. `month="current"` and the today highlight read it too.
+
+- **SQLite, `created`/`updated`.** Timestamps are stored with the server's offset, and the month and day ranges compare them as stored, so an entity is on its local date. A timestamp stored with another offset (written before the server's timezone changed, or kept from an imported group archive) is counted by the day link of its stored date but drawn on its date in the server's zone, which can be the neighbouring day.
+- **PostgreSQL, `created`/`updated`.** A date literal is read at midnight in the database session's `TimeZone`. Set the database `TimeZone` to the server's zone (both default to UTC in the container setup) or days are shifted by the difference.
+- **Meta.** The date as written; no zone applies.
+- **The one deviation.** In counts mode only, SQLite's per-day bucket normalises timestamps to UTC. On a SQLite server not running in UTC, a dense month's counts can put an entity within the UTC offset of midnight on the neighbouring day, and one on the first or last day of the month can drop out of both months' counts. Its day link still lists it under its local date. Items mode has no deviation.
+
+### Month navigation
+
+Prev and Next buttons swap the month in place, without a page load, through the same endpoint `[lazy]` and `[reload]` use. Focus stays on the button that was pressed, and the new month is announced. The buttons carry a sealed copy of the shortcode with the adjacent month, so the filter cannot be changed from the browser.
+
+- They render on display pages, cards, the lightbox and deferred bodies. Share pages, hover cards, the live template preview and list headers show the authored month without them.
+- There is no Prev at 1000-01 and no Next at 9999-12.
+- A `[reload]` around a calendar, or a `[lazy]` it sits in, re-renders the authored month, not the one navigated to.
+
+### Output
+
+```html
+<calendar-shortcode class="calendar-shortcode" role="group" aria-labelledby="cal-…-cap" data-prev-token="…" data-next-token="…">
+  <div class="calendar-shortcode-nav">
+    <button type="button" data-calendar-nav="prev">‹ <span class="sr-only">Previous month, </span>February 2026</button>
+    <button type="button" data-calendar-nav="next"><span class="sr-only">Next month, </span>April 2026 ›</button>
+  </div>
+  <table class="calendar-shortcode-grid">
+    <caption id="cal-…-cap">March 2026 <span class="calendar-shortcode-total">(12 items)</span></caption>
+    …
+    <td class="calendar-shortcode-cell">
+      <a class="calendar-shortcode-daylink" href="/mrql?q=…">…4…5…</a>
+      <ul class="calendar-shortcode-items"><li><a href="/note?id=12">Dentist</a></li>…</ul>
+      <a class="calendar-shortcode-more" href="/mrql?q=…">+2 more<span class="sr-only"> items on March 4</span></a>
+    </td>
+    …
+  </table>
+</calendar-shortcode>
+```
+
+- The group is named by the table caption, so the buttons and the grid are announced together. Column headers are full weekday names for assistive technology.
+- A day link reads "March 4, 5 items"; an empty day reads "March 5, no items" and is not a link. The visible number is part of each name.
+- Long titles are clipped on screen and read in full. Titles are always HTML-escaped.
+
+### Scoping and cost
+
+- Counts and titles are read as the viewer. A group-confined user or guest only sees entities inside their subtree, whatever `scope` says, and the day and title links open pages that are scoped the same way. A navigation token replayed for an entity outside the viewer's subtree is refused.
+- An entity with no owning group and the default scope matches nothing: the grid is empty and has no links.
+- Each render costs one unit of the [per-page query budget](#per-page-query-budget), or two in counts mode. An identical calendar on the same page is free. Each Prev/Next click costs one or two queries on its own request.
+- Put calendars in `CustomSidebar` or `CustomHeader`. In a per-card slot (`CustomMRQLResult`, `CustomAvatar`, `CustomCell`) with the entity's scope, every card runs its own queries: a list of 150 cards exhausts the default budget, and the remaining cards render the budget error. A fixed `scope` lets identical calendars share one result.
+- Both queries are a month-range predicate. `created`/`updated` use the timestamp indexes. No index serves a `meta.*` date range: [indexed metadata keys](./meta-schemas.md#indexed-metadata-keys) of the text kind serve equality only. On a large library, narrow a `meta.*` calendar's filter (an entity type plus a category, note type or tag) and keep the default entity scope rather than `scope="global"`, or every render and every Prev/Next click reads every row the filter matches.
+
+`[calendar]` cannot be used inside a `[reload]` button face. On share pages it renders `<!-- mr:calendar unavailable in this context -->`.
+
+`calendar` is now a reserved shortcode name: text written as `[calendar …]` in an existing template renders the calendar (or an error marker) instead of showing as text.
 
 ## `[comment]` -- Comment out a section
 

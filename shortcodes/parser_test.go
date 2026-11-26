@@ -1,6 +1,7 @@
 package shortcodes
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -224,4 +225,41 @@ func TestParseWithBlocksTopLevelOnly(t *testing.T) {
 	require.Len(t, result, 1)
 	assert.True(t, result[0].IsBlock)
 	assert.Equal(t, `[meta path="x"]`, result[0].InnerContent)
+}
+
+// A name ends at whitespace or "]": a longer word or a CSS arbitrary value
+// that starts with a built-in name is literal text, not that shortcode.
+func TestParseNameBoundary(t *testing.T) {
+	for _, src := range []string{
+		`<div class="max-w-[calc(100vw-2rem)]">`,
+		`[similarity: high]`,
+		`[calculated]`,
+		`[inspection]`,
+		`[metadata]`,
+		`[calendars]`,
+	} {
+		if got := Parse(src); len(got) != 0 {
+			t.Errorf("Parse(%q) = %+v, want no shortcode", src, got)
+		}
+		if out := Process(context.Background(), src, MetaShortcodeContext{}, nil, nil); out != src {
+			t.Errorf("Process(%q) = %q, want it unchanged", src, out)
+		}
+	}
+	for src, name := range map[string]string{
+		`[calc]`:                 "calc",
+		`[calc expr="1+2"]`:      "calc",
+		"[calc\texpr=\"1\"]":     "calc",
+		`[similar ]`:             "similar",
+		`[meta path="a"]`:        "meta",
+		`[plugin:my-p:rating x]`: "plugin:my-p:rating",
+	} {
+		got := Parse(src)
+		if len(got) != 1 || got[0].Name != name {
+			t.Errorf("Parse(%q) = %+v, want one %q", src, got, name)
+		}
+	}
+	known := KnownFromBuiltins()
+	if issues := Lint(`<div class="max-w-[calc(100vw-2rem)] lg:[calc(1px)]">`, LintOptions{Known: known}); len(issues) != 0 {
+		t.Errorf("a Tailwind calc() class should lint clean, got %+v", issues)
+	}
 }

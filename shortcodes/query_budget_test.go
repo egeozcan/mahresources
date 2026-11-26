@@ -182,3 +182,23 @@ func TestBudgetCacheDoesNotServeAcrossTheSeparator(t *testing.T) {
 		t.Fatal("a cached result was served to a different (query, saved) pair that splits at the separator")
 	}
 }
+
+func TestBudgetCacheKeyDistinguishesSimilarityDistance(t *testing.T) {
+	q := "type = resource AND SIMILAR TO resource(1)"
+	plain := budgetCacheKey(q, QueryOptions{Limit: 8})
+	withDist := budgetCacheKey(q, QueryOptions{Limit: 8, WantSimilarityDistance: true})
+	assert.NotEqual(t, plain, withDist)
+}
+
+// The fixed part of a key, every number at its widest, fits in the 160 bytes
+// budgetCacheKeyMetered reserves for it.
+func TestBudgetCacheKeyFixedPartFitsReservation(t *testing.T) {
+	maxUint := ^uint(0)
+	maxInt := int(^uint(0) >> 1)
+	k := budgetCacheKey("", QueryOptions{
+		ScopeGroupID: maxUint, Limit: -maxInt - 1, Buckets: -maxInt - 1,
+		WantTotal: true, WantSimilarityDistance: true,
+	})
+	// len(opts.Params) is 0 here; at its widest it adds 19 more digits.
+	assert.Less(t, len(k)+19, 160, "key %q", k)
+}

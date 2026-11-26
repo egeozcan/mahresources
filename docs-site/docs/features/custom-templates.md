@@ -204,6 +204,21 @@ Use `x-for` to render lists, tables, or grids from array metadata. This pattern 
 </template>
 ```
 
+### Derived totals
+
+A number computed from other fields stays correct when someone edits one of them, which a stored copy does not. [`[calc]`](./shortcodes.md#calc----arithmetic-over-fields) does the arithmetic on the server from the entity's Meta, its numeric fields and `[each]` elements, without a query:
+
+```html
+<table class="w-full text-sm">
+  <caption class="text-left font-semibold">Invoice lines</caption>
+  <tr><th scope="col" class="text-left">Item</th><th scope="col" class="text-right">Total</th></tr>
+  [each path="lines"]
+  <tr><td>[item path="name"]</td><td class="text-right">[calc expr="item.qty * item.price" decimals="2"]</td></tr>
+  [/each]
+</table>
+<p>Total due: [calc expr="meta.qty * meta.unit_price * (1 - coalesce(meta.discount, 0))" decimals="2" default="not set"]</p>
+```
+
 ### Dynamic Styling from Metadata
 
 Combine `:class` bindings with metadata values for status badges, progress bars, or conditional formatting.
@@ -281,6 +296,12 @@ It occupies roughly the same place as the `group_detail_after` / `resource_detai
 </footer>
 ```
 
+For items read one after another (a book's pages, a run of meeting notes), put [`[adjacent]`](./shortcodes.md#adjacent----previous-and-next) in `CustomHeader`. It links the previous and next sibling (same owner and category, or with `series="true"` the same Series) in creation order:
+
+```html
+[adjacent label="Meetings"]
+```
+
 ## CustomHoverCard
 
 Hovering a link to a group, resource or note shows a small preview card. By default that card shows the entity's `CustomAvatar` and `CustomSummary` -- the same markup as its list card. `CustomHoverCard` replaces the summary half of it.
@@ -352,6 +373,8 @@ It **adds to** the preview image rather than replacing it. The image has its own
 ```
 
 Both slots are expanded **server-side before the JSON response is serialized**, so shortcodes resolve normally even though the lightbox is rendered in the browser.
+
+For photo libraries, [`[similar]`](./shortcodes.md#similar----lookalike-thumbnails) in `CustomLightbox` or `CustomSidebar` puts the image's stored lookalikes, each with a Duplicate or Similar badge and a Compare link, next to the image being reviewed.
 
 ## CustomCell
 
@@ -507,6 +530,7 @@ Shortcodes let you embed dynamic content in custom templates without writing Alp
 - **`[reload]`** -- Button that re-renders the innermost `[lazy]`/`[details]`/`[autorefresh]` block, or else the whole custom-content slot, in place
 - **`[autorefresh]`** -- Re-render a block in place after an inline editor saves, so content the server expanded follows the edit
 - **`[using]`** -- Render a block with another group, resource or note (the owner, or an ID from metadata) as the entity
+- **[`[calendar]`](./shortcodes.md#calendar----month-grid-of-dated-entities)** -- A month grid of the entities an MRQL filter matches, by a created, updated or Meta date, with titles, day links and Prev/Next navigation
 - **`[comment]`** -- Comment out a section. The server removes it before rendering, so its shortcodes never run and it is never rendered. An HTML comment still runs its shortcodes and is sent to the browser.
 
 Plugins can also register custom shortcodes via `mah.shortcode()`.
@@ -840,6 +864,15 @@ Every template slot's section ends with its own preview, which renders that slot
 On the edit form, each slot's preview has a **History** button, and the Custom CSS editor has one too. It opens the slot's previous versions in a dialog where you can compare one with the editor, preview it and apply it. See [Slot history on the edit form](./template-revisions.md#slot-history-on-the-edit-form).
 
 Preview executes MRQL and plugin shortcodes, so it is gated at the same permission level as saving the template: **admin** for Category and Resource Category, **editor** for Note Type. To keep it responsive on large deployments, `[mrql]` result limits are capped during preview.
+
+To see what a template can read at a given point, add `[inspect]` there. The preview shows a collapsed panel listing the Meta paths with their types and sample values, the entity's fields, and, at the top level of an `[each]` body, the element's `[item]` paths. Each row has a snippet to copy. `[inspect]` renders only in the preview and renders nothing on pages, so leaving one in a saved template does no harm. See [`[inspect]`](./shortcodes.md#inspect----context-explorer-preview-only).
+
+```
+[each path="steps"]
+  [inspect]
+  <li>[item path="title"]</li>
+[/each]
+```
 
 ### Linting
 

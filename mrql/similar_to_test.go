@@ -448,3 +448,29 @@ func TestSimilarToGenerationLint(t *testing.T) {
 		t.Errorf("expected no lint errors, got %v", errs)
 	}
 }
+
+func TestSimilarToTarget(t *testing.T) {
+	cases := []struct {
+		query  string
+		want   int64
+		wantOK bool
+	}{
+		{"type = resource AND SIMILAR TO resource(42) ORDER BY distance ASC", 42, true},
+		{"type = resource AND SIMILAR TO resource(7) WITHIN 3", 7, true},
+		{`type = resource AND name ~ "x"`, 0, false},
+		{"type = resource AND (SIMILAR TO resource(1) OR SIMILAR TO resource(2))", 0, false},
+	}
+	for _, c := range cases {
+		q, err := Parse(c.query)
+		if err != nil {
+			t.Fatalf("parse %q: %v", c.query, err)
+		}
+		got, ok := SimilarToTarget(q)
+		if got != c.want || ok != c.wantOK {
+			t.Errorf("SimilarToTarget(%q) = (%d, %v), want (%d, %v)", c.query, got, ok, c.want, c.wantOK)
+		}
+	}
+	if _, ok := SimilarToTarget(nil); ok {
+		t.Error("SimilarToTarget(nil) reported a target")
+	}
+}

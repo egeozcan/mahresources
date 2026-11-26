@@ -102,6 +102,32 @@ Notes:
 
 Use `[property]` when the data is not in `Meta`.
 
+### `[calc]`
+
+Use for a number derived from other fields: a line total, a discounted price, a remaining budget, megapixels. Never store a redundant field for these; it goes stale on the next edit.
+
+Attrs:
+
+- `expr` -- required. Operands `meta.<path>`, `property.<Field>` (numeric struct fields only) and, at the top level of an `[each]` body, `item` / `item.<path>`; numeric literals (plain decimals, no exponent); `+ - * / %`, parentheses; functions `min`, `max` (1-8 args), `abs`, `round(x[, digits])` (half away from zero, digits 0-10), `coalesce(a, b, …)` (first argument that has a value).
+- `decimals=0..10` -- fixed fraction digits, trailing zeros kept. Unset: up to 10 digits, trailing zeros dropped.
+- `format=number|grouped|percent` -- `grouped` gives `1,234.50` (not locale-aware); `percent` multiplies by 100 and appends `%`.
+- `default="…"` -- escaped text when there is no numeric result.
+
+Rules:
+
+- A Meta string counts only when it is wholly a decimal number of at most 64 bytes (`"12.50"` yes, `"12,5"` no). Missing, null, boolean, object, array, division by zero and overflow give no value, which renders `default` unless `coalesce` catches it: `coalesce(meta.discount, 0)`, `coalesce(meta.a / meta.b, 0)`.
+- Syntax errors, unknown names (`qty` without `meta.`), unknown functions, wrong arity, a bad `decimals`/`format`, or an expression past 512 bytes / 128 tokens / 32 levels / 32 references render the `⚠ calc` marker; the linter flags them.
+- Only Meta keys of ASCII letters, digits and `_`, not starting with a digit, can be referenced (`meta.unit-price` is `meta.unit - price`). Design the schema with `snake_case` keys for anything `[calc]` reads.
+- Output is a bare number, so it works inside attributes (`<meter value="[calc …]">`). Inside `[each]`, `item` is visible only at the top level of the body, as for `[item]`.
+- It never queries, so it is safe on every card of a long list, on share pages and in `CustomMRQLResult`.
+- Accessibility: label derived numbers (a `<th scope="col">` header, or "Total due: …"), give a `<meter>` an `aria-label` and fallback text, and prefer `default="not set"` over a lone dash outside tables.
+
+```html
+[calc expr="meta.qty * meta.unit_price * (1 - coalesce(meta.discount, 0))" decimals="2" default="not set"]
+[each path="lines"]<tr><td>[item path="name"]</td><td>[calc expr="item.qty * item.price" decimals="2"]</td></tr>[/each]
+<meter min="0" max="1" value="[calc expr='meta.spent / meta.budget' default='0']" aria-label="Budget used">[calc expr='meta.spent / meta.budget' format='percent' decimals='0' default='unknown']</meter>
+```
+
 ### `[mrql]`
 
 Use to embed related collections, KPIs, and search-backed summaries.
@@ -203,6 +229,60 @@ Reach for it when a template needs fields from a related entity, typically the o
 [else]
   Unfiled
 [/using]
+```
+
+### `[inspect]`
+
+An **authoring aid, not page content**. In the template editor's live preview it renders a collapsed panel listing what that point of the template can read: Meta paths with type, sample and a copyable `[meta]`/`[each]` snippet; the entity's own fields for `[property]` (associations named, never read; credential fields omitted); and, at the top level of an `[each]` body, the first element's `[item]` paths. Inside `[mrql]`/`[using]` it describes the switched entity. `path="project"` limits the Meta section to one subtree.
+
+On every other surface (pages, cards, share pages, deferred bodies, MRQL API, AI template tools) it renders the empty string. Use it while exploring an entity's data, then **remove it before delivering a template**: it never belongs in a finished design. Inline only; not allowed inside a `[reload]` face.
+
+```
+[inspect]
+[each path="steps"][inspect][item path="title"][/each]
+```
+
+### `[adjacent]`
+
+Previous/Next links to the entity's siblings, in creation order (`created_at`, then `id`). Default mode: same entity type, same owner (ownerless pairs with ownerless) and same category / resource category / note type (none pairs with none). `series="true"` (resources only; an error marker on groups and notes) steps through the resource's Series instead. `label` names the `<nav>` landmark (default "Previous and next"); a name already used on the page gets a number ("Previous and next (2)"), but a label of your own reads better.
+
+Renders a `<nav>` with `rel="prev"`/`rel="next"` links, leaves out a missing side and renders nothing when both are missing. Read as the viewer, so a group-confined user only sees in-subtree siblings. One page-query budget unit each and bounded by the MRQL timeout: put it in `CustomHeader` or `CustomSidebar`, not a per-card slot. Renders an "unavailable" comment on the MRQL render API, share pages, the lightbox, hover cards, the entity picker and AI template tools. There is no name order; use a Series for curated order. Inline only; not allowed inside a `[reload]` face.
+
+```
+[adjacent label="Meetings"]
+[adjacent series="true" label="Pages"]
+```
+
+### `[similar]`
+
+Thumbnails of the resources that look like the current one, from the stored perceptual-hash pairs, nearest first (ties by ID). Each has a badge `Duplicate · d` (distance 0–2, a near-certain duplicate) or `Similar · d`, an alt text with name, tier and distance, and a Compare link to `/resource/compare?r1=<this>&r2=<match>`. Attributes: `max-distance` (0–11; unset uses the hash similarity threshold setting), `limit` (1–24, default 8), `size` (`sm` 48 px, `md` 96 px default, `lg` 200 px), `label` (caption and accessible name, default "Similar resources").
+
+Resources only: on a group or note it renders an error marker, so use `[using type="resource" id-path="cover"][similar][/using]` there. Renders nothing when there are no pairs within the distance (non-images never have any). Read as the viewer, so a group-confined user only sees in-subtree resources. One page-query budget unit each: put it in `CustomSidebar`, `CustomLightbox` or `CustomDetailFooter`, not a per-card slot. Renders inline in the lightbox; an "unavailable" comment on share pages. Inline only; not allowed inside a `[reload]` face.
+
+```
+[similar]
+[similar max-distance="2" limit="12" size="sm" label="Possible duplicates"]
+[using type="resource" id-path="cover"][similar label="Lookalikes of the cover"][/using]
+```
+
+### `[calendar]`
+
+One month as a grid (Monday first) of the entities an MRQL filter matches, placed by a date field. Each non-empty day shows its count as a link to that day's list on `/mrql`, up to 3 linked titles, and "+k more" past that; the caption names the month and total. Prev/Next buttons swap the month in place (display pages, cards, lightbox, deferred bodies; not share pages, the live preview or list headers). Attributes: `mrql` (required; a filter naming exactly one type through a top-level `type = …`, with no `GROUP BY`, `ORDER BY`, `LIMIT`, `OFFSET`, `SCOPE` or `$params`), `date` (`created` default, `updated`, or `meta.<path>`), `month` (`current` default or `YYYY-MM`), `scope` (as `[mrql]`; default the entity's group).
+
+A Meta date counts only when it is a string starting `YYYY-MM-DD` (a schema `format: date` value or an RFC3339 date-time, which is what `[datetime]` writes); its day is the date as written. Numbers, booleans and other strings are ignored everywhere. A day is a date on the server's local clock. One page-query budget unit for a month of up to 100 entities (titles and counts from one query); two above that, and then counts only, with a note. Read as the viewer, so a confined user sees only their subtree. Put it in `CustomSidebar` or `CustomHeader`, not a per-card slot, where each card runs its own queries. Inline only; not allowed inside a `[reload]` face.
+
+```
+[calendar mrql='type = "note"' date="meta.due"]
+[calendar mrql='type = "resource"' date="created" month="2026-03" scope="global"]
+```
+
+Event category example: a group category whose `MetaSchema` has `"date": {"type": "string", "format": "date"}`, and whose parent group's sidebar shows its events:
+
+```html
+<section aria-labelledby="events-h">
+  <h2 id="events-h" class="text-sm font-semibold">Events</h2>
+  [calendar mrql='type = "group" AND category = "Event"' date="meta.date" scope="entity"]
+</section>
 ```
 
 ## Built-in Plugin Shortcodes
@@ -336,6 +416,7 @@ Use this order of preference:
 
 1. `[meta]` for schema-aware field rendering.
 2. `[property]` for built-in entity fields.
+   - `[calc]` for numbers derived from either, instead of storing them.
 3. `data-views` for presentation widgets.
 4. `meta-editors` for frequent inline edits.
 5. `[using]` for fields of one related entity (owner, Meta-referenced ID); `[mrql]` for related collections and rollups.

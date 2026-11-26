@@ -85,6 +85,16 @@ func RenderEachShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 		// Values are formatted at their sentinel, one at a time, so a budget
 		// stop precedes the next formatting instead of following a slice of all.
 		spliced, ok := spliceLazy(m, rendered, len(items), func(idx int) string {
+			switch items[idx].Name {
+			case "calc":
+				return stripNUL(renderCalc(ctx, items[idx], elem, true))
+			case "inspect":
+				// One panel per loop, for the element [item] binds to here.
+				if i != 0 {
+					return ""
+				}
+				return renderInspectGated(reqCtx, items[idx], ctx, elem, true)
+			}
 			return stripNUL(renderItemValueObserved(ctx, items[idx], elem, i+1))
 		})
 		if !ok {
@@ -95,11 +105,14 @@ func RenderEachShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 	return b.String()
 }
 
-// markItems replaces every top-level [item …] token in branch with its inert
-// sentinel, returning the marked branch and the tokens in sentinel order.
-// [item] tokens inside a nested [each] block are not top-level (they live in
-// that block's inner content), so they are left untouched to bind to the nearest
-// enclosing [each].
+// markItems replaces every top-level [item …], [calc …] and [inspect …] token in
+// branch with its inert sentinel, returning the marked branch and the tokens in
+// sentinel order. All three read the element, so all are evaluated at the
+// splice; [inspect] there renders only for the first element. Tokens
+// inside a nested [each] block are not top-level (they live in that block's
+// inner content), so they are left untouched to bind to the nearest enclosing
+// [each]. A [calc] inside any other block is rendered by the processor's
+// dispatch instead, where its item operands have no value.
 //
 // Top-level is a proxy for "belongs to this loop", and it is a conservative one:
 // an [item] inside *any* block — a [conditional], say — is also left alone, and
@@ -112,6 +125,11 @@ func RenderEachShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 // the prefix being per-process, could not be consumed even in principle.
 // Widening this means classifying every block by whether its body is rendered in
 // this pass, which belongs with those handlers rather than here.
+// isElementToken names the shortcodes markItems turns into sentinels.
+func isElementToken(name string) bool {
+	return name == "item" || name == "calc" || name == "inspect"
+}
+
 func markItems(m *renderMeter, branch string) (string, []Shortcode) {
 	// A branch that already contains NUL could otherwise carry sentinel bytes
 	// of its own. Replacing it byte-for-byte keeps every parsed offset valid.
@@ -129,7 +147,7 @@ func markItems(m *renderMeter, branch string) (string, []Shortcode) {
 	// item records are reserved with it.
 	size, count := int64(len(branch)), 0
 	for _, sc := range scs {
-		if sc.Name == "item" {
+		if isElementToken(sc.Name) {
 			size += int64(len(itemSentinelPrefix)+decimalDigits(count)+1) - int64(sc.End-sc.Start)
 			count++
 		}
@@ -142,7 +160,7 @@ func markItems(m *renderMeter, branch string) (string, []Shortcode) {
 	var b strings.Builder
 	lastEnd := 0
 	for _, sc := range scs {
-		if sc.Name != "item" {
+		if !isElementToken(sc.Name) {
 			continue
 		}
 		if !m.tick() {

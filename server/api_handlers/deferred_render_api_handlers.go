@@ -91,6 +91,9 @@ func GetDeferredRenderHandler(ctx DeferredRenderContext) func(http.ResponseWrite
 		// signer keeps nested deferred blocks lazy on subsequent round trips.
 		reqCtx, cancel := buildMRQLAPIRenderContext(request.Context(), ctx, true)
 		defer cancel()
+		// Not inside buildMRQLAPIRenderContext: the MRQL render API shares it
+		// and is bound with WithMRQLPrincipal, which carries no ORM scope.
+		reqCtx = template_filters.WithAdjacentResolverFor(reqCtx, ctx)
 
 		// See auth.PluginCodeAllowed: plugin Lua runs unscoped, so a
 		// group-confined principal must not reach it through a deferred render.

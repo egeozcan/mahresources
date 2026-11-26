@@ -799,8 +799,9 @@ func main() {
 		fail("Error when creating supplemental indexes: %v", err)
 		return
 	}
-	// Concurrent index builds on the resources table, started on PostgreSQL
-	// after the synchronous FTS setup below.
+	// Concurrent index builds on the tables FTS covers (resources, notes,
+	// groups), started on PostgreSQL after the synchronous FTS setup below and
+	// one at a time.
 	var resourceIndexBuilds []func()
 	if db.Dialector.Name() == "postgres" {
 		// Built CONCURRENTLY beside the server, on a connection of its own, as the
@@ -813,6 +814,19 @@ func main() {
 		})
 	} else if err := models.EnsureResourceListIndexes(db); err != nil {
 		fail("Error when creating resource list indexes: %v", err)
+		return
+	}
+	// [adjacent]'s notes and groups indexes: CONCURRENTLY beside the server on
+	// PostgreSQL, with the resource builds, since the FTS prefix build also
+	// builds on notes and groups; before serving on SQLite.
+	if db.Dialector.Name() == "postgres" {
+		resourceIndexBuilds = append(resourceIndexBuilds, func() {
+			ensureIndexesUntilBuilt("sibling navigation indexes", oneResourceIndexBuildAtATime(func() error {
+				return models.EnsureSiblingNavIndexesOnOwnConnection(context.Config.DbDsn)
+			}), jobFilterIndexRetryInterval)
+		})
+	} else if err := models.EnsureSiblingNavIndexes(db); err != nil {
+		fail("Error when creating sibling navigation indexes: %v", err)
 		return
 	}
 
@@ -896,9 +910,10 @@ func main() {
 	// After migration, so the check sees every table the server has. It logs its
 	// verdict; under -auth a failing role keeps saved SQL refused until fixed.
 	_ = context.CheckSavedSQLRole()
-	// Started only now: InitFTS issues plain CREATE INDEX IF NOT EXISTS on the
-	// resources table, which takes a lock that conflicts with a concurrent build
-	// and would queue every upload behind it, or deadlock with it.
+	// Started only now: InitFTS issues plain CREATE INDEX IF NOT EXISTS (and
+	// ALTER TABLE) on the resources, notes and groups tables, which takes a lock
+	// that conflicts with a concurrent build and would queue every upload behind
+	// it, or deadlock with it.
 	for _, build := range resourceIndexBuilds {
 		go build()
 	}
@@ -1256,13 +1271,13 @@ func migrateJobCore(db *gorm.DB, postgresDSN string) error {
 }
 
 // jobFilterIndexRetryInterval is how long a failed concurrent index build (the
-// Job filter indexes, the resource list indexes, the FTS prefix indexes) waits
-// before it is tried again.
+// Job filter indexes, the resource list indexes, the sibling navigation
+// indexes, the FTS prefix indexes) waits before it is tried again.
 const jobFilterIndexRetryInterval = 5 * time.Minute
 
 // resourceIndexBuild serializes this server's concurrent index builds on the
-// resources table: two CREATE INDEX CONCURRENTLY on one table conflict, and each
-// waits out the other's transaction.
+// resources, notes and groups tables: two CREATE INDEX CONCURRENTLY on one table
+// conflict, and each waits out the other's transaction.
 var resourceIndexBuild sync.Mutex
 
 // oneResourceIndexBuildAtATime wraps one build attempt in resourceIndexBuild. The

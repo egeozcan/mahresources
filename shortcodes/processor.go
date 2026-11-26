@@ -30,6 +30,11 @@ type QueryOptions struct {
 	// WantTotal asks the executor to also compute QueryResult.Total, the true
 	// row count ignoring Limit. Off by default because it runs a second query.
 	WantTotal bool
+	// WantSimilarityDistance asks the executor to attach each resource's
+	// perceptual distance to the query's single SIMILAR TO target
+	// (QueryResultItem.SimilarityDistance). Off by default because it runs a
+	// second, index-bounded query; only [similar] sets it.
+	WantSimilarityDistance bool
 }
 
 // QueryExecutor is a callback that executes an MRQL query and returns results.
@@ -74,6 +79,11 @@ type QueryResultItem struct {
 	ParentCategoryName string
 	RootGroupName      string
 	RootCategoryName   string
+	// SimilarityDistance is the stored pair distance to the query's SIMILAR TO
+	// target, set only when QueryOptions.WantSimilarityDistance was. nil when
+	// not asked for, or when the pair is gone. Shared read-only between cached
+	// copies.
+	SimilarityDistance *int
 }
 
 // QueryResultGroup is a bucket of QueryResultItems sharing a common key.
@@ -283,6 +293,15 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 			replacement = RenderMetaShortcode(sc, ctx)
 		case sc.Name == "property":
 			replacement = RenderPropertyShortcode(sc, ctx)
+		case sc.Name == "calc":
+			replacement = RenderCalcShortcode(sc, ctx)
+		case sc.Name == "adjacent":
+			// Renders the "unavailable" comment unless the surface installed a
+			// scoped resolver (WithAdjacentResolver).
+			replacement = RenderAdjacentShortcode(reqCtx, sc, ctx)
+		case sc.Name == "inspect":
+			// Renders "" unless this is a template preview (WithInspect).
+			replacement = RenderInspectShortcode(reqCtx, sc, ctx)
 		case sc.Name == "mrql":
 			if executor != nil && depth < maxRecursionDepth {
 				replacement = RenderMRQLShortcode(reqCtx, sc, ctx, renderer, executor, depth)
@@ -299,6 +318,21 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 				// Same as [mrql]: the target is loaded through the executor, so a
 				// context without one cannot switch to it.
 				replacement = shortcodeComment("using unavailable in this context")
+			}
+		case sc.Name == "similar":
+			if executor != nil {
+				replacement = RenderSimilarShortcode(reqCtx, sc, ctx, executor)
+			} else {
+				// Share pages run no queries: comment, not the raw text.
+				replacement = shortcodeComment("similar unavailable in this context")
+			}
+		case sc.Name == "calendar":
+			if executor != nil {
+				replacement = RenderCalendarShortcode(reqCtx, sc, ctx, executor)
+			} else {
+				// Same as [mrql]: every count comes from the executor, so a
+				// context without one (share pages) leaves a comment.
+				replacement = shortcodeComment("calendar unavailable in this context")
 			}
 		case sc.Name == "link":
 			replacement = RenderLinkShortcode(reqCtx, sc, ctx, renderer, executor, depth)
