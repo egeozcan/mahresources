@@ -55,6 +55,7 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 | `[details]` | Block | Defer server rendering until a disclosure is opened |
 | `[reload]` | Inline or block | Re-render the nearest deferred block or custom-content slot on demand |
 | `[autorefresh]` | Block | Re-render the body after an inline editor saves |
+| `[action]` | Inline | Run a plugin action on this entity from a button |
 | `[using]` | Block | Render the body with another group, resource or note as the entity |
 | `[adjacent]` | Inline | Previous/next links to the entity's siblings or Series |
 | `[similar]` | Inline | Thumbnails of perceptually similar resources, with tier, distance and a compare link |
@@ -1262,6 +1263,7 @@ A block refreshes after a save when either holds:
 
 - **The save was for the entity the block was rendered for**, wherever the editor sits on the page. An editor in `CustomHeader` refreshes a block in `CustomSidebar`.
 - **The editor that saved sits inside the block**, whatever entity it edited. An editor inside a `[using]` or an `[mrql]` item template inside the block counts.
+- **An [`[action]`](#action----run-a-plugin-action) button finished a successful run** for the block's entity, or sits inside the block. It counts as a save of that entity.
 
 Saves less than 250 ms apart are coalesced: each save restarts the timer, and when it runs out every block that matched any of them refreshes once. When a block that is refreshing sits inside another that is also refreshing, only the outer one is fetched, since its re-render rebuilds the inner one.
 
@@ -1283,6 +1285,89 @@ A `[reload]` inside an `[autorefresh]` reloads that block, not the slot around i
 - It cannot go inside a `[reload]` button face; it renders a `⚠` marker there, and the linter flags it.
 - The token carries the block's source, so each block adds about 1.34x its raw body size to the page, as `[lazy]` does.
 - **JavaScript is required** for the refresh. The body itself renders without it.
+
+## `[action]` -- Run a plugin action
+
+A button that runs one registered plugin action (`mah.action`) on the entity the template is rendering, with the permissions of the person who clicks it. It posts to `POST /v1/jobs/action/run`, the endpoint the actions menu uses, so CSRF, roles, subtree scoping, the action's filters and its parameter checks all apply to the click exactly as they do there. Use it to put one step of a workflow next to the data it belongs to, instead of behind the generic actions menu.
+
+```
+[action plugin="fal-ai" name="upscale" label="Upscale (Topaz)" confirm="Upscale this image on fal.ai? This is billed." param-model="topaz"]
+```
+
+`[action]` is inline only. A `[action]…[/action]` block renders a `⚠ action` marker, and the linter flags it.
+
+Text that already contains `[action …]` now renders as this shortcode. That includes a CSS attribute selector written `form[action]` in a CustomCSS slot, which becomes a `⚠ action` marker; write it `form[ action]` (the space is valid CSS) to keep it a selector.
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `plugin` | Yes | -- | The plugin's name, as in `[plugin:<name>:…]`. Surrounding spaces are trimmed |
+| `name` | Yes | -- | The action's `id` from `mah.action({ id = … })`. Action ids are registered in lowercase |
+| `label` | No | the action's `label` | The button text, which is also its accessible name. Blank means the default |
+| `confirm` | No | the action's `confirm` | The confirmation question asked before the run, replacing the action's own. `confirm=""` keeps the action's confirmation: a template can add or reword one, never remove it |
+| `param-<name>` | No | the action's default | Sets the action parameter `<name>` (see below) |
+
+### Parameters
+
+The button starts from the action's own defaults, the way the action dialog does: an `entity_ref` parameter whose default is `trigger` (or `both`) and whose entity type matches gets this entity, a `selection` default gets nothing, `info` parameters are skipped, and every other parameter gets its `default` (or `false` for a `boolean` and `""` otherwise). Each `param-<name>` attribute then replaces one value. `<name>` must be a parameter the action declares, and the value is converted by its type:
+
+| Parameter type | Accepted value | Otherwise |
+|---|---|---|
+| `text`, `textarea`, `hidden` | the value as written | -- |
+| `select` | one of the parameter's options | `⚠ action` marker |
+| `number` | a finite number, e.g. `2` or `0.5` | `⚠ action` marker: "must be a number" |
+| `boolean` | exactly `true` or `false` | `⚠ action` marker: "must be true or false" |
+| `entity_ref`, `info` | cannot be set | `⚠ action` marker: "cannot be set from a template" |
+| not declared | -- | `⚠ action` marker: "no such parameter" |
+
+The result then goes through the action's own checks (required fields, `min`/`max`, options, `show_when`), and the first failure becomes the marker's text, so a mistake shows on the page rather than as a refusal on every click. The marker is only shown to viewers who could run the action. Values are literal: a shortcode written inside an attribute value is not expanded. Parameter values are visible in the page source, as the defaults are in the action dialog.
+
+An action that needs a bulk selection (an `entity_ref` parameter with `default = "selection"` and `required = true`) cannot run from a template and renders the marker "needs a bulk selection and cannot run from a template".
+
+### Who sees the button
+
+The button is drawn only where the click could succeed. Every other case renders one HTML comment, `<!-- mr:action unavailable in this context -->`, the same one a plugin or action that does not exist renders, so a page cannot be read for which plugins are installed or which ones its viewer may run:
+
+- **Guests and other accounts that cannot write.** Running an action is a write.
+- **Group-limited accounts, for a plugin the operator has not opened to them.**
+- **An entity the action does not apply to:** the action's `entity` is a different type, or its `filters` (content types, categories, note types) exclude this entity. In an `[mrql]` result, only the rows the filters match get a button.
+- **A missing or disabled plugin or action.**
+- **A Description or note text block when login is on.** That text may be written by a user-role account, and a button there would run with the rights of whoever clicks it, behind a confirmation text its author chose. Category, Resource Category and Note Type templates are written by admins and editors and are not affected.
+- **Surfaces that cannot run it:** share pages, the live template preview, the description preview, hover cards, `CustomListHeader` and `CustomListFooter` (they render a category, not an entity), `CustomMRQLResult` cards on `/mrql`, the entity picker, and template generation tools.
+
+The button works on display pages (every slot), list cards, `[mrql]` and `[using]` results, `[lazy]`, `[details]` and `[autorefresh]` bodies, and the lightbox. The run endpoint checks everything again on the click: a button for an entity outside a group-limited account's subtree gets the endpoint's 403, as a hand-made request would.
+
+`placement` does not matter here. It decides where the actions menu lists an action, and the run endpoint never checks it, so `[action]` accepts any registered action whose entity type matches.
+
+### What happens on a click
+
+- With a confirmation, the app's confirmation dialog asks first; declining does nothing.
+- While the run is in flight the button is marked `aria-disabled="true"` (it keeps focus) and further clicks are ignored. The text next to the button reads "Running…".
+- A synchronous action shows its message (or "Done") next to the button and announces it. A refusal, a validation error or a failed request shows and announces the reason instead, and changes nothing else.
+- An `async` action starts a Job; the button reads "Started" and then follows the Job every 2 seconds until it finishes, for at most 5 minutes, and reports how it ended. A Job that is still running after that reads "Still running. Follow it in the Jobs panel." The Jobs panel is never opened for you.
+- An action that answers with a redirect navigates there.
+- After a successful run, the `[autorefresh]` blocks for this entity and the one the button sits in re-render, exactly as after an inline edit. The page is never reloaded, so wrap what the action changes in `[autorefresh]`:
+
+```
+[autorefresh]
+  [action plugin="project-management" name="pm-set-status" label="Mark done" param-status="done"]
+  Status: [meta path="status"]
+[/autorefresh]
+```
+
+This is for the PM Task note type of the bundled project-management plugin, whose `pm-set-status` action takes a `select` parameter `status`.
+
+- **Focus.** When the button sits inside the block that refreshes, focus moves to the control at the same position in the fresh content. Put the button first in the block (or outside it), so content that appears only after the action cannot shift that position.
+- **Status text.** The text next to a button inside a refreshing block goes with the old content. The announcement is not lost: it is made through the page's live region, outside the block.
+
+### Accessibility
+
+The button is a real `<button>` whose visible text is its accessible name. Progress and outcomes are announced through the page's live region: success politely, failures assertively. The status text next to the button is for sighted readers and is not itself a live region, so nothing is announced twice.
+
+### For plugin authors
+
+An action that only makes sense with a selection cannot run from `[action]`. Declare its selection parameter `required = true`, so template authors see a clear error instead of a button that fails. See [Plugin Actions](./plugin-actions.md#running-an-action-from-a-template).
 
 ## `[using]` -- Switch to another entity
 

@@ -100,6 +100,12 @@ type LintOptions struct {
 	// missing. Lint memoizes it, so a template referencing one partial ten times
 	// asks once.
 	PartialExists func(name string) bool
+	// ActionExists, when non-nil, reports whether the caller could see an
+	// [action] button for that plugin action: the plugin is reachable for them
+	// and the action is registered. An [action] it rejects is flagged as a
+	// warning, with one wording for "missing" and "not yours", so lint cannot be
+	// used to enumerate plugins. nil disables the check. Lint memoizes it.
+	ActionExists func(plugin, name string) bool
 	// Context, when set, cancels the lint. A lint that is cancelled or runs past
 	// its work allowance reports one error issue instead of its findings.
 	Context context.Context
@@ -140,7 +146,7 @@ func KnownFromBuiltins() KnownShortcodes {
 var conditionalOperators = []string{"eq", "neq", "gt", "lt", "gte", "lte", "in", "contains", "matches", "empty", "not-empty"}
 
 // builtinBaseNames is used for near-miss detection of misspelled shortcodes.
-var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "calc", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "similar", "calendar", "inspect", "adjacent", "excerpt", "comment"}
+var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "calc", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "similar", "calendar", "inspect", "adjacent", "excerpt", "comment", "action"}
 
 // looseBracketPattern finds bracket expressions that lead with an identifier,
 // used to detect shortcode-looking brackets that did not parse as real
@@ -236,6 +242,22 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			}
 			got := opts.PartialExists(name)
 			seen[name] = got
+			return got
+		}
+	}
+
+	// Memoized like partialExists: a list template with one [action] per row
+	// type asks once per (plugin, name).
+	var actionExists func(plugin, name string) bool
+	if opts.ActionExists != nil {
+		seen := map[[2]string]bool{}
+		actionExists = func(plugin, name string) bool {
+			key := [2]string{plugin, name}
+			if got, ok := seen[key]; ok {
+				return got
+			}
+			got := opts.ActionExists(plugin, name)
+			seen[key] = got
 			return got
 		}
 	}
@@ -442,6 +464,8 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			}
 		case "calendar":
 			lintCalendar(tk, reloadSpans, add)
+		case "action":
+			lintAction(tk, reloadSpans, actionExists, add)
 		case "calc":
 			lintCalc(tk, opts, otherContext, eachSpans, usingSpans, add)
 		case "excerpt":

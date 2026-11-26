@@ -330,7 +330,7 @@ func BuiltinDocs() []BuiltinDoc {
 		{
 			Name:        "autorefresh",
 			Syntax:      `[autorefresh]...[/autorefresh]`,
-			Description: "Re-renders its body on the server whenever an inline editor saves, without reloading the page. It refreshes after a [meta], [pills] or [datetime] with editable=\"true\" saves this entity anywhere on the page, or saves any entity from inside the block (an editor in an [mrql] result list, say). Edits made within a quarter of a second of each other cause one refresh. Wrap only what depends on the edited values: everything in the body is replaced, so an editor inside it closes and loses unsaved input when another edit lands. A [reload] inside it reloads this block. On share pages and in the live preview the body renders once and does not refresh. An [item] from an enclosing [each] is not available inside it.",
+			Description: "Re-renders its body on the server whenever an inline editor saves, without reloading the page. It refreshes after a [meta], [pills] or [datetime] with editable=\"true\" saves this entity anywhere on the page, or saves any entity from inside the block (an editor in an [mrql] result list, say). An [action] button for this entity, or inside the block, refreshes it the same way when its run succeeds. Edits made within a quarter of a second of each other cause one refresh. Wrap only what depends on the edited values: everything in the body is replaced, so an editor inside it closes and loses unsaved input when another edit lands. A [reload] inside it reloads this block. On share pages and in the live preview the body renders once and does not refresh. An [item] from an enclosing [each] is not available inside it.",
 			IsBlock:     BlockRequired,
 			Attrs: []DocAttr{
 				{Name: "on", Type: "enum", Default: "edit", Description: "What triggers a refresh. edit is the only trigger.", Enum: []string{"edit"}},
@@ -338,6 +338,24 @@ func BuiltinDocs() []BuiltinDoc {
 			Examples: []DocExample{
 				{Title: "A badge that follows an editable field", Code: "[pills path=\"status\" editable=\"true\"]\n[autorefresh]\n  [conditional path=\"status\" eq=\"done\"]<span class=\"badge\">Done</span>[/conditional]\n[/autorefresh]"},
 				{Title: "Bare values in attributes", Code: "[autorefresh]\n  <span data-status=\"[meta path='status' inline='true']\">[meta path=\"status\" inline=\"true\"]</span>\n[/autorefresh]", Notes: "A value written with inline=\"true\" is plain text, so it never updates on its own after an edit."},
+			},
+		},
+		{
+			Name:        "action",
+			Syntax:      `[action plugin="..." name="..."]`,
+			Description: "A button that runs a registered plugin action (mah.action) on this entity, with the permissions of whoever clicks it, through the same endpoint as the actions menu. It shows the action's confirmation first when there is one, reports progress and the result next to the button and to screen readers, and when the run succeeds it refreshes the [autorefresh] blocks for this entity and the one it sits in. The page is never reloaded. Any registered action whose entity type matches works, whatever its placement; one that needs a bulk selection does not. It renders nothing (an HTML comment) for viewers who cannot run the action: guests and other read-only accounts, group-limited accounts the plugin is not opened to, an entity the action's filters exclude, and a missing or disabled plugin or action. It also renders nothing in a Description or note text block when login is on, on share pages, in the live preview, in hover cards and in MRQL results rendered by the API. Wrap the content the action changes in [autorefresh], with the button first in that block or outside it.",
+			IsBlock:     BlockNo,
+			Attrs: []DocAttr{
+				{Name: "plugin", Type: "string", Required: true, Description: "The plugin's name, as in [plugin:<name>:…]."},
+				{Name: "name", Type: "string", Required: true, Description: "The action's id, as registered with mah.action({ id = … }) (ids are lowercase)."},
+				{Name: "label", Type: "string", Description: "The button text, which is also its accessible name. Blank means the action's own label."},
+				{Name: "confirm", Type: "string", Description: "Confirmation question asked before the run, replacing the action's own. Blank keeps the action's confirmation; a template cannot remove one."},
+				{Name: "param-", Type: "string", Wildcard: true, Description: "Sets an action parameter, e.g. param-scale=\"2\". The parameter must be declared by the action; number takes a number, boolean true or false, select one of its options, and entity_ref and info parameters cannot be set. Unset parameters take the action's defaults, and an entity_ref that defaults to the trigger gets this entity. Values are literal: shortcodes inside them are not expanded."},
+			},
+			Examples: []DocExample{
+				{Title: "A button beside the value it changes", Code: "[autorefresh]\n  [action plugin=\"project-management\" name=\"pm-set-status\" label=\"Mark done\" param-status=\"done\"]\n  Status: [meta path=\"status\"]\n[/autorefresh]", Notes: "For the PM Task note type of the bundled project-management plugin. The button comes first in the block, so focus returns to it after the refresh."},
+				{Title: "With a parameter and a confirmation", Code: `[action plugin="fal-ai" name="upscale" label="Upscale (Topaz)" confirm="Upscale this image on fal.ai? This is billed." param-model="topaz"]`, Notes: "The bundled fal-ai plugin's upscale action, which applies to images only; it runs as a Job and the button reports when it finishes."},
+				{Title: "One button per result row", Code: "[mrql query='type = note AND tags = \"triage\"']\n  <div>[property path=\"Name\"] [action plugin=\"project-management\" name=\"pm-set-status\" label=\"Start\" param-status=\"in_progress\"]</div>\n[/mrql]", Notes: "Each row's button runs the action on that row's note; rows the action's filters exclude get no button."},
 			},
 		},
 		{

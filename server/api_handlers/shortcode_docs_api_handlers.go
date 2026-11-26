@@ -161,6 +161,7 @@ func GetShortcodeLintHandler(ctx ShortcodeLintContext) func(http.ResponseWriter,
 			Known:         known,
 			ValidateMRQL:  templateMRQLValidator(ctx.MRQLStaticEnv()),
 			PartialExists: partialExistsFn(ctx),
+			ActionExists:  actionExistsFn(ctx.PluginManager(), auth.PluginActionAccessFor(request.Context(), ctx.PluginAllowsScopedPrincipals)),
 			CSSMode:       strings.EqualFold(req.Mode, "css"),
 		})
 		if issues == nil {
@@ -256,6 +257,23 @@ func partialExistsFn(ctx partialNameResolver) func(string) bool {
 	return func(name string) bool {
 		partial, err := ctx.GetTemplatePartialByName(name)
 		return err == nil && partial != nil
+	}
+}
+
+// actionExistsFn is the resolver the linter uses to flag an [action] that would
+// render nothing for this caller: the plugin is not one they may run actions of
+// (access is auth.PluginActionAccessFor, the run endpoint's rule), or it has no
+// such action. Both answer false, so lint says the same thing for "missing" and
+// "not yours" and cannot be used to enumerate plugins. With no plugin manager
+// every [action] renders nothing, so every one is reported. It runs no plugin
+// code and reads no database: FindAction is an in-memory lookup.
+func actionExistsFn(pm *plugin_system.PluginManager, access auth.PluginAccess) func(plugin, name string) bool {
+	return func(plugin, name string) bool {
+		if pm == nil || !access(plugin) {
+			return false
+		}
+		_, _, err := pm.FindAction(plugin, name)
+		return err == nil
 	}
 }
 

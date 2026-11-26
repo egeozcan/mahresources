@@ -359,6 +359,14 @@
 [autorefresh][conditional path="status" eq="done"]Done[/conditional][/autorefresh]</code></pre>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[action plugin="…" name="…"]</code>
+                        &mdash; a button that runs a plugin action (mah.action) on this entity as the person who clicks it, with the action's confirmation first. When the run succeeds it refreshes the [autorefresh] blocks for this entity and the one it sits in. Renders nothing for viewers who cannot run the action, in Descriptions under login, on share pages and in the live preview.
+                        <br><span class="text-stone-600 ml-4">
+                            <b class="text-stone-500">plugin</b>="name" &nbsp; <b class="text-stone-500">name</b>="action id" &nbsp; <b class="text-stone-500">label</b>="button text" &nbsp; <b class="text-stone-500">confirm</b>="question" &nbsp; <b class="text-stone-500">param-&lt;name&gt;</b>="value"
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[action plugin="fal-ai" name="upscale" label="Upscale (Topaz)" param-model="topaz"]</code></pre>
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[using type="group" id="…"]…[else]…[/using]</code>
                         &mdash; render the body with another group, resource or note as the entity, so every shortcode inside reads that entity. Name the target with exactly one source. An optional <code class="bg-stone-100 px-1 rounded">[else]</code> branch renders when there is no target or you cannot see it.
                         <br><span class="text-stone-600 ml-4">

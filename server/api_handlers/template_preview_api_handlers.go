@@ -132,6 +132,7 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 			// [partial] too, so the diagnostic is there whether the author is
 			// reading the editor gutter or the preview.
 			PartialExists: partialExistsFn(ctx),
+			ActionExists:  actionExistsFn(ctx.PluginManager(), auth.PluginActionAccessFor(request.Context(), ctx.PluginAllowsScopedPrincipals)),
 		}
 		// The slot says which document Content is, and nothing else does. An
 		// unnamed slot is deliberately *not* guessed at from the buffers: at a

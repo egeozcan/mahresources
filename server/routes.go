@@ -267,7 +267,7 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		// Compute plugin actions for detail pages
 		if mainEntity := ctx["mainEntity"]; mainEntity != nil {
 			if entityType, ok := ctx["mainEntityType"].(string); ok && entityType != "" {
-				entityData := buildEntityDataFromEntity(mainEntity, entityType)
+				entityData := template_filters.ActionEntityData(mainEntity, entityType)
 				ctx["pluginDetailActions"] = offeredActions(actionAccess, pm.GetActionsForPlacement(entityType, "detail", entityData))
 			}
 		}
@@ -364,34 +364,6 @@ func offeredMenuItems(access auth.PluginAccess, items []plugin_system.MenuRegist
 	return offered
 }
 
-// buildEntityDataFromEntity extracts filter-relevant fields from an entity for action matching.
-func buildEntityDataFromEntity(entity any, entityType string) map[string]any {
-	data := map[string]any{}
-	switch entityType {
-	case "resource":
-		if r, ok := entity.(*models.Resource); ok {
-			data["content_type"] = r.ContentType
-			// A resource's category lives under "category_id", the key the
-			// filter predicate reads for every entity type. Without it an
-			// action filtered on category_ids was never offered on a resource
-			// detail page. The column is NOT NULL, so only a zero-valued
-			// struct lands here with no category — and 0 is not a real id.
-			if r.ResourceCategoryId != 0 {
-				data["category_id"] = r.ResourceCategoryId
-			}
-		}
-	case "group":
-		if g, ok := entity.(*models.Group); ok && g.CategoryId != nil {
-			data["category_id"] = *g.CategoryId
-		}
-	case "note":
-		if n, ok := entity.(*models.Note); ok && n.NoteTypeId != nil {
-			data["note_type_id"] = *n.NoteTypeId
-		}
-	}
-	return data
-}
-
 // resolveEntityScope computes the three scope IDs (scope, parent, root) for an entity.
 // For groups, the caller should set ScopeGroupID = group.ID after this returns.
 // ownerID is the entity's OwnerId pointer.
@@ -470,8 +442,17 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 	// Each slot gets the same reloadable region the process_shortcodes tag gives
 	// it, so a [reload] button in the lightbox re-renders its slot in place
 	// instead of falling back to reloading the whole page.
+	//
+	// [action] buttons are drawn by the run endpoint's own rule. The slots get
+	// the resolver and CustomCSS does not, as on the HTML page, where the
+	// custom_css tag renders without one. With no plugin manager every [action]
+	// is the unavailable comment.
+	slotCtx := reqCtx
+	if appCtx != nil {
+		slotCtx = shortcodes.WithActionResolver(reqCtx, template_filters.BuildActionResolver(pm, auth.PluginActionAccessFor(reqCtx, appCtx.PluginAllowsScopedPrincipals)))
+	}
 	processSlot := func(raw string, metaCtx shortcodes.MetaShortcodeContext) string {
-		rendered := shortcodes.Process(reqCtx, raw, metaCtx, pluginRenderer, executor)
+		rendered := shortcodes.Process(slotCtx, raw, metaCtx, pluginRenderer, executor)
 		return template_filters.WrapReloadableRegion(rendered, raw, metaCtx, appCtx)
 	}
 

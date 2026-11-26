@@ -304,6 +304,10 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 		case sc.Name == "inspect":
 			// Renders "" unless this is a template preview (WithInspect).
 			replacement = RenderInspectShortcode(reqCtx, sc, ctx)
+		case sc.Name == "action":
+			// Renders the "unavailable" comment unless the surface installed a
+			// resolver (WithActionResolver) and it offers this action.
+			replacement = RenderActionShortcode(reqCtx, sc, ctx)
 		case sc.Name == "mrql":
 			if executor != nil && depth < maxRecursionDepth {
 				replacement = RenderMRQLShortcode(reqCtx, sc, ctx, renderer, executor, depth)
