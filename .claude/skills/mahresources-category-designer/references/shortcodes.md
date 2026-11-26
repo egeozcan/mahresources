@@ -244,9 +244,9 @@ On every other surface (pages, cards, share pages, deferred bodies, MRQL API, AI
 
 ### `[adjacent]`
 
-Previous/Next links to the entity's siblings, in creation order (`created_at`, then `id`). Default mode: same entity type, same owner (ownerless pairs with ownerless) and same category / resource category / note type (none pairs with none). `series="true"` (resources only; an error marker on groups and notes) steps through the resource's Series instead. `label` names the `<nav>` landmark (default "Previous and next"); give each one on a page its own label.
+Previous/Next links to the entity's siblings, in creation order (`created_at`, then `id`). Default mode: same entity type, same owner (ownerless pairs with ownerless) and same category / resource category / note type (none pairs with none). `series="true"` (resources only; an error marker on groups and notes) steps through the resource's Series instead. `label` names the `<nav>` landmark (default "Previous and next"); a name already used on the page gets a number ("Previous and next (2)"), but a label of your own reads better.
 
-Renders a `<nav>` with `rel="prev"`/`rel="next"` links, leaves out a missing side and renders nothing when both are missing. Read as the viewer, so a group-confined user only sees in-subtree siblings. One page-query budget unit each and bounded by the MRQL timeout: put it in `CustomHeader` or `CustomSidebar`, not a per-card slot. Renders an "unavailable" comment on the MRQL render API, share pages, the lightbox, the entity picker and AI template tools. There is no name order; use a Series for curated order. Inline only; not allowed inside a `[reload]` face.
+Renders a `<nav>` with `rel="prev"`/`rel="next"` links, leaves out a missing side and renders nothing when both are missing. Read as the viewer, so a group-confined user only sees in-subtree siblings. One page-query budget unit each and bounded by the MRQL timeout: put it in `CustomHeader` or `CustomSidebar`, not a per-card slot. Renders an "unavailable" comment on the MRQL render API, share pages, the lightbox, hover cards, the entity picker and AI template tools. There is no name order; use a Series for curated order. Inline only; not allowed inside a `[reload]` face.
 
 ```
 [adjacent label="Meetings"]

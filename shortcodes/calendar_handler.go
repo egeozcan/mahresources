@@ -407,7 +407,8 @@ func calendarNavTokens(reqCtx context.Context, sc Shortcode, ctx MetaShortcodeCo
 
 // serializeCalendarShortcode writes [calendar …] back out with month set, the
 // author's other attributes kept, in sorted key order. A value holding both
-// quote characters cannot be written back; ok is false then.
+// quote characters is written unquoted when the parser can read it back that
+// way; otherwise ok is false.
 func serializeCalendarShortcode(attrs map[string]string, month string) (string, bool) {
 	merged := make(map[string]string, len(attrs)+1)
 	for k, v := range attrs {
@@ -425,10 +426,15 @@ func serializeCalendarShortcode(attrs map[string]string, month string) (string, 
 		v := merged[k]
 		quote := `"`
 		if strings.Contains(v, `"`) {
-			if strings.Contains(v, "'") {
-				return "", false
-			}
 			quote = "'"
+			if strings.Contains(v, "'") {
+				// Both quotes: only an unquoted value can hold it, which the
+				// parser reads up to whitespace or "]".
+				if v == "" || strings.ContainsAny(v, " \t\r\n]") || v[0] == '"' || v[0] == '\'' {
+					return "", false
+				}
+				quote = ""
+			}
 		}
 		// The deferred render unescapes the attributes again, so "&" is
 		// written as "&amp;" for the value to survive the round trip.

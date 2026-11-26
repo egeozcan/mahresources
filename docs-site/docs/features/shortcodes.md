@@ -15,7 +15,7 @@ Shortcodes are bracket-delimited expressions embedded in the custom template slo
 
 The parser recognizes these patterns:
 
-- **Built-in inline:** `[meta ...]`, `[datetime ...]`, `[pills ...]`, `[property ...]`, `[item ...]`, `[partial ...]`, `[calendar ...]`
+- **Built-in inline:** `[meta ...]`, `[datetime ...]`, `[pills ...]`, `[property ...]`, `[item ...]`, `[partial ...]`, `[calendar ...]`, `[calc ...]`, `[similar ...]`, `[adjacent ...]`, `[inspect ...]`
 - **Built-in block:** `[conditional ...]...[/conditional]`, `[each ...]...[/each]`, `[lazy]...[/lazy]`, `[details ...]...[/details]`, `[autorefresh ...]...[/autorefresh]`, `[using ...]...[/using]`, `[comment]...[/comment]`
 - **Built-in inline or block:** `[mrql ...]` or `[mrql ...]...[/mrql]`, `[link ...]` or `[link ...]...[/link]`, `[reload ...]` or `[reload ...]...[/reload]`
 - **Plugin:** `[plugin:plugin-name:shortcode-name ...]`, inline or as a block closed by `[/plugin:plugin-name:shortcode-name]`
@@ -1387,7 +1387,7 @@ Only the ID and name of a visible sibling reach the page.
 
 ### Where it renders
 
-On entity display pages, in hover cards, in deferred `[lazy]`/`[details]`/`[autorefresh]` bodies, and in the template editor's and the description editor's live previews. Everywhere else it renders the HTML comment `<!-- mr:adjacent unavailable in this context -->`: the MRQL render API, share pages, the lightbox, the entity picker, the AI template generation tools and the CLI.
+On entity display pages (their slots and list cards), in deferred `[lazy]`/`[details]`/`[autorefresh]` bodies, and in the template editor's and the description editor's live previews. Everywhere else it renders the HTML comment `<!-- mr:adjacent unavailable in this context -->`: the MRQL render API, share pages, the lightbox, hover cards (a tooltip the keyboard cannot enter), the entity picker, the AI template generation tools and the CLI.
 
 `[adjacent]` cannot be used inside a `[reload]` button face.
 

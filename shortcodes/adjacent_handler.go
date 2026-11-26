@@ -79,8 +79,17 @@ func WithAdjacentResolver(ctx context.Context, r AdjacentResolver) context.Conte
 	return context.WithValue(ctx, adjacentResolverKey{}, adjacentEnv{resolve: r, labels: &adjacentLabels{used: map[string]bool{}}})
 }
 
+type adjacentOffKey struct{}
+
+// WithoutAdjacent marks a render whose output cannot hold navigation, such as
+// a hover card (a tooltip the keyboard cannot enter): [adjacent] renders its
+// unavailable comment there even when a resolver is installed.
+func WithoutAdjacent(ctx context.Context) context.Context {
+	return context.WithValue(ctx, adjacentOffKey{}, true)
+}
+
 func adjacentEnvFrom(ctx context.Context) (adjacentEnv, bool) {
-	if ctx == nil {
+	if ctx == nil || ctx.Value(adjacentOffKey{}) != nil {
 		return adjacentEnv{}, false
 	}
 	env, ok := ctx.Value(adjacentResolverKey{}).(adjacentEnv)

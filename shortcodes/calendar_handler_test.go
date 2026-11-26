@@ -471,8 +471,17 @@ func TestCalendarSerializeQuoting(t *testing.T) {
 	body, ok := serializeCalendarShortcode(map[string]string{"mrql": `type = "note"`, "date": "created"}, "2026-05")
 	require.True(t, ok)
 	assert.Equal(t, `[calendar date="created" month="2026-05" mrql='type = "note"']`, body)
-	_, ok = serializeCalendarShortcode(map[string]string{"mrql": `a"b'c`}, "2026-05")
-	assert.False(t, ok)
+	_, ok = serializeCalendarShortcode(map[string]string{"mrql": `a "b'c`}, "2026-05")
+	assert.False(t, ok, "both quotes and a space cannot be written back")
+
+	// Both quotes but no space: written unquoted, read back the same.
+	compact := map[string]string{"mrql": `(type=resource)AND(name="Bob's")`}
+	body, ok = serializeCalendarShortcode(compact, "2026-05")
+	require.True(t, ok)
+	back := Parse(body)
+	require.Len(t, back, 1)
+	assert.Equal(t, compact["mrql"], back[0].Attrs["mrql"])
+	assert.Equal(t, "2026-05", back[0].Attrs["month"])
 
 	// The deferred render unescapes the attributes again: a value holding an
 	// entity reference must come back exactly as it was parsed.

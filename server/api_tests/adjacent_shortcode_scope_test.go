@@ -230,6 +230,16 @@ func TestAdjacentShortcode_UnavailableSurfaces(t *testing.T) {
 		t.Errorf("share page rendered [adjacent]")
 	}
 
+	// A hover card is a tooltip: its content cannot be reached by keyboard, so
+	// it holds no navigation.
+	if err := tc.DB.Model(f.noteType).Update("custom_hover_card", `<i>[adjacent]</i>`).Error; err != nil {
+		t.Fatal(err)
+	}
+	card := getHTML(t, tc, "", fmt.Sprintf("/hovercard?type=note&id=%d", f.notes[1].ID))
+	if !strings.Contains(card, adjacentUnavailable) || strings.Contains(card, "shortcode-adjacent") {
+		t.Errorf("hover card rendered [adjacent]: %s", card)
+	}
+
 	// The lightbox's JSON render.
 	rr = doReq(tc, http.MethodGet, fmt.Sprintf("/resource.json?id=%d", f.series[0].ID), map[string]string{"Accept": "application/json"}, nil, nil)
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), adjacentUnavailable) || strings.Contains(rr.Body.String(), "shortcode-adjacent") {
