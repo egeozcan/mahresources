@@ -146,7 +146,7 @@ func KnownFromBuiltins() KnownShortcodes {
 var conditionalOperators = []string{"eq", "neq", "gt", "lt", "gte", "lte", "in", "contains", "matches", "empty", "not-empty"}
 
 // builtinBaseNames is used for near-miss detection of misspelled shortcodes.
-var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "calc", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "similar", "calendar", "inspect", "adjacent", "excerpt", "comment", "action", "tabs", "pivot"}
+var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "calc", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "similar", "calendar", "inspect", "adjacent", "excerpt", "comment", "action", "tabs", "pivot", "relations"}
 
 // looseBracketPattern finds bracket expressions that lead with an identifier,
 // used to detect shortcode-looking brackets that did not parse as real
@@ -307,9 +307,10 @@ func lintText(input string, opts LintOptions) []LintIssue {
 	// counting [else] dividers.
 	condInner := conditionalInnerRanges(input, tokens)
 
-	// Inner byte spans of every [each] block, so [item] outside any [each] can
-	// be flagged.
-	eachSpans := namedBlockSpans(tokens, "each")
+	// Inner byte spans of every block that binds [item] to an element: [each]
+	// to an array element, [relations] to an edge. [item] outside all of them
+	// is flagged.
+	elementSpans := append(namedBlockSpans(tokens, "each"), namedBlockSpans(tokens, "relations")...)
 	reloadSpans := namedBlockSpans(tokens, "reload")
 	usingSpans := namedBlockSpans(tokens, "using")
 
@@ -444,12 +445,12 @@ func lintText(input string, opts LintOptions) []LintIssue {
 		// Name-specific semantic checks.
 		switch tk.name {
 		case "item":
-			if !insideSpans(tk.start, eachSpans) {
+			if !insideSpans(tk.start, elementSpans) {
 				add(tk.start, tk.end, SeverityWarning,
-					"[item] is only meaningful inside an [each] block")
-			} else if innermostSpanStart(tk.start, usingSpans) > innermostSpanStart(tk.start, eachSpans) {
+					"[item] is only meaningful inside an [each] or [relations] block")
+			} else if innermostSpanStart(tk.start, usingSpans) > innermostSpanStart(tk.start, elementSpans) {
 				add(tk.start, tk.end, SeverityWarning,
-					"[item] inside a [using] block renders nothing: [using] switches to another entity, so the [each] element is not available there")
+					"[item] inside a [using] block renders nothing: [using] switches to another entity, so the [each] or [relations] element is not available there")
 			}
 		case "using":
 			lintUsing(w, tk, add)
@@ -469,9 +470,11 @@ func lintText(input string, opts LintOptions) []LintIssue {
 		case "action":
 			lintAction(tk, reloadSpans, actionExists, add)
 		case "calc":
-			lintCalc(tk, opts, otherContext, eachSpans, usingSpans, add)
+			lintCalc(tk, opts, otherContext, elementSpans, usingSpans, add)
 		case "excerpt":
 			lintExcerpt(tk, opts, otherContext, reloadSpans, add)
+		case "relations":
+			lintRelations(tk, reloadSpans, add)
 		case "reload":
 			// A <button> may not contain another button. The renderer refuses the
 			// whole thing rather than emit invalid interactive nesting, so say so
@@ -1139,7 +1142,7 @@ func lintStrayCloseTags(w *schemaWork, lm *renderMeter, input string, tokens []t
 // lintCalc checks a [calc] opener with the parser the renderer uses: every
 // error here is one RenderCalcShortcode renders as its error marker, and every
 // warning a reference that renders the default.
-func lintCalc(tk token, opts LintOptions, otherContext, eachSpans, usingSpans [][2]int, add func(start, end int, severity, msg string)) {
+func lintCalc(tk token, opts LintOptions, otherContext, elementSpans, usingSpans [][2]int, add func(start, end int, severity, msg string)) {
 	if _, _, err := calcOptions(tk.attrs); err != nil {
 		add(tk.start, tk.end, SeverityError, "[calc] "+err.Error())
 	}
@@ -1171,11 +1174,33 @@ func lintCalc(tk token, opts LintOptions, otherContext, eachSpans, usingSpans []
 	if !usesItem {
 		return
 	}
-	if !insideSpans(tk.start, eachSpans) {
+	if !insideSpans(tk.start, elementSpans) {
 		add(tk.start, tk.end, SeverityWarning,
-			"[calc] uses item outside an [each] block; it renders the default")
-	} else if innermostSpanStart(tk.start, usingSpans) > innermostSpanStart(tk.start, eachSpans) {
+			"[calc] uses item outside an [each] or [relations] block; it renders the default")
+	} else if innermostSpanStart(tk.start, usingSpans) > innermostSpanStart(tk.start, elementSpans) {
 		add(tk.start, tk.end, SeverityWarning,
-			"[calc] inside a [using] block cannot read item: [using] switches to another entity, so the [each] element is not available there and it renders the default")
+			"[calc] inside a [using] block cannot read item: [using] switches to another entity, so the [each] or [relations] element is not available there and it renders the default")
+	}
+}
+
+// lintRelations checks a [relations] opener against what
+// RenderRelationsShortcode does with it: a direction it refuses, a limit it
+// silently replaces, and the button face it will not render in.
+func lintRelations(tk token, reloadSpans [][2]int, add func(start, end int, severity, msg string)) {
+	if v, set := tk.attrs["direction"]; set {
+		if d := strings.TrimSpace(v); d != RelationsDirectionOut && d != RelationsDirectionIn {
+			add(tk.start, tk.end, SeverityError, `[relations] direction must be "out" or "in"`)
+		}
+	}
+	if v, set := tk.attrs["limit"]; set {
+		if n, err := strconv.Atoi(v); err != nil || n <= 0 {
+			add(tk.start, tk.end, SeverityWarning,
+				"[relations] limit must be a whole number from 1 to "+strconv.Itoa(MaxRelationsLimit)+"; it falls back to "+strconv.Itoa(defaultRelationsLimit))
+		} else if n > MaxRelationsLimit {
+			add(tk.start, tk.end, SeverityWarning, "[relations] limit is capped at "+strconv.Itoa(MaxRelationsLimit))
+		}
+	}
+	if insideSpans(tk.start, reloadSpans) {
+		add(tk.start, tk.end, SeverityError, "[relations] cannot be used inside a [reload] button face")
 	}
 }

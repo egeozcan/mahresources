@@ -246,6 +246,10 @@ func buildMRQLAPIRenderContext(parent context.Context, appCtx mrqlRenderContext,
 	reqCtx = application_context.WithMRQLRenderDataCache(reqCtx)
 	reqCtx = shortcodes.WithPartialResolver(reqCtx, template_filters.BuildPartialResolver(appCtx))
 	reqCtx = shortcodes.WithQueryBudget(reqCtx, appCtx.MRQLPageQueryBudget())
+	// The MRQL render API binds WithMRQLPrincipal, whose handle carries no ORM
+	// scope; the lister answers ErrRelationsUnavailable there for a confined
+	// viewer rather than reading unscoped.
+	reqCtx = shortcodes.WithRelationLister(reqCtx, template_filters.BuildRelationLister(appCtx))
 	if deferredSigner {
 		seal := func(entityType string, entityID uint, body string, untrusted bool) string {
 			return deferredtoken.SealWithTrust(appCtx.DeferredSigningKey(), entityType, entityID, body, untrusted)

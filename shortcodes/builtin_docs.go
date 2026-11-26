@@ -39,7 +39,7 @@ type DocExample struct {
 
 // BuiltinDoc documents one built-in shortcode (meta, datetime, pills,
 // property, calc, mrql, conditional, link, each, item, partial, lazy, details,
-// reload, using, inspect, adjacent, similar, calendar, comment).
+// reload, using, inspect, adjacent, similar, calendar, relations, comment).
 type BuiltinDoc struct {
 	Name        string          `json:"name"`
 	Syntax      string          `json:"syntax"`
@@ -158,7 +158,7 @@ func BuiltinDocs() []BuiltinDoc {
 			Description: "Computes a number from this entity's Meta (meta.<path>), its numeric fields (property.<Path>) and, at the top level of an [each] block, the current element (item or item.<path>), with + - * / % and parentheses and the functions min, max, abs, round(x[, digits]) and coalesce(a, b, …). It renders the bare number, so it works in text, table cells and attributes such as <meter value=\"…\">. A Meta string counts only when it is wholly a decimal number of at most 64 bytes; a missing or non-numeric operand, division by zero or overflow gives no value, which renders the default unless coalesce catches it. A syntax error, an unknown name or a bad decimals/format renders an error marker. It never runs a query. Only Meta keys of ASCII letters, digits and _ that do not start with a digit can be referenced. Limits: 512 bytes, 128 tokens, 32 levels of nesting, 32 references.",
 			IsBlock:     BlockNo,
 			Attrs: []DocAttr{
-				{Name: "expr", Type: "string", Required: true, Description: "The expression, e.g. meta.qty * meta.unit_price. Names are case-sensitive; numbers are plain decimals with no exponent. An item operand has no value outside [each] or inside another block within it."},
+				{Name: "expr", Type: "string", Required: true, Description: "The expression, e.g. meta.qty * meta.unit_price. Names are case-sensitive; numbers are plain decimals with no exponent. An item operand has no value outside [each] or [relations], or inside another block within them."},
 				{Name: "decimals", Type: "number", Description: "A whole number from 0 to 10: round half away from zero to exactly that many fraction digits, keeping trailing zeros (10 gives 10.00). Unset, the result is rounded to 10 digits and trailing zeros are dropped."},
 				{Name: "format", Type: "enum", Default: "number", Description: "number is a plain decimal (1234567.89); grouped puts a comma between every three integer digits (1,234,567.89, not locale-aware); percent multiplies by 100 and appends % (0.256 gives 25.6%).", Enum: []string{"number", "grouped", "percent"}},
 				{Name: "default", Type: "string", Description: "Text rendered, HTML-escaped, when the expression has no numeric result. Empty by default. Prefer words such as \"not set\" over a lone dash where the reader needs to know why the value is missing."},
@@ -261,7 +261,7 @@ func BuiltinDocs() []BuiltinDoc {
 		{
 			Name:        "item",
 			Syntax:      `[item path="..."]`,
-			Description: "Renders the current element inside an [each] block: the element itself (scalar) or a dot-path into it (object). Uses the same format/layout/default helpers as [property] and is HTML-escaped unless raw is set. Outside an [each] block it renders nothing.",
+			Description: "Renders the current element inside an [each] or [relations] block: the element itself (scalar) or a dot-path into it (object). Uses the same format/layout/default helpers as [property] and is HTML-escaped unless raw is set. Outside those blocks it renders nothing.",
 			IsBlock:     BlockNo,
 			Attrs: []DocAttr{
 				{Name: "path", Type: "string", Required: false, Description: "Dot-path into the current element when it is an object, e.g. name. Omit to render a scalar element directly."},
@@ -275,6 +275,22 @@ func BuiltinDocs() []BuiltinDoc {
 				{Title: "Scalar element", Code: `[item]`},
 				{Title: "Object field with fallback", Code: `[item path="qty" default="?"]`},
 				{Title: "1-based position", Code: `[item index="true"]`},
+			},
+		},
+		{
+			Name:        "relations",
+			Syntax:      `[relations type="..." direction="out|in" limit="20"]`,
+			Description: "Lists this group's typed relations to other groups as nested lists, one per relation type in type-name order, each entry a link to the group at the far end with its category. direction=\"out\" (the default) lists the edges from this group; direction=\"in\" lists the edges to it, labelled \"Incoming: <type>\". A relation type with a back relation stores its reverse edge too, so out already shows both halves of such a pair from this group's side; use in for types without one. With a block body each relation renders the body instead, against this group's context, with [item] reading the edge: Name, Description, Type, Direction, GroupID, GroupName, GroupCategory, GroupURL, and the far group's GroupDescription and GroupMeta (its Meta, e.g. [item path=\"GroupMeta.status\"]). No relation renders the [else] branch, or nothing. Only groups have relations; on a resource or note it renders a comment. An edge is listed only when the viewer may see both groups, so a group-confined user never sees a group outside their subtree; of a group's first 500 edges in one direction, the hidden ones are dropped before limit applies. Each [relations] costs one unit of the page query budget, and one more when the body reads GroupDescription or GroupMeta. It renders on display pages and their cards, the lightbox, deferred bodies, MRQL results and the template and description previews; elsewhere (share pages, the entity picker, generation-run tools) it renders an \"unavailable\" comment.",
+			IsBlock:     BlockOptional,
+			Attrs: []DocAttr{
+				{Name: "type", Type: "string", Description: "Only relations of this type: an exact, case-sensitive name. Types are unique by name and their from and to categories, so every type of that name matches. Empty lists every type."},
+				{Name: "direction", Type: "enum", Default: "out", Description: "out lists the relations from this group, in the relations to it.", Enum: []string{"out", "in"}},
+				{Name: "limit", Type: "number", Default: "20", Description: "The most relations listed, a whole number from 1 to 100. Larger values are capped at 100; anything else falls back to 20."},
+			},
+			Examples: []DocExample{
+				{Title: "All outgoing relations", Code: `[relations]`},
+				{Title: "One type", Code: `[relations type="Depends on" limit="10"]`},
+				{Title: "Custom rows with an empty state", Code: "[relations direction=\"in\"]\n  <a href=\"/group?id=[item path='GroupID']\">[item path=\"GroupName\"]</a>: [item path=\"GroupMeta.status\" default=\"no status\"]\n[else]\n  <p>Nothing depends on this.</p>\n[/relations]", Notes: "Each relation renders inside its own list item."},
 			},
 		},
 		{

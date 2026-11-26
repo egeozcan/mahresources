@@ -354,6 +354,10 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 			replacement = RenderPartialShortcode(reqCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "each":
 			replacement = RenderEachShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+		case sc.Name == "relations":
+			// Renders the "unavailable" comment unless the surface installed a
+			// lister (WithRelationLister).
+			replacement = RenderRelationsShortcode(reqCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "lazy":
 			replacement = RenderLazyShortcode(reqCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "details":

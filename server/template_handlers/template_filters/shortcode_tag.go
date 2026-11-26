@@ -208,6 +208,7 @@ func buildPageRenderContext(reqCtx context.Context, appCtx PageRenderContext) co
 		// Page contexts are bound with WithPrincipal, so [adjacent]'s reads
 		// carry the viewer's subtree scope.
 		reqCtx = WithAdjacentResolverFor(reqCtx, appCtx)
+		reqCtx = shortcodes.WithRelationLister(reqCtx, BuildRelationLister(appCtx))
 	}
 	return reqCtx
 }

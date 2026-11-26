@@ -272,6 +272,16 @@
 [/each]</code></pre>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[relations]</code>
+                        &mdash; a group's typed relations as nested lists, one per relation type, each a link to the group at the far end. Only groups have relations, so here wrap it in [using type="group" …] to list the relations of a group this entity references. As a block, each relation renders the body, where [item] reads <span class="font-mono">Name Type GroupID GroupName GroupCategory GroupMeta.path</span>. One page-query budget unit (two when the body reads GroupMeta or GroupDescription).
+                        <br><span class="text-stone-600 ml-4">
+                            <b class="text-stone-500">type</b>="exact type name"
+                            &middot; <b class="text-stone-500">direction</b>="out|in" (out)
+                            &middot; <b class="text-stone-500">limit</b>="1–100" (20)
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[using rel="owner"][relations type="Depends on"][/using]</code></pre>
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[link to="self"]</code>
                         &mdash; resolve a detail-page URL. Inline it renders just the URL; as a block it wraps its content in an anchor.
                         <br><span class="text-stone-600 ml-4">

@@ -767,6 +767,9 @@ func (e *templateToolExecutor) preview(ctx context.Context, mc *application_cont
 
 	renderCtx, cancel := buildMRQLAPIRenderContext(ctx, mc, false)
 	defer cancel()
+	// The preview is a model-facing corpus with its own masking of user data;
+	// relation names and far-group fields would bypass it.
+	renderCtx = shortcodes.WithRelationLister(renderCtx, nil)
 	if e.cfg.Principal != nil {
 		renderCtx = auth.WithPrincipal(renderCtx, e.cfg.Principal)
 		renderCtx = shortcodes.WithCredentialFieldsVisible(renderCtx, e.cfg.Principal.CanWrite())

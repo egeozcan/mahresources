@@ -269,6 +269,19 @@
 [/each]</code></pre>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[relations]</code>
+                        &mdash; this group's typed relations as nested lists, one per relation type, each a link to the group at the far end with its category. Only relations whose two groups the viewer may see are listed. As a block, each relation renders the body, where [item] reads <span class="font-mono">Name Type GroupID GroupName GroupCategory GroupMeta.path</span>; an optional [else] renders when there are none. One page-query budget unit (two when the body reads GroupMeta or GroupDescription). Hide the built-in Relations panel under Section Visibility when you show them here.
+                        <br><span class="text-stone-600 ml-4">
+                            <b class="text-stone-500">type</b>="exact type name"
+                            &middot; <b class="text-stone-500">direction</b>="out|in" (out)
+                            &middot; <b class="text-stone-500">limit</b>="1–100" (20)
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[relations type="Depends on"]
+[relations direction="in"]
+  &lt;a href="/group?id=[item path='GroupID']"&gt;[item path="GroupName"]&lt;/a&gt; [item path="GroupMeta.status"]
+[else]None[/relations]</code></pre>
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[link to="self"]</code>
                         &mdash; resolve a detail-page URL. Inline it renders just the URL; as a block it wraps its content in an anchor.
                         <br><span class="text-stone-600 ml-4">

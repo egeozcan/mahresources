@@ -133,11 +133,12 @@ type savedMRQLLookup interface {
 }
 
 // mrqlRenderContext is what building a render context for inline [mrql]
-// shortcodes needs: the executor and partial resolver it installs, plus the
-// budget, timeout and signing key it reads.
+// shortcodes needs: the executor, partial resolver and [relations] lister it
+// installs, plus the budget, timeout and signing key it reads.
 type mrqlRenderContext interface {
 	template_filters.QueryExecutorContext
 	template_filters.PartialResolverContext
+	template_filters.RelationListerContext
 	DeferredSigningKey() []byte
 	MRQLPageQueryBudget() int
 	MRQLQueryTimeout() time.Duration

@@ -49,7 +49,8 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 | `[conditional]` | Block | Render the first matching branch from a meta, field, or MRQL condition |
 | `[link]` | Inline or block | Resolve a detail-page URL or wrap content in a link |
 | `[each]` | Block | Iterate an array in Meta |
-| `[item]` | Inline | Render the current element inside an `[each]` block |
+| `[item]` | Inline | Render the current element inside an `[each]` or `[relations]` block |
+| `[relations]` | Inline or block | List the group's typed relations to other groups |
 | `[partial]` | Inline | Expand a named Template Partial |
 | `[lazy]` | Block | Defer server rendering until the block scrolls into view |
 | `[details]` | Block | Defer server rendering until a disclosure is opened |
@@ -1049,7 +1050,7 @@ Renders its inner content once per element of an array meta value.
 
 ### `[item]`
 
-`[item]` renders the current element inside an `[each]` block. It uses the same `format`, `layout`, and `default` helpers as `[property]`, and is HTML-escaped unless `raw="true"`. Outside an `[each]` block it renders nothing.
+`[item]` renders the current element inside an `[each]` block (or the current relation inside a [`[relations]`](#relations----group-relations) block). It uses the same `format`, `layout`, and `default` helpers as `[property]`, and is HTML-escaped unless `raw="true"`. Outside an `[each]` block it renders nothing.
 
 | Attribute | Required | Default | Description |
 |-----------|----------|---------|-------------|
@@ -1091,6 +1092,111 @@ For an array of objects, `[item path="..."]` reads a field of each element. Inne
 ```
 
 `[item]` binds to the nearest enclosing `[each]`; `[item]` tokens inside a nested `[each]` belong to that inner loop.
+
+## `[relations]` -- Group relations
+
+`[relations]` lists the current group's typed [relations](../concepts/relationships.md) to other groups, grouped by relation type, each entry a link to the group at the far end. Use it to show "depends on X, Y" on the cards of a list or an MRQL result, to show only one type of relation, or to place relations in a slot of your own.
+
+```
+[relations]
+[relations type="Depends on" limit="5"]
+[relations direction="in"]
+```
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `type` | No | | Only relations of this type: an exact, case-sensitive name (surrounding spaces are ignored). A relation type is unique by its name **and** its from and to categories, so two types named "Depends on" for different categories are both matched. Empty lists every type. |
+| `direction` | No | `out` | `out` lists the relations from this group; `in` lists the relations to it. Any other value renders an error marker. |
+| `limit` | No | `20` | The most relations listed. Above 100 is capped at 100; `0`, a negative or a non-number falls back to 20. The linter warns on each. |
+
+### Outgoing and incoming
+
+A relation is directed: "Backend API **Depends on** Auth Service" is outgoing from Backend API and incoming to Auth Service.
+
+- A relation type with a **back relation** stores the reverse edge as a relation of its own: adding "Backend API depends on Auth Service" also adds "Auth Service is required by Backend API". So `direction="out"` already lists both halves of such a pair, each from its own group's side, and `in` would list the same pair again.
+- Use `direction="in"` for types without a back relation, whose edges only the far group lists as outgoing. Its labels read "Incoming: <type>".
+- To show both, write two shortcodes, each where it belongs.
+
+### Output
+
+```html
+<div class="relations-shortcode" data-direction="out">
+  <ul class="relations-shortcode__types">
+    <li class="relations-shortcode__type">
+      <span class="relations-shortcode__label">Depends on</span>
+      <ul class="relations-shortcode__list">
+        <li class="relations-shortcode__entry"><a href="/group?id=12">Auth Service</a> <span class="relations-shortcode__category">(Service)</span></li>
+      </ul>
+    </li>
+  </ul>
+</div>
+```
+
+- One list per relation type, in type-name order, and within a type in the order the relations were created.
+- The markup is nested native lists, so a screen reader announces each type's label and then its list with the number of items. It has no headings and no IDs, so it fits any slot and any number of cards on one page.
+- The far group's category is shown in parentheses when it has one. A group with a blank name is shown as "Group 12". All text is HTML-escaped.
+- The `relations-shortcode__*` classes are hooks for `CustomCSS`.
+- In a hover card, which the keyboard cannot enter, the names are plain text rather than links.
+- With no relation to show it renders nothing (or the `[else]` branch of a block).
+
+### Block form
+
+As a block, each relation renders the body instead of the default entry, inside its own list item. `[item]` reads the relation:
+
+| `[item path=…]` | Value |
+|---|---|
+| `Name` | The relation's own name (may be empty) |
+| `Description` | The relation's description |
+| `Type` | The relation type's name |
+| `Direction` | `out` or `in` |
+| `GroupID` | The far group's ID |
+| `GroupName` | The far group's name |
+| `GroupCategory` | The far group's category name, or empty |
+| `GroupURL` | `/group?id=<GroupID>` |
+| `GroupDescription` | The far group's description |
+| `GroupMeta` | The far group's Meta: `[item path="GroupMeta.status"]` reads one field |
+
+```
+[relations direction="in"]
+  <a href="/group?id=[item path='GroupID']">[item path="GroupName"]</a>
+  -- [item path="GroupMeta.status" default="no status"]
+[else]
+  <p>Nothing depends on this.</p>
+[/relations]
+```
+
+- The body renders against **this** group, as an `[each]` body does: `[property]`, `[meta]` and `[mrql]` inside it read the carrier, not the far group. Read the far group through `GroupName`, `GroupDescription` and `GroupMeta`.
+- Attributes are not expanded, so `[using type="group" id="[item path='GroupID']"]` does not work.
+- In an `href`, write `/group?id=[item path='GroupID']` rather than `[item path='GroupURL']`: the linter cannot tell that a bare `[item]` holds a safe URL and warns about it.
+- Values are spliced in after the body renders, so a relation named `[property path="Name"]` shows that text literally and never runs it.
+- `[calc]` reads the relation too, e.g. `[calc expr="item.GroupMeta.cost * 2"]`.
+
+### Scoping
+
+A relation is listed only when the viewer may see **both** of its groups. A group-confined user or guest therefore sees only relations inside their subtree, and a relation to a group outside it is left out without a trace: no count of hidden relations is shown, since that would tell them such groups exist. A guest whose account has no scope group sees none.
+
+For a confined viewer, `[relations]` reads up to 500 of the group's relations in one direction (after the `type` filter), drops the hidden ones, and then applies `limit`. Only a group with more than 500 relations in one direction, most of them hidden, can therefore list fewer than `limit` visible ones.
+
+### Cost
+
+- One query per `[relations]`, which counts one unit of the [per-page query budget](#per-page-query-budget). A block body that reads `GroupDescription` or `GroupMeta` runs a second, small query by primary key and counts a second unit. An identical `[relations]` repeated on the same page is free. Past the budget it renders an error marker.
+- In a per-card slot it runs once per card: a group list page shows at most 50 cards, so an inline `[relations]` in `CustomSummary` spends 50 of the default 200 units, leaving 150 for `[mrql]` and the rest. Raise `-mrql-page-query-budget` if a dense page needs more.
+- Each lookup is bounded by the MRQL query timeout (`-mrql-query-timeout`), and one that runs out of time renders "lookup timed out".
+- `direction="out"` reads the relation table's unique index; `direction="in"` reads `idx__group_relations__to_group_id`, which is built at startup.
+
+### Hiding the built-in panel
+
+A group page already shows Relations and Reverse Relations panels. When a category shows its relations through `[relations]`, turn the built-in ones off under **Section Visibility** in the category form, or in its [section configuration](./custom-templates.md#section-configuration): `{"relations": {"state": "off"}}`, or `forwardRelations` / `reverseRelations` set to `false`.
+
+### Where it renders
+
+`[relations]` works only on groups; on a resource or note it renders `<!-- mr:relations: only groups have relations -->`. To list the relations of a group a resource or note refers to, wrap it in [`[using]`](#using----switch-to-another-entity), e.g. `[using rel="owner"][relations][/using]`.
+
+It renders on display pages and their list cards, the lightbox, hover cards, deferred `[lazy]`/`[details]`/`[autorefresh]` bodies, MRQL results and the template and description previews. Everywhere else it renders `<!-- mr:relations unavailable in this context -->`: share pages, the entity picker and the AI template generation tools. The MRQL result API also renders that comment for a group-confined viewer, because it is bound to run MRQL only and has no subtree to check relations against.
+
+`[relations]` cannot be used inside a `[reload]` button face.
 
 ## `[partial]` -- Reusable snippets
 
