@@ -224,6 +224,19 @@ If a filter is set but the entity lacks the filtered field, the action does not 
 
 The `bulk` placement renders a button only on the Resource and Group list pages. The Note list page does not expose bulk plugin actions, so a `bulk` action declared with `entity = "note"` shows no button there. Running it directly via `POST /v1/jobs/action/run` with multiple note IDs still works.
 
+### Running an action from a template
+
+A category, resource category or note type template can put one action on the page as its own button with the built-in [`[action]`](./shortcodes.md#action----run-a-plugin-action) shortcode:
+
+```
+[action plugin="project-management" name="pm-set-status" label="Mark done" param-status="done"]
+```
+
+- **Placement is ignored.** It decides where the menus list an action, and `POST /v1/jobs/action/run` never checks it, so a template button works for any registered action whose `entity` matches the entity being rendered. The action's `filters` still apply: the button is drawn only on entities they match, and the run endpoint checks them again on the click.
+- **Selection-only actions cannot run from a template.** A template has no bulk selection. If an action only makes sense with one, declare its selection parameter `required = true` (an `entity_ref` with `default = "selection"`), so template authors get the error "needs a bulk selection and cannot run from a template" on the page instead of a button that fails.
+- **Template parameters are literal.** `param-<name>="…"` values are fixed in the template and converted by the parameter's type (`number`, `boolean`, `select` and the text types). `entity_ref` and `info` parameters cannot be set; an `entity_ref` that defaults to `trigger` gets the rendered entity.
+- The button runs with the permissions of whoever clicks it, through the same endpoint, checks and Job handling as the actions menu, and is not drawn for accounts that could not run the action.
+
 ## Synchronous Execution
 
 Sync actions (the default) run within a single request-response cycle. The handler receives a context table and returns a result table.

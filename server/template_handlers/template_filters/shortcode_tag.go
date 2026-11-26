@@ -94,9 +94,11 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 	// against the unscoped DB handle. Leaving the renderer nil makes [plugin:*]
 	// render the same "unavailable" comment the share server already produces.
 	var pluginRenderer shortcodes.PluginRenderer
+	var actionPM *plugin_system.PluginManager
 	access := pluginAccessFromContext(ctx, reqCtx)
 	if pmVal, ok := ctx.Public["_pluginManager"]; ok && pmVal != nil {
 		if pm, ok := pmVal.(*plugin_system.PluginManager); ok && pm != nil {
+			actionPM = pm
 			pluginRenderer = func(pluginName string, sc shortcodes.Shortcode, mctx shortcodes.MetaShortcodeContext) (string, error) {
 				if !access(pluginName) {
 					return "", shortcodes.ErrPluginUnavailable
@@ -122,7 +124,15 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 		untrusted, isBool := untrustedVal.Interface().(bool)
 		metaCtx.UntrustedSource = untrusted || !isBool
 	}
-	result := shortcodes.Process(reqCtx, content, *metaCtx, pluginRenderer, executor)
+	// [action] buttons follow the run endpoint's rule (auth.PluginActionAccessFor):
+	// a writer, and a plugin this caller may reach. The resolver goes on a copy
+	// of reqCtx that is never stored back into ctx.Public, so the custom_css tag
+	// and every later tag that reuses _reqCtxWithCache render without it.
+	actionAccess := func(plugin string) bool {
+		return auth.PrincipalFromContext(reqCtx).CanWrite() && access(plugin)
+	}
+	renderCtx := shortcodes.WithActionResolver(reqCtx, BuildActionResolver(actionPM, actionAccess))
+	result := shortcodes.Process(renderCtx, content, *metaCtx, pluginRenderer, executor)
 	result = WrapReloadableRegion(result, content, *metaCtx, appCtx)
 	if _, writeErr := writer.WriteString(result); writeErr != nil {
 		return ctx.Error(fmt.Sprintf("process_shortcodes: write error: %s", writeErr), nil)

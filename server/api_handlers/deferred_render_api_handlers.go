@@ -99,6 +99,9 @@ func GetDeferredRenderHandler(ctx DeferredRenderContext) func(http.ResponseWrite
 		// group-confined principal must not reach it through a deferred render.
 		var renderer shortcodes.PluginRenderer
 		if pm := ctx.PluginManager(); pm != nil {
+			// An [action] inside a [lazy], [details] or [autorefresh] body keeps
+			// its button after the body is fetched or refreshed.
+			reqCtx = shortcodes.WithActionResolver(reqCtx, template_filters.BuildActionResolver(pm, auth.PluginActionAccessFor(reqCtx, ctx.PluginAllowsScopedPrincipals)))
 			access := auth.PluginAccessFor(reqCtx, ctx.PluginAllowsScopedPrincipals)
 			renderer = func(pluginName string, sc shortcodes.Shortcode, mctx shortcodes.MetaShortcodeContext) (string, error) {
 				if !access(pluginName) {

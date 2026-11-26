@@ -566,6 +566,13 @@ func (pm *PluginManager) GetActionsForPlacement(entity string, placement string,
 	return result
 }
 
+// ActionMatchesEntityData reports whether a's own filters match one entity's
+// filter data (keys as for actionMatchesFilters). The [action] shortcode asks it
+// before drawing a button, with the same predicate the action menus use.
+func ActionMatchesEntityData(a ActionRegistration, entityData map[string]any) bool {
+	return actionMatchesFilters(a, entityData)
+}
+
 // actionMatchesFilters checks whether an action's filters match the given entity data.
 // Empty filter fields match everything. entityData keys:
 //   - "content_type" (string) — matched against Filters.ContentTypes
