@@ -141,6 +141,7 @@ import './webcomponents/expandabletext.js';
 import './webcomponents/inlineedit.js';
 import './webcomponents/meta-shortcode.ts';
 import './webcomponents/deferredShortcodes.js';
+import './webcomponents/tabsShortcode.js';
 import './webcomponents/reloadShortcode.js';
 import './webcomponents/autorefreshShortcode.js';
 import './webcomponents/calendarShortcode.js';

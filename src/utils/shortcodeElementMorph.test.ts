@@ -23,7 +23,7 @@ describe('morphOptionsWithShortcodeElements', () => {
     },
   );
 
-  it.each(['LAZY-SHORTCODE', 'DETAILS-SHORTCODE', 'META-SHORTCODE', 'SCHEMA-EDITOR', 'RELOAD-SHORTCODE'])(
+  it.each(['LAZY-SHORTCODE', 'DETAILS-SHORTCODE', 'META-SHORTCODE', 'SCHEMA-EDITOR', 'RELOAD-SHORTCODE', 'TABS-SHORTCODE'])(
     'refreshes %s after attributes have been patched',
     (tagName) => {
       const refreshFromMorph = vi.fn();
@@ -37,16 +37,17 @@ describe('morphOptionsWithShortcodeElements', () => {
     },
   );
 
-  // <reload-shortcode> owns server-rendered children, so morph must patch them as
-  // usual; it only wants the callback afterwards to re-check the button's name.
-  it('lets morph patch reload-shortcode children while still notifying it', () => {
+  // <reload-shortcode> and <tabs-shortcode> own server-rendered children, so
+  // morph must patch them as usual; each only wants the callback afterwards
+  // (the reload button re-checks its name, the tab set re-applies its state).
+  it.each(['RELOAD-SHORTCODE', 'TABS-SHORTCODE'])('lets morph patch %s children while still notifying it', (tagName) => {
     const skip = vi.fn();
     const skipChildren = vi.fn();
     const refreshFromMorph = vi.fn();
     const options = morphOptionsWithShortcodeElements();
 
-    options.updating(el('RELOAD-SHORTCODE'), el('RELOAD-SHORTCODE'), false, skip, skipChildren);
-    options.updated(el('RELOAD-SHORTCODE', { refreshFromMorph }), el('RELOAD-SHORTCODE'));
+    options.updating(el(tagName), el(tagName), false, skip, skipChildren);
+    options.updated(el(tagName, { refreshFromMorph }), el(tagName));
 
     expect(skipChildren).not.toHaveBeenCalled();
     expect(skip).not.toHaveBeenCalled();
