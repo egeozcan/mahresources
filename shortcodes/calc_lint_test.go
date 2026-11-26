@@ -16,7 +16,7 @@ func TestLintCalc(t *testing.T) {
 		{"decimals too large", `[calc expr="1" decimals="11"]`, `[calc] decimals must be a whole number from 0 to 10`, SeverityError},
 		{"bad format", `[calc expr="1" format="currency"]`, `[calc] format must be`, SeverityError},
 		{"missing expr", `[calc decimals="2"]`, `[calc] is missing required attribute "expr"`, SeverityError},
-		{"item outside each", `[calc expr="item.qty * 2"]`, `[calc] uses item outside an [each] block; it renders the default`, SeverityWarning},
+		{"item outside each", `[calc expr="item.qty * 2"]`, `[calc] uses item outside an [each] or [relations] block; it renders the default`, SeverityWarning},
 		{"item in using in each", `[each path="xs"][using rel="owner"][calc expr="item"][/using][/each]`, `[calc] inside a [using] block`, SeverityWarning},
 		{"closer", `[calc expr="1"][/calc]`, `[calc] is an inline shortcode and cannot have a closing tag`, SeverityError},
 		{"unknown attr", `[calc expr="1" raw="true"]`, `unknown attribute "raw" on [calc]`, SeverityWarning},

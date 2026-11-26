@@ -111,7 +111,7 @@ func TestLint(t *testing.T) {
 		{
 			name:       "item outside each",
 			input:      `<li>[item path="name"]</li>`,
-			wantSubstr: `only meaningful inside an [each] block`,
+			wantSubstr: `only meaningful inside an [each] or [relations] block`,
 			wantSev:    SeverityWarning,
 		},
 		{

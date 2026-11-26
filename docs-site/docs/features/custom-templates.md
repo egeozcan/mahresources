@@ -259,6 +259,12 @@ The CustomSummary template appears in list views. Keep it compact:
 </div>
 ```
 
+On a group category, [`[relations]`](./shortcodes.md#relations----group-relations) shows each card's typed relations, here only one type. Each card costs one unit of the page query budget. When the detail page shows relations through the template too, hide the built-in Relations panels under Section Visibility:
+
+```html
+[relations type="Depends on" limit="5"]
+```
+
 ## CustomAvatar Example
 
 The CustomAvatar template controls how the entity appears when linked. Its placement differs by carrier, for a structural reason:
