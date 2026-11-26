@@ -98,7 +98,7 @@ func TestSimilarShortcode_OrderTiersAndLimit(t *testing.T) {
 			t.Errorf("%s: no compare link", o.r.Name)
 		}
 	}
-	if !strings.Contains(out, fmt.Sprintf(`alt="sim-d1, near-certain duplicate, distance 1"`)) {
+	if !strings.Contains(out, `alt="sim-d1, near-certain duplicate, distance 1"`) {
 		t.Errorf("alt text: %s", out)
 	}
 
