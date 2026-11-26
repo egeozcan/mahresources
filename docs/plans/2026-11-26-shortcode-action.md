@@ -347,8 +347,8 @@ Problems to fix before or during implementation:
 
 ### Verified
 
-- `gofmt -l` on the changed Go files is empty; `go vet --tags 'json1 fts5' ./...` is clean.
-- `go test --tags 'json1 fts5' ./... -count=1` passes, including `internal/arch` and the docs consistency tests.
+- `gofmt -l` on the changed Go files is empty. `go vet --tags 'json1 fts5' ./...` reports one finding, in `application_context/job_download_progress_test.go:99` (a copied lock), which is on the base commit and untouched here.
+- `go test --tags 'json1 fts5' ./... -count=1`: 47 packages pass, including `internal/arch` and the docs consistency tests. Under five lanes' load, `application_context` failed two timing tests (`TestAPauseAskedOfAnotherProcessIsDeliveredToTheTransfer`, `TestReductionSpoolChangedMembersLinearSQLite`, neither in code this lane touched) and `server/api_tests` hit the default 10-minute timeout. Rerun, the two tests pass and `server/api_tests` passes in full with `-timeout 45m` (813 s).
 - `npm run test:unit` (vitest), `npm run build`, `./scripts/css-scan-test.sh`.
 - E2E: the three new specs, plus `106-reload-shortcode`, `107-autorefresh-shortcode`, `tests/shortcodes/`, `template-preview`, `category-template-authoring-a11y`, `plugins/plugin-actions` and `plugins/plugin-manage`.
 - Zero queries per button holds by construction: `BuildActionResolver` is given a plugin manager and an access predicate and no database handle.
