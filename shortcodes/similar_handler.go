@@ -35,7 +35,7 @@ type similarSize struct {
 var similarSizes = map[string]similarSize{
 	"sm": {48, "h-12 w-12"},
 	"md": {96, "h-24 w-24"},
-	"lg": {200, "h-48 w-48"},
+	"lg": {200, "h-[200px] w-[200px]"},
 }
 
 // similarOptions is a [similar] opener's attributes, validated.

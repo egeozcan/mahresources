@@ -72,11 +72,15 @@ func TestCalcOperandConversion(t *testing.T) {
 	assert.Equal(t, "3", RenderCalcShortcode(calcSC("expr", "meta.b"), ctx))
 	assert.Equal(t, "-100", RenderCalcShortcode(calcSC("expr", "meta.c"), ctx))
 	assert.Equal(t, "0.5", RenderCalcShortcode(calcSC("expr", "meta.d"), ctx))
+	atCap := calcMeta(t, map[string]any{"n": strings.Repeat("0", calcMaxNumericString-1) + "7"})
+	assert.Equal(t, "7", RenderCalcShortcode(calcSC("expr", "meta.n"), atCap))
 
 	bad := map[string]any{
 		"comma": "12,5", "word": "abc", "hex": "0x10", "nan": "NaN", "inf": "Inf",
 		"under": "1_000", "empty": "", "yes": true, "nil": nil,
 		"obj": map[string]any{}, "arr": []any{}, "huge": "1e999",
+		// Numeric, but longer than any float64 needs: not read at all.
+		"long": "1" + strings.Repeat("0", calcMaxNumericString),
 	}
 	ctx = calcMeta(t, bad)
 	for key := range bad {

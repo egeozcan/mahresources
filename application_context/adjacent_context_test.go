@@ -237,6 +237,7 @@ func runAdjacentScope(t *testing.T, ctx *MahresourcesContext) {
 	w.group("S-sibling", &top.ID, nil, 2)
 	child := w.group("S-child", &s.ID, nil, 3)
 	outside := w.group("outside", nil, nil, 4)
+	w.group("S-child-2", &s.ID, nil, 5)
 	rc := &models.ResourceCategory{Name: "rc"}
 	w.create(rc)
 	series := &models.Series{Name: "mixed", Slug: "mixed"}
@@ -255,6 +256,7 @@ func runAdjacentScope(t *testing.T, ctx *MahresourcesContext) {
 	guest := ctx.WithPrincipal(&auth.Principal{Role: models.RoleGuest, ScopeGroupID: &s.ID})
 	expectAdjacent(t, guest, "note", n1.ID, false, "", "in-2")
 	expectAdjacent(t, guest, "group", s.ID, false, "", "")
+	expectAdjacent(t, guest, "group", child.ID, false, "", "S-child-2")
 	expectAdjacent(t, guest, "resource", r1.ID, true, "", "s-3")
 	expectAdjacent(t, guest, "resource", unowned.ID, false, "", "")
 	// The unconfined view of the same rows, so the checks above are the scope.
@@ -271,6 +273,14 @@ func runAdjacentScope(t *testing.T, ctx *MahresourcesContext) {
 	expectAdjacent(t, guest, "note", nOut.ID, false, "", "")
 	if got := queries.Load(); got != 1 {
 		t.Errorf("an out-of-subtree entity ran %d queries, want 1", got)
+	}
+
+	// The subtree root's siblings are all outside the subtree, however many
+	// its parent has: one query for the root itself, and no seek.
+	queries.Store(0)
+	expectAdjacent(t, guest, "group", s.ID, false, "", "")
+	if got := queries.Load(); got != 1 {
+		t.Errorf("the subtree root ran %d queries, want 1", got)
 	}
 
 	// A handle bound for MRQL carries no ORM scope; the guard refuses it before

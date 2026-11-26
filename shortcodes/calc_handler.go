@@ -27,7 +27,9 @@ const (
 	calcMaxLiteral   = 32
 	calcMaxArgs      = 8
 	calcMaxDecimals  = 10
-	calcAutoDecimals = 10
+	// calcMaxNumericString bounds a Meta string read as a number.
+	calcMaxNumericString = 64
+	calcAutoDecimals     = 10
 )
 
 // calcNumericString is what a Meta string must look like to count as a number.
@@ -486,6 +488,11 @@ func calcJSONNumber(v any) (float64, bool) {
 	case float64:
 		return x, calcFinite(x)
 	case string:
+		// No finite float64 needs more bytes than this, and the cap keeps the
+		// work per operand fixed however long a stored string is.
+		if len(x) > calcMaxNumericString {
+			return 0, false
+		}
 		s := strings.TrimSpace(x)
 		if !calcNumericString.MatchString(s) {
 			return 0, false

@@ -10,7 +10,7 @@ Each point below answers one item of the evaluator's review.
 2. **Indexes (review item 2, accepted).**
    - The sort keys are cut to `created` only, and the `order` attribute is gone. That leaves three composite indexes instead of six.
    - The resources index joins `resourceListIndexes`. It is on the resources table, so it **must** share `ResourceTableIndexBuildLockKey` and `oneResourceIndexBuildAtATime`, because two concurrent `CREATE INDEX CONCURRENTLY` builds on one table deadlock. That lock exists for exactly this case.
-   - The notes and groups indexes get their own `EnsureSiblingNavIndexes` with a new lock key. That needs a small `main.go` change modelled on the Job filter index wiring.
+   - The notes and groups indexes get their own `EnsureSiblingNavIndexes`. They also share `ResourceTableIndexBuildLockKey` and `oneResourceIndexBuildAtATime`, and start after `InitFTS`: the FTS prefix build runs `CREATE INDEX CONCURRENTLY` on notes and groups too, and `InitFTS` runs plain DDL on them.
 3. **Tailwind (review item 3, accepted).** The old claim was wrong. The real reason the classes are generated: Tailwind v4 auto-detection reads every non-gitignored file in the checkout, and `index.css` excludes only `*.md`, `docs/`, `docs-site/`, `e2e/`, `tasks/`, `.claude/` and `skills/`. The class strings in the new `shortcodes/adjacent_handler.go` are therefore scanned. `public/tailwind.css` is a build product and is not tracked. `./scripts/css-scan-test.sh` is still run, and one test asserts that the built CSS contains the rules (section 9).
 4. **Surfaces (review item 4, accepted).**
    - The resolver is also wired into the live template preview (`/v1/{category,resourceCategory,noteType}/previewTemplate`) and the description preview (`/v1/*/previewDescription`). Both are bound with `WithPrincipal` (`scopedAPI` and `scopedPreviewDescription`).
@@ -268,16 +268,16 @@ Consequences:
 | Index | Table | Columns | Ensured by | Lock |
 |---|---|---|---|---|
 | `idx_resources_adjacent_created` | resources | `owner_id, resource_category_id, created_at, id` | appended to `resourceListIndexes` | `ResourceTableIndexBuildLockKey`, plus `oneResourceIndexBuildAtATime` (same table, so it must serialise with the FTS prefix and list builds) |
-| `idx_notes_adjacent_created` | notes | `owner_id, note_type_id, created_at, id` | new `siblingNavIndexes` | new `constants.SiblingNavIndexBuildLockKey` |
-| `idx_groups_adjacent_created` | groups | `owner_id, category_id, created_at, id` | new `siblingNavIndexes` | new `constants.SiblingNavIndexBuildLockKey` |
+| `idx_notes_adjacent_created` | notes | `owner_id, note_type_id, created_at, id` | new `siblingNavIndexes` | `ResourceTableIndexBuildLockKey`, plus `oneResourceIndexBuildAtATime` (the FTS prefix build also builds on notes) |
+| `idx_groups_adjacent_created` | groups | `owner_id, category_id, created_at, id` | new `siblingNavIndexes` | `ResourceTableIndexBuildLockKey`, plus `oneResourceIndexBuildAtATime` (the FTS prefix build also builds on groups) |
 
 - New in `models/job_filter_indexes.go`:
   - `EnsureSiblingNavIndexes(db)`, which is `ensurePlannedIndexes(db, "sibling navigation indexes", siblingNavIndexLockKey, siblingNavIndexes)`
   - `EnsureSiblingNavIndexesOnOwnConnection(dsn)`
-- `main.go`, next to the Job filter index block:
-  - Postgres: `go ensureIndexesUntilBuilt("sibling navigation indexes", …OnOwnConnection…, jobFilterIndexRetryInterval)`
+- `main.go`, next to the resource list index block:
+  - Postgres: appended to `resourceIndexBuilds`, so it starts after `InitFTS`, as `ensureIndexesUntilBuilt("sibling navigation indexes", oneResourceIndexBuildAtATime(…OnOwnConnection…), jobFilterIndexRetryInterval)`
   - SQLite: a synchronous call before serving
-- Its lock differs from the resources lock because notes and groups builds do not conflict with resources builds. It does not need `oneResourceIndexBuildAtATime`.
+- It takes the resources table lock because the FTS prefix build also runs `CREATE INDEX CONCURRENTLY` on notes and groups, and two such builds on one table deadlock.
 - `idx_resources_adjacent_created` makes the existing `idx_resources_owner_created (owner_id, created_at)` partly redundant, but that index serves list pages filtered by owner alone, so it stays.
 
 **Complexity**
@@ -308,9 +308,8 @@ Consequences:
 - `application_context/adjacent_context.go` (new).
 - `models/job_filter_indexes.go`:
   - Add `idx_resources_adjacent_created` to `resourceListIndexes`.
-  - Add `siblingNavIndexes`, `siblingNavIndexLockKey`, `EnsureSiblingNavIndexes` and `…OnOwnConnection`.
-- `constants/constants.go`: `SiblingNavIndexBuildLockKey`, a new distinct int64.
-- `main.go`: the two-branch call next to the Job filter index block.
+  - Add `siblingNavIndexes`, `siblingNavIndexLockKey` (= `constants.ResourceTableIndexBuildLockKey`), `EnsureSiblingNavIndexes` and `…OnOwnConnection`.
+- `main.go`: the two-branch call next to the resource list index block.
 - `server/template_handlers/template_filters/shortcode_adjacent_resolver.go` (new), and `shortcode_tag.go` (`buildPageRenderContext`).
 - `server/api_handlers/deferred_render_api_handlers.go`, `template_preview_api_handlers.go` and `description_preview_api_handlers.go`: one `WithAdjacentResolverFor` line each.
 - `templates/createCategory.tpl`, `createResourceCategory.tpl` and `createNoteType.tpl`: a reference-panel entry containing `[adjacent`. `TestReferencePanelsCoverAllBuiltins` enforces this.
@@ -401,7 +400,9 @@ Built as planned, with these deviations, each found while testing:
 - **Budget test:** it uses a budget of 2. The `[using]` lookup also takes a unit, so with 1 the `[using]` itself would be refused before the inner `[adjacent]` ran.
 - **Template preview test:** it runs as an admin. Group-confined principals are refused at that route (403), so scoping there is covered by the gate. The description preview and the deferred endpoint are tested with confined accounts.
 - **Tests that had to change:** `models/resource_list_indexes_test.go` and `server/api_tests/index_search_path_pg_test.go` build a minimal `resources` table, which now needs a `resource_category_id` column for the new index.
-- **Notes and groups index lock (post-review fix).** The plan gave the notes and groups indexes a lock key of their own. That was wrong: the FTS prefix build also runs `CREATE INDEX CONCURRENTLY` on notes and groups, and `InitFTS` runs plain DDL on them. They now share `ResourceTableIndexBuildLockKey`, run under `oneResourceIndexBuildAtATime`, and start with the other resource builds after `InitFTS`. `SiblingNavIndexBuildLockKey` is gone. The index table in §7 and the file list describe the first version.
+- **Notes and groups index lock (post-review fix).** The plan gave the notes and groups indexes a lock key of their own. That was wrong: the FTS prefix build also runs `CREATE INDEX CONCURRENTLY` on notes and groups, and `InitFTS` runs plain DDL on them. They now share `ResourceTableIndexBuildLockKey`, run under `oneResourceIndexBuildAtATime`, and start with the other resource builds after `InitFTS`; the sections above are updated.
+- **Subtree root (post-review fix).** For a confined principal, a group whose parent is outside the subtree (the subtree root, or a top-level group) returns empty right after the current-row read. Its siblings all share that parent and so are all invisible, and the seeks would otherwise walk every one of them, rejecting each by the scope filter.
+- **Landmark names (post-review fix).** A render numbers a repeated `[adjacent]` label (`Previous and next (2)`), so per-card and repeated instances never give two navigation landmarks one name.
 - **Hover cards:** focusing an `[adjacent]` link opens that entity's hover card, which sits outside every landmark. The axe scan therefore runs before the keyboard checks. The hover card has its own scan in `20-a11y-hover-cards.spec.ts`.
 
 Verified:

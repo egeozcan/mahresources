@@ -362,7 +362,7 @@ func BuiltinDocs() []BuiltinDoc {
 			IsBlock:     BlockNo,
 			Attrs: []DocAttr{
 				{Name: "series", Type: "boolean", Default: "false", Description: "Resources only. true takes the siblings from the resource's Series; a resource with no Series renders nothing. On a group or note, true renders an error marker.", Enum: []string{"true", "false"}},
-				{Name: "label", Type: "string", Default: "Previous and next", Description: "The accessible name (aria-label) of the <nav> landmark. Give each [adjacent] on a page its own label."},
+				{Name: "label", Type: "string", Default: "Previous and next", Description: "The accessible name (aria-label) of the <nav> landmark. A name already used on the page gets a number, e.g. \"Previous and next (2)\"; a label of your own reads better."},
 			},
 			Examples: []DocExample{
 				{Title: "Owner and category siblings", Code: `[adjacent]`},

@@ -110,9 +110,12 @@ func TestSimilarMarkup(t *testing.T) {
 	assert.Contains(t, out, `<a href="/resource/compare?r1=42&amp;r2=17" class="text-xs underline inline-flex items-center min-h-6 px-1 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500">Compare<span class="sr-only"> Beach sunset (2) with Beach sunset</span></a>`)
 	assert.Contains(t, out, `alt="Dunes, similar, distance 5"`)
 
-	for size, want := range map[string]string{"sm": "48", "lg": "200"} {
+	// The rendered box matches the requested pixels: Tailwind's h-48 is 192px.
+	for size, want := range map[string]struct{ px, class string }{"sm": {"48", "h-12 w-12"}, "lg": {"200", "h-[200px] w-[200px]"}} {
 		f := &fakeSimilarExecutor{result: flat(simItem(17, "x", "h", intp(1)))}
 		out := renderSimilar(t, map[string]string{"size": size}, similarCtx(), f)
+		assert.Contains(t, out, want.class, size)
+		want := want.px
 		assert.Contains(t, out, `width="`+want+`" height="`+want+`"`, size)
 		assert.Contains(t, out, "&amp;width="+want+"&amp;height="+want+"&amp;", size)
 	}

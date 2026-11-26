@@ -161,3 +161,23 @@ func TestAdjacent_RefusedInsideAReloadFace(t *testing.T) {
 	assert.Contains(t, got, "cannot be used inside a [reload] button face")
 	assert.Empty(t, f.calls)
 }
+
+// Every <nav> one render emits has its own name, whether the template repeats
+// [adjacent] or a per-card slot renders it once per card with the shared page
+// context.
+func TestAdjacent_LandmarkNamesAreUniquePerRender(t *testing.T) {
+	f := &fakeAdjacent{result: AdjacentResult{Next: &AdjacentLink{ID: 13, Name: "Page 3"}}}
+	reqCtx := WithAdjacentResolver(context.Background(), f.resolve)
+	page := Process(reqCtx, `[adjacent][adjacent][adjacent label="Chapters"]`, adjacentCtx("resource", 12), nil, nil)
+	card := Process(reqCtx, `[adjacent][adjacent label="Chapters"]`, adjacentCtx("resource", 40), nil, nil)
+
+	assert.Contains(t, page, `aria-label="Previous and next">`)
+	assert.Contains(t, page, `aria-label="Previous and next (2)">`)
+	assert.Contains(t, page, `aria-label="Chapters">`)
+	assert.Contains(t, card, `aria-label="Previous and next (3)">`)
+	assert.Contains(t, card, `aria-label="Chapters (2)">`)
+
+	// A new render starts the names again.
+	fresh := renderAdjacent(t, f, `[adjacent]`, adjacentCtx("resource", 12))
+	assert.Contains(t, fresh, `aria-label="Previous and next">`)
+}

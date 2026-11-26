@@ -224,6 +224,8 @@ Each `[similar]` costs one budget unit, or nothing on a cache hit, and runs:
 - **(a) One MRQL select.** `idx_sim_r1`/`idx_sim_r2` seeks, ordered by the existing correlated distance expression, with `LIMIT ≤ 24`. Its cost scales with the cluster size, not the library size, and it is the shipped `SIMILAR TO … ORDER BY distance` path.
 - **(b) The distance query.** At most 24 IDs and two seeks on the unique `idx_sim_pair`.
 
+The cluster-size cost of (a) is accepted, not an oversight (raised again in review): the select reads every pair of the target that passes the threshold, computes the distance for each and sorts before `LIMIT`, so a hub resource with 20,000 lookalikes costs 20,000 pair seeks. That is the cost every similarity read in the app already pays. The resource page's own Similar Resources panel (`GetSimilarResources`) reads the same pairs with no limit at all and then loads and tag-preloads every one of them, so on the page `[similar]` is meant for it is the cheaper of the two. A directional top-k (read `N` visible pairs per direction from the effective-distance indexes and merge) would bound it, but it belongs in `SIMILAR TO` for every caller, not in this shortcode.
+
 There is no hashing, no `image_hashes` scan and no N+1 at render time. On list cards, the per-page `-mrql-page-query-budget` caps total work exactly as it does for `[mrql]`. The docs recommend `CustomSidebar`, `CustomLightbox` and `CustomDetailFooter`. The lightbox renders one resource per `/resource.json` fetch, so the cost there is one instance.
 
 ## 8. Where it lives: a built-in Go handler

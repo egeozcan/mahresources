@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"strconv"
 	"strings"
+	"sync"
 )
 
 // AdjacentQuery asks for the previous and next siblings of one entity, in
@@ -42,17 +44,44 @@ var ErrAdjacentBudget = errors.New("adjacent: budget")
 
 type adjacentResolverKey struct{}
 
-// WithAdjacentResolver returns a context carrying r for [adjacent].
-func WithAdjacentResolver(ctx context.Context, r AdjacentResolver) context.Context {
-	return context.WithValue(ctx, adjacentResolverKey{}, r)
+// adjacentEnv is what WithAdjacentResolver installs: the resolver and the
+// landmark names the render has used so far.
+type adjacentEnv struct {
+	resolve AdjacentResolver
+	labels  *adjacentLabels
 }
 
-func adjacentResolverFrom(ctx context.Context) AdjacentResolver {
-	if ctx == nil {
-		return nil
+// adjacentLabels keeps every <nav> one render emits uniquely named. A page
+// with [adjacent] in a per-card slot, or twice in one template, would
+// otherwise hold several navigation landmarks with one name.
+type adjacentLabels struct {
+	mu   sync.Mutex
+	seen map[string]int
+}
+
+// unique returns label the first time and "label (n)" for its nth use.
+func (l *adjacentLabels) unique(label string) string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.seen[label]++
+	if n := l.seen[label]; n > 1 {
+		return label + " (" + strconv.Itoa(n) + ")"
 	}
-	r, _ := ctx.Value(adjacentResolverKey{}).(AdjacentResolver)
-	return r
+	return label
+}
+
+// WithAdjacentResolver returns a context carrying r for [adjacent]. Install it
+// once per render: the landmark names are unique within it.
+func WithAdjacentResolver(ctx context.Context, r AdjacentResolver) context.Context {
+	return context.WithValue(ctx, adjacentResolverKey{}, adjacentEnv{resolve: r, labels: &adjacentLabels{seen: map[string]int{}}})
+}
+
+func adjacentEnvFrom(ctx context.Context) (adjacentEnv, bool) {
+	if ctx == nil {
+		return adjacentEnv{}, false
+	}
+	env, ok := ctx.Value(adjacentResolverKey{}).(adjacentEnv)
+	return env, ok && env.resolve != nil
 }
 
 // adjacentPaths are the detail-page paths [link] builds for each entity type;
@@ -70,8 +99,8 @@ const defaultAdjacentLabel = "Previous and next"
 // with neither the output is empty rather than an empty landmark. An entity the
 // viewer may not see and one that does not exist both render nothing.
 func RenderAdjacentShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcodeContext) string {
-	resolver := adjacentResolverFrom(reqCtx)
-	if resolver == nil {
+	env, ok := adjacentEnvFrom(reqCtx)
+	if !ok {
 		return shortcodeComment("adjacent unavailable in this context")
 	}
 
@@ -98,7 +127,7 @@ func RenderAdjacentShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShort
 		return ""
 	}
 
-	result, err := resolver(reqCtx, AdjacentQuery{EntityType: ctx.EntityType, EntityID: ctx.EntityID, Series: series})
+	result, err := env.resolve(reqCtx, AdjacentQuery{EntityType: ctx.EntityType, EntityID: ctx.EntityID, Series: series})
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrAdjacentBudget):
@@ -121,6 +150,7 @@ func RenderAdjacentShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShort
 	if strings.TrimSpace(label) == "" {
 		label = defaultAdjacentLabel
 	}
+	label = env.labels.unique(label)
 	name := func(l *AdjacentLink) string {
 		if strings.TrimSpace(l.Name) == "" {
 			return fmt.Sprintf("%s %d", adjacentTypeNames[ctx.EntityType], l.ID)

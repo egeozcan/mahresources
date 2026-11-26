@@ -65,6 +65,7 @@ func inspectStateFrom(ctx context.Context) *inspectState // nil when absent or c
   - MRQL API renders
   - hover cards and the lightbox
   - and especially the AI template run tools (`template_run_tools.go`). If that path set the flag, the panel would send raw Meta values to a model past the privacy mode's masking. It must not set it, and a test pins that.
+- The MCP preview tools (`previewCategoryTemplate`, `previewNoteTypeTemplate`, `previewResourceCategoryTemplate`) dispatch to this same route as the same caller, so they render the panel too. That is intended: the caller already holds the save capability and can read every value through `[meta]` in the same preview, and MCP preview applies no privacy masking either way. The AI template run tools are different: they render under privacy mode, which the panel would bypass, so they never set the flag.
 - The empty string is deliberate: it is not a comment and not a marker, so a page reveals nothing about whether `[inspect]` exists.
 - There is deliberately **no** "user can edit this category" check on live pages. A live-page path would have to be correct across sealed deferred bodies rendered by a later request, shared pages, and per-request render caches. One opt-in point is the fail-closed design. A template saved with `[inspect]` still in it is harmless.
 - `ctx.UntrustedSource == true` also renders `""`, as defence in depth. It cannot occur in a slot preview today.

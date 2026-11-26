@@ -372,7 +372,7 @@ There is no `raw`, `hide-empty`, `editable` or `layout`: the output is always a 
 
 | Operand | Reads | Counts as a number when |
 |---------|-------|-------------------------|
-| `meta.<path>` | The entity's Meta at a dot path, e.g. `meta.price.net` | It is a JSON number, or a string that is wholly a decimal number after trimming spaces (`"12.50"`, `" 3 "`, `"1e3"`). `"12,5"`, `"0x10"`, `"NaN"`, `"1_000"` and `""` are not numbers. |
+| `meta.<path>` | The entity's Meta at a dot path, e.g. `meta.price.net` | It is a JSON number, or a string that is wholly a decimal number after trimming spaces (`"12.50"`, `" 3 "`, `"1e3"`). `"12,5"`, `"0x10"`, `"NaN"`, `"1_000"`, `""` and a string longer than 64 characters are not numbers. |
 | `property.<Path>` | An entity field, the same traversal as `[property]` (e.g. `property.Width`, `property.Tags.0.ID`) | It is an integer or floating-point field. Strings, booleans, times and structs are never numbers. A nil pointer (an ownerless entity's `OwnerId`) has no value. Credential fields are withheld exactly as in `[property]`. |
 | `item`, `item.<path>` | The current `[each]` element, or a dot path into it | As for `meta.`. See [Inside `[each]`](#inside-each). |
 | `12`, `0.5` | A literal | Always. Literals are plain decimals: no exponent, no leading `.`, at most 32 characters. |
@@ -406,6 +406,8 @@ A mistake in the template itself renders the `⚠ calc` [failure marker](#failur
 ### Formatting and rounding
 
 The output is bare text with no wrapper element: digits, an optional leading `-`, `.`, the `,` of `grouped` and the `%` of `percent`. It never uses exponent notation, and a result that rounds to zero renders `0` (or `0.00`), never `-0`. Rounding works on the shortest decimal form of the number, so `1.005` with `decimals="2"` renders `1.01`, as written, rather than the `1.00` that binary floating point would give.
+
+`[calc]` computes in double-precision floating point, which holds about 15 significant digits exactly. An integer beyond 9,007,199,254,740,992 (2^53), such as a 19-digit ID, is rounded before any arithmetic, so it does not render as stored. Store such identifiers as JSON strings and show them with `[meta]`.
 
 Because the output is plain text, `[calc]` can sit inside an HTML attribute: `style="width: [calc expr='meta.done / meta.total * 100' decimals='0' default='0']%"`.
 
@@ -1309,7 +1311,7 @@ Each snippet is a read-only text field. Press Tab to reach it, then Ctrl+A (Cmd+
 
 ### Where it renders
 
-Only in the template editor's live preview (`POST /v1/{category,resourceCategory,noteType}/previewTemplate`), which requires the same rights as saving the template. Everywhere else (entity pages, list cards, hover cards, the lightbox, share pages, deferred `[lazy]`/`[details]` bodies, MRQL API renders and the AI template tools) `[inspect]` renders as the empty string, not a comment. The page reads exactly as if it were absent. It never runs a query.
+Only in the template editor's live preview (`POST /v1/{category,resourceCategory,noteType}/previewTemplate`), which requires the same rights as saving the template. That includes the MCP preview tools (`previewCategoryTemplate` and its siblings), which call the same route for the same caller; the panel shows them nothing that a `[meta]` in the same preview would not. Everywhere else (entity pages, list cards, hover cards, the lightbox, share pages, deferred `[lazy]`/`[details]` bodies, MRQL API renders and the AI template tools) `[inspect]` renders as the empty string, not a comment. The page reads exactly as if it were absent. It never runs a query.
 
 ### Limits
 
@@ -1332,7 +1334,7 @@ Only in the template editor's live preview (`POST /v1/{category,resourceCategory
 | Attribute | Required | Default | Description |
 |-----------|----------|---------|-------------|
 | `series` | No | `false` | `true` or `false`. Resources only: `true` steps through the other members of the resource's [Series](../user-guide/managing-resources.md), whatever their owner or category. |
-| `label` | No | `Previous and next` | The accessible name of the navigation landmark. Give each `[adjacent]` on a page its own label. |
+| `label` | No | `Previous and next` | The accessible name of the navigation landmark. A name already used on the page gets a number (`Previous and next (2)`), so repeated or per-card `[adjacent]`s stay distinct; a label of your own reads better. |
 
 `[adjacent]` is inline only. A closing `[/adjacent]` is a lint error, and so is a `series` value other than `true` or `false`.
 
@@ -1376,7 +1378,7 @@ Only the ID and name of a visible sibling reach the page.
 
 ### Cost
 
-- Each `[adjacent]` runs at most three small queries: the current row by primary key and one indexed seek in each direction. Its cost does not grow with the number of siblings.
+- Each `[adjacent]` runs at most three small queries: the current row by primary key and one seek in each direction. In default mode each seek is a single index probe, so its cost does not grow with the number of siblings; Series mode is the exception below.
 - It counts one unit of the [per-page query budget](#per-page-query-budget); an identical `[adjacent]` repeated on the same page is free. Past the budget it renders an error marker.
 - Each lookup is bounded by the MRQL query timeout (`-mrql-query-timeout`), and a lookup that runs out of time renders "lookup timed out".
 - Put it in CustomHeader or CustomSidebar. In a per-card slot (CustomSummary, CustomMRQLResult) it costs one budget unit per card.

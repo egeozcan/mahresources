@@ -3,6 +3,7 @@ package application_context
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"gorm.io/gorm"
 
@@ -79,6 +80,15 @@ func (ctx *MahresourcesContext) AdjacentEntities(reqCtx context.Context, q short
 		return shortcodes.AdjacentResult{}, err
 	}
 	if len(cur) == 0 || (q.Series && cur[0].SeriesID == nil) {
+		return shortcodes.AdjacentResult{}, nil
+	}
+	// A group's siblings share its parent. For a confined principal they are
+	// all visible when the parent is in the subtree, and none are when it is
+	// not (the subtree root, or a top-level group). Answer the second case
+	// here: the seeks would otherwise walk every sibling of the root under a
+	// parent that may have millions, rejecting each one by the scope filter.
+	if sf := scopeFromContext(db.Statement.Context); sf != nil && q.EntityType == "group" &&
+		(cur[0].OwnerId == nil || !slices.Contains(sf.allowed, *cur[0].OwnerId)) {
 		return shortcodes.AdjacentResult{}, nil
 	}
 

@@ -281,7 +281,7 @@
                         <code class="bg-stone-100 px-1 rounded">[inspect]</code>
                         &mdash; authoring aid for the live preview: a collapsed panel listing the Meta paths, entity fields and, at the top level of an [each] body, the element's [item] paths available at that point, each with a copyable shortcode. Renders nothing outside the preview.
                         <br><span class="text-stone-400 ml-4">
-                            <b class="text-stone-500">path</b>="meta.path" limits the Meta section to one subtree
+                            <b class="text-stone-500">path</b>="project.budget" limits the Meta section to one subtree
                         </span>
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[inspect]
 [inspect path="project"]</code></pre>
