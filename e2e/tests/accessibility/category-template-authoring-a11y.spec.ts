@@ -27,6 +27,13 @@ test.describe('Category template authoring accessibility', () => {
       await page.waitForLoadState('load');
       await page.getByRole('button', { name: 'Reference' }).click();
       await expect(page.locator(panelId)).toBeVisible();
+      // x-collapse animates the height with overflow hidden and clears the
+      // overflow when it ends. axe skips the contrast of anything clipped, so
+      // scan only once the panel has settled.
+      await page.waitForFunction((sel) => {
+        const el = document.querySelector<HTMLElement>(sel);
+        return !!el && el.style.overflow !== 'hidden';
+      }, panelId);
       await checkComponentA11y(panelId);
     });
   }
