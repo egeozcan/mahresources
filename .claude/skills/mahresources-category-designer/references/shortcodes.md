@@ -117,7 +117,7 @@ Rules:
 
 - A Meta string counts only when it is wholly a decimal number (`"12.50"` yes, `"12,5"` no). Missing, null, boolean, object, array, division by zero and overflow give no value, which renders `default` unless `coalesce` catches it: `coalesce(meta.discount, 0)`, `coalesce(meta.a / meta.b, 0)`.
 - Syntax errors, unknown names (`qty` without `meta.`), unknown functions, wrong arity, a bad `decimals`/`format`, or an expression past 512 bytes / 128 tokens / 32 levels / 32 references render the `⚠ calc` marker; the linter flags them.
-- Meta keys containing `-` or spaces cannot be referenced (`meta.unit-price` is `meta.unit - price`). Design the schema with `snake_case` keys for anything `[calc]` reads.
+- Only Meta keys of ASCII letters, digits and `_`, not starting with a digit, can be referenced (`meta.unit-price` is `meta.unit - price`). Design the schema with `snake_case` keys for anything `[calc]` reads.
 - Output is a bare number, so it works inside attributes (`<meter value="[calc …]">`). Inside `[each]`, `item` is visible only at the top level of the body, as for `[item]`.
 - It never queries, so it is safe on every card of a long list, on share pages and in `CustomMRQLResult`.
 - Accessibility: label derived numbers (a `<th scope="col">` header, or "Total due: …"), give a `<meter>` an `aria-label` and fallback text, and prefer `default="not set"` over a lone dash outside tables.

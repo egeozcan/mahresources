@@ -18,7 +18,7 @@ Status: implemented; review at the end.
 5. **Timezone.** There is now one rule: **a day is a calendar date on the server's local clock**. That is the clock `START_OF_MONTH()` and `[datetime]` already use. How each path meets the rule, and the one place it can deviate, is in §4.4. The deviation is documented.
 6. **Meta value types.**
    - A `F ~ "????-??-??*"` guard is now added to every meta query and day link. Numbers, booleans and non-ISO strings therefore match nothing on both dialects, and the counts, titles and links stay consistent.
-   - Range comparisons on meta strings are not `LOWER()`-wrapped. Only `=`/`!=` are, per `buildMetaClause`, so ISO strings compare as written and a metadata expression index stays usable.
+   - Range comparisons on meta strings are not `LOWER()`-wrapped. Only `=`/`!=` are, per `buildMetaClause`, so ISO strings compare as written.
    - There is a test with numeric and boolean `meta.due`.
 7. **Per-card multiplication.** The exact budget-exhaustion output and the cost per card are now stated and documented. I push back on a lint warning: `LintOptions` has no slot identity, so lint cannot tell a card slot from a sidebar. Adding that field to every lint caller is outside this feature, and the runtime already reports exhaustion visibly (§8).
 8. **Smaller points.**
@@ -254,7 +254,7 @@ The ID prefix is `"cal-" + rand.Text()[:12]` (`crypto/rand`, as `each_handler.go
 **Index use**
 - Both queries are month-range predicates.
 - For `created`/`updated` they must use the `created_at`/`updated_at` indexes. Add EXPLAIN tests next to `mrql/explain_test.go` (SQLite) and `mrql/explain_pg_test.go` (Postgres) for the paren-wrapped composed `List` and `Count` queries.
-- For `meta.*`, the `>=`/`<` comparison is the plain extraction expression with no `LOWER()` (`buildMetaClause` lowers only `=`/`!=`). A metadata expression index from `mrql/metadata_index.go` therefore applies, and the `~` guard is a residual filter. The docs page says so.
+- For `meta.*`, the `>=`/`<` comparison is the plain extraction expression with no `LOWER()` (`buildMetaClause` lowers only `=`/`!=`). *Correction after review:* no metadata expression index applies. Text metadata indexes are built on `LOWER(...)`, and `USING HASH` on Postgres, so they serve equality only. The docs page says no index serves a `meta.*` range and tells authors to narrow the filter.
 
 **Per-item slots**
 - In `CustomMRQLResult`, `CustomAvatar`, `CustomCell` or card slots with entity scope, every card has a distinct scope. That means a distinct cache key, so N cards cost N to 2N queries.

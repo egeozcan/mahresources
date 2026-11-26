@@ -77,7 +77,7 @@ func renderInspectGated(reqCtx context.Context, sc Shortcode, ctx MetaShortcodeC
 	case state.panels > maxInspectPanels+1:
 		return ""
 	}
-	return renderInspectPanel(ctx, sc, elem, hasElem)
+	return renderInspectPanel(ctx, sc, elem, hasElem, state.panels)
 }
 
 // inspectEscape escapes s for HTML text or a quoted attribute value, and writes
@@ -112,9 +112,17 @@ func (r *inspectRows) take() bool {
 }
 
 // renderInspectPanel renders the disclosure for ctx, plus the current [each]
-// element's section when hasElem. It reads only what the context already holds
+// element's section when hasElem. panel is its 1-based number in the preview. It reads only what the context already holds
 // and issues no query.
-func renderInspectPanel(ctx MetaShortcodeContext, sc Shortcode, elem any, hasElem bool) string {
+func renderInspectPanel(ctx MetaShortcodeContext, sc Shortcode, elem any, hasElem bool, panel int) string {
+	// A preview can show several panels; the second and later number their
+	// regions so no two landmarks on the page share a name.
+	region := func(name string) string {
+		if panel > 1 {
+			return name + ", panel " + strconv.Itoa(panel)
+		}
+		return name
+	}
 	budget := &inspectRows{left: maxInspectRows}
 	path := sc.Attrs["path"]
 
@@ -127,15 +135,15 @@ func renderInspectPanel(ctx MetaShortcodeContext, sc Shortcode, elem any, hasEle
 	// The element section comes first inside a loop: it is what the author is
 	// most likely asking about there.
 	if hasElem {
-		writeInspectTable(&b, "Current [each] element", "Each element paths", inspectElementRows(elem, budget), "")
+		writeInspectTable(&b, "Current [each] element", region("Each element paths"), inspectElementRows(elem, budget), "")
 	}
 
 	metaRows, metaEmpty := inspectMetaRows(ctx, path, budget)
-	writeInspectTable(&b, "Meta", "Meta paths", metaRows, metaEmpty)
+	writeInspectTable(&b, "Meta", region("Meta paths"), metaRows, metaEmpty)
 
 	if ctx.Entity != nil {
 		if rows, ok := inspectPropertyRows(ctx.Entity, budget); ok {
-			writeInspectTable(&b, "Properties", "Property fields", rows, "This entity has no readable fields.")
+			writeInspectTable(&b, "Properties", region("Property fields"), rows, "This entity has no readable fields.")
 		}
 	}
 

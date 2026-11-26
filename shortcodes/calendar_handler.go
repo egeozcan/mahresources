@@ -134,7 +134,13 @@ func composeCalendarQueries(filter, date string, first time.Time) (calendarQueri
 		guard = " AND " + field + ` ~ "????-??-??*"`
 	}
 	window := func(from, to time.Time) string {
-		return "(" + filter + ") AND " + field + ` >= "` + from.Format("2006-01-02") + `" AND ` + field + ` < "` + to.Format("2006-01-02") + `"` + guard
+		upper := ""
+		// A bound in year 10000 would not compare as a date ("10000-01-01"
+		// sorts before "9999-…"), and no stored date passes 9999-12-31 anyway.
+		if to.Year() <= 9999 {
+			upper = ` AND ` + field + ` < "` + to.Format("2006-01-02") + `"`
+		}
+		return "(" + filter + ") AND " + field + ` >= "` + from.Format("2006-01-02") + `"` + upper + guard
 	}
 	next := first.AddDate(0, 1, 0)
 	month := window(first, next)
@@ -419,7 +425,9 @@ func serializeCalendarShortcode(attrs map[string]string, month string) (string, 
 			}
 			quote = "'"
 		}
-		b.WriteString(" " + k + "=" + quote + v + quote)
+		// The deferred render unescapes the attributes again, so "&" is
+		// written as "&amp;" for the value to survive the round trip.
+		b.WriteString(" " + k + "=" + quote + strings.ReplaceAll(v, "&", "&amp;") + quote)
 	}
 	b.WriteString("]")
 	return b.String(), true

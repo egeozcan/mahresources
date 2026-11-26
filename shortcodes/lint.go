@@ -684,6 +684,11 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			continue
 		}
 		if suggestion := nearMissBuiltin(name); suggestion != "" {
+			if suggestion == name && attachedToWord(input, pos) {
+				// A CSS arbitrary value such as max-w-[calc(100%-1rem)]: the
+				// name is followed by neither whitespace nor "]", so it is text.
+				continue
+			}
 			if suggestion == name {
 				add(pos, m[1], SeverityInfo,
 					"["+name+"…] looks like an incomplete or malformed shortcode")
@@ -878,9 +883,9 @@ func attrOffsetW(w *schemaWork, tk token, attr string) (int, int) {
 // nearMissBuiltin returns a suggested built-in name for a misspelled bracket
 // identifier, or "" if none is close. An exact match returns the name itself
 // (signaling a malformed-but-recognizable bracket). Names that contain a
-// built-in as a prefix never reach here — the shortcode regex parses them as a
-// real shortcode (the extra characters become attributes) — so the reachable
-// near-misses are proper abbreviations of a built-in or single-character typos.
+// built-in as a prefix ("[metas]", "[calculated]") reach here too: the
+// shortcode regex ends a name at whitespace or "]", so they are literal text,
+// and a one-character extension is reported as a typo.
 func nearMissBuiltin(name string) string {
 	for _, base := range builtinBaseNames {
 		if name == base {
@@ -901,6 +906,16 @@ func nearMissBuiltin(name string) string {
 		}
 	}
 	return ""
+}
+
+// attachedToWord reports whether the bracket at pos directly follows an
+// identifier or class-name character, as in a Tailwind arbitrary value.
+func attachedToWord(input string, pos int) bool {
+	if pos == 0 {
+		return false
+	}
+	c := input[pos-1]
+	return c == '-' || c == '_' || c == ':' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }
 
 // editDistanceAtMost1 reports whether a and b differ by at most one single-
@@ -1111,7 +1126,7 @@ func lintCalc(tk token, opts LintOptions, otherContext, eachSpans, usingSpans []
 				continue
 			}
 			seen[ref.path] = true
-			if msg := metaPathIssueFor("[calc]", ref.path, opts.metaProps); msg != "" {
+			if msg := metaPathIssueFor("[calc]", "it has no value, so the expression falls back to coalesce or the default attribute", ref.path, opts.metaProps); msg != "" {
 				add(tk.start, tk.end, SeverityWarning, msg)
 			}
 		}

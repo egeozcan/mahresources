@@ -401,6 +401,7 @@ Built as planned, with these deviations, each found while testing:
 - **Budget test:** it uses a budget of 2. The `[using]` lookup also takes a unit, so with 1 the `[using]` itself would be refused before the inner `[adjacent]` ran.
 - **Template preview test:** it runs as an admin. Group-confined principals are refused at that route (403), so scoping there is covered by the gate. The description preview and the deferred endpoint are tested with confined accounts.
 - **Tests that had to change:** `models/resource_list_indexes_test.go` and `server/api_tests/index_search_path_pg_test.go` build a minimal `resources` table, which now needs a `resource_category_id` column for the new index.
+- **Notes and groups index lock (post-review fix).** The plan gave the notes and groups indexes a lock key of their own. That was wrong: the FTS prefix build also runs `CREATE INDEX CONCURRENTLY` on notes and groups, and `InitFTS` runs plain DDL on them. They now share `ResourceTableIndexBuildLockKey`, run under `oneResourceIndexBuildAtATime`, and start with the other resource builds after `InitFTS`. `SiblingNavIndexBuildLockKey` is gone. The index table in §7 and the file list describe the first version.
 - **Hover cards:** focusing an `[adjacent]` link opens that entity's hover card, which sits outside every landmark. The axe scan therefore runs before the keyboard checks. The hover card has its own scan in `20-a11y-hover-cards.spec.ts`.
 
 Verified:

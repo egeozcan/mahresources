@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"mahresources/constants"
+
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -56,14 +58,9 @@ func TestSiblingNavigationIndexes(t *testing.T) {
 		check(pass)
 	}
 
-	// The two sets are built under different locks: the resources one must
-	// share the resources table's lock, the others must not hold it up.
-	if resourceListIndexLockKey == siblingNavIndexLockKey {
-		t.Fatal("the notes/groups sibling indexes must not share the resources table lock")
-	}
-	for _, index := range siblingNavIndexes {
-		if index.table == "resources" {
-			t.Fatalf("%s builds on resources outside the resources table lock", index.name)
-		}
+	// The FTS prefix build also builds CONCURRENTLY on notes and groups, so the
+	// notes and groups set must take the same lock or the two builds deadlock.
+	if siblingNavIndexLockKey != constants.ResourceTableIndexBuildLockKey {
+		t.Fatal("the notes/groups sibling indexes must share the FTS prefix build's lock")
 	}
 }

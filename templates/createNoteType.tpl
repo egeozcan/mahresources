@@ -198,7 +198,7 @@
                             <b class="text-stone-500">decimals</b>="0&ndash;10"
                             &middot; <b class="text-stone-500">format</b>="number|grouped|percent"
                             &middot; <b class="text-stone-500">default</b>="text" when a value is missing or not a number, or on division by zero
-                            &middot; keys with - or spaces cannot be referenced
+                            &middot; only keys of ASCII letters, digits and _ can be referenced
                         </span>
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[calc expr="meta.qty * meta.unit_price" decimals="2"]
 [calc expr="meta.qty * meta.unit_price * (1 - coalesce(meta.discount, 0))" decimals="2" default="not set"]

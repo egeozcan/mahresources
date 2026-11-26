@@ -311,3 +311,20 @@ func TestInspectAccessibleStructure(t *testing.T) {
 		assert.Regexp(t, `aria-label="[^"]+"`, in)
 	}
 }
+
+// Several panels in one preview never give two region landmarks one name.
+func TestInspectRegionNamesAreUniqueAcrossPanels(t *testing.T) {
+	ctx := inspectCtx(`{"a":1,"items":[{"x":1}]}`)
+	ctx.Entity = &inspectEntity{ID: 42, Name: "Root"}
+	out := inspectOn(`[inspect][inspect][each path="items"][inspect][/each]`, ctx)
+
+	labels := regexp.MustCompile(`role="region" aria-label="([^"]+)"`).FindAllStringSubmatch(out, -1)
+	require.Greater(t, len(labels), 3)
+	seen := map[string]bool{}
+	for _, m := range labels {
+		assert.False(t, seen[m[1]], "duplicate region name %q", m[1])
+		seen[m[1]] = true
+	}
+	assert.True(t, seen["Meta paths"], "the first panel keeps the plain names")
+	assert.True(t, seen["Meta paths, panel 2"])
+}

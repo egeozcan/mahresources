@@ -361,9 +361,10 @@ var siblingNavIndexes = []plannedIndex{
 }
 
 // siblingNavIndexLockKey is the PostgreSQL advisory lock one server holds while
-// it builds siblingNavIndexes. It is not the resources table lock: these builds
-// are on other tables and do not conflict with the resources ones.
-const siblingNavIndexLockKey = constants.SiblingNavIndexBuildLockKey
+// it builds siblingNavIndexes. It is the resources table lock because the FTS
+// prefix build also builds CONCURRENTLY on notes and groups, and two such builds
+// on one table deadlock.
+const siblingNavIndexLockKey = constants.ResourceTableIndexBuildLockKey
 
 // EnsureSiblingNavIndexes creates the notes and groups sibling navigation
 // indexes that are missing, the way EnsureJobFilterIndexes does: CONCURRENTLY

@@ -379,7 +379,7 @@ There is no `raw`, `hide-empty`, `editable` or `layout`: the output is always a 
 
 Names are case-sensitive. A bare name (`qty`), any other root (`entity.x`) or any other function (`sqrt`) is a syntax error.
 
-**Meta keys containing `-`, spaces or dots cannot be referenced.** `meta.unit-price` reads as `meta.unit - price`, and `price` is an unknown name, so it is a syntax error. Rename the key (`unit_price`) to use it in `[calc]`.
+**Only Meta keys made of ASCII letters, digits and `_`, not starting with a digit, can be referenced.** Keys containing `-`, spaces, dots or non-ASCII letters cannot. `meta.unit-price` reads as `meta.unit - price`, and `price` is an unknown name, so it is a syntax error. Rename the key (`unit_price`) to use it in `[calc]`.
 
 ### Operators and functions
 
@@ -1505,7 +1505,7 @@ A Meta value counts only when it is a JSON string that starts `YYYY-MM-DD`: a JS
 
 A day is a calendar date on the server's local clock, the clock `START_OF_MONTH()` and `[datetime]` use. `month="current"` and the today highlight read it too.
 
-- **SQLite, `created`/`updated`.** Timestamps are stored with the server's offset, and the month and day ranges compare them as stored, so an entity is on its local date.
+- **SQLite, `created`/`updated`.** Timestamps are stored with the server's offset, and the month and day ranges compare them as stored, so an entity is on its local date. A timestamp stored with another offset (written before the server's timezone changed, or kept from an imported group archive) is counted by the day link of its stored date but drawn on its date in the server's zone, which can be the neighbouring day.
 - **PostgreSQL, `created`/`updated`.** A date literal is read at midnight in the database session's `TimeZone`. Set the database `TimeZone` to the server's zone (both default to UTC in the container setup) or days are shifted by the difference.
 - **Meta.** The date as written; no zone applies.
 - **The one deviation.** In counts mode only, SQLite's per-day bucket normalises timestamps to UTC. On a SQLite server not running in UTC, a dense month's counts can put an entity within the UTC offset of midnight on the neighbouring day, and one on the first or last day of the month can drop out of both months' counts. Its day link still lists it under its local date. Items mode has no deviation.
@@ -1549,7 +1549,7 @@ Prev and Next buttons swap the month in place, without a page load, through the 
 - An entity with no owning group and the default scope matches nothing: the grid is empty and has no links.
 - Each render costs one unit of the [per-page query budget](#per-page-query-budget), or two in counts mode. An identical calendar on the same page is free. Each Prev/Next click costs one or two queries on its own request.
 - Put calendars in `CustomSidebar` or `CustomHeader`. In a per-card slot (`CustomMRQLResult`, `CustomAvatar`, `CustomCell`) with the entity's scope, every card runs its own queries: a list of 150 cards exhausts the default budget, and the remaining cards render the budget error. A fixed `scope` lets identical calendars share one result.
-- Both queries are a month-range predicate. `created`/`updated` use the timestamp indexes. For a `meta.*` date on a large library, an [indexed metadata key](./meta-schemas.md#indexed-metadata-keys) on that path serves the range; the date-shape guard is checked on the rows it returns.
+- Both queries are a month-range predicate. `created`/`updated` use the timestamp indexes. No index serves a `meta.*` date range: [indexed metadata keys](./meta-schemas.md#indexed-metadata-keys) of the text kind serve equality only. On a large library, narrow a `meta.*` calendar's filter (an entity type plus a category, note type or tag) and keep the default entity scope rather than `scope="global"`, or every render and every Prev/Next click reads every row the filter matches.
 
 `[calendar]` cannot be used inside a `[reload]` button face. On share pages it renders `<!-- mr:calendar unavailable in this context -->`.
 

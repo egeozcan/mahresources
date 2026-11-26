@@ -117,6 +117,14 @@ func TestCalendarComposeQueries(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, q.List, `created >= "2026-12-01" AND created < "2027-01-01"`)
 	assert.Equal(t, `(type = "note") AND created >= "2026-12-31" AND created < "2027-01-01"`, q.Day(time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)))
+
+	// December 9999 has no upper bound: "10000-01-01" sorts before every
+	// 9999 date, so the bound would empty the month.
+	q, err = composeCalendarQueries(`type = "note"`, "meta.due", time.Date(9999, 12, 1, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	assert.Equal(t, `(type = "note") AND meta.due >= "9999-12-01"`+guard+` ORDER BY meta.due ASC`, q.List)
+	assert.Equal(t, `(type = "note") AND meta.due >= "9999-12-31"`+guard, q.Day(time.Date(9999, 12, 31, 0, 0, 0, 0, time.UTC)))
+	assert.Equal(t, `(type = "note") AND meta.due >= "9999-12-30" AND meta.due < "9999-12-31"`+guard, q.Day(time.Date(9999, 12, 30, 0, 0, 0, 0, time.UTC)))
 }
 
 // The parentheses are transparent to ExtractEntityType, and an OR inside the
@@ -462,6 +470,15 @@ func TestCalendarSerializeQuoting(t *testing.T) {
 	assert.Equal(t, `[calendar date="created" month="2026-05" mrql='type = "note"']`, body)
 	_, ok = serializeCalendarShortcode(map[string]string{"mrql": `a"b'c`}, "2026-05")
 	assert.False(t, ok)
+
+	// The deferred render unescapes the attributes again: a value holding an
+	// entity reference must come back exactly as it was parsed.
+	attrs := map[string]string{"mrql": `name = "&lt;b&gt; & co"`}
+	body, ok = serializeCalendarShortcode(attrs, "2026-05")
+	require.True(t, ok)
+	parsed := Parse(body)
+	require.Len(t, parsed, 1)
+	assert.Equal(t, attrs["mrql"], parsed[0].Attrs["mrql"])
 }
 
 func TestCalendarErrors(t *testing.T) {
@@ -512,8 +529,7 @@ func TestCalendarErrors(t *testing.T) {
 	assert.Equal(t, 31, strings.Count(out, ", no items</span>"))
 }
 
-// The processor dispatches [calendar] through the parser, and a stopped meter
-// renders nothing.
+// The processor dispatches [calendar] through the parser.
 func TestCalendarThroughProcess(t *testing.T) {
 	pinCalendarClock(t, time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC), time.UTC)
 	f := &fakeCalendarExecutor{list: &QueryResult{Mode: "flat"}}

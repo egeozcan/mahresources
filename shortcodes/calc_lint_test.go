@@ -49,6 +49,9 @@ func TestLintCalcChecksMetaReferencesAgainstTheSchema(t *testing.T) {
 	if !strings.Contains(got, `warning: [calc] path "prcie": "prcie" is not declared in the metadata schema`) {
 		t.Fatalf("got:\n%s", got)
 	}
+	if !strings.Contains(got, "falls back to coalesce or the default attribute") {
+		t.Fatalf("the [calc] warning should say what a typo does to [calc], got %q", got)
+	}
 	if strings.Count(got, "is not declared") != 1 || strings.Contains(got, "[meta]") {
 		t.Fatalf("got:\n%s", got)
 	}
