@@ -2,8 +2,8 @@
     x-data="{
         rendered: false,
         canNavigate(paging = false) {
-            // The crop overlay owns the keyboard while open — block viewer navigation.
-            if (this.$store.lightbox.cropOpen) return false;
+            // A nested modal owns the keyboard while open.
+            if (this.$store.lightbox.cropOpen || this.$store.confirmDialog.isOpen) return false;
             // Allow navigation unless focus is on a field, or on a video, whose native
             // controls seek with the arrow keys. PageUp/PageDown (paging) are not used by the
             // video controls or the tag search, so they stay a way to move on from both; the
@@ -19,7 +19,7 @@
             // For Space/Enter, which ACTIVATE the focused control: bail when focus is on a
             // button or video so they don't hijack button activation (BH: M3) or video
             // play/pause (BH: H2), and bail inside a panel (BH: H3).
-            if (this.$store.lightbox.cropOpen) return false;
+            if (this.$store.lightbox.cropOpen || this.$store.confirmDialog.isOpen) return false;
             const el = document.activeElement;
             if (!el) return true;
             if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'VIDEO'].includes(el.tagName)) return false;
@@ -35,7 +35,7 @@
             // right after a click, e.g. Cmd/Ctrl+Z right after clicking a quick-slot button),
             // but bail in a text field, the edit panel, or the auto-focused 'Add tag?' confirm
             // UI — which would otherwise eat the keystroke (BH: H3).
-            if (this.$store.lightbox.cropOpen) return false;
+            if (this.$store.lightbox.cropOpen || this.$store.confirmDialog.isOpen) return false;
             // A bare letter/digit must not fire as part of a browser chord: Cmd/Ctrl+R
             // re-applied the previous image's tags on every page reload, and Ctrl+U undid a
             // tag change on view-source. The bindings that ARE chords (the meta/ctrl+z undo)
@@ -56,7 +56,7 @@
     {# .noreturn (WS4 finding 74): the trap records whatever had focus when it #}
     {# activated and restores to it on release, which raced and then beat     #}
     {# close()'s own restore. close() owns that decision now.                 #}
-    x-trap.noreturn="$store.lightbox.isOpen && !$store.lightbox.cropOpen && !$store.entityPicker.isOpen"
+    x-trap.noreturn="$store.lightbox.isOpen && !$store.lightbox.cropOpen && !$store.entityPicker.isOpen && !$store.confirmDialog.isOpen"
     @keydown.escape.window="$store.lightbox.isOpen && ($store.lightbox.cropOpen ? $store.lightbox.closeCrop() : ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.handleEscape()))"
     {# Alt/Cmd + arrow is the browser's Back/Forward, which closes the viewer; Alpine's #}
     {# single-key listeners fire through those modifiers, so skip them here.            #}
@@ -70,7 +70,7 @@
     @keydown.enter.window="$store.lightbox.isOpen && canShortcut() && $store.lightbox.toggleFullscreen()"
     @keydown.h.window="$store.lightbox.isOpen && !$event.repeat && canPanelShortcut($event) && $store.lightbox.toggleVersionPanel()"
     @keydown.e.window="$store.lightbox.isOpen && !$event.repeat && canPanelShortcut($event) && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
-    @keydown.f2.window.prevent="$store.lightbox.isOpen && !$store.lightbox.cropOpen && !$event.repeat && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
+    @keydown.f2.window="$store.lightbox.isOpen && !$store.lightbox.cropOpen && !$store.confirmDialog.isOpen && !$event.repeat && ($event.preventDefault(), $store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
     @keydown.t.window="$store.lightbox.isOpen && !$event.repeat && canPanelShortcut($event) && ($store.lightbox.quickTagPanelOpen ? $store.lightbox.closeQuickTagPanel() : $store.lightbox.openQuickTagPanel())"
     @keydown.1.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut($event) && $store.lightbox.handleSlotKeydown(0, $event)"
     @keydown.2.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut($event) && $store.lightbox.handleSlotKeydown(1, $event)"
