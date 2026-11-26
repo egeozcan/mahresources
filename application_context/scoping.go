@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 
 	"mahresources/auth"
 	"mahresources/models"
@@ -34,9 +35,32 @@ import (
 
 // scopeFilter holds the set of group IDs a scoped principal may touch.
 type scopeFilter struct {
-	// allowed is the flattened subtree of group IDs. An empty slice means
-	// "deny all" (fail-closed) rather than "allow all".
+	// allowed is the immutable, flattened subtree of group IDs. An empty
+	// slice means "deny all" (fail-closed) rather than "allow all".
 	allowed []uint
+
+	membershipOnce  sync.Once
+	membership      map[uint]struct{}
+	allowedJSONOnce sync.Once
+	allowedJSON     string
+}
+
+func (sf *scopeFilter) containsGroup(id uint) bool {
+	sf.membershipOnce.Do(func() {
+		sf.membership = make(map[uint]struct{}, len(sf.allowed))
+		for _, id := range sf.allowed {
+			sf.membership[id] = struct{}{}
+		}
+	})
+	_, ok := sf.membership[id]
+	return ok
+}
+
+func (ctx *MahresourcesContext) groupScopeFilter() *scopeFilter {
+	if ctx.db == nil || ctx.db.Statement == nil {
+		return nil
+	}
+	return scopeFromContext(ctx.db.Statement.Context)
 }
 
 type scopeCtxKey struct{}
@@ -429,10 +453,7 @@ func (ctx *MahresourcesContext) visibleGroupIDs(ids []uint) map[uint]bool {
 		return visible
 	}
 
-	var sf *scopeFilter
-	if ctx.db != nil && ctx.db.Statement != nil {
-		sf = scopeFromContext(ctx.db.Statement.Context)
-	}
+	sf := ctx.groupScopeFilter()
 	if sf == nil {
 		// No filter on the db context. For admins and unscoped users that means
 		// unrestricted. For a principal that IS scoped, it means the filter never
@@ -448,12 +469,8 @@ func (ctx *MahresourcesContext) visibleGroupIDs(ids []uint) map[uint]bool {
 
 	// An empty allow-list is deny-all, matching scopeReadCallback's fail-closed
 	// branch rather than being read as "no restriction".
-	allowSet := make(map[uint]bool, len(sf.allowed))
-	for _, id := range sf.allowed {
-		allowSet[id] = true
-	}
 	for _, id := range ids {
-		if allowSet[id] {
+		if sf.containsGroup(id) {
 			visible[id] = true
 		}
 	}

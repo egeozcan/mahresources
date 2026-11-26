@@ -16,10 +16,6 @@ func EnsureSupplementalIndexes(db *gorm.DB) error {
 		"CREATE INDEX IF NOT EXISTS idx__resource_tags__tag_id ON resource_tags(tag_id)",
 		"CREATE INDEX IF NOT EXISTS idx__note_tags__tag_id ON note_tags(tag_id)",
 		"CREATE INDEX IF NOT EXISTS idx__group_tags__tag_id ON group_tags(tag_id)",
-		// The incoming relations of one group (the [relations direction="in"]
-		// shortcode, the reverse-relations panel). unique_rel leads with
-		// from_group_id, so it serves only the outgoing side.
-		"CREATE INDEX IF NOT EXISTS idx__group_relations__to_group_id ON group_relations(to_group_id)",
 	}
 	if db.Dialector.Name() == "postgres" {
 		queries = append(queries, "CREATE INDEX IF NOT EXISTS idx__groups_related_resources__resource_id___hash ON groups_related_resources USING HASH (resource_id)")
@@ -36,5 +32,25 @@ func EnsureSupplementalIndexes(db *gorm.DB) error {
 			return err
 		}
 	}
+	if db.Dialector.Name() != "postgres" {
+		return ensureRelationIncomingIndex(db)
+	}
 	return nil
+}
+
+// unique_rel leads with from_group_id; the reverse lookup needs its own index.
+var relationIncomingIndexes = []plannedIndex{
+	{"idx__group_relations__to_group_id", "group_relations", "to_group_id"},
+}
+
+const relationIncomingIndexLockKey = int64(0x4D5252454C494458)
+
+func ensureRelationIncomingIndex(db *gorm.DB) error {
+	return ensurePlannedIndexes(db, "incoming relation index", relationIncomingIndexLockKey, relationIncomingIndexes)
+}
+
+// EnsureRelationIncomingIndexOnOwnConnection builds the Postgres index
+// concurrently, beside the server, without borrowing a request connection.
+func EnsureRelationIncomingIndexOnOwnConnection(dsn string) error {
+	return onOwnConnection(dsn, "incoming relation index", ensureRelationIncomingIndex)
 }

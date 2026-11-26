@@ -1057,6 +1057,14 @@ func main() {
 		serveErr <- srv.ListenAndServe()
 	}()
 
+	// The reverse-edge lookup is correct without the index. Build it beside
+	// the server on Postgres so a rolling upgrade does not block writers.
+	if db.Dialector.Name() == "postgres" {
+		go ensureIndexesUntilBuilt("incoming relation index", func() error {
+			return models.EnsureRelationIncomingIndexOnOwnConnection(context.Config.DbDsn)
+		}, jobFilterIndexRetryInterval)
+	}
+
 	// After the server is up: sweep the plan generations nobody owns (a compute that
 	// died, a landing that crashed before its staging rows were removed), then move
 	// every legacy Reduction plan to tables. Both are chunked and restartable. The
@@ -1272,7 +1280,8 @@ func migrateJobCore(db *gorm.DB, postgresDSN string) error {
 
 // jobFilterIndexRetryInterval is how long a failed concurrent index build (the
 // Job filter indexes, the resource list indexes, the sibling navigation
-// indexes, the FTS prefix indexes) waits before it is tried again.
+// indexes, the incoming relation index, the FTS prefix indexes) waits before
+// it is tried again.
 const jobFilterIndexRetryInterval = 5 * time.Minute
 
 // resourceIndexBuild serializes this server's concurrent index builds on the

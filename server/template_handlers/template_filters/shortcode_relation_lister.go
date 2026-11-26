@@ -17,6 +17,7 @@ import (
 // edge listing, the far-group details a block body may read, the timeout that
 // bounds them, and the logger for their failures.
 type RelationListerContext interface {
+	IsGroupVisibleForTemplateRelations(groupID uint) (bool, error)
 	ListGroupRelationsForTemplate(context.Context, shortcodes.RelationsRequest) ([]shortcodes.GroupRelationEntry, error)
 	LoadRelatedGroupDetails(context.Context, []uint) ([]models.Group, error)
 	MRQLQueryTimeout() time.Duration
@@ -51,6 +52,9 @@ func BuildRelationLister(appCtx RelationListerContext) shortcodes.RelationLister
 	var mu sync.Mutex
 	calls := map[shortcodes.RelationsRequest]*relationCall{}
 	return func(reqCtx context.Context, req shortcodes.RelationsRequest) ([]shortcodes.GroupRelationEntry, error) {
+		if ok, err := appCtx.IsGroupVisibleForTemplateRelations(req.GroupID); !ok {
+			return nil, err
+		}
 		mu.Lock()
 		if c, ok := calls[req]; ok {
 			mu.Unlock()

@@ -27,6 +27,10 @@ type countingPageContext struct {
 func (c *countingPageContext) DeferredSigningKey() []byte { return []byte("k") }
 func (c *countingPageContext) MRQLPageQueryBudget() int   { return 0 }
 
+func (c *countingPageContext) IsGroupVisibleForTemplateRelations(uint) (bool, error) {
+	return false, nil
+}
+
 func (c *countingPageContext) ListGroupRelationsForTemplate(context.Context, shortcodes.RelationsRequest) ([]shortcodes.GroupRelationEntry, error) {
 	return nil, nil
 }
