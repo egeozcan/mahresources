@@ -357,3 +357,29 @@ func TestInspectPanelCountIsSafeForConcurrentRenders(t *testing.T) {
 	assert.Equal(t, maxInspectPanels, strings.Count(all, `<details class="inspect-shortcode">`))
 	assert.Equal(t, 1, strings.Count(all, `aria-label="Meta paths"`))
 }
+
+// One enormous Meta key cannot make the panel grow with it, and a control
+// character in a key or value never reaches the HTML raw.
+func TestInspectBoundsLongKeysAndEscapesControls(t *testing.T) {
+	huge := strings.Repeat("k", 1<<20)
+	meta, err := json.Marshal(map[string]any{huge: map[string]any{"child": 1}, "nul\u0000key": 1, "v": "a\u0000b\nc"})
+	require.NoError(t, err)
+	out := inspectOn(`[inspect]`, inspectCtx(string(meta)))
+
+	assert.Less(t, len(out), 20_000, "the panel must not carry the key")
+	assert.Contains(t, out, "path too long to address")
+	assert.NotContains(t, out, ".child</code>", "a long key is not descended into")
+	assert.NotContains(t, out, "\x00")
+	assert.Contains(t, out, `&#34;a\x00b\nc&#34;`)
+	assert.NotContains(t, out, `[meta path=&#34;nul`)
+	assert.Contains(t, out, `<code>nul\u0000key</code>`)
+}
+
+// Labels that differ only in whitespace are one accessible name.
+func TestAdjacentLabelWhitespaceIsOneName(t *testing.T) {
+	f := &fakeAdjacent{result: AdjacentResult{Next: &AdjacentLink{ID: 13, Name: "x"}}}
+	out := renderAdjacent(t, f, `[adjacent label="Meetings"][adjacent label=" Meetings  "][adjacent label="  "]`, adjacentCtx("note", 12))
+	assert.Contains(t, out, `aria-label="Meetings">`)
+	assert.Contains(t, out, `aria-label="Meetings (2)">`)
+	assert.Contains(t, out, `aria-label="Previous and next">`)
+}

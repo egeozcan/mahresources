@@ -149,8 +149,10 @@ func RenderAdjacentShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShort
 		return ""
 	}
 
-	label := sc.Attrs["label"]
-	if strings.TrimSpace(label) == "" {
+	// Whitespace collapsed as the accessible name computation does, so
+	// " Meetings " and "Meetings" count as one name.
+	label := strings.Join(strings.Fields(sc.Attrs["label"]), " ")
+	if label == "" {
 		label = defaultAdjacentLabel
 	}
 	label = env.labels.unique(label)

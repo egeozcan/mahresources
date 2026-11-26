@@ -10,18 +10,23 @@ export function uniqueAdjacentLabels(container, doc = document) {
   if (added.length === 0) return;
   const used = new Set();
   for (const nav of doc.querySelectorAll(SELECTOR)) {
-    if (!container.contains(nav)) used.add(nav.getAttribute('aria-label'));
+    if (!container.contains(nav)) used.add(accessibleName(nav));
   }
   for (const nav of added) {
-    const label = nav.getAttribute('aria-label');
+    const label = accessibleName(nav);
     if (used.has(label)) {
       const base = label.replace(/ \(\d+\)$/, '');
       let n = 2;
       while (used.has(`${base} (${n})`)) n++;
       nav.setAttribute('aria-label', `${base} (${n})`);
     }
-    used.add(nav.getAttribute('aria-label'));
+    used.add(accessibleName(nav));
   }
+}
+
+// Whitespace collapses in an accessible name, so " Meetings " is "Meetings".
+function accessibleName(nav) {
+  return nav.getAttribute('aria-label').trim().replace(/\s+/g, ' ');
 }
 
 // One observer covers every insertion path, as startCustomCSSHoist does.

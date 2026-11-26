@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
 )
 
 // Limits of one [inspect] render. A panel lists at most maxInspectRows paths
@@ -23,6 +24,10 @@ const (
 	maxInspectRows     = 200
 	inspectSampleRunes = 80
 	inspectMaxDepth    = 6
+	// inspectMaxPathBytes bounds a listed path. A longer one (a huge Meta key)
+	// is shown cut, has no snippet, and is not descended into, so one key
+	// cannot make the panel or the walk grow with its size.
+	inspectMaxPathBytes = 200
 )
 
 type inspectKey struct{}
@@ -86,9 +91,30 @@ func renderInspectGated(reqCtx context.Context, sc Shortcode, ctx MetaShortcodeC
 // "[" as a character reference so nothing the panel prints — a Meta value that
 // holds shortcode text, or a snippet, which is shortcode text — could ever be
 // parsed as a shortcode again. The browser decodes it for display and copying.
+// A control character, which a JSON key may hold, is shown as \uXXXX: HTML
+// would drop or replace it.
 func inspectEscape(s string) string {
+	if strings.IndexFunc(s, unicode.IsControl) >= 0 {
+		s = strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) {
+				return -1
+			}
+			return r
+		}, controlEscaper.Replace(s))
+	}
 	return strings.ReplaceAll(html.EscapeString(s), "[", "&#91;")
 }
+
+// controlEscaper writes each C0 control and DEL as visible \uXXXX text; the
+// C1 controls left after it are dropped by inspectEscape.
+var controlEscaper = func() *strings.Replacer {
+	var pairs []string
+	for r := rune(0); r < 0x20; r++ {
+		pairs = append(pairs, string(r), fmt.Sprintf(`\u%04x`, r))
+	}
+	pairs = append(pairs, "\x7f", `\u007f`)
+	return strings.NewReplacer(pairs...)
+}()
 
 type inspectRow struct {
 	path    string
@@ -211,7 +237,16 @@ func writeInspectTable(b *strings.Builder, caption, region string, rows []inspec
 // segment of a path= value: the path splits on ".", and the attribute is
 // quoted, so neither may appear, nor may brackets, which would end the token.
 func inspectKeyAddressable(k string) bool {
-	return k != "" && !strings.ContainsAny(k, `."'[]`)
+	if k == "" || strings.ContainsAny(k, `."'[]`) {
+		return false
+	}
+	// A control character does not survive the trip through HTML and back.
+	for _, r := range k {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }
 
 func inspectJSONType(v any) string {
@@ -236,7 +271,8 @@ func inspectJSONType(v any) string {
 func inspectJSONSample(v any) string {
 	switch t := v.(type) {
 	case string:
-		return `"` + truncateRunes(t, inspectSampleRunes) + `"`
+		// Quoted with escapes, so control characters show as \n or \x00.
+		return strconv.Quote(truncateRunes(t, inspectSampleRunes))
 	case map[string]any, []any, nil:
 		return ""
 	default:
@@ -261,7 +297,8 @@ func truncateRunes(s string, n int) string {
 // walkInspectJSON emits one row per key of obj, depth-first in sorted key
 // order, descending into objects until a path has inspectMaxDepth segments.
 // Arrays are leaves: no path= indexes into one. A key that cannot be written as
-// a path is listed without a snippet, and so is everything beneath it.
+// a path is listed without a snippet, and so is everything beneath it. A path
+// past inspectMaxPathBytes is shown cut, without a snippet, and not descended.
 func walkInspectJSON(obj map[string]any, prefix string, segments int, addressable bool, budget *inspectRows, snippet func(path string, v any) string, rows *[]inspectRow) {
 	keys := make([]string, 0, len(obj))
 	for k := range obj {
@@ -274,11 +311,17 @@ func walkInspectJSON(obj map[string]any, prefix string, segments int, addressabl
 		if prefix != "" {
 			p = prefix + "." + k
 		}
-		ok := addressable && inspectKeyAddressable(k)
+		long := len(p) > inspectMaxPathBytes
+		ok := addressable && !long && inspectKeyAddressable(k)
 		if budget.take() {
-			*rows = append(*rows, inspectJSONRow(p, v, ok, snippet))
+			row := inspectJSONRow(p, v, ok, snippet)
+			if long {
+				row.path = truncateRunes(p, inspectMaxPathBytes/2)
+				row.note = "path too long to address"
+			}
+			*rows = append(*rows, row)
 		}
-		if child, isObj := v.(map[string]any); isObj && segments+1 < inspectMaxDepth {
+		if child, isObj := v.(map[string]any); isObj && !long && segments+1 < inspectMaxDepth {
 			walkInspectJSON(child, p, segments+1, ok, budget, snippet, rows)
 		}
 	}

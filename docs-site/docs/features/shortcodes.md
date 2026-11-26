@@ -1387,7 +1387,7 @@ Only the ID and name of a visible sibling reach the page.
 
 ### Where it renders
 
-On entity display pages, in deferred `[lazy]`/`[details]`/`[autorefresh]` bodies, and in the template editor's and the description editor's live previews. Everywhere else it renders the HTML comment `<!-- mr:adjacent unavailable in this context -->`: the MRQL render API, share pages, the lightbox, the entity picker, the AI template generation tools and the CLI.
+On entity display pages, in hover cards, in deferred `[lazy]`/`[details]`/`[autorefresh]` bodies, and in the template editor's and the description editor's live previews. Everywhere else it renders the HTML comment `<!-- mr:adjacent unavailable in this context -->`: the MRQL render API, share pages, the lightbox, the entity picker, the AI template generation tools and the CLI.
 
 `[adjacent]` cannot be used inside a `[reload]` button face.
 

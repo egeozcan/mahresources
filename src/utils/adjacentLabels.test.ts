@@ -36,6 +36,14 @@ describe('uniqueAdjacentLabels', () => {
     expect(labels()).toEqual(['Previous and next', 'Chapters']);
   });
 
+  it('treats names that differ only in whitespace as one', () => {
+    document.body.innerHTML = nav(' Meetings ') + '<div id="card"></div>';
+    const card = document.getElementById('card')!;
+    card.innerHTML = nav('Meetings');
+    uniqueAdjacentLabels(card);
+    expect(labels()).toEqual([' Meetings ', 'Meetings (2)']);
+  });
+
   it('handles the nav itself being the inserted node', () => {
     document.body.innerHTML = nav('Chapters');
     const tpl = document.createElement('template');
