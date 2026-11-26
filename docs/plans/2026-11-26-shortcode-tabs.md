@@ -1,10 +1,8 @@
-<!-- Shortcode idea that did not make the first implementation round. -->
-> **Status:** idea, not implemented. The plan went through 3 plan/evaluate round(s).
-> Last evaluation: consistency 8.7/10, usefulness 8.6/10, average 8.65/10. The bar was 8.5.
->
-> **Pitch:** A layout block, [tabs][tab label="Overview"]...[/tab][tab label="Files" lazy="true"]...[/tab][/tabs], that renders the WAI-ARIA tabs pattern: role=tablist/tab/tabpanel, arrow-key and Home/End navigation, and aria-selected and aria-controls wiring. Only the active panel renders eagerly. With lazy="true", a panel reuses the [details] deferred-fragment path, so heavy [mrql] or gallery content costs nothing until it's opened. Category authors can fit rich headers and sidebars into a compact space instead of one long scroll.
-
 # Plan: `[tabs]` / `[tab]`, an accessible tabbed layout shortcode (revision 3)
+
+Slug: `tabs`. Implemented on branch `feat/shortcode-tabs`; the implementation record is the Review section at the end.
+
+A layout block, [tabs][tab label="Overview"]...[/tab][tab label="Files" lazy="true"]...[/tab][/tabs], that renders the WAI-ARIA tabs pattern: role=tablist/tab/tabpanel, arrow-key and Home/End navigation, and aria-selected and aria-controls wiring. A panel renders with the page unless it says lazy="true"; then it reuses the [lazy] deferred-fragment path, so heavy [mrql] or gallery content costs nothing until it's opened. Category authors can fit rich headers and sidebars into a compact space instead of one long scroll.
 
 ## 0. Changes since revision 2
 
