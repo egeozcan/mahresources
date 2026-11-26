@@ -1116,7 +1116,7 @@ For an array of objects, `[item path="..."]` reads a field of each element. Inne
 A relation is directed: "Backend API **Depends on** Auth Service" is outgoing from Backend API and incoming to Auth Service.
 
 - A relation type with a **back relation** stores the reverse edge as a relation of its own: adding "Backend API depends on Auth Service" also adds "Auth Service is required by Backend API". So `direction="out"` already lists both halves of such a pair, each from its own group's side, and `in` would list the same pair again.
-- Use `direction="in"` for types without a back relation, whose edges only the far group lists as outgoing. Its labels read "Incoming: <type>".
+- Use `direction="in"` for types without a back relation, whose edges only the far group lists as outgoing. Its labels read `Incoming: <type>`.
 - To show both, write two shortcodes, each where it belongs.
 
 ### Output
