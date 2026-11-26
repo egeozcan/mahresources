@@ -367,6 +367,9 @@ func TestInspectBoundsLongKeysAndEscapesControls(t *testing.T) {
 	out := inspectOn(`[inspect]`, inspectCtx(string(meta)))
 
 	assert.Less(t, len(out), 20_000, "the panel must not carry the key")
+	wide := inspectOn(`[inspect]`, inspectCtx(`{"`+strings.Repeat("界", 100)+`":1}`))
+	assert.Contains(t, wide, "path too long to address")
+	assert.NotContains(t, wide, strings.Repeat("界", 100), "a long multi-byte path is cut too")
 	assert.Contains(t, out, "path too long to address")
 	assert.NotContains(t, out, ".child</code>", "a long key is not descended into")
 	assert.NotContains(t, out, "\x00")

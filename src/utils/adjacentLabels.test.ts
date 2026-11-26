@@ -55,6 +55,21 @@ describe('uniqueAdjacentLabels', () => {
   });
 });
 
+describe('collisions with other navigation landmarks', () => {
+  it('numbers an [adjacent] named like the page menu, on load and on insertion', async () => {
+    document.body.innerHTML = '<nav aria-label="Main"></nav>' + nav('Main') + nav('Main (2)') + '<div id="slot"></div>';
+    const observer = startAdjacentLabels();
+    try {
+      expect(labels()).toEqual(['Main (2)', 'Main (3)']);
+      document.getElementById('slot')!.innerHTML = '<nav aria-label="Pages"></nav>' + nav('Pages');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(labels()).toEqual(['Main (2)', 'Main (3)', 'Pages (2)']);
+    } finally {
+      observer.disconnect();
+    }
+  });
+});
+
 describe('startAdjacentLabels', () => {
   it('renumbers a nav that any insertion path adds, such as a hover card', async () => {
     document.body.innerHTML = nav('Previous and next') + '<div id="popover"></div>';

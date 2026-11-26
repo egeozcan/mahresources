@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Limits of one [inspect] render. A panel lists at most maxInspectRows paths
@@ -316,7 +317,11 @@ func walkInspectJSON(obj map[string]any, prefix string, segments int, addressabl
 		if budget.take() {
 			row := inspectJSONRow(p, v, ok, snippet)
 			if long {
-				row.path = truncateRunes(p, inspectMaxPathBytes/2)
+				cut := inspectMaxPathBytes / 2
+				for cut > 0 && !utf8.RuneStart(p[cut]) {
+					cut--
+				}
+				row.path = p[:cut] + "…"
 				row.note = "path too long to address"
 			}
 			*rows = append(*rows, row)

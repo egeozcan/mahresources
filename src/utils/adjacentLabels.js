@@ -1,16 +1,19 @@
-// [adjacent] numbers a repeated landmark name within one server render, but a
-// fragment inserted later (a deferred body, a hover card, a re-rendered text
-// block) is a render of its own, so its <nav> can repeat a name the page
-// already holds. Newcomers are numbered against the rest of the document.
+// [adjacent] numbers a repeated landmark name within one server render, but it
+// cannot see the page's own navigation landmarks (the main menu is "Main"), and
+// a fragment inserted later (a deferred body, a re-rendered text block) is a
+// render of its own. So the [adjacent] navs are numbered against every other
+// named navigation landmark in the document: once on load, then on insertion.
 
-const SELECTOR = 'nav.shortcode-adjacent[aria-label]';
+const ADJACENT = 'nav.shortcode-adjacent[aria-label]';
+const NAMED_NAV = 'nav[aria-label], [role="navigation"][aria-label]';
 
 export function uniqueAdjacentLabels(container, doc = document) {
-  const added = container.matches?.(SELECTOR) ? [container] : [...container.querySelectorAll(SELECTOR)];
+  const added = container.matches?.(ADJACENT) ? [container] : [...container.querySelectorAll(ADJACENT)];
   if (added.length === 0) return;
+  const mine = new Set(added);
   const used = new Set();
-  for (const nav of doc.querySelectorAll(SELECTOR)) {
-    if (!container.contains(nav)) used.add(accessibleName(nav));
+  for (const nav of doc.querySelectorAll(NAMED_NAV)) {
+    if (!mine.has(nav)) used.add(accessibleName(nav));
   }
   for (const nav of added) {
     const label = accessibleName(nav);
@@ -31,6 +34,7 @@ function accessibleName(nav) {
 
 // One observer covers every insertion path, as startCustomCSSHoist does.
 export function startAdjacentLabels(doc = document) {
+  uniqueAdjacentLabels(doc.body, doc);
   const observer = new MutationObserver((records) => {
     for (const record of records) {
       for (const node of record.addedNodes) {
