@@ -149,7 +149,7 @@
                             attribute, or stop CSS injection in <code class="bg-stone-100 px-1 rounded">style</code>.
                             The editor warns on those four. Metadata is written by anyone who can edit the entity.
                         </span>
-                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[meta path="status"]
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[meta path="status"]
 [meta path="contact.email" editable="true"]
 [meta path="address.city" hide-empty="true"]
 [meta path="priority" default="Normal"]
@@ -186,7 +186,7 @@
                         <br><span class="text-stone-600 ml-4">
                             Fields: <span class="font-mono">ID, Name, Description, CreatedAt, UpdatedAt, NoteTypeId, OwnerId, StartDate, EndDate, Meta</span>
                         </span>
-                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[property path="Name"]
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[property path="Name"]
 [property path="StartDate" format="date"]
 [property path="Description" raw="true"]
 &lt;span class="text-stone-600"&gt;[property path="StartDate"] &ndash; [property path="EndDate"]&lt;/span&gt;</code></pre>
@@ -200,7 +200,7 @@
                             &middot; <b class="text-stone-500">default</b>="text" when a value is missing or not a number, or on division by zero
                             &middot; only keys of ASCII letters, digits and _, not starting with a digit, can be referenced
                         </span>
-                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[calc expr="meta.qty * meta.unit_price" decimals="2"]
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[calc expr="meta.qty * meta.unit_price" decimals="2"]
 [calc expr="meta.qty * meta.unit_price * (1 - coalesce(meta.discount, 0))" decimals="2" default="not set"]
 &lt;meter min="0" max="1" value="[calc expr='meta.spent / meta.budget' default='0']" aria-label="Budget used"&gt;[calc expr='meta.spent / meta.budget' format='percent' decimals='0' default='unknown']&lt;/meter&gt;</code></pre>
                     </div>
@@ -215,7 +215,7 @@
                             &middot; <b class="text-stone-500">limit</b>=20
                             &middot; <b class="text-stone-500">buckets</b>=5 (for GROUP BY)
                         </span>
-                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[mrql query='type = resource AND tags = "photos"']
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[mrql query='type = resource AND tags = "photos"']
 [mrql query='type = note AND created > -7d' format="table" limit="10"]
 [mrql query='type = resource AND contentType ~ "image/*"' format="list" limit="5"]
 [mrql query='type = group AND category = 3 GROUP BY meta.status' buckets="10"]
@@ -236,7 +236,7 @@
                             &middot; add <b class="text-stone-500">[elseif …]</b> / <b class="text-stone-500">[else]</b> branches
                             &middot; numbered suffixes (<span class="font-mono">path2, eq2…</span>) add conditions
                         </span>
-                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[conditional path="rating" not-empty="true"]
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[conditional path="rating" not-empty="true"]
   Rated: [meta path="rating"]
 [/conditional]
 [conditional path="tier" eq="gold"]Gold[elseif path="tier" eq="silver"]Silver[else]Basic[/conditional]</code></pre>
@@ -244,7 +244,7 @@
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[each path="arrayPath"]…[item]…[/each]</code>
                         &mdash; iterate an array in Meta, rendering the block once per element. Reference the element with <code class="bg-stone-100 px-1 rounded">[item]</code> (<code class="bg-stone-100 px-1 rounded">[item path="field"]</code> for objects, <code class="bg-stone-100 px-1 rounded">[item index="true"]</code> for its 1-based position). An optional <code class="bg-stone-100 px-1 rounded">[else]</code> branch renders when the array is empty.
-                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[each path="ingredients"]
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[each path="ingredients"]
   &lt;li&gt;[item path="name"] &mdash; [item path="qty" default="?"]&lt;/li&gt;
 [else]
   &lt;li&gt;No items&lt;/li&gt;
@@ -256,18 +256,18 @@
                         <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">to</b>="self|owner|root|category"
                         </span>
-                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>&lt;a href="[link]" class="underline"&gt;[property path="Name"]&lt;/a&gt;
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>&lt;a href="[link]" class="underline"&gt;[property path="Name"]&lt;/a&gt;
 [link to="owner"]Back to group[/link]</code></pre>
                     </div>
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[partial name="kebab-name"]</code>
                         &mdash; expand a reusable Template Partial by name, rendered with the current entity so its own shortcodes resolve here. Manage these under Template Partials.
-                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[partial name="status-badge"]</code></pre>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[partial name="status-badge"]</code></pre>
                     </div>
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[lazy]…[/lazy]</code>
                         &mdash; defer the inner content: it renders on the server only when the block scrolls into view, keeping expensive shortcodes (especially [mrql]) out of the initial page load. Ideal for per-card slots on long lists.
-                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[lazy][mrql query='type = "resource"' format="list"][/lazy]</code></pre>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[lazy][mrql query='type = "resource"' format="list"][/lazy]</code></pre>
                     </div>
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[details summary="…"]…[/details]</code>
@@ -275,7 +275,7 @@
                         <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">summary</b>="label" &nbsp; <b class="text-stone-500">open</b>="true|false"
                         </span>
-                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[details summary="Nutrition"][meta path="calories"] kcal[/details]</code></pre>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[details summary="Nutrition"][meta path="calories"] kcal[/details]</code></pre>
                     </div>
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[inspect]</code>
@@ -283,7 +283,7 @@
                         <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">path</b>="project.budget" limits the Meta section to one subtree
                         </span>
-                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[inspect]
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[inspect]
 [inspect path="project"]</code></pre>
                     </div>
                     <div>
@@ -293,7 +293,7 @@
                             <b class="text-stone-500">series</b>="true|false" (resources only)
                             &middot; <b class="text-stone-500">label</b>="accessible name of the navigation landmark"
                         </span>
-                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[adjacent]
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[adjacent]
 [adjacent series="true" label="Pages"]</code></pre>
                     </div>
                     <div>
@@ -305,7 +305,7 @@
                             &middot; <b class="text-stone-500">size</b>="sm|md|lg"
                             &middot; <b class="text-stone-500">label</b>="caption and accessible name"
                         </span>
-                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[using type="resource" id-path="cover"][similar label="Lookalikes of the cover"][/using]</code></pre>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[using type="resource" id-path="cover"][similar label="Lookalikes of the cover"][/using]</code></pre>
                     </div>
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[calendar]</code>
@@ -316,7 +316,7 @@
                             &middot; <b class="text-stone-500">month</b>="current|YYYY-MM"
                             &middot; <b class="text-stone-500">scope</b>="global|parent|root|ID"
                         </span>
-                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[calendar mrql='type = "note"' date="meta.due" scope="parent"]</code></pre>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[calendar mrql='type = "note"' date="meta.due" scope="parent"]</code></pre>
                     </div>
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[reload]</code>
@@ -324,7 +324,7 @@
                         <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">label</b>="accessible name"
                         </span>
-                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[lazy][reload label="Refresh tasks"][mrql query='type = "note"' format="list"][/lazy]
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[lazy][reload label="Refresh tasks"][mrql query='type = "note"' format="list"][/lazy]
 [reload]Refresh[/reload]</code></pre>
                     </div>
                     <div>
@@ -333,7 +333,7 @@
                         <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">on</b>="edit"
                         </span>
-                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[pills path="status" editable="true"]
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[pills path="status" editable="true"]
 [autorefresh][conditional path="status" eq="done"]Done[/conditional][/autorefresh]</code></pre>
                     </div>
                     <div>
@@ -342,7 +342,7 @@
                         <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">id</b>="42" &nbsp; <b class="text-stone-500">id-path</b>="meta.path" &nbsp; <b class="text-stone-500">id-prop</b>="OwnerId" &nbsp; <b class="text-stone-500">rel</b>="owner|root" &nbsp; <b class="text-stone-500">query</b>="MRQL" &nbsp; <b class="text-stone-500">type</b>="group|resource|note"
                         </span>
-                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[using rel="owner"]
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[using rel="owner"]
   &lt;a href="[link]"&gt;[property path="Name"]&lt;/a&gt;: [meta path="status" inline="true"]
 [else]
   No owner
@@ -351,14 +351,14 @@
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[comment]…[/comment]</code>
                         &mdash; comment out part of the template. The server removes everything inside before any shortcode runs, so none of it is rendered. An HTML comment still runs its shortcodes and is sent to the browser. Comments nest; the opener accepts attributes such as reason="…" and ignores them; it ends at its first ] and fits on one line.
-                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[comment reason="old sidebar"]
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[comment reason="old sidebar"]
   &lt;aside&gt;[mrql query='type = "note"' format="list"]&lt;/aside&gt;
 [/comment]</code></pre>
                     </div>
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[plugin:name:shortcode attr="val"]</code>
                         &mdash; render a plugin-provided shortcode. See each plugin's docs page for available shortcodes.
-                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[plugin:meta-editors:star-rating path="rating"]
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[plugin:meta-editors:star-rating path="rating"]
 [plugin:meta-editors:slider path="progress" min="0" max="100"]</code></pre>
                     </div>
                 </div>
