@@ -1208,6 +1208,8 @@ A button that runs one registered plugin action (`mah.action`) on the entity the
 
 `[action]` is inline only. A `[action]…[/action]` block renders a `⚠ action` marker, and the linter flags it.
 
+Text that already contains `[action …]` now renders as this shortcode. That includes a CSS attribute selector written `form[action]` in a CustomCSS slot, which becomes a `⚠ action` marker; write it `form[ action]` (the space is valid CSS) to keep it a selector.
+
 ### Attributes
 
 | Attribute | Required | Default | Description |
