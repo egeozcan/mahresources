@@ -295,6 +295,8 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 			replacement = RenderPropertyShortcode(sc, ctx)
 		case sc.Name == "calc":
 			replacement = RenderCalcShortcode(sc, ctx)
+		case sc.Name == "excerpt":
+			replacement = RenderExcerptShortcode(reqCtx, sc, ctx)
 		case sc.Name == "adjacent":
 			// Renders the "unavailable" comment unless the surface installed a
 			// scoped resolver (WithAdjacentResolver).

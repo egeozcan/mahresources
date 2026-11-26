@@ -43,6 +43,7 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 | `[pills]` | Inline | Pill selector with schema enum or manual options |
 | `[datetime]` | Inline | Display/edit a date/time Meta field, preserving its format |
 | `[property]` | Inline | Render a scalar field or dot-path from the current entity |
+| `[excerpt]` | Inline | Plain-text, length-bounded preview of a Description, string field or Meta string |
 | `[calc]` | Inline | Compute a number from Meta, entity fields or [each] elements |
 | `[mrql]` | Inline or block | Run an MRQL query and render results, a scalar value, or a custom item template |
 | `[conditional]` | Block | Render the first matching branch from a meta, field, or MRQL condition |
@@ -347,6 +348,92 @@ The exception is a credential field: a note's `ShareToken` (and `TokenHash`, `Cs
 
 **Note:** `ID`, `Name`, `Description`, `CreatedAt`, `UpdatedAt`, `NoteTypeId`, `OwnerId`, `StartDate`, `EndDate`, `Meta`
 
+## `[excerpt]` -- Text Preview
+
+Renders a short, single-line, plain-text preview of an entity's long text: its Description by default, another string field, or a string in its Meta. Use it on cards and in query results, where `[property path="Description"]` would print the whole Markdown source, mention markers and all.
+
+```
+[excerpt words="25" more="Read more"]
+```
+
+`[excerpt]` is inline only. It never runs a query and never loads data: it reads the entity the surface already shows, so it works in every slot, in `CustomMRQLResult` and in `[mrql]` and `[using]` bodies.
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `words` | No | `30` | Maximum number of words, a whole number from 1 to 200. A value that is not a whole number, or is below 1, falls back to 30; above 200 is clamped to 200. |
+| `field` | No | `Description` | One string field of the current entity, such as `Name` or `OriginalName`. No dot paths: to preview a related entity, put `[excerpt]` inside [`[using]`](#using----switch-to-another-entity). A field that is missing, not a string, or a credential the reader may not see (as with `[property]`) renders the default. |
+| `path` | No | -- | Dot-notation path to a string in the entity's Meta, e.g. `recipe.intro`. A number, boolean, object, array, `null` or missing key renders the default. Cannot be combined with `field`. |
+| `more` | No | -- | Visible label of a link to the entity's detail page, shown only when the text was cut. |
+| `default` | No | -- | Text rendered when there is nothing to preview. It is always HTML-escaped. |
+
+There is no `raw`: the output is always escaped text. Setting both `path` and `field` renders the `⚠ excerpt` [failure marker](#failure-markers), and the linter reports it.
+
+### What is stripped
+
+The source goes through these steps on the server, in order:
+
+1. Only its first 16 KiB are read.
+2. [Template comments](#comment----comment-out-a-section) are removed.
+3. Every shortcode is removed without running: a block goes with its body, so `[details]…[/details]` disappears entirely, and an `[mrql]` in the text runs no query. This happens before Markdown is read, so a shortcode inside a code span or fenced code block is removed too; the rest of the code text stays.
+4. Each mention (`@[resource:5:Sunset photo]`) becomes its name, `Sunset photo`, exactly as written: a `*` or `<` in a name is not read as Markdown or HTML.
+5. Markdown is rendered and only the visible text kept. HTML tags, attributes (image alt text included), HTML comments and the contents of `<script>`, `<style>` and similar elements are dropped. Paragraphs, list items, table cells and line breaks become spaces.
+
+The result is one line: every run of whitespace becomes one space.
+
+### Truncation
+
+- The text is cut after `words` words, and in any case after 12 characters per allowed word, so text without spaces (CJK, a long URL) stays bounded too.
+- A cut text ends with `…`, after any trailing `, ; : . -` has been removed.
+- A source longer than 16 KiB always ends with `…`, even when its first 16 KiB show fewer than `words` words, because the excerpt cannot know what follows.
+
+### Empty state
+
+When there is no text to show (an empty field, a non-string Meta value, or a Description that is only shortcodes, comments or images), `[excerpt]` renders `default`, escaped, or nothing.
+
+### Output and the `more` link
+
+Without `more`, the output is a bare escaped value with no wrapper element, so it can sit inside a quoted attribute like `[property]`:
+
+```
+<span title="[excerpt words='25']">[property path="Name"]</span>
+```
+
+With `more` and a cut text, a link follows the ellipsis:
+
+```html
+Lorem ipsum dolor… <a href="/note?id=42" class="underline" aria-label="Read more: Meeting notes">Read more</a>
+```
+
+- Its accessible name adds the entity's name (or `note 42` when it has none), so a list of "Read more" links reads as distinct links, and it starts with the visible label.
+- It is underlined, so it does not rely on colour alone.
+- It renders for read-only viewers as well: it is navigation, not an edit control.
+- It is left out inside a [`[reload]`](#reload----re-render-on-demand) button face, which cannot contain a link, and on the [public share page](./note-sharing.md), which serves no detail pages.
+- Do not use `more` inside an HTML attribute: the link is markup.
+
+### Examples
+
+A note type's `CustomSummary`:
+
+```
+<p class="text-sm text-stone-600">[excerpt words="25" more="Read more"]</p>
+```
+
+The latest notes in a group header, each with a preview:
+
+```
+[mrql query="type = note ORDER BY updated DESC" limit="5"]
+  <p><a href="[link]">[property path="Name"]</a>: [excerpt words="12"]</p>
+[/mrql]
+```
+
+A Meta string with a fallback:
+
+```
+[excerpt path="recipe.intro" words="15" default="No intro yet"]
+```
+
 ## `[calc]` -- Arithmetic over Fields
 
 Computes a number from values the page already holds: the entity's Meta, its numeric fields and, inside `[each]`, the current element. Use it for derived values that would go stale if stored, such as a line total, a discounted price, a remaining budget or a resource's megapixels.
@@ -588,6 +675,7 @@ Each result entity gets its own shortcode context (entity type, ID, meta, and th
 | Shortcode | Behavior inside the block body |
 |-----------|--------------------------------|
 | `[property path="..."]` | Reads a struct field off the current item (`Name`, `Description`, `ContentType`, `CreatedAt`, ...) |
+| `[excerpt ...]` | A plain-text preview of the current item's Description, string field or Meta string |
 | `[meta path="..."]` | Reads the current item's meta JSON, rendered schema-aware using that item's own category MetaSchema |
 | `[meta path="..." editable=true]` | Edits target the current item; the pencil writes back to that specific entity |
 | `[conditional ...]...[/conditional]` | Branches on the current item's meta, fields, or a nested query, including `[elseif ...]` and `[else]` |

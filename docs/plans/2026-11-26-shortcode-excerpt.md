@@ -1,10 +1,8 @@
-<!-- Shortcode idea that did not make the first implementation round. -->
-> **Status:** idea, not implemented. The plan went through 2 plan/evaluate round(s).
-> Last evaluation: consistency 8.4/10, usefulness 8.8/10, average 8.60/10. The bar was 8.5.
->
-> **Pitch:** Renders a length-bounded plain-text excerpt of an entity's long text, such as a note's text blocks, a Description or a meta text field, with word-boundary truncation, an ellipsis and an optional 'Read more' link: [excerpt source="blocks" words="40"], or inside [using]/[mrql] blocks for related notes. HTML and markdown are stripped server-side, so the excerpt can't break card layouts or inject markup, and highlighting a search term is optional. CustomSummary cards and MRQL result templates can show meaningful previews instead of names only.
+# Plan: `[excerpt]`, a safe plain-text preview of long text (revision 3, implemented)
 
-# Plan: `[excerpt]`, a safe plain-text preview of long text (revision 3)
+> **Pitch:** Renders a length-bounded plain-text excerpt of an entity's long text, such as a note's Description or a meta text field, with word-boundary truncation, an ellipsis and an optional 'Read more' link. HTML and markdown are stripped server-side, so the excerpt can't break card layouts or inject markup. CustomSummary cards and MRQL result templates can show meaningful previews instead of names only.
+>
+> Implemented on `feat/shortcode-excerpt`. Where the implementation differs from the text below, the Review section at the end says how and why. §0 records the revision-2 to revision-3 changes and is kept as history; on the share page in particular, §6 and the Review supersede it.
 
 ## 0. Changes since the previous version (response to evaluation)
 
@@ -57,7 +55,7 @@ The shortcode is inline only (`IsBlock: BlockNo`). `[/excerpt]` is reported by t
 | Attribute | Type | Required | Default | Meaning |
 |---|---|---|---|---|
 | `path` | string | no | — | Dot-notation path into the entity's Meta (`cooking.notes`). The value must be a JSON string. Cannot be combined with `field`. |
-| `field` | string | no | `Description` (when `path` is also absent) | One exported **string** field of the current entity (`Description`, `Name`, `OriginalName`, …), with no dots. Credential fields (`ShareToken`, …) follow `[property]`'s rule: they are empty unless credentials are visible. Cannot be combined with `path`. |
+| `field` | string | no | `Description` (when `path` is also absent) | One exported **string** field of the current entity (`Description`, `Name`, `OriginalName`, …), with no dots. Credential fields (`credentialFields` in `shortcodes/credential_fields.go`: `ShareToken`, `TokenHash`, `CsrfToken`, `PasswordHash`) follow `[property]`'s rule: they are empty unless credentials are visible. Cannot be combined with `path`. |
 | `words` | integer | no | `30` | Maximum number of words, from 1 to 200. A value that is not an integer, or is below 1, falls back to 30. A value above 200 is clamped to 200. |
 | `more` | string | no | — (no link) | Visible label of a link to the current entity's detail page. The link appears only when the text was actually truncated. |
 | `default` | string | no | — | Text shown when the resolved text is empty after stripping. It is **always HTML-escaped, never raw.** |
@@ -73,14 +71,14 @@ There are no other attributes and there is no `raw`.
 2. **Charge the render meter**: `m.chargeScratch(12 * int64(len(capped)))` (§8). If the charge fails, return `ok = false`; the handler then outputs `""`.
 3. **Remove template comments** with `stripTemplateComments(capped)` (`shortcodes/comment.go`).
    - If the cap cut a `[comment]` open, the unclosed opener hides the rest of the prefix (`templatecomment.Strip` semantics), so comment text cannot leak.
-4. **Remove shortcodes without expanding them.** Run `parseWithBlocksM(m, …)` on the text and delete every span `[sc.Start, sc.End)`, working from the end of the text back to the start.
+4. **Remove shortcodes without expanding them.** Run `parseWithBlocksM(nil, …)` on the text, delete every top-level span `[sc.Start, sc.End)`, then delete any closer left with no opener (`closingTagPattern`).
    - A block span includes its body, so `[details]secret[/details]` disappears entirely.
    - Nothing is executed. An `[excerpt]` in a Description cannot recurse, and an `[mrql]` inside it runs no query.
    - This runs on raw source before Markdown, so shortcodes inside fenced or inline code are deleted too. The rest of the code text is kept.
    - If the cap cuts a block opener off from its closer, only the opener tag is removed and the body text stays. That text is the same entity's own Description, which the viewer can already read.
 5. **Turn mentions into sentinels.**
    - First delete any U+E000/U+E001 already in the text, so no collision is possible.
-   - Then replace the i-th match of `mentions.ParseAll` (by `OriginalMatch`, in order) with `"" + strconv.Itoa(i) + ""` and keep `names[i] = Name`.
+   - Then replace the i-th marker `mentions.ParseAll` would report with `"\uE000" + strconv.Itoa(i) + "\uE001"` and keep `names[i] = Name`. The replacement walks match positions (`mentions.ReplaceAll`, added for this), not `OriginalMatch` text, so a valid marker's text inside a skipped one (`@[group:0:@[note:1:x]`) is not substituted.
    - Private-use runes and ASCII digits have no meaning in Markdown or HTML, so the sentinel passes through unchanged.
 6. **Convert Markdown to HTML** with a package-level `excerptMarkdown = goldmark.New(goldmark.WithExtensions(extension.GFM), goldmark.WithRendererOptions(html.WithUnsafe()))`.
    - This is the same parser shape as the `markdown2` filter (`server/template_handlers/template_filters/markdown_filter.go`). Its two other options, `WithAutoHeadingID` and `WithHardWraps`, change only attributes and `<br>`, and step 7 turns `<br>` into a space either way.
@@ -92,7 +90,7 @@ There are no other attributes and there is no `raw`.
    - The start and end tags of `p div br li tr td th h1–h6 blockquote pre hr ul ol table dd dt section article` insert a space.
    - `<img>` produces no text, so alt text is not included.
 8. **Restore names and truncate.**
-   - Replace each sentinel `<i>` with `names[i]`. A sentinel with an out-of-range index is removed.
+   - Replace each sentinel `\uE000<i>\uE001` with `names[i]`. An opener or closer that is not part of a well-formed sentinel with an in-range index is stripped; the digits after an unpaired opener stay as text.
    - Collapse every Unicode whitespace run to one space and trim. The output is always one line.
    - Split with `strings.Fields`. If there are more than `words` words, keep the first `words`.
    - If the kept text is longer than `words × 12` runes (CJK text, long URLs), cut it at that rune count.
@@ -104,8 +102,7 @@ There are no other attributes and there is no `raw`.
   - A `string` goes through the pipeline.
   - Any other JSON type (number, bool, object, array, null), or a missing key, gives the empty state.
 - **`field` set, or neither set (in which case `field = "Description"`):**
-  - A field that contains `.` or fails `isValidFieldName` gives the empty state.
-  - Otherwise read it with `traversePropertyPath(ctx.Entity, field, ctx.credentialsVisible)`.
+  - A field that contains `.` gives the empty state. There is no separate validator: `traversePropertyPath(ctx.Entity, field, ctx.credentialsVisible)` on the single segment already refuses a missing field, an unexported one (`CanInterface`) and a withheld credential field (`credentialFields`, `shortcodes/credential_fields.go`), which is what `[conditional field=]` checks inline (`conditional_handler.go`).
   - Only a value whose kind is `reflect.String`, after dereferencing a pointer, goes through the pipeline. Anything else gives the empty state.
 - **`path` and `field` both set:** render `shortcodeErrorMarker("excerpt", "set path or field, not both")`. Lint reports this at edit time.
 - **`ctx.Entity == nil`:** `field` gives the empty state. `path` still reads `ctx.Meta`.
@@ -113,27 +110,27 @@ There are no other attributes and there is no `raw`.
 
 ## 6. Rendered output and accessibility
 
-- **Not truncated:** `html.EscapeString(text)`. This is a bare value with no wrapper element, so it is valid inside a quoted attribute (`title="[excerpt words='20']"`), exactly like `[property]`.
+- **Not truncated:** `html.EscapeString(text)`. This is a bare value with no wrapper element, so it is valid inside a quoted attribute (`title="[excerpt words='20']"`), exactly like `[property]`. That holds only without `more` (a cut text with `more` carries a link), which is why `emitsBareValue` returns true for `[excerpt]` only when `more` is blank.
 - **Truncated, without `more`:** `html.EscapeString(text)` followed by `…`.
 - **Truncated, with `more` set, and `resolveLinkURL("self", ctx)` returns ok:**
   ```html
-  Escaped text… <a href="/note?id=42" class="underline">Read more<span class="sr-only">: Escaped Name</span></a>
+  Escaped text… <a href="/note?id=42" class="underline" aria-label="Read more: Escaped Name">Read more</a>
   ```
   - If `resolveLinkURL` does not return ok (unknown entity type, ID 0), the link is omitted and the ellipsis is kept.
   - The visible label is `html.EscapeString(more)`.
-  - The `sr-only` suffix is the escaped `Name` (`traversePropertyPath(ctx.Entity, "Name", …)`), or `<entityType> <id>` when there is no name. Repeated "Read more" links on a list therefore have distinct accessible names (WCAG 2.4.4), and each name starts with the visible label (WCAG 2.5.3).
+  - The `aria-label` is the label, `: `, and the escaped `Name` (`traversePropertyPath(ctx.Entity, "Name", …)`), or `<entityType> <id>` when there is no name. Repeated "Read more" links on a list therefore have distinct accessible names (WCAG 2.4.4), and each name starts with the visible label (WCAG 2.5.3). (An `aria-label`, not an `sr-only` span: `docs/lessons.md` records that `.sr-only` is `position: absolute` and escapes a card's scroll container.)
   - The `underline` class means the link does not depend on colour alone (WCAG 1.4.1).
   - The literal `…` character is announced naturally by screen readers, so no ARIA is needed.
-- **`ForceReadOnly` does not affect the output.**
-  - Read-only principals get the link, because it is navigation, not an edit affordance.
-  - Share pages get the same `href` that `[link]` emits there. The `processShareTemplates` comment already lists `[link]` as running normally, and that comment is extended to name `[excerpt]`.
+- **`ForceReadOnly` does not affect the output.** Read-only principals get the link, because it is navigation, not an edit affordance.
+- **The public share page gets no link.** `processShareTemplates` (`share_server.go`) renders only a shared note's `NoteType.CustomHeader`/CSS, never `CustomSummary`, and the share server serves no `/note?id=` route, so a link there would be dead and would expose the internal note ID. The share server marks its render with `shortcodes.WithPublicSharePage`, and `[excerpt]` drops `more` there (the ellipsis stays). `[link]` keeps its existing behaviour; this plan does not change it.
+- **No link inside a `[reload]` button face** (`withinReloadFace`): a button cannot contain a link.
 - **`UntrustedSource` does not change the output**, because the output is always escaped. A test pins this.
 
 ## 7. Scoping and authorization
 
 `[excerpt]` issues no query and opens no new data path:
 
-- It reads only `ctx.Meta` and a top-level column of `ctx.Entity`. The surface that rendered it has already loaded that entity in scope, through scoped `Find`, the scoped `QueryExecutor` (`[mrql]` items via `itemContext`), or `[using]`'s scoped target load.
+- It reads only `ctx.Meta` and a top-level column of `ctx.Entity`. The surface that rendered it has already loaded that entity in scope, through scoped `Find`, the scoped `QueryExecutor` (`[mrql]` items get their context from `contextFromItem` in `shortcodes/mrql_handler.go`), or `[using]`'s scoped target load.
 - Dot paths are refused, so preloaded associations are never read.
 - Credential fields go through `traversePropertyPath`'s `credentialFields` guard.
 - The link targets only the current entity.
@@ -146,14 +143,14 @@ A group-subtree-confined principal therefore sees an excerpt only of entities it
 
 - There are **zero DB queries** per call, so `[excerpt]` adds nothing to the MRQL query budget (`query_budget.go`).
 - **Bounded work.** Every step runs on at most 16 KiB, so a 50-card list parses at most about 800 KiB however large its Descriptions are. Neither comment stripping nor anything else touches the bytes past the cap.
-- **Scratch charge `12 × len(capped)`** is reserved before allocation (`chargeScratch`, which caps only limited meters, for example budgeted template-generation previews). It is derived per buffer as an upper estimate:
+- **Scratch charge `12 × len(capped)`** is reserved before allocation (`chargeScratch`, which caps only limited meters, for example budgeted template-generation previews). It is a per-buffer **heuristic, not an upper bound**: the goldmark AST share is the soft part. A node is about a hundred bytes, and pathological input (`*a*`, `- a\n`, `|a|` repeated) makes one every two to four bytes, far more than two bytes per source byte. The 16 KiB source cap is what bounds the work either way:
 
   | Buffer | Bytes per source byte |
   |---|---|
   | comment-stripped copy | 1 |
   | shortcode-deleted copy | 1 |
   | sentinel copy | 1 |
-  | goldmark AST nodes (segments point into the source; about one node per few bytes) | ≈2 |
+  | goldmark AST nodes (segments point into the source; heuristic, see above) | ≈2 |
   | rendered HTML buffer (worst case `"` → `&quot;`) | up to 6 |
   | tokenizer buffer and text builder | 1 |
 
@@ -182,8 +179,8 @@ It is a **built-in Go handler** in `shortcodes/`, not a plugin:
 3. **`shortcodes/parser.go`**: add `excerpt` to the opener alternation (`shortcodePattern`, line 29) and the closer alternation (line 72).
 4. **`shortcodes/builtin_docs.go`**: a new `BuiltinDoc` after `property`.
    - Name `excerpt`, Syntax `[excerpt words="30"]`, `IsBlock: BlockNo`.
-   - Description: "Renders a short plain-text preview of the entity's Description (or another string field, or a Meta string). Markdown, HTML, mentions and shortcodes are stripped, the text is cut at a word boundary with an ellipsis, and the result (including default=) is always HTML-escaped. Without more= it emits a bare value usable inside a quoted attribute. It never loads data: use it inside [using] or an [mrql] block to preview a related entity."
-   - Attrs as in the §3 table: `words` is Type `integer` with Default `30`, `field` has Default `Description`, no Enums.
+   - Description: "Renders a short plain-text preview of the entity's Description (or another string field, or a Meta string). Markdown, HTML, mentions and shortcodes are stripped, the text is cut at a word boundary with an ellipsis, and the result (including default=) is always HTML-escaped. **Without more=** it emits a bare value usable inside a quoted attribute; with more= a cut text is followed by a link, so more= does not belong in an attribute. A source over 16 KiB always ends with an ellipsis. It never loads data: use it inside [using] or an [mrql] block to preview a related entity."
+   - Attrs as in the §3 table: `words` is Type `number` (the type every other numeric attribute uses) with Default `30`, `field` has Default `Description`, no Enums.
    - Examples:
      - `[excerpt]`
      - `[excerpt words="20" more="Read more"]`
@@ -200,7 +197,7 @@ It is a **built-in Go handler** in `shortcodes/`, not a plugin:
    - The inline-closer error for `[/excerpt]` comes from `IsBlock` through `Known` (`lint.go:131`/`302`), with no extra code.
 6. **`shortcodes/lint_attr_context.go`**: add `case "excerpt": return attrs["more"] == ""` to `emitsBareValue`.
 7. **`server/template_handlers/template_filters/markdown_filter.go`**: comment only. If the converter options change, keep `shortcodes/excerpt_handler.go`'s `excerptMarkdown` and the parity test in step with them.
-8. **`server/share_server.go`**: comment only. Add `[excerpt]` to the list of pure shortcodes in the `processShareTemplates` doc comment.
+8. **`server/share_server.go`**: add `[excerpt]` to the list of pure shortcodes in the `processShareTemplates` doc comment, and mark the render with `shortcodes.WithPublicSharePage` (defined in `excerpt_handler.go`) so the `more` link is left out there (§6).
 
 **Frontend**
 
@@ -276,6 +273,7 @@ The template-generation prompt and `get_shortcode_docs` pick up the doc from `Bu
   - `shortcodes.Process` of `[excerpt words="200"]` against an entity whose Description is the input.
   - The visible text of `markDownFilter`'s output, extracted by a small tokenizer helper in the test with the same block-tag spacing and whitespace collapsing, then escaped.
 - They must be equal. A change to either goldmark configuration that alters visible text fails this test.
+- **The corpus holds no mentions and no shortcodes.** On a page, `render_mentions` and the shortcode pass run after `markdown2`, so neither is part of the comparison; adding one would fail for a reason unrelated to goldmark.
 
 **Lint** (`shortcodes/lint_test.go`)
 
@@ -293,38 +291,53 @@ The template-generation prompt and `get_shortcode_docs` pick up the doc from `Bu
 
 **Existing consistency tests** cover the new doc: `TestReferencePanelsCoverAllBuiltins`, `TestDocsSiteShortcodesPageCoversAllBuiltins` and `TestBuiltinDocMRQLExamplesParse`. They must fail before the docs and template changes (§10 steps 10–11) and pass after.
 
-**API: `server/api_tests/excerpt_shortcode_scope_test.go`** (new). It reuses `setupAuthEnv`, `buildScopingFixture`, `previewDescription`/`previewHTML` and `scopedRoleBearer`.
+**API: `server/api_tests/excerpt_shortcode_scope_test.go`** (new). It reuses `setupAuthEnv`, `buildScopingFixture`, `previewDescription`/`previewHTML`, `scopedRoleBearer`, `roleBearer`, `getHTML`, `signToken` and `renderShare`. Every query is `scope="global"`, so only the viewer's own subtree confines it, and each confinement check has an admin control that does see the outside note.
 
-- Set Descriptions on `nIn` (`in-subtree-text alpha beta`) and `nOut` (`out-subtree-text`).
-- Confined `RoleUser` (fixture bearer), previewing `nIn`:
-  - `[mrql query="type = note"][excerpt][/mrql]` contains `in-subtree-text` and not `out-subtree-text`.
-  - `[using query="type = note AND name = 'sf-nOut'"][excerpt][else]none[/using]` contains `none` and not `out-subtree-text`.
-- **Read-only link:** a `RoleGuest` confined to the fixture root (`scopedRoleBearer(t, tc, models.RoleGuest, root, "reader")`) previews `nIn` with `[excerpt words="1" more="Read more"]`. The response is 200, and the HTML contains `in-subtree-text…` and `<a href="/note?id=<nIn>"`. This principal does not have `CanWrite()`, so the handler sets `ForceReadOnly`; the test proves the link survives it.
+- Descriptions on `nIn` (`in-subtree-text alpha beta`) and `nOut` (`out-subtree-text gamma delta`).
+- Description preview, confined `RoleUser`: `[mrql …][excerpt][/mrql]` shows `nIn` only; `[using query='type = note AND name = "sf-nOut"' …][excerpt][else]none[/using]` renders `none`.
+- **Read-only link:** a `RoleGuest` confined to the fixture root opens `/group?id=<child>` (category `CustomHeader` with `[mrql …][excerpt words="2" more="Read more"][/mrql]`) and `/notes` (note type `CustomSummary` with the same excerpt). Both contain `in-subtree-text alpha… <a href="/note?id=<nIn>" class="underline" aria-label="Read more: sf-nIn">Read more</a>` and no `out-subtree-text`. The guest lacks `CanWrite()`, so the page sets `ForceReadOnly`; the link survives it. (The plan's `previewDescription` route is gated at the edit capability, so a guest cannot call it.)
+- `/v1/shortcodes/deferred` and `/v1/mrql?render=1` (`CustomMRQLResult` with `[excerpt]`) for the guest show `nIn` only.
+- The share page renders `first…` with no link, and the same note's own page on the main server keeps the link.
 
-**E2E: `e2e/tests/shortcodes/excerpt-shortcode.spec.ts`** (new)
+**E2E: `e2e/tests/110-excerpt-shortcode.spec.ts`** and **`e2e/tests/accessibility/excerpt-shortcode-a11y.spec.ts`** (new), sharing `e2e/helpers/excerpt-fixture.ts`
 
-- Create a note type with `CustomSummary: '<p data-probe="ex">[excerpt words="4" more="Read more"]</p>'`.
-- Create a note of that type with the Description `**Alpha** beta <em>gamma</em> delta epsilon <script>window.__exc=1</script>`.
-- In that note's card on `/notes`:
+- A note type with `CustomSummary: '<p data-probe="ex">[excerpt words="4" more="Read more"]</p>'`.
+- A note of that type with the Description `**Alpha** beta <em>gamma</em> delta epsilon <script>window.__exc=1</script> zeta`.
+- In that note's card on `/notes?noteTypeId=…`:
   - The probe has no `strong`, `em` or `script` descendants.
-  - The text starts with `Alpha beta gamma delta…`.
+  - The text contains `Alpha beta gamma delta…`.
   - `window.__exc` is undefined.
-  - The link has the accessible name `Read more: <note name>` and `href` `/note?id=<id>`.
-- A second note with a two-word Description shows no link.
-- `checkA11y()` passes on `/notes`.
-- A group category `CustomHeader` with `[mrql query="type = note AND id = <id>"][excerpt words="2"][/mrql]` renders `Alpha beta…` on the group page.
-
-Run `go test --tags 'json1 fts5' ./shortcodes/... ./server/...`, then `cd e2e && npm run test:with-server -- excerpt` and `npm run test:with-server:a11y`.
+  - The link has the accessible name `Read more: <note name>`, text `Read more` and `href` `/note?id=<id>`, and following it opens the note.
+- A second note with a two-word Description shows its text and no link.
+- A group category `CustomHeader` with `[mrql query="type = note AND id = <id>" scope="global"]<p>[excerpt words="2"]</p>[/mrql]` renders `Alpha beta…` on the group page.
+- `checkA11y()` passes on the notes list and on the group page.
 
 ## 12. Success criterion
 
-- In a note type's `CustomSummary`, `[excerpt words="25" more="Read more"]` shows a single-line, escaped, word-truncated preview of each note's text on every card surface: lists, panels, MRQL cards and the share page.
+- In a note type's `CustomSummary`, `[excerpt words="25" more="Read more"]` shows a single-line, escaped, word-truncated preview of each note's text on every card surface: lists, panels and MRQL cards. (The share page renders only `CustomHeader`; there the excerpt renders without its link.)
 - No Markdown syntax, HTML, mention markers, shortcode source or comment text leaks into it. Mention names appear verbatim.
 - The "Read more" link appears for every viewer who can see the card, read-only principals included. It has a distinct accessible name and passes axe.
 - It issues zero DB queries and does bounded work per card: at most 16 KiB processed, and a scratch charge reserved before allocation.
 - A subtree-confined principal never sees an excerpt of an out-of-subtree entity.
 - Lint, autocomplete, hover docs, the reference panels, docs-site and the skill reference all document it, and the goldmark parity test ties it to `markdown2`.
 - All the tests above pass.
+
+
+## Implementation checklist
+
+- [x] Plan moved to `docs/plans/`, banner removed.
+- [x] `mentions.ReplaceAll` with tests (`mentions/mentions_test.go`).
+- [x] `shortcodes/excerpt_handler.go`: handler, pipeline, `lintExcerpt`, `WithPublicSharePage`.
+- [x] `shortcodes/processor.go` dispatch, `shortcodes/parser.go` opener/closer alternations.
+- [x] `shortcodes/builtin_docs.go` entry; `shortcodes/lint.go` near-miss name and `excerpt` case; `shortcodes/lint_attr_context.go` `emitsBareValue`.
+- [x] `server/share_server.go` (comment and `WithPublicSharePage`); `markdown_filter.go` cross-reference comment.
+- [x] `src/components/shortcodeCompletion.js` Meta-path completion for `path=`, with a vitest (`shortcodeCompletion-excerpt.test.ts`).
+- [x] Reference panels in `createCategory.tpl`, `createResourceCategory.tpl`, `createNoteType.tpl`.
+- [x] `docs-site/docs/features/shortcodes.md` (table row, section, `[mrql]` body row) and `custom-templates.md`.
+- [x] `.claude/skills/mahresources-category-designer/references/shortcodes.md` subsection and heuristic.
+- [x] Unit tests (`excerpt_handler_test.go`), lint tests (`excerpt_lint_test.go`), parity test (`markdown_excerpt_parity_test.go`).
+- [x] HTTP scope tests (`server/api_tests/excerpt_shortcode_scope_test.go`).
+- [x] E2E and axe specs (`e2e/tests/110-excerpt-shortcode.spec.ts`, `e2e/tests/accessibility/excerpt-shortcode-a11y.spec.ts`).
 
 ---
 
@@ -347,3 +360,37 @@ Most API claims check out against the code: traversePropertyPath (property_handl
 7. Minor: "Credential fields (`ShareToken`, …)" should cite credential_fields.go. §6 says the output is "valid inside a quoted attribute", which is true only without `more`. The lint change to emitsBareValue covers this; mirror that condition in the BuiltinDoc description too.
 
 Usefulness is high. Every note, resource and MRQL card author wants a clean, bounded preview. [property path="Description"] leaks Markdown, mention markers and shortcode source, and has no length bound. Dropping blocks and search highlighting was the right call. Usefulness is held just below 9 by a few edge-only gaps: no "start at heading" or "skip first paragraph" control, and no CJK-aware word counting beyond the rune cap. These are acceptable omissions.
+
+## Review
+
+### Deviations from the plan
+
+- **`aria-label`, not an `sr-only` span**, on the `more` link. `docs/lessons.md` ("Tailwind's `.sr-only` is `position: absolute`…") records that a visually hidden span escapes a scroll container and widens the page; cards and MRQL results sit in such containers. The accessible name is the same (`Read more: <Name>`), it still starts with the visible label (WCAG 2.5.3), and axe passes on the notes list and the group page.
+- **No link on the public share page** (`WithPublicSharePage`), resolving evaluator point 2 by suppression rather than by documenting a dead link. `[link]` is unchanged.
+- **No link inside a `[reload]` button face** (`withinReloadFace`), and lint warns about `more=` there. A button cannot contain a link; without this the renderer would emit invalid interactive nesting. Not in the plan.
+- **`mentions.ReplaceAll`** (new, in `mentions/`) instead of replacing `ParseAll` results by `OriginalMatch` text. Text replacement could substitute a valid marker's text found inside a marker `ParseAll` skipped (`@[group:0:@[note:1:x]`); `TestReplaceAll_MarkerInsideAnInvalidOne` pins it.
+- **The shortcode deletion runs `parseWithBlocksM(nil, …)`, not under the render's meter.** The meter's token and attribute caps apply to template source; under a budgeted meter a Description's own text (one token with over 1000 attributes fits in 16 KiB) could otherwise end a whole budgeted render. The work is bounded by the 16 KiB cap and charged through `chargeScratch` first.
+- **Stray closers are deleted too** (`[/mrql]` with no opener), not only top-level spans, so no closing tag text reaches the excerpt.
+- **`ctx.EntityID == 0` omits the link explicitly**: `resolveLinkURL("self")` does not check the ID, and returned `/note?id=0`.
+- **A blank `more=` (whitespace only) is no label**: no link, and lint treats the excerpt as a bare value.
+- **The punctuation trim never empties the text**: `[excerpt words="1"]` on `— dash` renders `—…`, not the default.
+- **`words` is documented as Type `number`**, the type every other numeric attribute in `BuiltinDocs` uses; the plan said `integer`.
+- **The read-only HTTP test uses display pages, not `previewDescription`.** That route is mounted at the edit capability, so a guest gets 403. The guest test reads `/group?id=` (header) and `/notes` (cards) instead, which set `ForceReadOnly` for a principal without `CanWrite()`; deferred bodies and the MRQL render API are covered as well.
+- **E2E spec location**: `e2e/tests/110-excerpt-shortcode.spec.ts`, as the lane assignment required, with a shared `e2e/helpers/excerpt-fixture.ts`.
+- **The `BuiltinDoc` type comment's list of names** ("meta, datetime, … comment") was not extended, to keep this lane's edit of `builtin_docs.go` to one contiguous block while four other lanes edit the same file; add `excerpt` there when merging.
+
+### Evaluator points
+
+1. *`isValidFieldName` does not exist; `itemContext` names nothing.* Resolved: §5 now says there is no validator, only "no `.`" plus `traversePropertyPath` on the single segment (missing, unexported and withheld credential fields fail there); §7 cites `contextFromItem` in `mrql_handler.go`.
+2. *Share-page claims overreach.* Resolved by suppression: `processShareTemplates` sets `WithPublicSharePage` and `[excerpt]` drops `more` there. §6 and §12 no longer promise the share page; docs say the link is left out there. `TestExcerptShortcode_SharePageHasNoMoreLink` checks the share page has no link while the same note's main-server page does; a unit test covers the context flag.
+3. *Scratch derivation hand-waved.* Resolved: §8 and the code comment call 12× a heuristic, not a bound, name the node-heavy inputs, and say the 16 KiB cap is what bounds the work. No machinery added.
+4. *Sentinel delimiters invisible; unpaired restore unspecified.* Resolved: §4 writes `"\uE000" + i + "\uE001"`, and says an unpaired or out-of-range opener/closer is stripped with its digits kept as text. `TestExcerptRestoreMentionsStripsBrokenSentinels` pins each case.
+5. *`capped` forces an ellipsis silently.* Resolved: the BuiltinDoc, the docs-site Truncation section and the skill reference say a source over 16 KiB always ends with `…`. `TestExcerptSourceCap` asserts it directly, including a capped source whose visible text is two words.
+6. *Parity corpus must exclude mentions.* Resolved: §11 and the test's comment say the corpus holds no mentions and no shortcodes, and why.
+7. *Cite `credential_fields.go`; the attribute claim needs "without more".* Resolved: §3 cites `credentialFields` in `shortcodes/credential_fields.go`; §6, the BuiltinDoc and the docs say the bare value is attribute-safe only without `more`, matching `emitsBareValue`.
+
+### Not verified
+
+- **Postgres**: no Postgres-specific test was added. `[excerpt]` issues no query; the entities it reads come from the existing scoped executors, whose Postgres behaviour other suites cover. `server/api_tests` under `--tags 'json1 fts5 postgres'` still runs these tests on SQLite (`SetupTestEnv`), so running them with the tag (done, passing) shows only that they compile and pass there.
+- **The full E2E suite** was not run (shared machine); the new specs plus the nearest existing shortcode, authoring-a11y and note-sharing specs were.
+- **`go vet ./...`** reports one pre-existing finding in `application_context/job_download_progress_test.go` (a lock copy), a file this branch does not touch; every package this branch changes vets clean.

@@ -29,7 +29,7 @@ type Shortcode struct {
 // value that merely starts with a name ("[similarity]", "max-w-[calc(100%)]")
 // stays literal text.
 var shortcodePattern = regexp.MustCompile(
-	`\[(meta|datetime|pills|property|mrql|conditional|link|each|item|partial|lazy|details|reload|autorefresh|using|similar|calc|calendar|adjacent|inspect|plugin:[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*)(?:\s((?:"[^"]*"|'[^']*'|[^\]])*))?\]`,
+	`\[(meta|datetime|pills|property|mrql|conditional|link|each|item|partial|lazy|details|reload|autorefresh|using|similar|calc|calendar|adjacent|inspect|excerpt|plugin:[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*)(?:\s((?:"[^"]*"|'[^']*'|[^\]])*))?\]`,
 )
 
 // attrPattern matches key="value", key='value', or key=value pairs.
@@ -72,7 +72,7 @@ func Parse(input string) []Shortcode {
 
 // closingTagPattern matches [/name] closing tags.
 var closingTagPattern = regexp.MustCompile(
-	`\[/(meta|datetime|pills|property|mrql|conditional|link|each|item|partial|lazy|details|reload|autorefresh|using|similar|calc|calendar|adjacent|inspect|plugin:[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*)\]`,
+	`\[/(meta|datetime|pills|property|mrql|conditional|link|each|item|partial|lazy|details|reload|autorefresh|using|similar|calc|calendar|adjacent|inspect|excerpt|plugin:[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*)\]`,
 )
 
 // token represents a parsed opening or closing tag.

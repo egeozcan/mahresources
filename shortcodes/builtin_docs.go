@@ -133,6 +133,26 @@ func BuiltinDocs() []BuiltinDoc {
 			},
 		},
 		{
+			Name:        "excerpt",
+			Syntax:      `[excerpt words="30"]`,
+			Description: "Renders a short plain-text preview of the entity's Description, another string field (field=) or a Meta string (path=). Markdown, HTML, mentions (their names are kept), template comments and shortcodes are stripped without running anything; the text becomes one line, is cut to words= words (and at most 12 characters per word) with an ellipsis, and the result, default= included, is always HTML-escaped. A source longer than 16 KiB is read only to that point, so its excerpt always ends with an ellipsis. Without more= it emits a bare value, usable inside a quoted attribute; with more= a cut text is followed by a link to the entity's page, so do not use more= inside an attribute. It never loads data: use it inside [using] or an [mrql] block to preview a related entity.",
+			IsBlock:     BlockNo,
+			Attrs: []DocAttr{
+				{Name: "words", Type: "number", Default: "30", Description: "Maximum number of words, a whole number from 1 to 200. Anything else falls back to 30; above 200 is clamped to 200."},
+				{Name: "field", Type: "string", Default: "Description", Description: "One string field of this entity, e.g. Name or OriginalName. No dot paths: preview a related entity through [using]. Credential fields stay empty unless the reader may see them, as with [property]. Cannot be combined with path."},
+				{Name: "path", Type: "string", Description: "Dot-notation path to a string in the entity Meta, e.g. recipe.intro. Any other JSON type renders the default. Cannot be combined with field."},
+				{Name: "more", Type: "string", Description: "Visible label of a link to the entity's detail page, shown only when the text was cut. Its accessible name adds the entity's name (\"Read more: Sunset\"). Left out inside a [reload] button face and on the public share page, which serves no detail pages."},
+				{Name: "default", Type: "string", Description: "Text rendered, HTML-escaped, when there is no text to preview, including a source that is empty once stripped."},
+			},
+			Examples: []DocExample{
+				{Title: "Description preview", Code: `[excerpt]`},
+				{Title: "With a link", Code: `[excerpt words="20" more="Read more"]`},
+				{Title: "A Meta string", Code: `[excerpt path="recipe.intro" words="15" default="No intro"]`},
+				{Title: "Related notes", Code: `[mrql query="type = note ORDER BY updated DESC" limit="5"]<p><b>[property path="Name"]</b> [excerpt words="12"]</p>[/mrql]`},
+				{Title: "Inside an attribute", Code: `<span title="[excerpt words='25']">[property path="Name"]</span>`, Notes: "Only without more=, which adds a link."},
+			},
+		},
+		{
 			Name:        "calc",
 			Syntax:      `[calc expr="..."]`,
 			Description: "Computes a number from this entity's Meta (meta.<path>), its numeric fields (property.<Path>) and, at the top level of an [each] block, the current element (item or item.<path>), with + - * / % and parentheses and the functions min, max, abs, round(x[, digits]) and coalesce(a, b, …). It renders the bare number, so it works in text, table cells and attributes such as <meter value=\"…\">. A Meta string counts only when it is wholly a decimal number of at most 64 bytes; a missing or non-numeric operand, division by zero or overflow gives no value, which renders the default unless coalesce catches it. A syntax error, an unknown name or a bad decimals/format renders an error marker. It never runs a query. Only Meta keys of ASCII letters, digits and _ that do not start with a digit can be referenced. Limits: 512 bytes, 128 tokens, 32 levels of nesting, 32 references.",

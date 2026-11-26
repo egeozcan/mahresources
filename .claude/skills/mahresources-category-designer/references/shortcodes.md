@@ -102,6 +102,30 @@ Notes:
 
 Use `[property]` when the data is not in `Meta`.
 
+### `[excerpt]`
+
+Use for a short preview of long text on cards, panels, hover cards and `[mrql]`/`CustomMRQLResult` items: a note's gist, a resource's description, a Meta summary string. Prefer it to `[property path="Description"]` on any card, which prints the whole Markdown source with mention markers and has no length bound.
+
+Attrs:
+
+- `words` -- 1 to 200, default 30. Also cut at 12 characters per word (CJK, URLs).
+- `field` -- one string field of this entity, default `Description`. No dot paths.
+- `path` -- a Meta string instead (not with `field`).
+- `more="Read more"` -- link to the entity's page, only when the text was cut. Its accessible name gets the entity's name appended.
+- `default="…"` -- escaped text when there is nothing to show.
+
+Rules:
+
+- Markdown, HTML, mentions (kept as their names), template comments and shortcodes are stripped; embedded shortcodes never run. Output is one escaped line ending in `…` when cut, or always when the source exceeds 16 KiB.
+- Without `more` it is a bare value, usable in a quoted attribute (`title="[excerpt words='25']"`); never put a `more` excerpt in an attribute.
+- It never loads data: preview a related entity inside `[using]` or an `[mrql]` block.
+- No `more` link inside a `[reload]` face or on the public share page.
+
+```html
+<p class="text-sm text-stone-600">[excerpt words="25" more="Read more"]</p>
+[mrql query="type = note ORDER BY updated DESC" limit="5"]<p><a href="[link]">[property path="Name"]</a>: [excerpt words="12"]</p>[/mrql]
+```
+
 ### `[calc]`
 
 Use for a number derived from other fields: a line total, a discounted price, a remaining budget, megapixels. Never store a redundant field for these; it goes stale on the next edit.
@@ -417,6 +441,7 @@ Use this order of preference:
 1. `[meta]` for schema-aware field rendering.
 2. `[property]` for built-in entity fields.
    - `[calc]` for numbers derived from either, instead of storing them.
+   - `[excerpt]` for a bounded preview of a Description or other long text on cards, instead of `[property path="Description"]`.
 3. `data-views` for presentation widgets.
 4. `meta-editors` for frequent inline edits.
 5. `[using]` for fields of one related entity (owner, Meta-referenced ID); `[mrql]` for related collections and rollups.

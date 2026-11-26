@@ -182,3 +182,28 @@ func TestGroupMentionsByType_Integration(t *testing.T) {
 	assert.Equal(t, []uint{2}, result["note"])
 	assert.Equal(t, []uint{4}, result["resource"])
 }
+
+func TestReplaceAll(t *testing.T) {
+	var seen []Mention
+	got := ReplaceAll("a @[Group:1:One] b @[note:0:Zero] c @[note:2:Two: x] @[group:1:One]", func(m Mention) string {
+		seen = append(seen, m)
+		return "<" + m.Name + ">"
+	})
+	assert.Equal(t, "a <One> b @[note:0:Zero] c <Two: x> <One>", got)
+	assert.Equal(t, ParseAll("a @[Group:1:One] b @[note:0:Zero] c @[note:2:Two: x] @[group:1:One]"), seen)
+}
+
+func TestReplaceAll_MarkerInsideAnInvalidOne(t *testing.T) {
+	// The invalid marker's name swallows the text of a valid one up to its
+	// "]". ParseAll does not report that inner text, and ReplaceAll must not
+	// replace it either: a later, separate marker with the same text is the
+	// one ParseAll reported.
+	text := "@[group:0:@[note:1:x] then @[note:1:x]"
+	got := ReplaceAll(text, func(m Mention) string { return "N" })
+	assert.Equal(t, "@[group:0:@[note:1:x] then N", got)
+	assert.Len(t, ParseAll(text), 1)
+}
+
+func TestReplaceAll_NoMarkers(t *testing.T) {
+	assert.Equal(t, "plain", ReplaceAll("plain", func(Mention) string { t.Fatal("called"); return "" }))
+}
