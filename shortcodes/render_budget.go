@@ -55,9 +55,14 @@ type renderMeterKey struct{}
 // handler that returns a plain string still ends the whole render. A nil
 // *renderMeter is valid and checks nothing (handlers called directly).
 type renderMeter struct {
-	ctx    context.Context
-	budget RenderBudget
+	ctx     context.Context
+	budget  RenderBudget
+	cssMode bool
+	*renderUsage
+}
 
+// renderUsage is shared by the markup and stylesheet views of a render meter.
+type renderUsage struct {
 	mu     sync.Mutex
 	out    int64
 	parsed int64
@@ -151,7 +156,8 @@ func meterFrom(ctx context.Context) *renderMeter {
 
 func newRenderMeter(ctx context.Context) *renderMeter {
 	b, _ := RenderBudgetFrom(ctx)
-	return &renderMeter{ctx: ctx, budget: b}
+	cssMode := ctx != nil && ctx.Value(cssModeKey{}) != nil
+	return &renderMeter{ctx: ctx, budget: b, cssMode: cssMode, renderUsage: &renderUsage{}}
 }
 
 // limited reports whether a byte budget applies (not just cancellation).

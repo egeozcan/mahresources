@@ -19,6 +19,7 @@ type Shortcode struct {
 	End          int               // byte offset end (exclusive)
 	InnerContent string            // text between opening and closing tags (block shortcodes only)
 	IsBlock      bool              // true when this is a paired [name]...[/name] block
+	inStyle      bool              // the opener is inside a stylesheet embedded in markup
 }
 
 // shortcodePattern matches [name ...attrs] where name is "meta", "property", "mrql",
@@ -84,6 +85,7 @@ type token struct {
 	end     int
 	closing bool
 	matched bool
+	inStyle bool
 }
 
 // matchTokens scans input for opening and closing shortcode tags, sorts them by
@@ -114,6 +116,11 @@ func matchTokensM(m *renderMeter, input string) []token {
 		tokens = make([]token, 0, len(opens)+len(closes))
 	}
 
+	cssMode := m != nil && m.cssMode
+	var styleSpans [][2]int
+	if !cssMode && len(opens) > 0 && strings.Contains(input, "<") {
+		styleSpans = styleElementSpans(input)
+	}
 	for _, mm := range opens {
 		if !m.tick() {
 			return nil
@@ -124,17 +131,24 @@ func matchTokensM(m *renderMeter, input string) []token {
 		if mm[4] >= 0 && mm[5] >= 0 {
 			attrStr = input[mm[4]:mm[5]]
 		}
-		attrs, over := parseAttrsReserve(strings.TrimSpace(attrStr), attrCap, m.reserveAttrs)
+		attrStr = strings.TrimSpace(attrStr)
+		inStyle := insideSortedSpans(fullStart, styleSpans)
+		if (cssMode || inStyle) && attrStr == "" && fullStart > 0 &&
+			cssSelectorChar(input[fullStart-1]) && !strings.HasPrefix(name, "plugin:") {
+			continue
+		}
+		attrs, over := parseAttrsReserve(attrStr, attrCap, m.reserveAttrs)
 		if over {
 			m.fail("more than %d attributes on one shortcode, or past the aggregate allowance", attrCap)
 			return nil
 		}
 		tokens = append(tokens, token{
-			name:  name,
-			attrs: attrs,
-			raw:   input[fullStart:fullEnd],
-			start: fullStart,
-			end:   fullEnd,
+			name:    name,
+			attrs:   attrs,
+			raw:     input[fullStart:fullEnd],
+			start:   fullStart,
+			end:     fullEnd,
+			inStyle: inStyle,
 		})
 	}
 
@@ -240,11 +254,12 @@ func parseWithBlocksM(m *renderMeter, input string) []Shortcode {
 
 			if closeIdx < 0 {
 				result = append(result, Shortcode{
-					Name:  tokens[i].name,
-					Attrs: tokens[i].attrs,
-					Raw:   tokens[i].raw,
-					Start: tokens[i].start,
-					End:   tokens[i].end,
+					Name:    tokens[i].name,
+					Attrs:   tokens[i].attrs,
+					Raw:     tokens[i].raw,
+					Start:   tokens[i].start,
+					End:     tokens[i].end,
+					inStyle: tokens[i].inStyle,
 				})
 				continue
 			}
@@ -264,15 +279,17 @@ func parseWithBlocksM(m *renderMeter, input string) []Shortcode {
 				End:          tokens[closeIdx].end,
 				InnerContent: inner,
 				IsBlock:      true,
+				inStyle:      tokens[i].inStyle,
 			})
 			skipUntil = tokens[closeIdx].end
 		} else {
 			result = append(result, Shortcode{
-				Name:  tokens[i].name,
-				Attrs: tokens[i].attrs,
-				Raw:   tokens[i].raw,
-				Start: tokens[i].start,
-				End:   tokens[i].end,
+				Name:    tokens[i].name,
+				Attrs:   tokens[i].attrs,
+				Raw:     tokens[i].raw,
+				Start:   tokens[i].start,
+				End:     tokens[i].end,
+				inStyle: tokens[i].inStyle,
 			})
 		}
 	}

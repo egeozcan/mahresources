@@ -133,7 +133,7 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 	}
 	renderCtx := shortcodes.WithActionResolver(reqCtx, BuildActionResolver(actionPM, actionAccess))
 	result := shortcodes.Process(renderCtx, content, *metaCtx, pluginRenderer, executor)
-	result = WrapReloadableRegion(result, content, *metaCtx, appCtx)
+	result = WrapReloadableRegion(renderCtx, result, content, *metaCtx, appCtx)
 	if _, writeErr := writer.WriteString(result); writeErr != nil {
 		return ctx.Error(fmt.Sprintf("process_shortcodes: write error: %s", writeErr), nil)
 	}
@@ -157,12 +157,13 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 // walks the DOM at click time, so those resolve to that host rather than here.
 // Carrier slots (CustomListHeader) are skipped because the endpoint cannot load a
 // Category by (type, id); a [reload] there falls back to reloading the page.
-func WrapReloadableRegion(rendered, raw string, metaCtx shortcodes.MetaShortcodeContext, appCtx PageRenderContext) string {
+func WrapReloadableRegion(reqCtx context.Context, rendered, raw string, metaCtx shortcodes.MetaShortcodeContext, appCtx PageRenderContext) string {
 	appCtx = pageRenderContext(appCtx)
 	if appCtx == nil || !shortcodes.ContainsReloadButton(rendered) || !shortcodes.IsDeferrableEntity(metaCtx) {
 		return rendered
 	}
-	token := deferredtoken.SealWithTrust(appCtx.DeferredSigningKey(), metaCtx.EntityType, metaCtx.EntityID, raw, metaCtx.UntrustedSource)
+	seal := BuildDeferredSigner(reqCtx, appCtx.DeferredSigningKey())
+	token := seal(metaCtx.EntityType, metaCtx.EntityID, raw, metaCtx.UntrustedSource)
 	if token == "" {
 		// Sealing only fails catastrophically (a broken CSPRNG), but a wrapper
 		// with no token is one the frontend would skip anyway. Leave the slot as
@@ -170,6 +171,17 @@ func WrapReloadableRegion(rendered, raw string, metaCtx shortcodes.MetaShortcode
 		return rendered
 	}
 	return `<div class="shortcode-region" data-shortcode-region="` + html.EscapeString(token) + `">` + rendered + `</div>`
+}
+
+// BuildDeferredSigner binds a render's surface restriction to its sealed
+// bodies. Source trust is supplied per body, since slots can differ in trust.
+func BuildDeferredSigner(reqCtx context.Context, key []byte) shortcodes.DeferredSigner {
+	tooltip := shortcodes.IsWithinTooltip(reqCtx)
+	return func(entityType string, entityID uint, body string, untrusted bool) string {
+		return deferredtoken.SealWithContext(key, entityType, entityID, body, deferredtoken.RenderContext{
+			Untrusted: untrusted, WithinTooltip: tooltip,
+		})
+	}
 }
 
 // buildPageRenderContext wraps reqCtx with the per-page render helpers shared by
@@ -200,9 +212,7 @@ func buildPageRenderContext(reqCtx context.Context, appCtx PageRenderContext) co
 	reqCtx = shortcodes.WithPartialResolver(reqCtx, BuildPartialResolver(partials))
 	reqCtx = shortcodes.WithQueryBudget(reqCtx, pageQueryBudget(appCtx))
 	if appCtx != nil {
-		seal := func(entityType string, entityID uint, body string, untrusted bool) string {
-			return deferredtoken.SealWithTrust(appCtx.DeferredSigningKey(), entityType, entityID, body, untrusted)
-		}
+		seal := BuildDeferredSigner(reqCtx, appCtx.DeferredSigningKey())
 		reqCtx = shortcodes.WithDeferredSigner(reqCtx, seal)
 		reqCtx = shortcodes.WithRefreshSigner(reqCtx, seal)
 		// Page contexts are bound with WithPrincipal, so [adjacent]'s reads

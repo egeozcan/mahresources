@@ -266,7 +266,7 @@ func lintText(input string, opts LintOptions) []LintIssue {
 	// limited mode): the match collection is bounded before it is retained and
 	// the collection loops consult the context. A source past a cap is "too
 	// complex to check", through the lint's own work object.
-	lm := &renderMeter{ctx: opts.Context, budget: RenderBudget{ParsedSourceBytes: 1 << 62}}
+	lm := &renderMeter{ctx: opts.Context, budget: RenderBudget{ParsedSourceBytes: 1 << 62}, cssMode: opts.CSSMode, renderUsage: &renderUsage{}}
 	tokens := matchTokensM(lm, input)
 	if lm.Err() != nil {
 		w.fail()

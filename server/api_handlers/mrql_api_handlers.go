@@ -16,7 +16,6 @@ import (
 
 	"mahresources/application_context"
 	"mahresources/constants"
-	"mahresources/deferredtoken"
 	"mahresources/models"
 	"mahresources/mrql"
 	"mahresources/plugin_system"
@@ -251,9 +250,7 @@ func buildMRQLAPIRenderContext(parent context.Context, appCtx mrqlRenderContext,
 	// viewer rather than reading unscoped.
 	reqCtx = shortcodes.WithRelationLister(reqCtx, template_filters.BuildRelationLister(appCtx))
 	if deferredSigner {
-		seal := func(entityType string, entityID uint, body string, untrusted bool) string {
-			return deferredtoken.SealWithTrust(appCtx.DeferredSigningKey(), entityType, entityID, body, untrusted)
-		}
+		seal := template_filters.BuildDeferredSigner(reqCtx, appCtx.DeferredSigningKey())
 		reqCtx = shortcodes.WithDeferredSigner(reqCtx, seal)
 		reqCtx = shortcodes.WithRefreshSigner(reqCtx, seal)
 	}
@@ -337,7 +334,7 @@ func mrqlCategoryCSS(reqCtx context.Context, seen map[string]bool, entityType st
 		return ""
 	}
 	seen[key] = true
-	return "<style data-mr-custom-css=\"" + key + "\">" + shortcodes.Process(reqCtx, css, mctx, pluginRenderer, executor) + "</style>"
+	return "<style data-mr-custom-css=\"" + key + "\">" + shortcodes.Process(shortcodes.WithinCSS(reqCtx), css, mctx, pluginRenderer, executor) + "</style>"
 }
 
 // renderMRQLCustomTemplates processes CustomMRQLResult templates for each result entity

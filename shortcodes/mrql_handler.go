@@ -251,6 +251,7 @@ func renderResultCSS(reqCtx context.Context, result *QueryResult, parent MetaSho
 	if seen == nil {
 		seen = map[string]bool{}
 	}
+	cssCtx := WithinCSS(WithActionResolver(reqCtx, nil))
 	m := meterFrom(reqCtx)
 	var b strings.Builder
 	emit := func(items []QueryResultItem) {
@@ -281,7 +282,7 @@ func renderResultCSS(reqCtx context.Context, result *QueryResult, parent MetaSho
 				RootGroupName: it.RootGroupName, RootCategoryName: it.RootCategoryName,
 				UntrustedSource: parent.UntrustedSource,
 			}
-			css := processWithDepth(reqCtx, it.CustomCSS, childCtx, renderer, executor, depth+1)
+			css := processWithDepth(cssCtx, it.CustomCSS, childCtx, renderer, executor, depth+1)
 			wrapped := `<style data-mr-custom-css="` + key + `">` + css + `</style>`
 			if !m.chargeOut(int64(len(wrapped))) {
 				return

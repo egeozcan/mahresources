@@ -52,6 +52,7 @@ func (node *customCSSNode) Execute(ctx *pongo2.ExecutionContext, writer pongo2.T
 	appCtx := pageRenderContext(ctx.Public["_appContext"])
 	reqCtx := customCSSReqCtx(ctx)
 	pluginRenderer := customCSSPluginRenderer(ctx, reqCtx)
+	cssCtx := shortcodes.WithinCSS(reqCtx)
 	var executor shortcodes.QueryExecutor
 	// metaResolver stays a nil INTERFACE when there is no context. Assigning a
 	// nil *MahresourcesContext to it would produce a non-nil interface holding a
@@ -76,7 +77,7 @@ func (node *customCSSNode) Execute(ctx *pongo2.ExecutionContext, writer pongo2.T
 
 		rendered := css
 		if metaCtx := buildMetaContext(e, metaResolver); metaCtx != nil {
-			rendered = shortcodes.Process(reqCtx, css, *metaCtx, pluginRenderer, executor)
+			rendered = shortcodes.Process(cssCtx, css, *metaCtx, pluginRenderer, executor)
 		}
 		if _, werr := writer.WriteString("<style data-mr-custom-css=\"" + key + "\">" + rendered + "</style>"); werr != nil {
 			return ctx.Error(fmt.Sprintf("custom_css: write error: %s", werr), nil)

@@ -17,6 +17,8 @@ Detail-page descriptions process shortcodes. List-preview descriptions do not.
 
 ## Core Syntax
 
+In stylesheets, a bare built-in opener immediately after an ASCII letter, digit, `-`, `_`, `*`, `]`, or `|` stays literal (e.g. `form[action]` and `.w[tabs]`). An attributed shortcode still expands. `[comment]` is stripped before that rule applies.
+
 Built-in:
 
 ```text
@@ -255,6 +257,7 @@ A **button that runs one registered plugin action (`mah.action`) on this entity*
 - `plugin` and `name` (the action id) are required. `label` replaces the button text (and accessible name); `confirm` replaces the action's confirmation question, and `confirm=""` keeps it (a template can never remove one).
 - `param-<name>="…"` sets a parameter the action declares: `number` takes a number, `boolean` `true`/`false`, `select` one of its options, text types the value as written. `entity_ref` and `info` cannot be set; an `entity_ref` that defaults to the trigger gets this entity. A bad value renders a `⚠ action` marker naming the parameter. An action whose required parameter is a bulk selection cannot run from a template.
 - It renders an HTML comment, not a button, for viewers who cannot run the action (guests, read-only roles, group-limited accounts the plugin is not opened to), for entities the action's `entity` or `filters` exclude, for a missing or disabled plugin, in Descriptions under login, on share pages, in the live preview and in hover cards. So the live preview never shows the button: check it on the real page. Placement does not matter.
+- Category stylesheets, including inline `[mrql]` result CSS, render the unavailable comment for an attributed `[action]`. Hover cards still omit the button when a deferred body loads or refreshes.
 - After a successful run it refreshes the `[autorefresh]` blocks for this entity and the one it sits in; the page is not reloaded. Put the content the action changes in `[autorefresh]`, with the button **first** in that block (or outside it) so focus returns to it.
 - Name an action that exists in an enabled plugin and say so: the bundled `project-management` (`pm-set-status`, `pm-set-priority`, `pm-open-board`, …) and `fal-ai` (`upscale`, `colorize`, …) plugins register actions. The linter warns about an action that does not exist.
 
