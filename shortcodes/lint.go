@@ -140,7 +140,7 @@ func KnownFromBuiltins() KnownShortcodes {
 var conditionalOperators = []string{"eq", "neq", "gt", "lt", "gte", "lte", "in", "contains", "matches", "empty", "not-empty"}
 
 // builtinBaseNames is used for near-miss detection of misspelled shortcodes.
-var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "calc", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "similar", "calendar", "inspect", "adjacent", "comment"}
+var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "calc", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "similar", "calendar", "inspect", "adjacent", "excerpt", "comment"}
 
 // looseBracketPattern finds bracket expressions that lead with an identifier,
 // used to detect shortcode-looking brackets that did not parse as real
@@ -444,6 +444,8 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			lintCalendar(tk, reloadSpans, add)
 		case "calc":
 			lintCalc(tk, opts, otherContext, eachSpans, usingSpans, add)
+		case "excerpt":
+			lintExcerpt(tk, opts, otherContext, reloadSpans, add)
 		case "reload":
 			// A <button> may not contain another button. The renderer refuses the
 			// whole thing rather than emit invalid interactive nesting, so say so

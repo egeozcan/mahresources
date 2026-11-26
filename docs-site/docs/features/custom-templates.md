@@ -259,6 +259,12 @@ The CustomSummary template appears in list views. Keep it compact:
 </div>
 ```
 
+To show what a note says rather than only its name, use [`[excerpt]`](./shortcodes.md#excerpt----text-preview). It strips the Markdown, HTML, mentions and shortcodes from the Description and cuts it to a few words, so a long note cannot stretch its card:
+
+```html
+<p class="text-sm text-gray-600">[excerpt words="25" more="Read more"]</p>
+```
+
 ## CustomAvatar Example
 
 The CustomAvatar template controls how the entity appears when linked. Its placement differs by carrier, for a structural reason:

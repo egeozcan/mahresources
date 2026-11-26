@@ -192,6 +192,20 @@
 &lt;span class="text-stone-600"&gt;[property path="StartDate"] &ndash; [property path="EndDate"]&lt;/span&gt;</code></pre>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[excerpt words="30" more="Read more"]</code>
+                        &mdash; a short plain-text preview of the note's Description. Markdown, HTML, mentions and shortcodes are stripped (nothing in it runs), and the text is cut at a word boundary with an ellipsis. Always escaped. Never runs a query: put it inside [mrql] or [using] to preview a related entity.
+                        <br><span class="text-stone-600 ml-4">
+                            <b class="text-stone-500">words</b>="1&ndash;200" (default 30)
+                            &middot; <b class="text-stone-500">field</b>="Name" another string field instead
+                            &middot; <b class="text-stone-500">path</b>="meta.path" a Meta string instead
+                            &middot; <b class="text-stone-500">more</b>="Read more" link to the note when the text was cut (not inside an attribute)
+                            &middot; <b class="text-stone-500">default</b>="text" when there is nothing to show
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[excerpt words="25" more="Read more"]
+[excerpt path="summary" words="15" default="No summary"]
+&lt;span title="[excerpt words='25']"&gt;[property path="Name"]&lt;/span&gt;</code></pre>
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[calc expr="…"]</code>
                         &mdash; compute a number from <span class="font-mono">meta.path</span>, numeric fields (<span class="font-mono">property.Field</span>) and, inside [each], <span class="font-mono">item</span> / <span class="font-mono">item.path</span>. Operators <span class="font-mono">+ - * / %</span> and parentheses; functions <span class="font-mono">min max abs round coalesce</span>. Renders the bare number, so it also works in attributes. Never runs a query.
                         <br><span class="text-stone-600 ml-4">
