@@ -1,0 +1,269 @@
+// @vitest-environment happy-dom
+
+// The [action] button: what a click sends, what each answer of the run
+// endpoint does to the status text, the live region and the [autorefresh]
+// signal, and how an async run is followed.
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const askToConfirm = vi.fn();
+vi.mock('../components/confirmDialog.js', () => ({ askToConfirm: (...args: any[]) => askToConfirm(...args) }));
+
+let MAX_POLLS: number;
+let POLL_MS: number;
+let announce: ReturnType<typeof vi.fn>;
+let fetchMock: ReturnType<typeof vi.fn>;
+let events: { type: string; detail: any }[];
+
+const record = (e: Event) => events.push({ type: e.type, detail: (e as CustomEvent).detail });
+
+beforeAll(async () => {
+  ({ MAX_POLLS, POLL_MS } = await import('./actionShortcode.js'));
+});
+
+beforeEach(() => {
+  announce = vi.fn();
+  (window as any).mahAnnounce = announce;
+  fetchMock = vi.fn();
+  vi.stubGlobal('fetch', fetchMock);
+  askToConfirm.mockReset();
+  events = [];
+  document.addEventListener('meta-shortcode-saving', record);
+  document.addEventListener('meta-shortcode-updated', record);
+});
+
+afterEach(() => {
+  document.removeEventListener('meta-shortcode-saving', record);
+  document.removeEventListener('meta-shortcode-updated', record);
+  document.body.innerHTML = '';
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
+
+function mount({ confirm = '', async = false, params = '{"scale":2,"tag":"x"}' } = {}) {
+  document.body.innerHTML =
+    `<action-shortcode data-plugin="fal-ai" data-action="upscale" data-entity-type="resource" data-entity-id="42"` +
+    ` data-async="${async}" data-label="Upscale image"` +
+    (confirm ? ` data-confirm="${confirm}"` : '') +
+    ` data-params='${params}'>` +
+    `<button type="button" class="action-shortcode-button">Upscale image</button><span class="action-shortcode-status"></span></action-shortcode>`;
+  const host = document.querySelector('action-shortcode') as HTMLElement;
+  return { host, button: host.querySelector('button') as HTMLButtonElement, status: host.querySelector('.action-shortcode-status') as HTMLElement };
+}
+
+function answer(status: number, body: any) {
+  return { ok: status >= 200 && status < 300, status, json: async () => body };
+}
+
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+describe('action-shortcode', () => {
+  it('posts the action, the entity and the server-resolved params', async () => {
+    const { button } = mount();
+    fetchMock.mockResolvedValue(answer(200, { success: true }));
+    button.click();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('/v1/jobs/action/run');
+    expect(init.method).toBe('POST');
+    expect(init.headers['Content-Type']).toBe('application/json');
+    expect(JSON.parse(init.body)).toEqual({ plugin: 'fal-ai', action: 'upscale', entity_ids: [42], params: { scale: 2, tag: 'x' } });
+  });
+
+  it('asks the confirmation first and sends nothing when it is declined', async () => {
+    const { button } = mount({ confirm: 'Run upscale?' });
+    askToConfirm.mockResolvedValue(false);
+    button.click();
+    await settle();
+    expect(askToConfirm).toHaveBeenCalledWith('Run upscale?', expect.objectContaining({ title: 'Upscale image', confirmLabel: 'Upscale image', destructive: false }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(button.hasAttribute('aria-disabled')).toBe(false);
+
+    askToConfirm.mockResolvedValue(true);
+    fetchMock.mockResolvedValue(answer(200, { success: true }));
+    button.click();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a synchronous success and signals autorefresh: saving, then updated, with no meta', async () => {
+    const { host, button, status } = mount();
+    let release: (v: any) => void = () => {};
+    fetchMock.mockReturnValue(new Promise((r) => { release = r; }));
+    button.click();
+    await settle();
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(status.textContent).toBe('Running…');
+    expect(announce).toHaveBeenCalledWith('Upscale image: running', { assertive: false });
+
+    release(answer(200, { success: true, message: 'Upscaled' }));
+    await settle();
+    expect(status.textContent).toBe('Upscaled');
+    expect(announce).toHaveBeenLastCalledWith('Upscale image: Upscaled', { assertive: false });
+    expect(events.map((e) => e.type)).toEqual(['meta-shortcode-saving', 'meta-shortcode-updated']);
+    expect(events[0].detail).toEqual({ source: host });
+    expect(events[1].detail).toEqual({ entityType: 'resource', entityId: 42, source: host });
+    expect('meta' in events[1].detail).toBe(false);
+    expect(button.hasAttribute('aria-disabled')).toBe(false);
+  });
+
+  it('says Done when a successful run has no message', async () => {
+    const { button, status } = mount();
+    fetchMock.mockResolvedValue(answer(200, { success: true }));
+    button.click();
+    await settle();
+    expect(status.textContent).toBe('Done');
+  });
+
+  it.each([
+    ['a refusal', answer(200, { success: false, message: 'Quota exhausted' }), 'Quota exhausted'],
+    ['a refusal with no message', answer(200, { success: false }), 'Action failed'],
+    ['validation errors', answer(400, { errors: [{ field: 'scale', message: 'Scale must be at most 4' }, { field: 'x' }] }), 'Scale must be at most 4; x'],
+    ['an error', answer(403, { error: 'this plugin is not available to group-limited accounts' }), 'this plugin is not available to group-limited accounts'],
+    ['an unreadable answer', { ok: false, status: 500, json: async () => { throw new Error('not json'); } }, 'Action failed'],
+  ])('reports %s assertively and signals nothing', async (_name, response, message) => {
+    const { button, status } = mount();
+    fetchMock.mockResolvedValue(response);
+    button.click();
+    await settle();
+    expect(status.textContent).toBe(message);
+    expect(announce).toHaveBeenLastCalledWith(`Upscale image: ${message}`, { assertive: true });
+    expect(events).toEqual([]);
+    expect(button.hasAttribute('aria-disabled')).toBe(false);
+  });
+
+  it('reports a network failure', async () => {
+    const { button, status } = mount();
+    fetchMock.mockRejectedValue(new TypeError('offline'));
+    button.click();
+    await settle();
+    expect(status.textContent).toBe('Action failed');
+    expect(events).toEqual([]);
+  });
+
+  it('follows a redirect', async () => {
+    const original = Object.getOwnPropertyDescriptor(window, 'location');
+    const location = { href: '/resource?id=42' };
+    Object.defineProperty(window, 'location', { value: location, configurable: true });
+    try {
+      const { button } = mount();
+      fetchMock.mockResolvedValue(answer(200, { success: true, redirect: '/note?id=7' }));
+      button.click();
+      await settle();
+      expect(location.href).toBe('/note?id=7');
+      expect(events).toEqual([]);
+    } finally {
+      if (original) Object.defineProperty(window, 'location', original);
+    }
+  });
+
+  it('ignores clicks while a run is in flight', async () => {
+    const { button } = mount();
+    let release: (v: any) => void = () => {};
+    fetchMock.mockReturnValue(new Promise((r) => { release = r; }));
+    button.click();
+    button.click();
+    await settle();
+    button.click();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    release(answer(200, { success: true }));
+    await settle();
+    fetchMock.mockResolvedValue(answer(200, { success: true }));
+    button.click();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  describe('async runs', () => {
+    const started = answer(202, { job_id: 'legacy-1', canonicalJobId: 'job-1' });
+
+    async function startAsync() {
+      vi.useFakeTimers();
+      const parts = mount({ async: true });
+      fetchMock.mockResolvedValueOnce(started);
+      parts.button.click();
+      await vi.advanceTimersByTimeAsync(0);
+      return parts;
+    }
+
+    it('polls the Job until it succeeds, then signals', async () => {
+      const { button, status } = await startAsync();
+      expect(status.textContent).toBe('Started');
+      expect(button.getAttribute('aria-disabled')).toBe('true');
+      fetchMock.mockResolvedValueOnce(answer(200, { id: 'job-1', state: 'running' }));
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      expect(fetchMock.mock.calls[1][0]).toBe('/v1/jobs/job-1');
+      expect(events).toEqual([]);
+
+      fetchMock.mockResolvedValueOnce(answer(200, { id: 'job-1', state: 'succeeded' }));
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      expect(status.textContent).toBe('Succeeded');
+      expect(announce).toHaveBeenLastCalledWith('Upscale image: Succeeded', { assertive: false });
+      expect(events.map((e) => e.type)).toEqual(['meta-shortcode-saving', 'meta-shortcode-updated']);
+      expect(button.hasAttribute('aria-disabled')).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(POLL_MS * 3);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('reads a partial success as one', async () => {
+      const { status } = await startAsync();
+      fetchMock.mockResolvedValueOnce(answer(200, { id: 'job-1', state: 'succeeded', phase: 'partial' }));
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      expect(status.textContent).toBe('Partially completed');
+      expect(events).toHaveLength(2);
+    });
+
+    it.each(['failed', 'cancelled', 'interrupted'])('reports a %s Job assertively and signals nothing', async (state) => {
+      const { status } = await startAsync();
+      fetchMock.mockResolvedValueOnce(answer(200, { id: 'job-1', state }));
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      expect(status.textContent).toBe(state[0].toUpperCase() + state.slice(1));
+      expect(announce).toHaveBeenLastCalledWith(`Upscale image: ${status.textContent}`, { assertive: true });
+      expect(events).toEqual([]);
+    });
+
+    it('reports a Job it cannot read', async () => {
+      const { status } = await startAsync();
+      fetchMock.mockResolvedValueOnce(answer(404, { error: 'not found' }));
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      expect(status.textContent).toBe("Could not read the job's progress");
+      expect(events).toEqual([]);
+    });
+
+    it('stops polling when the button leaves the page, and drops an answer in flight', async () => {
+      const { host } = await startAsync();
+      let release: (v: any) => void = () => {};
+      fetchMock.mockReturnValueOnce(new Promise((r) => { release = r; }));
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      host.remove();
+      release(answer(200, { id: 'job-1', state: 'succeeded' }));
+      await vi.advanceTimersByTimeAsync(POLL_MS * 5);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(events).toEqual([]);
+    });
+
+    it('gives up after MAX_POLLS polls and points at the Jobs panel', async () => {
+      const { status, button } = await startAsync();
+      fetchMock.mockResolvedValue(answer(200, { id: 'job-1', state: 'running' }));
+      await vi.advanceTimersByTimeAsync(POLL_MS * MAX_POLLS);
+      expect(fetchMock).toHaveBeenCalledTimes(1 + MAX_POLLS);
+      expect(status.textContent).toBe('Still running. Follow it in the Jobs panel.');
+      expect(button.hasAttribute('aria-disabled')).toBe(false);
+      await vi.advanceTimersByTimeAsync(POLL_MS * 10);
+      expect(fetchMock).toHaveBeenCalledTimes(1 + MAX_POLLS);
+      expect(events).toEqual([]);
+    });
+
+    it('does not poll without a canonical Job id', async () => {
+      vi.useFakeTimers();
+      const { button, status } = mount({ async: true });
+      fetchMock.mockResolvedValueOnce(answer(202, { job_id: 'legacy-1' }));
+      button.click();
+      await vi.advanceTimersByTimeAsync(POLL_MS * 3);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(status.textContent).toBe('Started. Follow it in the Jobs panel.');
+      expect(button.hasAttribute('aria-disabled')).toBe(false);
+    });
+  });
+});

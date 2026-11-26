@@ -4236,6 +4236,52 @@ autorefresh-shortcode.deferred-reloading > * {
   }
 }
 
+/* [action] button. It takes the slot's text colour, border included, so it
+   reads on the white page and on the lightbox's stone-900 panel alike. The focus
+   ring is amber-700 (#b45309): 5.0:1 on white, 3.5:1 on stone-900. A run in
+   flight sets aria-disabled on the button (not disabled, so it keeps focus); it
+   shows as a dashed border and a progress cursor rather than opacity, which
+   would fade the focus ring with it. The status text beside it takes no space
+   until there is something to say. */
+action-shortcode {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  vertical-align: middle;
+}
+.action-shortcode-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.75rem;
+  padding: 0.125rem 0.625rem;
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.25;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 0.25rem;
+  cursor: pointer;
+}
+.action-shortcode-button:hover {
+  background: rgba(120, 113, 108, 0.12);
+}
+.action-shortcode-button:focus-visible {
+  outline: 2px solid #b45309;
+  outline-offset: 2px;
+}
+.action-shortcode-button[aria-disabled="true"] {
+  cursor: progress;
+  border-style: dashed;
+}
+.action-shortcode-status {
+  font-size: 0.8125rem;
+}
+.action-shortcode-status:empty {
+  display: none;
+}
+
 /* [calendar] month grid. It takes the slot's text colour, so it reads on the
    white page and on the lightbox's dark panel alike; lines are that colour at
    low alpha, and the focus ring and today's outline are amber-700 (#b45309),
