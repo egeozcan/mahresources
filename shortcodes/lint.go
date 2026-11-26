@@ -146,7 +146,7 @@ func KnownFromBuiltins() KnownShortcodes {
 var conditionalOperators = []string{"eq", "neq", "gt", "lt", "gte", "lte", "in", "contains", "matches", "empty", "not-empty"}
 
 // builtinBaseNames is used for near-miss detection of misspelled shortcodes.
-var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "calc", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "similar", "calendar", "inspect", "adjacent", "excerpt", "comment", "action", "tabs"}
+var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "calc", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "similar", "calendar", "inspect", "adjacent", "excerpt", "comment", "action", "tabs", "pivot"}
 
 // looseBracketPattern finds bracket expressions that lead with an identifier,
 // used to detect shortcode-looking brackets that did not parse as real
@@ -464,6 +464,8 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			}
 		case "calendar":
 			lintCalendar(tk, reloadSpans, add)
+		case "pivot":
+			lintPivot(w, tk, reloadSpans, add)
 		case "action":
 			lintAction(tk, reloadSpans, actionExists, add)
 		case "calc":
@@ -632,6 +634,13 @@ func lintText(input string, opts LintOptions) []LintIssue {
 				start, end := attrOffsetW(w, tk, "mrql")
 				for _, q := range calendarLintQueries(tk.attrs) {
 					check(q.query, q.opts, start, end, "mrql")
+				}
+			case "pivot":
+				// Only a pivot that composes runs a query; lintPivot reported
+				// why one does not.
+				if composed, _, err := pivotQuery(tk.attrs); err == nil {
+					start, end := attrOffsetW(w, tk, "query")
+					check(composed, MRQLCheckOptions{Limit: pivotFetchLimit + 1}, start, end, "query")
 				}
 			case "conditional":
 				forEachConditionalQuery(tk.attrs, func(attr, suffix string) {

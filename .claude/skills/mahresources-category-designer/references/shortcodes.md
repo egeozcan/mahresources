@@ -344,6 +344,17 @@ Event category example: a group category whose `MetaSchema` has `"date": {"type"
 </section>
 ```
 
+### `[pivot]`
+
+A cross-tab of two fields over the entities an MRQL filter matches: one row per `rows` value, one column per `cols` value, a count (or sum) per cell, and row, column and grand totals, in an accessible `<table>` with a caption inside a keyboard-scrollable region. Attributes: `query` (required; a filter naming exactly one type through a top-level `type = …`, with no `GROUP BY`, `ORDER BY`, `LIMIT`, `OFFSET`, `SCOPE` or `$params`), `rows` and `cols` (required, different fields), `value` (`count` default or `sum`), `field` (with `sum`: `meta.<path>`, or `fileSize`/`width`/`height` on resources), `scope` (as `[mrql]`), `max-rows` (default 20, at most 50), `max-cols` (default 10, at most 20), `rows-label`, `cols-label`, `caption`.
+
+A dimension is a `meta.<path>`, a text field (`name`, `contentType`, …), `fileSize`/`width`/`height`, a note's `shared` (yes/no), a relation by name (`owner`, `groups`, `tags`, `notes`, `resources`, `parent`, `children`) or a date bucket (`created.month`, `updated.year`, …). Refused: bare timestamps, ID fields (`id`, `category`, `noteType`; filter by them in `query` instead) and traversals (`owner.name`). Values equal up to ASCII case share a row, as do same-named groups. A multi-valued relation drops the totals that would double-count. In count mode each cell and total links to `/mrql` filtered to exactly that cell; sum pivots, date buckets, `(none)` and truncated tables have no links. One query (at most 5000 combinations, most items first), one page-query budget unit; read as the viewer. Put it in `CustomHeader`, `CustomSidebar` or `CustomListHeader`, not a per-card slot. Inline only; not inside a `[reload]` face; an "unavailable" comment on share pages.
+
+```
+[pivot query="type = note AND meta.status IS NOT NULL" rows="meta.status" cols="owner" caption="Open work by owner"]
+[pivot query="type = resource" rows="contentType" cols="created.year" value="sum" field="fileSize"]
+```
+
 ## Built-in Plugin Shortcodes
 
 Only three built-in plugins currently ship shortcodes:

@@ -340,6 +340,14 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 				// context without one (share pages) leaves a comment.
 				replacement = shortcodeComment("calendar unavailable in this context")
 			}
+		case sc.Name == "pivot":
+			if executor != nil {
+				replacement = RenderPivotShortcode(reqCtx, sc, ctx, executor)
+			} else {
+				// Same as [mrql]: the table is one executor query, so a context
+				// without one (share pages) leaves a comment.
+				replacement = shortcodeComment("pivot unavailable in this context")
+			}
 		case sc.Name == "link":
 			replacement = RenderLinkShortcode(reqCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "partial":

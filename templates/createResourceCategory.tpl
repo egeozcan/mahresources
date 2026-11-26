@@ -352,6 +352,21 @@
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[calendar mrql='type = "resource"' date="created" scope="parent"]</code></pre>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[pivot]</code>
+                        &mdash; a cross-tab of two fields over the entities an MRQL filter matches: a count (or a sum) in each cell, with row, column and grand totals, and each count linking to the MRQL page for exactly that cell. One aggregated query and one page-query budget unit, so prefer CustomHeader or CustomSidebar to a per-card slot.
+                        <br><span class="text-stone-600 ml-4">
+                            <b class="text-stone-500">query</b>="filter with one type = &hellip;" (required)
+                            &middot; <b class="text-stone-500">rows</b>, <b class="text-stone-500">cols</b>="meta.path|field|owner|tags|created.year" (required)
+                            &middot; <b class="text-stone-500">value</b>="count|sum" with <b class="text-stone-500">field</b>
+                            &middot; <b class="text-stone-500">scope</b>="global|parent|root|ID"
+                            &middot; <b class="text-stone-500">max-rows</b>="1&ndash;50" (20)
+                            &middot; <b class="text-stone-500">max-cols</b>="1&ndash;20" (10)
+                            &middot; <b class="text-stone-500">rows-label</b>, <b class="text-stone-500">cols-label</b>, <b class="text-stone-500">caption</b>
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[pivot query="type = resource" rows="contentType" cols="created.year" scope="parent"]
+[pivot query="type = resource" rows="contentType" cols="owner" value="sum" field="fileSize" scope="parent"]</code></pre>
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[reload]</code>
                         &mdash; a button that re-renders content in place, without navigating. It refreshes the innermost [lazy], [details] or [autorefresh] block around it, or the whole custom-content slot when it sits outside both. Self-closing renders a circular-arrow icon; wrap a body to use that as the button face instead.
                         <br><span class="text-stone-600 ml-4">

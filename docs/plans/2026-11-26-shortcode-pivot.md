@@ -1,10 +1,6 @@
-<!-- Shortcode idea that did not make the first implementation round. -->
-> **Status:** idea, not implemented. The plan went through 3 plan/evaluate round(s).
-> Last evaluation: consistency 8.6/10, usefulness 8.2/10, average 8.40/10. The bar was 8.5.
->
-> **Pitch:** Aggregates an MRQL result set into a cross-tabulation of two fields with counts or sums in each cell, plus row and column totals: [pivot mrql="type = note AND noteType = 'Task'" rows="meta.status" cols="meta.assignee" value="count" scope="entity"]. It renders a real <table> with <th scope> headers and a caption, and each cell can link to the filtered MRQL page. It runs a single GROUP BY with capped distinct buckets and says 'and N more' when the cap is hit. Dashboards get status-by-owner or type-by-year matrices that bar-chart and pie-chart can't express.
-
 # Plan: `[pivot]`, a built-in shortcode for two-field cross-tabs (rev. 4)
+
+Status: implemented; review at the end.
 
 ## 0. Changes from rev. 3
 
@@ -497,3 +493,64 @@ I checked the plan's code claims and most of them hold. These are correct as sta
    - docs/plans/README conventions use `-design.md` / `-impl.md` or a bare slug. `2026-11-24-pivot-shortcode.md` is acceptable, but confirm that generate-index.sh lists it under Active.
    - The plan says `ORDER BY count DESC, <rows> ASC, <cols> ASC` will be "pinned" in a unit test. Also add a Validate-level test that the ORDER BY on `group` resolves through the alias map on both dialects.
    - The a11y markup is good. Consider `<th scope="row">` text for the none-bucket and empty-bucket so screen readers announce "(none)" rather than punctuation.
+
+---
+
+## Review
+
+### Checklist
+
+- [x] §10.1 `shortcodes/pivot_handler.go`: `pivotQuery`, the handler, bucket merging, caps, table writer, `lintPivot`.
+- [x] §10.2 `shortcodes/processor.go` dispatch (comment on share pages). Also `shortcodes/parser.go`: `pivot` added to both token regexes, which the plan missed; without it `[pivot …]` stays literal text.
+- [x] §10.3 `shortcodes/builtin_docs.go` entry with the three §3 examples.
+- [x] §10.4 `shortcodes/lint.go`: `builtinBaseNames`, the structural case (`lintPivot`), and the composed-query check in the `ValidateMRQL` switch.
+- [x] §10.5 Reference panels in `createCategory.tpl`, `createResourceCategory.tpl`, `createNoteType.tpl`.
+- [x] §10.6–8 `docs-site` shortcodes page (table row and `## [pivot] -- Cross-tab` section), `custom-templates.md`, `note-sharing.md`.
+- [x] §10.9 Category designer skill reference.
+- [x] §10.10 Plan saved here (`docs/plans/2026-11-26-shortcode-pivot.md`, per the lane brief rather than the `2026-11-24` name). `generate-index.sh` and `docs/ideas/shortcodes/README.md` are left to the merge, as instructed.
+- [x] §11.1 `shortcodes/pivot_handler_test.go` (composition, rejections, suffix pin, shape, escaping, caps, merging, multi-valued totals, truncation, links, literals, sum mode, Postgres-shaped values, budget and cache, error paths, render meter).
+- [x] §11.2 `shortcodes/pivot_lint_test.go` and `shortcodes/pivot_docs_test.go` (`TestPivotBuiltinExamplesLintClean`, plus relation dimensions building on both static dialects). In a new file rather than `builtin_docs_consistency_test.go`, to keep the shared file out of the merge.
+- [x] §11.3 `server/api_tests/pivot_shortcode_test.go` and `pivot_shortcode_pg_test.go`: scope, link counts, sum semantics, one statement, on SQLite and PostgreSQL; a preview-route scope check on SQLite.
+- [x] §11.4 `e2e/tests/111-pivot-shortcode.spec.ts` (111, not 108: 108–110 are taken by sibling lanes) and `e2e/tests/accessibility/pivot-shortcode-a11y.spec.ts`.
+- [x] §12 criteria 1–5 shown by the tests above; 6 by the validation listed below.
+
+### Deviations from the plan
+
+1. **ID dimensions are refused** (`id`, `category`, `noteType`): `[pivot] rows: "noteType" holds IDs, which would head the table as bare numbers; pivot by a meta.* field instead, or filter by noteType in query`. Evaluator point 1, option (b). The motivating "notes by owner and note type" example became "notes by status and owner", and the integration test uses `owner` and `group` instead of `noteType`. Name resolution (option a) would need a new scoped resolver threaded through every render surface; left for a follow-up.
+2. **String literals are always double-quoted and escaped** (`\"`, `\\`), which the MRQL lexer reads back exactly. The plan's "at most one quote kind, no backslash, else `'…'`" rules are gone; such labels are now linkable.
+3. **Linkability lives in `pivotBucket.literal`** ("" means unlinkable) instead of a separate `pivotLinkable` function. The rules are the plan's minus the quote rule, plus one (deviation 4).
+4. **A multi-valued relation bucket that merged two raw rows in one cell loses its links** (evaluator point 2). Two raw rows in one cell are distinct values that compare equal; on a multi-valued relation they can be two same-named entities on one item, which the cell counts twice and a link once. This removes the plan's limitation 2. Single-valued `owner`/`parent` keep merging by name and keep their links, which are exact (`owner = "Inbox"` matches both groups). The table still shows same-named groups as one row: the aggregated result carries only the name (`MAX(name)`), so the entities cannot be told apart. That trade-off is stated in the docs.
+5. **`shared` is labelled `yes`/`no` and linked** as `shared = true|false` (the plan left it unlinked with raw `1`/`0` labels). Exact, since the group-by expression is `share_token IS NOT NULL`.
+6. **`$parameters` in `query` are refused** (`[pivot] query cannot use $parameters`), as `[calendar]` does; the plan only said param-* was unsupported.
+7. **`[pivot]` inside a `[reload]` face is refused** by the renderer and the linter, as `[calendar]`/`[similar]` are (a table is not phrasing content).
+8. **Duplicate-field check** compares canonical columns in `pivotQuery` before composition, instead of counting GROUP BY fields after `Validate` (dedup happens inside `Validate`, so the plan's order could not work). Same single message.
+9. **Missing `query`/`rows`/`cols` in lint** is left to the generic required-attribute check, so it is reported exactly once; `lintPivot` returns early.
+10. **Unknown `scope` keyword warns in lint** (evaluator point 4). The evaluator's premise that `[mrql]` warns is not right: no shortcode lints `scope` today. `[pivot]` now does: `[pivot] scope must be entity, parent, root, global or a group ID; "x" counts in the entity's own group`.
+11. **Links carry `aria-label` instead of an `sr-only` span**, per the lesson "Tailwind's `.sr-only` is `position: absolute`, so it escapes the scroll container". The truncation markers (`—` "not counted", `+` "or more") still use `sr-only`, so the region is `relative`, which makes it their containing block; the a11y spec injects such a span at 390 px and asserts the page does not widen (it fails without `relative`: 899 > 390). Decorative `—` and `+` are `aria-hidden`.
+12. **Muted zero is `text-stone-500`**, not `stone-400` (2.5:1 fails WCAG AA; axe would flag it).
+13. **Numbers use `calcFormat(v, -1, "number")`** (as `[calc]`: at most ten fraction digits, trailing zeros dropped) rather than `FormatFloat`/`formatFloat`, so a float sum like 0.1 + 0.2 does not print 0.30000000000000004.
+14. **The bool branch of §5.2 is gone** (evaluator point 3): no dimension yields a Go `bool` (SQLite returns 0/1, Postgres `->>` text); such a value falls into the defensive opaque branch, which is unlinkable.
+15. **The unavailable comment** is documented in the `[pivot]` section, as `[calendar]` does, not in the shared "Failure markers" paragraph (keeps a line other lanes edit out of the merge).
+16. **`RenderPivotShortcode(reqCtx, sc, ctx, executor)`** takes no renderer or depth (unused), matching `RenderCalendarShortcode`; the processor needs no depth check (`processWithDepth` already stops at the cap).
+17. **The `BuiltinDoc` type comment that lists every built-in was not updated**, to keep that shared line out of the five-lane merge; the parent may add `pivot` when resolving.
+
+### Evaluator points
+
+1. *noteType/category render as IDs* — resolved with option (b): refused with a pointer to meta fields or filtering in `query`; examples and tests changed (deviation 1).
+2. *Owner/group merging by name* — kept for single-valued relations (links exact, trade-off documented); multi-valued buckets that merge in a cell become unlinkable (deviation 4). Making same-named owners separate is not possible from the result, which carries only the name.
+3. *Too complex for v1* — reduced: the quote-kind rules and their limitation are gone (deviation 2), the bool branch is gone (14), limitation 2 is gone (4), and limitation 3 (SQLite `3.0`) is covered by the float rule. One documented mismatch remains: PostgreSQL's `LOWER` folds non-ASCII case. Links were kept for meta dimensions: status-by-owner is the main use case, and the integration test proves every link count equals its cell on both databases.
+4. *Edge cases* —
+   - unknown `scope` keyword: lint warning (deviation 10);
+   - none-bucket: rendered as `(none)` in a `<th scope="row">` (or column header), always shown last, ranked like any value for the caps, never linked; an empty string is `(empty)`. Both are words a screen reader announces;
+   - `rows="shared"` on a resource: `[pivot] rows: "shared" is not a resource field`, the same in lint and render (unit tests);
+   - `field="meta.*"` with SUM on Postgres: `aggregateExpr` wraps meta in `pgMetaNumericExpr` (`CASE WHEN text ~ '^-?[0-9]+(\.[0-9]+)?$' THEN ::numeric ELSE NULL END`), so non-numeric text is skipped. SQLite's `SUM(json_extract(…))` reads the numeric prefix of a string and counts JSON `true` as 1. Pinned by `checkPivotSumSemantics` on both databases and documented.
+5. *Totals with multi-valued `cols`* — stated from the row side in the docs and the description: each row's items spread over several columns, so a row total would overcount; the Total column and grand total are omitted. Tested.
+6. *Smaller points* — the plan lives under `docs/plans/` with the lane's name and the parent regenerates the index. The alias check: `TestPivotRelationDimensionsBuildOnBothDialects` builds `rows="group"` and other relation dimensions through `CheckTemplateMRQL` on both static dialects, and `checkPivotLinkCountsMatchCells` runs `cols="group"` for real on SQLite and PostgreSQL (`ORDER BY "group" ASC` resolves through the alias map). The none/empty header text is a word, see 4.
+
+### Not verified / risks
+
+- The full E2E suite was not run (shared machine, per the brief); the pivot specs and the nearest neighbours (shortcode, calendar, adjacent, calc, lint, autocomplete, template preview, category authoring a11y) were.
+- Truncation (5001 combinations) is covered by unit tests only, not on a real database.
+- On PostgreSQL, non-ASCII case variants are separate rows whose links overlap (documented).
+- `guid`/`hash`/`description` are accepted as dimensions; they are legal but rarely useful (one row per entity, bounded by the caps).
+- `go vet --tags 'json1 fts5 postgres'` reports a pre-existing copylocks issue in `resource_reduction_review_fixes_pg_test.go`, and `go vet --tags 'json1 fts5' ./...` one in `application_context/job_download_progress_test.go`; neither file is touched by this branch.

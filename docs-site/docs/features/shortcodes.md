@@ -61,6 +61,7 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 | `[adjacent]` | Inline | Previous/next links to the entity's siblings or Series |
 | `[similar]` | Inline | Thumbnails of perceptually similar resources, with tier, distance and a compare link |
 | `[calendar]` | Inline | Month grid of entities by a date field, with titles, day links and month navigation |
+| `[pivot]` | Inline | Cross-tab of two fields with a count or sum per cell, totals and count links |
 | `[inspect]` | Inline | Live preview only: list the Meta paths, fields and `[each]` element paths available at that point |
 | `[comment]` | Block | Remove a section on the server so it never runs or renders |
 
@@ -1787,6 +1788,124 @@ Prev and Next buttons swap the month in place, without a page load, through the 
 `[calendar]` cannot be used inside a `[reload]` button face. On share pages it renders `<!-- mr:calendar unavailable in this context -->`.
 
 `calendar` is now a reserved shortcode name: text written as `[calendar …]` in an existing template renders the calendar (or an error marker) instead of showing as text.
+
+## `[pivot]` -- Cross-tab
+
+`[pivot]` counts the entities an MRQL filter matches by two fields at once and shows the result as a table: one row per value of `rows`, one column per value of `cols`, a count (or a sum) in each cell, and row, column and grand totals. Use it for dashboards an `[mrql … GROUP BY]` list or a one-dimensional chart cannot show: tasks by status and assignee, resources by content type and year, notes by status and owner.
+
+```
+[pivot query="type = resource" rows="contentType" cols="created.year"]
+[pivot query="type = note AND meta.status IS NOT NULL" rows="meta.status" cols="owner" caption="Open work by owner"]
+[pivot query="type = resource" rows="contentType" cols="created.year" value="sum" field="fileSize"]
+```
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `query` | Yes | | An MRQL **filter** naming exactly one entity type through a top-level `type = …`. It cannot carry `GROUP BY`, `ORDER BY`, `LIMIT`, `OFFSET`, `SCOPE` or `$parameters`: the pivot adds its own grouping and order. |
+| `rows` | Yes | | The row field. See [Dimensions](#dimensions). |
+| `cols` | Yes | | The column field, in the same forms. It must be a different field from `rows`; `group` and `groups` count as the same field. |
+| `value` | No | `count` | `count` (entities per cell) or `sum` (of `field`). Averages, minimums and maximums are left out because their totals cannot be built by adding cells. |
+| `field` | With `value="sum"` | | The field to add up: `meta.<path>`, or `fileSize`, `width` or `height` on resources. Set without `value="sum"` it is ignored, and the linter says so. |
+| `scope` | No | `entity` | As on [`[mrql]`](#scope): `entity` (the entity's own group), `parent`, `root`, `global`, or a group ID. The linter warns on any other value, which counts in the entity's own group. |
+| `max-rows` | No | `20` | How many row values are shown, most items first. At most 50; an invalid value or one below 1 means the default. |
+| `max-cols` | No | `10` | How many column values are shown, most items first. At most 20, with the same fallback. |
+| `rows-label` | No | the `rows` field without `meta.` | The heading of the row-label column, also used in the caption and the link names. |
+| `cols-label` | No | the `cols` field without `meta.` | The name of the column field in the caption and the link names. |
+| `caption` | No | `Count by <rows> and <cols>`, or `Sum of <field> by <rows> and <cols>` | The table caption, which also names the scroll region. |
+
+A blank label or caption counts as unset. `[pivot]` is inline only; a `[/pivot]` closer is a lint error. An invalid attribute renders the red error box and the linter reports the same message once, at `query=`. The linter also checks the composed query, on SQLite and PostgreSQL alike.
+
+### Dimensions
+
+`rows` and `cols` each accept one of:
+
+- **A Meta path**, `meta.<key>[.<key>…]`: `meta.status`, `meta.project.phase`.
+- **A field of the entity**: a text field such as `name`, `contentType` or `originalName`; `fileSize`, `width` or `height` on resources; `shared` on notes, shown as `yes` and `no`.
+- **A relation, by name**: `owner`, `groups` (or `group`), `tags`, `notes` and `resources` where the entity has them, and `parent` and `children` on groups.
+- **A date bucket of a timestamp**: `created`, `updated`, or a note's `startDate` and `endDate`, followed by `.day`, `.week`, `.month` or `.year`, such as `created.month`. Buckets are shown oldest first.
+
+These are refused, with a message saying what to use instead:
+
+- a bare timestamp (`created`): pick a date bucket;
+- an ID field (`id`, `category`, `noteType`): they would head the table with numbers. Filter by the category or note type in `query` and pivot by a Meta field;
+- a traversal (`owner.name`, `tags.count`) and `similarImages`.
+
+Using a field the entity does not have, such as `shared` on a resource, is refused with `"shared" is not a resource field`.
+
+### What a cell holds
+
+- **Equal values share a row or column.** Values that differ only in ASCII letter case (`Open` and `open`) are one row, because MRQL's `=` compares text that way. So are a Meta number and the same digits written as a string (`3` and `"3"`), and two related groups with the same name: the result carries a group's name, not its ID, so the table cannot tell them apart. The spelling shown is the one in the combination with the most items.
+- **Booleans in Meta** show as `1` and `0` on SQLite (merged with the numbers 1 and 0 and the strings "1" and "0") and as `true` and `false` on PostgreSQL (merged with the strings "true" and "false").
+- **Missing values** go in a `(none)` row or column, shown last: a missing Meta key, an entity with no owner or no tags, or an owner the viewer cannot see. An empty string is `(empty)`.
+- **Sums** add numbers. How other Meta values count depends on the database. PostgreSQL adds a string only when it is wholly a plain decimal (`"2"`, `"-1.5"`) and skips everything else. SQLite reads the number a string starts with (`"2"` and `"2 hours"` both add 2, `"x"` adds nothing) and adds a JSON `true` as 1. A cell with no number to add shows 0.
+- **Numbers** are written as `[calc]` writes them: plain decimals, at most ten fraction digits, no thousands separators. A combination with no entities shows a muted `0`.
+
+### Totals
+
+The Total column holds each row's total and the Total row each column's; the bottom-right cell is the grand total. Totals include the values hidden by `max-rows` and `max-cols`.
+
+A multi-valued relation (`tags`, `groups`, `notes`, `resources`, `children`) puts an entity in one row or column per value, so adding across it would count that entity several times:
+
+- with `rows` multi-valued, the Total row and the grand total are left out;
+- with `cols` multi-valued, the Total column and the grand total are left out. Each row's items are spread over several columns, so a row total would overcount for the same reason.
+
+### Caps and truncation
+
+Rows are ranked by their total, highest first, with ties broken by label, and the top `max-rows` are shown; columns likewise with `max-cols`. A note under the table says how many values are not shown. A date bucket is still shown oldest first among the values kept.
+
+One query reads at most 5000 (row, column) combinations, those with the most items first (with ties broken by the two fields, so a render is stable). Past that the table says "Only the 5000 combinations with the most items were counted", combinations it did not read show `—` (read as "not counted"), totals are marked `+` (read as "or more"), and nothing is linked. Narrow the query.
+
+### Links
+
+In count mode every cell and total that can be matched exactly links to the [MRQL page](./mrql.md) for what it counted, in the scope the table was counted in: `(<query>) AND meta.status = "open" AND owner = "Inbox"` for a cell, one condition for a row or column total, and the bare `query` for the grand total. The link's count equals the cell's.
+
+No links appear:
+
+- in sum mode;
+- in a truncated table;
+- for date buckets and the `(none)` row or column;
+- for a Meta row or column that held a JSON number with a fraction on SQLite, which `=` cannot match by its label;
+- for a multi-valued relation's row or column that merged two values in one cell, such as two groups named Inbox and inbox, where one note in both would be counted twice by the cell and once by the link.
+
+One known mismatch remains: PostgreSQL's `LOWER` folds non-ASCII letters too, so `É` and `é` are two rows there whose links each list both.
+
+### Output and accessibility
+
+```html
+<div class="mrql-pivot my-2">
+  <div class="relative overflow-x-auto …" role="region" aria-label="Count by status and assignee" tabindex="0">
+    <table class="min-w-full text-sm border border-stone-200">
+      <caption>Count by status and assignee</caption>
+      <thead><tr><th scope="col">status</th><th scope="col">ann</th><th scope="col">bob</th><th scope="col">Total</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">open</th><td><a href="/mrql?q=…" aria-label="3: status open, assignee ann">3</a></td>…</tr>
+        …
+      </tbody>
+      <tfoot><tr><th scope="row">Total</th>…<td><a href="/mrql?q=…" aria-label="10: total of all">10</a></td></tr></tfoot>
+    </table>
+  </div>
+  <p>1 more status value is not shown; the totals include them.</p>
+</div>
+```
+
+- The scroll region is reachable with Tab and named by the caption, so a wide table can be scrolled from the keyboard.
+- Every column header is `scope="col"` and every row header, the Total row included, `scope="row"`.
+- Each link's name starts with its visible number and names the row and column it counts.
+- Colour never carries meaning on its own: an empty combination is a written `0`.
+- Labels and the caption are always HTML-escaped.
+
+### Scoping and cost
+
+- Counts and labels are read as the viewer. A group-confined user or guest only counts entities inside their subtree, whatever `scope` says, and a group outside their subtree is never named; an entity whose owner they cannot see falls in `(none)`. The links open the MRQL page, which applies the same confinement.
+- Each `[pivot]` is one SQL statement of at most 5001 rows and costs one unit of the [per-page query budget](#per-page-query-budget). An identical pivot on the same page is free.
+- No index serves a `meta.*` grouping. On a large library, narrow `query` by type plus a category, note type, owner or date range, and keep the default entity scope rather than `scope="global"`. Two multi-valued dimensions multiply the rows the query joins; see the junction-join note in the [MRQL reference](./mrql-reference.md).
+- Put pivots in `CustomHeader`, `CustomSidebar` or `CustomListHeader`, not in a per-card slot, where every card runs its own query.
+
+`[pivot]` cannot be used inside a `[reload]` button face. On share pages it renders `<!-- mr:pivot unavailable in this context -->`.
+
+`pivot` is now a reserved shortcode name: text written as `[pivot …]` in an existing template renders the table (or an error box) instead of showing as text.
 
 ## `[comment]` -- Comment out a section
 

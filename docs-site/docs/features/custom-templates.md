@@ -539,6 +539,7 @@ Shortcodes let you embed dynamic content in custom templates without writing Alp
 - **[`[action]`](./shortcodes.md#action----run-a-plugin-action)** -- A button that runs a plugin action on this entity as the person who clicks it, then refreshes the `[autorefresh]` blocks around it
 - **`[using]`** -- Render a block with another group, resource or note (the owner, or an ID from metadata) as the entity
 - **[`[calendar]`](./shortcodes.md#calendar----month-grid-of-dated-entities)** -- A month grid of the entities an MRQL filter matches, by a created, updated or Meta date, with titles, day links and Prev/Next navigation
+- **[`[pivot]`](./shortcodes.md#pivot----cross-tab)** -- A cross-tab of two fields over the entities an MRQL filter matches, with a count or sum in each cell, row, column and grand totals, and count links to the MRQL page
 - **`[comment]`** -- Comment out a section. The server removes it before rendering, so its shortcodes never run and it is never rendered. An HTML comment still runs its shortcodes and is sent to the browser.
 
 Plugins can also register custom shortcodes via `mah.shortcode()`.
