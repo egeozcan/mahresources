@@ -34,19 +34,35 @@ export function uniqueAdjacentLabels(inserted = null, doc = document) {
   }
 }
 
-// The accessible name as a screen reader computes it for a landmark:
-// aria-labelledby wins over aria-label, and whitespace collapses.
+// A landmark's accessible name, in the order the accessible name computation
+// takes its sources: aria-labelledby, then aria-label, then title. Whitespace
+// collapses. A labelledby target contributes its own aria-label, its alt when
+// it is an image, or its text, and so do the images inside it.
 function accessibleName(el, doc) {
   let name = '';
   const ids = el.getAttribute('aria-labelledby');
   if (ids) {
     name = ids
       .split(/\s+/)
-      .map((id) => doc.getElementById(id)?.textContent ?? '')
+      .map((id) => referencedName(doc.getElementById(id)))
       .join(' ');
   }
   if (!name.trim()) name = el.getAttribute('aria-label') ?? '';
+  if (!name.trim()) name = el.getAttribute('title') ?? '';
   return name.trim().replace(/\s+/g, ' ');
+}
+
+function referencedName(target) {
+  if (!target) return '';
+  const label = target.getAttribute('aria-label');
+  if (label && label.trim()) return label;
+  if (target.tagName === 'IMG') return target.getAttribute('alt') ?? '';
+  let text = '';
+  for (const node of target.childNodes) {
+    if (node.nodeType === 3) text += node.textContent;
+    else if (node.nodeType === 1 && node.getAttribute('aria-hidden') !== 'true') text += ' ' + referencedName(node) + ' ';
+  }
+  return text;
 }
 
 // One observer covers every insertion path, as startCustomCSSHoist does.

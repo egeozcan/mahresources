@@ -17,6 +17,20 @@ test.describe('Category template authoring accessibility', () => {
     await checkA11y();
   });
 
+  for (const [path, panelId] of [
+    ['/category/new', '#cat-template-docs-panel'],
+    ['/resourceCategory/new', '#rc-template-docs-panel'],
+    ['/noteType/new', '#nt-template-docs-panel'],
+  ]) {
+    test(`the open Reference panel on ${path} has no a11y violations`, async ({ page, checkComponentA11y }) => {
+      await page.goto(path);
+      await page.waitForLoadState('load');
+      await page.getByRole('button', { name: 'Reference' }).click();
+      await expect(page.locator(panelId)).toBeVisible();
+      await checkComponentA11y(panelId);
+    });
+  }
+
   test('preview controls are labelled', async ({ page }) => {
     await page.goto('/category/new');
     await page.waitForLoadState('load');

@@ -52,7 +52,7 @@
              class="text-sm text-stone-600 bg-white border border-stone-200 rounded-md p-4 space-y-3 font-sans">
             <div>
                 <h2 class="font-semibold text-stone-700">Slot Locations</h2>
-                <p class="text-xs text-stone-400 mt-1">Each slot below renders against one <b>note</b>, so <code class="bg-stone-100 px-1 rounded">[meta]</code> and <code class="bg-stone-100 px-1 rounded">[property]</code> read that note — except the two list slots, which render against the note type itself. Leave a slot empty to keep the built-in appearance.</p>
+                <p class="text-xs text-stone-600 mt-1">Each slot below renders against one <b>note</b>, so <code class="bg-stone-100 px-1 rounded">[meta]</code> and <code class="bg-stone-100 px-1 rounded">[property]</code> read that note — except the two list slots, which render against the note type itself. Leave a slot empty to keep the built-in appearance.</p>
                 <h3 class="font-medium text-stone-600 mt-3 first:mt-1">Detail page</h3>
                 <dl class="mt-1 space-y-1 text-xs">
                     <div class="flex gap-2">
@@ -88,7 +88,7 @@
                     </div>
                 </dl>
                 <h3 class="font-medium text-stone-600 mt-3 first:mt-1">List pages</h3>
-                <p class="text-xs text-stone-400">Rendered against the note type itself, not a note: <code class="bg-stone-100 px-1 rounded">[property path="Name"]</code> is the note type name, <code class="bg-stone-100 px-1 rounded">[meta]</code> is empty, and <code class="bg-stone-100 px-1 rounded">[mrql]</code> runs at global scope.</p>
+                <p class="text-xs text-stone-600">Rendered against the note type itself, not a note: <code class="bg-stone-100 px-1 rounded">[property path="Name"]</code> is the note type name, <code class="bg-stone-100 px-1 rounded">[meta]</code> is empty, and <code class="bg-stone-100 px-1 rounded">[mrql]</code> runs at global scope.</p>
                 <dl class="mt-1 space-y-1 text-xs">
                     <div class="flex gap-2">
                         <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom List Header</dt>
@@ -113,24 +113,24 @@
             </div>
             <div>
                 <h2 class="font-semibold text-stone-700">Shortcodes</h2>
-                <p class="text-xs text-stone-400 mt-1">Type <code class="bg-stone-100 px-1 rounded">[</code> in any template editor for autocomplete; hover a shortcode for its full attribute list.</p>
+                <p class="text-xs text-stone-600 mt-1">Type <code class="bg-stone-100 px-1 rounded">[</code> in any template editor for autocomplete; hover a shortcode for its full attribute list.</p>
                 <div class="mt-1 space-y-3 text-xs">
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[meta path="dotted.path"]</code>
                         &mdash; render a metadata field value. Renders an element by default (schema-aware, optionally editable); add <code class="bg-stone-100 px-1 rounded">inline="true"</code> for the bare value, which is what an HTML attribute needs.
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">path</b> (required) dot-notation into Meta JSON
                             &middot; <b class="text-stone-500">inline</b>="true" render the bare value instead of the element &mdash; the only form usable inside an HTML attribute
                             &middot; <b class="text-stone-500">editable</b>="true" show edit button (ignored with inline)
                             &middot; <b class="text-stone-500">hide-empty</b>="true" hide when absent
                             &middot; <b class="text-stone-500">default</b>="text" fallback when the value is missing
                         </span>
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             With <b class="text-stone-500">inline</b>: <b class="text-stone-500">format</b>="date|datetime|time|filesize"
                             &middot; <b class="text-stone-500">layout</b>="Jan 2, 2006"
                             &middot; <b class="text-stone-500">raw</b>="true" skip HTML escaping (never inside an attribute &mdash; an unescaped quote closes it early)
                         </span>
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             Inline emits the stored value, not the element's rendering of it. The display rules the
                             element applies do not apply here: a labeled enum renders its stored value and not its
                             label, a boolean renders
@@ -141,7 +141,7 @@
                             has to carry the key a CSS rule or a script was written against, not a label an operator can
                             rename in the schema. Use the element form where you want the label.
                         </span>
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             Escaping keeps the value inside a <i>quoted</i> attribute and no further. It does not make a
                             <code class="bg-stone-100 px-1 rounded">javascript:</code> value safe as a whole
                             <code class="bg-stone-100 px-1 rounded">href</code>, survive an
@@ -163,7 +163,7 @@
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[datetime path="event.start" editable="true"]</code>
                         &mdash; display/edit a date or time Meta field, preserving its format and offset.
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">layout</b>="January 2, 2006 at 15:04" custom display
                             &middot; <b class="text-stone-500">input-layout</b>="02/01/2006" custom storage format
                             &middot; invalid values display unchanged; editing starts at the schema default.
@@ -176,29 +176,29 @@
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[property path="FieldName"]</code>
                         &mdash; render a struct field of the note. Output is HTML-escaped by default.
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">path</b> (required) field name or dot path (e.g. <span class="font-mono">Owner.Name</span>)
                             &middot; <b class="text-stone-500">raw</b>="true" skip HTML escaping &mdash; the value then becomes real markup, and whoever can edit the entity chooses it, so use it only where the field is authored by someone you would trust with this template
                             &middot; <b class="text-stone-500">format</b>="date|datetime|time|filesize"
                             &middot; <b class="text-stone-500">layout</b>="Jan 2, 2006" custom time layout
                             &middot; <b class="text-stone-500">default</b>="text" fallback when empty
                         </span>
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             Fields: <span class="font-mono">ID, Name, Description, CreatedAt, UpdatedAt, NoteTypeId, OwnerId, StartDate, EndDate, Meta</span>
                         </span>
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[property path="Name"]
 [property path="StartDate" format="date"]
 [property path="Description" raw="true"]
-&lt;span class="text-stone-400"&gt;[property path="StartDate"] &ndash; [property path="EndDate"]&lt;/span&gt;</code></pre>
+&lt;span class="text-stone-600"&gt;[property path="StartDate"] &ndash; [property path="EndDate"]&lt;/span&gt;</code></pre>
                     </div>
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[calc expr="…"]</code>
                         &mdash; compute a number from <span class="font-mono">meta.path</span>, numeric fields (<span class="font-mono">property.Field</span>) and, inside [each], <span class="font-mono">item</span> / <span class="font-mono">item.path</span>. Operators <span class="font-mono">+ - * / %</span> and parentheses; functions <span class="font-mono">min max abs round coalesce</span>. Renders the bare number, so it also works in attributes. Never runs a query.
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">decimals</b>="0&ndash;10"
                             &middot; <b class="text-stone-500">format</b>="number|grouped|percent"
                             &middot; <b class="text-stone-500">default</b>="text" when a value is missing or not a number, or on division by zero
-                            &middot; only keys of ASCII letters, digits and _ can be referenced
+                            &middot; only keys of ASCII letters, digits and _, not starting with a digit, can be referenced
                         </span>
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[calc expr="meta.qty * meta.unit_price" decimals="2"]
 [calc expr="meta.qty * meta.unit_price * (1 - coalesce(meta.discount, 0))" decimals="2" default="not set"]
@@ -207,10 +207,10 @@
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[mrql query='...']</code>
                         &mdash; inline MRQL query results.
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">query</b> or <b class="text-stone-500">saved</b> (one required) MRQL expression or saved query name
                         </span>
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">format</b>=table|list|compact|custom
                             &middot; <b class="text-stone-500">limit</b>=20
                             &middot; <b class="text-stone-500">buckets</b>=5 (for GROUP BY)
@@ -220,7 +220,7 @@
 [mrql query='type = resource AND contentType ~ "image/*"' format="list" limit="5"]
 [mrql query='type = group AND category = 3 GROUP BY meta.status' buckets="10"]
 [mrql saved="recent-uploads" format="compact"]</code></pre>
-                        <p class="mt-1 text-stone-400">
+                        <p class="mt-1 text-stone-600">
                             <b class="text-stone-500">scope</b>=entity|parent|root|global
                             &mdash; filter to a group subtree. Default: <code class="bg-stone-100 px-1 rounded">entity</code> (owning group).
                             An explicit <code class="bg-stone-100 px-1 rounded">SCOPE</code> clause in the query takes precedence.
@@ -230,7 +230,7 @@
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[conditional path="..." eq="..."]…[/conditional]</code>
                         &mdash; render the inner content only when a condition holds. Test a <b class="text-stone-500">path</b> (Meta), <b class="text-stone-500">field</b> (struct field), or <b class="text-stone-500">mrql</b> result count.
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             Operators: <span class="font-mono">eq neq gt lt gte lte in contains matches empty not-empty</span>
                             &middot; <b class="text-stone-500">combine</b>="all"|"any" (AND / OR)
                             &middot; add <b class="text-stone-500">[elseif …]</b> / <b class="text-stone-500">[else]</b> branches
@@ -253,7 +253,7 @@
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[link to="self"]</code>
                         &mdash; resolve a detail-page URL. Inline it renders just the URL; as a block it wraps its content in an anchor.
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">to</b>="self|owner|root|category"
                         </span>
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>&lt;a href="[link]" class="underline"&gt;[property path="Name"]&lt;/a&gt;
@@ -272,7 +272,7 @@
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[details summary="…"]…[/details]</code>
                         &mdash; a keyboard- and screen-reader-accessible disclosure; the inner content renders on the server only the first time it is opened.
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">summary</b>="label" &nbsp; <b class="text-stone-500">open</b>="true|false"
                         </span>
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[details summary="Nutrition"][meta path="calories"] kcal[/details]</code></pre>
@@ -280,7 +280,7 @@
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[inspect]</code>
                         &mdash; authoring aid for the live preview: a collapsed panel listing the Meta paths, entity fields and, at the top level of an [each] body, the element's [item] paths available at that point, each with a copyable shortcode. Renders nothing outside the preview.
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">path</b>="project.budget" limits the Meta section to one subtree
                         </span>
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[inspect]
@@ -289,7 +289,7 @@
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[adjacent]</code>
                         &mdash; Previous and Next links to this entity's siblings in creation order: the same owner (or none) and the same category, or with series="true" the other members of a resource's Series. Only siblings the viewer may see are linked; with none it renders nothing. One page-query budget unit each, so prefer CustomHeader or CustomSidebar.
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">series</b>="true|false" (resources only)
                             &middot; <b class="text-stone-500">label</b>="accessible name of the navigation landmark"
                         </span>
@@ -299,7 +299,7 @@
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[similar]</code>
                         &mdash; thumbnails of the resources that look like a resource (stored perceptual-hash pairs), nearest first, each with a Duplicate or Similar badge, its distance and a Compare link. It works only on a resource, so here wrap it in [using type="resource" …] to show the lookalikes of one this entity references.
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">max-distance</b>="0–11"
                             &middot; <b class="text-stone-500">limit</b>="1–24" (8)
                             &middot; <b class="text-stone-500">size</b>="sm|md|lg"
@@ -310,7 +310,7 @@
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[calendar]</code>
                         &mdash; one month as a grid (Monday first) of the entities an MRQL filter matches, placed by a date field: each day's count, a link to that day's list and up to 3 linked titles, with Prev/Next buttons that change the month in place. One page-query budget unit (two for a month of more than 100), so prefer CustomSidebar or CustomHeader to a per-card slot.
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">mrql</b>="filter with one type = …" (required)
                             &middot; <b class="text-stone-500">date</b>="created|updated|meta.path" (created)
                             &middot; <b class="text-stone-500">month</b>="current|YYYY-MM"
@@ -321,7 +321,7 @@
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[reload]</code>
                         &mdash; a button that re-renders content in place, without navigating. It refreshes the innermost [lazy], [details] or [autorefresh] block around it, or the whole custom-content slot when it sits outside both. Self-closing renders a circular-arrow icon; wrap a body to use that as the button face instead.
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">label</b>="accessible name"
                         </span>
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[lazy][reload label="Refresh tasks"][mrql query='type = "note"' format="list"][/lazy]
@@ -330,7 +330,7 @@
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[autorefresh]…[/autorefresh]</code>
                         &mdash; re-renders its body in place whenever an inline editor ([meta], [pills] or [datetime] with editable) saves this entity, or saves anything inside the block. Wrap only what depends on the edited values: an editor inside the body closes when it refreshes. Share pages and the live preview render it once.
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">on</b>="edit"
                         </span>
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[pills path="status" editable="true"]
@@ -339,7 +339,7 @@
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[using type="group" id="…"]…[else]…[/using]</code>
                         &mdash; render the body with another group, resource or note as the entity, so every shortcode inside reads that entity. Name the target with exactly one source. An optional <code class="bg-stone-100 px-1 rounded">[else]</code> branch renders when there is no target or you cannot see it.
-                        <br><span class="text-stone-400 ml-4">
+                        <br><span class="text-stone-600 ml-4">
                             <b class="text-stone-500">id</b>="42" &nbsp; <b class="text-stone-500">id-path</b>="meta.path" &nbsp; <b class="text-stone-500">id-prop</b>="OwnerId" &nbsp; <b class="text-stone-500">rel</b>="owner|root" &nbsp; <b class="text-stone-500">query</b>="MRQL" &nbsp; <b class="text-stone-500">type</b>="group|resource|note"
                         </span>
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[using rel="owner"]

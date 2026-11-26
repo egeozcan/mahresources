@@ -398,3 +398,31 @@ func TestInspectSnippetRoundTripsAmpersands(t *testing.T) {
 	require.Len(t, parsed, 1)
 	assert.Equal(t, "a&amp;b", parsed[0].Attrs["path"])
 }
+
+// A path= naming a huge key is cut like the walk cuts it, and an exhausted
+// row budget does not claim the entity has no fields.
+func TestInspectPathBoundAndBudgetNote(t *testing.T) {
+	huge := strings.Repeat("k", 5000)
+	meta, err := json.Marshal(map[string]any{huge: 1})
+	require.NoError(t, err)
+	out := inspectOn(`[inspect path="`+huge+`"]`, inspectCtx(string(meta)))
+	assert.Less(t, len(out), 4000)
+	assert.Contains(t, out, "path too long to address")
+
+	many := map[string]any{}
+	for i := 0; i < maxInspectRows+5; i++ {
+		many[fmt.Sprintf("k%03d", i)] = i
+	}
+	ctx := inspectCtx(string(mustJSON(t, many)))
+	ctx.Entity = &inspectEntity{ID: 42, Name: "Root"}
+	out = inspectOn(`[inspect]`, ctx)
+	assert.NotContains(t, out, "This entity has no readable fields.")
+	assert.Contains(t, out, "more paths not shown")
+}
+
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	require.NoError(t, err)
+	return b
+}

@@ -172,7 +172,12 @@ func renderInspectPanel(ctx MetaShortcodeContext, sc Shortcode, elem any, hasEle
 
 	if ctx.Entity != nil {
 		if rows, ok := inspectPropertyRows(ctx.Entity, budget); ok {
-			writeInspectTable(&b, "Properties", region("Property fields"), rows, "This entity has no readable fields.")
+			empty := "This entity has no readable fields."
+			if budget.omitted > 0 {
+				// The row budget ran out before the fields; the note below says so.
+				empty = ""
+			}
+			writeInspectTable(&b, "Properties", region("Property fields"), rows, empty)
 		}
 	}
 
@@ -194,7 +199,7 @@ func inspectSummary(ctx MetaShortcodeContext, path string) string {
 		s += "no entity"
 	}
 	if path != "" {
-		s += " · Meta at “" + path + "”"
+		s += " · Meta at “" + cutInspectPath(path) + "”"
 	}
 	if ctx.outer != nil {
 		s += " · inside [using]"
@@ -295,6 +300,19 @@ func truncateRunes(s string, n int) string {
 	return s
 }
 
+// cutInspectPath shortens a path past inspectMaxPathBytes for display, on a
+// rune boundary.
+func cutInspectPath(p string) string {
+	if len(p) <= inspectMaxPathBytes {
+		return p
+	}
+	cut := inspectMaxPathBytes / 2
+	for cut > 0 && !utf8.RuneStart(p[cut]) {
+		cut--
+	}
+	return p[:cut] + "…"
+}
+
 // walkInspectJSON emits one row per key of obj, depth-first in sorted key
 // order, descending into objects until a path has inspectMaxDepth segments.
 // Arrays are leaves: no path= indexes into one. A key that cannot be written as
@@ -317,12 +335,7 @@ func walkInspectJSON(obj map[string]any, prefix string, segments int, addressabl
 		if budget.take() {
 			row := inspectJSONRow(p, v, ok, snippet)
 			if long {
-				cut := inspectMaxPathBytes / 2
-				for cut > 0 && !utf8.RuneStart(p[cut]) {
-					cut--
-				}
-				row.path = p[:cut] + "…"
-				row.note = "path too long to address"
+				row.path, row.note = cutInspectPath(p), "path too long to address"
 			}
 			*rows = append(*rows, row)
 		}
@@ -374,9 +387,14 @@ func inspectMetaRows(ctx MetaShortcodeContext, path string, budget *inspectRows)
 	obj, isObj := v.(map[string]any)
 	// A path already at the depth limit lists itself, not its children, so no
 	// row is ever deeper than inspectMaxDepth segments.
-	if !isObj || segments >= inspectMaxDepth {
+	long := len(path) > inspectMaxPathBytes
+	if !isObj || segments >= inspectMaxDepth || long {
 		if budget.take() {
-			rows = append(rows, inspectJSONRow(path, v, addressable, inspectMetaSnippet))
+			row := inspectJSONRow(path, v, addressable && !long, inspectMetaSnippet)
+			if long {
+				row.path, row.note = cutInspectPath(path), "path too long to address"
+			}
+			rows = append(rows, row)
 		}
 		return rows, ""
 	}

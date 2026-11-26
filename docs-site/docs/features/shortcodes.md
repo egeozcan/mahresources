@@ -401,7 +401,7 @@ A missing key, `null`, a boolean, an object, an array or a non-numeric string ha
 
 The second line renders `0%` when the budget is zero or missing, instead of the default.
 
-A mistake in the template itself renders the `⚠ calc` [failure marker](#failure-markers), with the reason in its tooltip: a syntax error, an unknown name or function, a wrong argument count, an expression past the limits below, or a `decimals` or `format` value outside the lists above. The editor's linter reports the same mistakes, and warns about a `meta.` key the category's Meta Schema does not declare.
+A mistake in the template itself renders the `⚠ calc` [failure marker](#failure-markers), with the reason in its tooltip: a syntax error, an unknown name or function, a wrong argument count, an expression past the limits below, or a `decimals` or `format` value outside the lists above. The editor's linter reports the same mistakes. Template generation, which lints against the category's Meta Schema, also warns about a `meta.` key the schema does not declare.
 
 ### Formatting and rounding
 

@@ -77,6 +77,16 @@ describe('names from aria-labelledby and later landmarks', () => {
     expect(labels()).toEqual(['Pages (2)']);
   });
 
+  it('counts names from an image alt, a target aria-label and a title', () => {
+    document.body.innerHTML =
+      '<img id="i" alt="Pages"><nav aria-labelledby="i"></nav>' +
+      '<span id="s" aria-label="Chapters"></span><nav aria-labelledby="s"></nav>' +
+      '<nav title="Meetings"></nav>' +
+      nav('Pages') + nav('Chapters') + nav('Meetings');
+    uniqueAdjacentLabels();
+    expect(labels()).toEqual(['Pages (2)', 'Chapters (2)', 'Meetings (2)']);
+  });
+
   it('renames an existing [adjacent] when a plain landmark with its name is inserted', async () => {
     document.body.innerHTML = nav('Pages') + '<div id="slot"></div>';
     const observer = startAdjacentLabels();
