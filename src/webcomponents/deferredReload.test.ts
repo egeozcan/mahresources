@@ -28,6 +28,8 @@ function fakeEl(descendants: any[] = []) {
     // A region contains the deferred blocks inside it; reloadInto has to be able
     // to see that overlap.
     contains: (other: any) => descendants.includes(other),
+    // No <tabs-shortcode> inside, so a swap has no tab selection to carry.
+    querySelectorAll: () => [],
     setAttribute: (k: string, v: string) => void attrs.set(k, v),
     removeAttribute: (k: string) => void attrs.delete(k),
     hasAttribute: (k: string) => attrs.has(k),

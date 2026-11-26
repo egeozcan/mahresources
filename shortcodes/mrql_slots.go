@@ -19,12 +19,14 @@ const (
 // body. None is registered with the global parser, so each carries meaning only
 // inside its parent: [mrql] pulls out [header], [footer] and a top-level
 // [else] (parseMRQLSlots); [conditional] splits on [elseif] and [else]
-// (SplitBranches); [each] and [using] split on [else] (SplitElse).
+// (SplitBranches); [each] and [using] split on [else] (SplitElse); [tabs]
+// reads its top-level [tab …]…[/tab] pairs (splitTabsM).
 var slotTags = map[string][]string{
 	"mrql":        {mrqlHeaderTag, mrqlFooterTag, "else"},
 	"conditional": {"else", "elseif"},
 	"each":        {"else"},
 	"using":       {"else"},
+	"tabs":        {"tab"},
 }
 
 // SlotTags returns the tags a block shortcode's handler reads out of its body,
@@ -157,7 +159,9 @@ func firstSlotSpanM(m *renderMeter, content, tag string) (openIdx, innerStart, c
 // parent block's handler consumes from its body: for [mrql] the first complete
 // [header] and [footer] pair and the top-level [else]; for [conditional] every
 // top-level [else] and [elseif …] divider; for [each] and [using] the first
-// top-level [else]. Any other occurrence of the same tag stays literal text at runtime.
+// top-level [else]; for [tabs] each top-level [tab …] opener (attributes
+// included, like [elseif …]) followed by its [/tab] closer. Any other occurrence
+// of the same tag stays literal text at runtime.
 func SlotTagSpans(parent, inner string) [][2]int { return slotTagSpansM(nil, parent, inner) }
 
 func slotTagSpansM(m *renderMeter, parent, inner string) [][2]int {
@@ -170,6 +174,12 @@ func slotTagSpansM(m *renderMeter, parent, inner string) [][2]int {
 		if i := firstElseIndexM(m, inner); i >= 0 {
 			return [][2]int{{i, i + len(elseTag)}}
 		}
+	case "tabs":
+		var out [][2]int
+		for _, t := range splitTabsM(m, inner).Tabs {
+			out = append(out, [2]int{t.OpenStart, t.OpenEnd}, [2]int{t.CloseStart, t.CloseEnd})
+		}
+		return out
 	}
 	return nil
 }

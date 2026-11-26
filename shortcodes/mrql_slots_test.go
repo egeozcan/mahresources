@@ -1,6 +1,7 @@
 package shortcodes
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -142,6 +143,43 @@ func TestSlotTagSpansAreWhatTheHandlersConsume(t *testing.T) {
 		a, b := SplitElse(inner)
 		if got := cut(inner, SlotTagSpans("each", inner)); got != a+b {
 			t.Errorf("each %q: spans leave %q, handler keeps %q", inner, got, a+b)
+		}
+	}
+	// [tabs] spans come in pairs: each top-level opener, attributes included,
+	// then its closer. Removing them leaves exactly the tab bodies.
+	opener := regexp.MustCompile(`^\[tab(\s|\])`)
+	for _, tc := range []struct {
+		inner string
+		pairs int
+	}{
+		{`[tab label="A"]x[/tab][tab]y[/tab]`, 2},
+		{`[tab]a[tabs][tab]b[/tab][/tabs][/tab]`, 1},
+		{`[tab][conditional path="x"][tab]z[/tab][/conditional][/tab]`, 1},
+		{"[tab\n lazy=\"true\"]q[/tab]", 1},
+	} {
+		inner := tc.inner
+		spans := SlotTagSpans("tabs", inner)
+		if len(spans) != 2*tc.pairs {
+			t.Fatalf("tabs %q: %d spans, want %d", inner, len(spans), 2*tc.pairs)
+		}
+		for k, sp := range spans {
+			text := inner[sp[0]:sp[1]]
+			if k%2 == 0 && !opener.MatchString(text) {
+				t.Errorf("tabs %q: span %d is %q, want a [tab …] opener", inner, k, text)
+			}
+			if k%2 == 1 && text != tabCloseTag {
+				t.Errorf("tabs %q: span %d is %q, want [/tab]", inner, k, text)
+			}
+			if k > 0 && sp[0] < spans[k-1][1] {
+				t.Errorf("tabs %q: spans %v are not sorted and disjoint", inner, spans)
+			}
+		}
+		var want string
+		for _, tab := range splitTabsM(nil, inner).Tabs {
+			want += tab.Body
+		}
+		if got := cut(inner, spans); got != want {
+			t.Errorf("tabs %q: spans leave %q, handler keeps %q", inner, got, want)
 		}
 	}
 }

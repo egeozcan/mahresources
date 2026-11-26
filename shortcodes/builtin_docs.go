@@ -314,6 +314,19 @@ func BuiltinDocs() []BuiltinDoc {
 			},
 		},
 		{
+			Name:        "tabs",
+			Syntax:      `[tabs label="..."][tab label="..."]...[/tab][/tabs]`,
+			Description: "Alternative sections in one constant-height area, as an accessible tab set. Each [tab label=\"…\" lazy=\"true|false\"]…[/tab] directly inside the block is one tab; the first is selected when the page loads. label is the tab's visible text and accessible name (blank shows \"Tab N\"). An eager tab renders with the page, hidden or not, so put lazy=\"true\" on every tab after the first that holds [mrql], a gallery or a plugin view: a lazy tab is a [lazy] block, rendered on the server only when the tab is first shown (a lazy first tab loads right after the page). A lazy tab's body renders against the entity, so an [item] from an enclosing [each] is not available inside it. Keyboard: Left and Right arrows (wrapping), Home and End move between tabs, and Enter or Space opens the focused one; Tab moves into the open panel. Without JavaScript every tab shows, stacked under its label. A [tab] inside a nested block such as [conditional] is not a tab of this block, so tabs cannot be added conditionally: put the [conditional] inside a tab. A [tabs] inside a tab works. Off the display page (share pages, live preview, list headers) lazy tabs render inline.",
+			IsBlock:     BlockRequired,
+			Attrs: []DocAttr{
+				{Name: "label", Type: "string", Description: "The accessible name of the tab list. Set it whenever a page has more than one [tabs]."},
+			},
+			Examples: []DocExample{
+				{Title: "Two views", Code: "[tabs label=\"Recipe\"]\n  [tab label=\"Ingredients\"]<ul>[each path=\"ingredients\"]<li>[item]</li>[/each]</ul>[/tab]\n  [tab label=\"Steps\"][each path=\"steps\"]<p>[item]</p>[/each][/tab]\n[/tabs]"},
+				{Title: "Lazy query tabs", Code: "[tabs label=\"Project views\"]\n  [tab label=\"Overview\"][property path=\"Description\"][/tab]\n  [tab label=\"Open tasks\" lazy=\"true\"][mrql query='type = note AND tags = \"todo\"' format=\"list\"][/tab]\n  [tab label=\"Files\" lazy=\"true\"][mrql query='type = resource' format=\"list\"][/tab]\n[/tabs]", Notes: "The two query tabs run nothing until a reader opens them."},
+			},
+		},
+		{
 			Name:        "reload",
 			Syntax:      `[reload]`,
 			Description: "A button that re-renders content on the server without navigating. It reloads the innermost [lazy], [details] or [autorefresh] block it sits inside. Outside those it reloads the whole custom-content slot it was written in (header, sidebar, summary or avatar). Where neither can be re-rendered on its own (share pages, live preview) it reloads the page. Self-closing it renders a circular-arrow icon button; wrap a block body to use that content as the button face instead. Keep the body to text or icons: a button may not contain links or other interactive elements.",

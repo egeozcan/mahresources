@@ -4080,6 +4080,47 @@ details.details-shortcode > .details-content {
   margin-top: 0.375rem;
 }
 
+/* [tabs]: the tab set <tabs-shortcode> upgrades the stacked fallback into.
+   The selected tab is marked by weight as well as its accent underline, so
+   selection is not shown by colour alone. :not([hidden]) keeps display: flex
+   from overriding the hidden attribute the server and a morph put back. */
+tabs-shortcode {
+  display: block;
+}
+tabs-shortcode > .tabs-list:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  border-bottom: 1px solid #d6d3d1;
+}
+tabs-shortcode > .tabs-list > .tabs-tab {
+  max-width: 100%;
+  padding: 0.375rem 0.75rem;
+  color: #292524;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  overflow-wrap: anywhere;
+  text-align: start;
+  cursor: pointer;
+}
+tabs-shortcode > .tabs-list > .tabs-tab[aria-selected="true"] {
+  border-bottom-color: #b45309;
+  font-weight: 600;
+}
+tabs-shortcode > .tabs-list > .tabs-tab:focus-visible,
+tabs-shortcode > .tabs-panel:focus-visible {
+  outline: 2px solid #b45309;
+  outline-offset: 2px;
+}
+tabs-shortcode > .tabs-panel {
+  margin-top: 0.5rem;
+}
+tabs-shortcode > .tabs-panel > .tabs-fallback-label {
+  margin: 0.75rem 0 0.25rem;
+  font-weight: 600;
+}
+
 /* [inspect]: the author-only context panel the live preview renders. Plain
    class names, no utilities, so nothing here depends on the source scan. */
 details.inspect-shortcode {

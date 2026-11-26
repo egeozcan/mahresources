@@ -1,10 +1,8 @@
-<!-- Shortcode idea that did not make the first implementation round. -->
-> **Status:** idea, not implemented. The plan went through 3 plan/evaluate round(s).
-> Last evaluation: consistency 8.7/10, usefulness 8.6/10, average 8.65/10. The bar was 8.5.
->
-> **Pitch:** A layout block, [tabs][tab label="Overview"]...[/tab][tab label="Files" lazy="true"]...[/tab][/tabs], that renders the WAI-ARIA tabs pattern: role=tablist/tab/tabpanel, arrow-key and Home/End navigation, and aria-selected and aria-controls wiring. Only the active panel renders eagerly. With lazy="true", a panel reuses the [details] deferred-fragment path, so heavy [mrql] or gallery content costs nothing until it's opened. Category authors can fit rich headers and sidebars into a compact space instead of one long scroll.
-
 # Plan: `[tabs]` / `[tab]`, an accessible tabbed layout shortcode (revision 3)
+
+Slug: `tabs`. Implemented on branch `feat/shortcode-tabs`; the implementation record is the Review section at the end.
+
+A layout block, [tabs][tab label="Overview"]...[/tab][tab label="Files" lazy="true"]...[/tab][/tabs], that renders the WAI-ARIA tabs pattern: role=tablist/tab/tabpanel, arrow-key and Home/End navigation, and aria-selected and aria-controls wiring. A panel renders with the page unless it says lazy="true"; then it reuses the [lazy] deferred-fragment path, so heavy [mrql] or gallery content costs nothing until it's opened. Category authors can fit rich headers and sidebars into a compact space instead of one long scroll.
 
 ## 0. Changes since revision 2
 
@@ -333,8 +331,8 @@ The a11y behaviour belongs in core JS, where unit and axe tests cover it.
 
 ### Go, in `shortcodes/`
 
-1. **`parser.go`**: add `tabs` to the alternation in both `shortcodePattern` and `closingTagPattern`. Do not add `tab`.
-2. **`tabs_handler.go`** (new):
+1. [x] **`parser.go`**: add `tabs` to the alternation in both `shortcodePattern` and `closingTagPattern`. Do not add `tab`.
+2. [x] **`tabs_handler.go`** (new):
    - `var tabOpenPattern = regexp.MustCompile(` + "`" + `\[tab(?:\s(?:"[^"]*"|'[^']*'|[^\]"'])*)?\]` + "`" + `)`
    - `const tabCloseTag = "[/tab]"`
    - `type tabSlot struct { Attrs map[string]string; Body string; OpenStart, OpenEnd, CloseStart, CloseEnd int }`
@@ -343,13 +341,13 @@ The a11y behaviour belongs in core JS, where unit and axe tests cover it.
      - reports whether non-whitespace text lies outside them;
      - returns the §4 unclosed or nested-opener message.
    - `RenderTabsShortcode` as in §3.1, built with `strings.Builder` and `html.EscapeString`.
-3. **`processor.go`**: add `case sc.Name == "tabs":`.
-4. **`mrql_slots.go`**:
+3. [x] **`processor.go`**: add `case sc.Name == "tabs":`.
+4. [x] **`mrql_slots.go`**:
    - Add `"tabs": {"tab"}` to `slotTags`.
    - Add `case "tabs":` to `slotTagSpansM`. For each `tabSlot` in order, it returns the opener span `{OpenStart, OpenEnd}` followed by the closer span `{CloseStart, CloseEnd}`. On an `errMsg` it returns the pairs completed before the error.
    - Extend the `SlotTagSpans` doc comment with: "for [tabs] each top-level [tab …] opener (attributes included, like [elseif …]) followed by its [/tab] closer".
    - Update the other comments that enumerate the parents.
-5. **`lint.go`**:
+5. [x] **`lint.go`**:
    - Add `"tabs"` to `builtinBaseNames`.
    - In the loose-bracket near-miss scan, skip `name == "tab"` next to `else` and `elseif` (around line 655). Otherwise `[tab]` would get "did you mean [tabs]?".
    - Add `lintTabs(w, lm, input, tokens, add)`. For each `namedBlockSpans(tokens, "tabs")` it reports the §4 rows from `splitTabsM`, charging `w` the way the `[mrql]` slot path does (`w.charge(1 + len/8)`).
@@ -359,7 +357,7 @@ The a11y behaviour belongs in core JS, where unit and axe tests cover it.
      - Add an opener scan with `tabOpenPattern` over `input`. Every match whose start is not in `consumed` gets the single §4 warning.
      - Update the function comment.
    - Add `"tabs"` to the reload-face `case "lazy", "details":` arm.
-6. **`builtin_docs.go`**: add a `tabs` entry after `details`.
+6. [x] **`builtin_docs.go`**: add a `tabs` entry after `details`.
    - `IsBlock: BlockRequired`, with the `label` attr.
    - The description covers:
      - `[tab label= lazy=]`;
@@ -373,20 +371,20 @@ The a11y behaviour belongs in core JS, where unit and axe tests cover it.
 
 ### `internal/templateeval/`
 
-7. **No code change.** `consumedSlotTags` (`score.go`) iterates `shortcodes.SlotTagSpans` generically and records only `span[0]`, so `[tab …]` openers and `[/tab]` closers become known through the new spans. This dependency is pinned by a test (§9.1).
+7. [x] **No code change.** `consumedSlotTags` (`score.go`) iterates `shortcodes.SlotTagSpans` generically and records only `span[0]`, so `[tab …]` openers and `[/tab]` closers become known through the new spans. This dependency is pinned by a test (§9.1).
 
 ### Frontend
 
-8. **`src/webcomponents/tabsShortcode.js`** (new): §3.3.
-9. **`src/webcomponents/deferredShortcodes.js`**: the `suspended` field and `_rearmOrReveal` (§3.4.1). Nothing else changes.
-10. **`src/main.js`**: import `./webcomponents/tabsShortcode.js` after `./webcomponents/deferredShortcodes.js`.
-11. **`src/utils/shortcodeElementMorph.js`**: add `'TABS-SHORTCODE'` to `MORPH_AWARE_TAGS` only, and update its comment.
-12. **`public/index.css`**: the §3.5 rules.
+8. [x] **`src/webcomponents/tabsShortcode.js`** (new): §3.3.
+9. [x] **`src/webcomponents/deferredShortcodes.js`**: the `suspended` field and `_rearmOrReveal` (§3.4.1). Nothing else changes.
+10. [x] **`src/main.js`**: import `./webcomponents/tabsShortcode.js` after `./webcomponents/deferredShortcodes.js`.
+11. [x] **`src/utils/shortcodeElementMorph.js`**: add `'TABS-SHORTCODE'` to `MORPH_AWARE_TAGS` only, and update its comment.
+12. [x] **`public/index.css`**: the §3.5 rules.
 
 ### Templates and docs
 
-13. **`templates/createCategory.tpl`, `createResourceCategory.tpl`, `createNoteType.tpl`**: add a `[tabs]` line to the Shortcodes reference panel (`TestReferencePanelsCoverAllBuiltins`).
-14. **`docs-site/docs/features/shortcodes.md`**:
+13. [x] **`templates/createCategory.tpl`, `createResourceCategory.tpl`, `createNoteType.tpl`**: add a `[tabs]` line to the Shortcodes reference panel (`TestReferencePanelsCoverAllBuiltins`).
+14. [x] **`docs-site/docs/features/shortcodes.md`**:
     - Add `[tabs]…[/tabs]` to the built-in block list and table.
     - Add a new section ``## `[tabs]` -- Tabbed sections`` covering:
       - attributes and the `[tab]` rules;
@@ -399,8 +397,8 @@ The a11y behaviour belongs in core JS, where unit and axe tests cover it.
       - the conditional-tabs non-goal;
       - the Project and Recipe examples.
     - Under "Where deferral applies", mention that hidden lazy tabs re-load on next view after a `[reload]`.
-15. **`docs-site/docs/features/custom-templates.md`**: add `[tabs]` to the shortcode list, and note the carrier-slot inline fallback next to the existing `[lazy]` / `[details]` note.
-16. **`.claude/skills/mahresources-category-designer/references/shortcodes.md`**: add a `[tabs]` entry with the same slot guidance.
+15. [x] **`docs-site/docs/features/custom-templates.md`**: add `[tabs]` to the shortcode list, and note the carrier-slot inline fallback next to the existing `[lazy]` / `[details]` note.
+16. [x] **`.claude/skills/mahresources-category-designer/references/shortcodes.md`**: add a `[tabs]` entry with the same slot guidance.
 
 ## 9. Tests
 
@@ -601,3 +599,41 @@ Remaining issues, most important first:
 6. **Scope trimming (minor).** The test matrix is very large. The no-IntersectionObserver Vitest case and the separate 320 px "every tab button inside the viewport" check could be folded into existing cases. They do no harm as written.
 
 Usefulness: tabs are a common, real layout need for `CustomHeader`. `[details]` cannot express mutually exclusive alternatives at a constant height, and the lazy-per-tab deferral matters on large deployments. The value is a little lower in sidebars and summaries, which the plan itself discourages.
+
+## Review (implementation record)
+
+Built on `feat/shortcode-tabs`. Every §8 item is done (ticked above) and every §4 row is implemented and tested. The evaluator points below were all taken as required work.
+
+### How each evaluator point was resolved
+
+1. **Focus during the morph gap.** Both halves. `refreshFromMorph` records the focused tab; the microtask flush, after re-applying every host, gives focus back to that tab when focus has fallen to `<body>` (never when it went somewhere real) and re-syncs the roving tabindex. Vitest simulates the loss with a blur inside the real morph and fails without the restore. The E2E morph test (point 2's trigger) asserts that the focused Overview tab is still focused after a real paste-upload morph in Chromium.
+2. **Naming the trigger.** Checked against the code: a `[reload]` in an eager panel does **not** morph. It resolves to the slot's `[data-shortcode-region]` and `reloadInto` swaps it with `innerHTML` (`reloadShortcode.js` → `deferredShortcodes.js`). So the morph trigger in the E2E spec is **paste-upload**, whose `_refreshPage` morphs `.main` with `morphOptionsWithShortcodeElements`. The innerHTML swap found here is a gap the plan had not seen: a fresh `<tabs-shortcode>` started on its first tab, so a `[reload]` in tab 2 closed tab 2 and its focus restore aimed at a button inside a hidden panel. `reloadInto` now carries each host's selection and IDs into the host at the same position in the new markup (`captureTabSelections` / `restoreTabSelections`, which skip hosts inside nested `[lazy]`/`[details]` bodies, since those come back unrevealed). That one change covers region reloads, `[lazy]`/`[details]` reloads and `[autorefresh]`. An E2E test fails without it.
+3. **Stale panel tab stop.** A `MutationObserver` on the host watches `aria-busy` in its subtree, which every deferred block clears when content lands (first load, retry, `[reload]`), and re-runs the panel tab-stop check. A focused panel keeps its `tabindex` so focus is not dropped to `<body>`; it is re-checked the next time the panel is shown. Vitest covers the loaded-link case.
+4. **Lint scan in stylesheets.** The unconsumed-opener and stray-closer scans skip `CSSMode` entirely and `<style>` elements otherwise. They also skip text inside a shortcode's own tag (an attribute value), and the body of a `[tabs]` whose problem is already reported, so one malformed block is one issue rather than a cascade.
+5. **`[tab` inside a nested shortcode's attributes.** Excluded on purpose. "Top-level" now means outside the whole extent (`Start`..`End`) of every shortcode the parser finds in the body: a nested block's opener, body and closer, and an inline shortcode's tag. `splitTabsM` is the one definition the renderer, `SlotTagSpans` and lint share, so they agree by construction. Tested in the handler, lint and slot-span tests.
+6. **Scope trimming.** The no-IntersectionObserver Vitest case is dropped: it exercises `LazyShortcode` behaviour this change does not touch, and the shared observer is cached per module, so it cannot be tested beside the IO-stubbed cases. The 320 px button check is folded into the one narrow-viewport test.
+
+### Deviations from the plan
+
+- **`attributeChangedCallback` also re-arms.** §3.4.1 said only `refreshFromMorph` changes. The first E2E run showed one stray request per morph: every server render seals a fresh, nonced token, so a morph changes `data-token`, and `attributeChangedCallback` (which runs first, during the attribute patch) revealed the hidden block. It now calls `_rearmOrReveal(this._revealed)` too. With `suspended` false it behaves exactly as before. A Vitest case morphs with a freshly sealed token and fails without the change.
+- **`reloadInto` carries tab state** (point 2 above). `deferredShortcodes.js` therefore imports two helpers from `tabsShortcode.js`, which means `<tabs-shortcode>` is defined just before `<lazy-shortcode>`. That ordering is harmless (and slightly better: hidden panels are hidden before any lazy block observes), and `suspended` set on a not-yet-upgraded `<lazy-shortcode>` is kept, as §3.4.1 already required. The `src/main.js` import stays, after `deferredShortcodes.js`, as the plan said.
+- **`splitTabsM` returns a `tabsSplit` struct** (`Tabs`, `Outside` ranges, `Problem`, `ProblemAt`) instead of `(tabs, outside bool, errMsg)`, so lint can anchor each issue on the opener or the dropped text it is about.
+- **Lint lives in a new `tabs_lint.go`** (`lintTabs`, one call from `lintText`), not inside `lintStrayCloseTags`, and the `[reload]`-face check is there rather than in the shared `case "lazy", "details", …` arm. Same behaviour, fewer shared lines for the five parallel lanes to conflict on. The only shared `lint.go` edits are `builtinBaseNames`, the near-miss skip for `tab`, and the call.
+- **API test** is a new file, `server/api_tests/tabs_shortcode_scope_test.go`, and uses the tokens a real `/group` page mints (admin page for the outside group) rather than a capturing signer: a confined guest gets 200 for its own subtree and 404 for the outside group's token; an admin control gets 200.
+- **Vitest layout.** The `LazyShortcode.suspended` cases live in `tabsShortcode.test.ts`, under happy-dom with real custom elements, because `deferredReload.test.ts` stubs `HTMLElement` and cannot construct the element. `deferredReload.test.ts` only gains `querySelectorAll` on its fake container. Native Enter/Space activation is covered by the E2E spec, not Vitest.
+- **E2E paths.** `e2e/tests/108-tabs-shortcode.spec.ts` (the lane's assigned prefix) and `e2e/tests/accessibility/tabs-shortcode-a11y.spec.ts`. The shared-note scan is scoped to the tab set with `region` and `landmark-one-main` disabled: the share page template has no `<main>` landmark, which axe reports page-wide whatever the content (pre-existing, not changed here).
+- **CSS** selectors are scoped under `tabs-shortcode >` so an author's own `.tabs-tab` class is not restyled, and tabs get `cursor: pointer`.
+- **Docs.** The `BuiltinDoc` comment listing the built-ins is not edited (merge hygiene). The docs-site section also states that the selected tab survives `[reload]`, `[autorefresh]` and page re-renders.
+
+### Verified
+
+- `go test --tags 'json1 fts5' ./...`; the new `shortcodes` handler, lint and slot-span tests, the templateeval cases, and the API scope test.
+- `npm run test:unit` (Vitest), `npm run build`, `./scripts/css-scan-test.sh`.
+- E2E: the two new specs, plus the deferred, `[reload]`, `[autorefresh]`, `[calendar]`, shortcode lint/autocomplete/general specs and the category-template authoring a11y spec.
+
+### Not verified
+
+- Postgres: `[tabs]` runs no queries, so no Postgres test was added or run for it.
+- Chromium does not lose focus in the morph gap on this page: with the restore disabled, the paste-upload E2E test still passed. The restore is a safeguard for browsers or pages that force a style recalculation mid-morph, proven by simulation in Vitest.
+- Windows forced colours and right-to-left arrow direction (arrows are not flipped for RTL) were not checked. Selection is shown by weight as well as the accent underline, so it does not rely on colour.
+- Only Chromium runs the E2E suite.

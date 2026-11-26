@@ -194,6 +194,23 @@ Deferral applies only on the main display pages; on share pages, the live previe
 [details summary="Nutrition"][meta path="calories"] kcal[/details]
 ```
 
+### `[tabs]`
+
+A block of **alternative sections as an accessible tab set** (WAI-ARIA tabs, manual activation). Each `[tab label="..." lazy="true|false"]...[/tab]` directly inside `[tabs label="..."]...[/tabs]` is one tab; the first is open on load. Reach for it when a header would otherwise stack several `[details]` blocks, or when the sections are alternatives a reader flips between (Overview / Open tasks / Files, Ingredients / Steps / Nutrition). For one optional section, keep `[details]`.
+
+- An eager tab renders with the page even while hidden. Put `lazy="true"` on every tab after the first that holds `[mrql]`, a gallery or a plugin data view: a lazy tab is a `[lazy]` block, fetched the first time it is opened, with `[lazy]`'s inline fallback on share pages, the live preview and the carrier slots.
+- Give the `[tabs]` a `label` when the page has more than one, and give every `[tab]` a short `label` (a blank one shows "Tab N").
+- Slots: use it in `CustomHeader`; in `CustomSidebar` keep to about three short labels; never in `CustomSummary` or another per-card slot.
+- Only a `[tab]` directly inside `[tabs]` counts, so a `[conditional]` cannot add a tab: put the `[conditional]` inside a tab. A `[tabs]` inside a tab works. Text between tabs is dropped, and `[tabs]` cannot go in a `[reload]` face.
+- Without JavaScript every tab shows stacked under its label.
+
+```
+[tabs label="Project views"]
+  [tab label="Overview"][property path="Description"][/tab]
+  [tab label="Open tasks" lazy="true"][mrql query='type = note AND tags = "todo"' format="list"][/tab]
+[/tabs]
+```
+
 ### `[reload]`
 
 A button that **re-renders content on the server without navigating**. Both the self-closing and the block form are valid.

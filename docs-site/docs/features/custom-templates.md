@@ -408,7 +408,7 @@ Unlike the other slots, both are processed with **the category/type itself as th
 - `[property path="Name"]` yields the category's own name (and `path="Description"` its description). Other `[property]` paths that expect a member entity's fields will be empty.
 - `[meta]` renders its empty state -- a category carries no `Meta`, so a `[meta path="..." default="—"]` shows the default.
 - `[mrql]` resolves against **global scope** (not a group subtree), so dashboard queries count across the whole instance. Add an explicit `scope="..."` attribute if you want to narrow it.
-- `[reload]` falls back to reloading the page -- the deferred-render endpoint cannot load a category/type by id, so the header has no region of its own to re-render. For the same reason `[lazy]` and `[details]` render inline here instead of deferring, and `[autorefresh]` renders once and never refreshes.
+- `[reload]` falls back to reloading the page -- the deferred-render endpoint cannot load a category/type by id, so the header has no region of its own to re-render. For the same reason `[lazy]`, `[details]` and lazy `[tabs]` tabs render inline here instead of deferring, and `[autorefresh]` renders once and never refreshes.
 
 ```html
 <div class="cat-dashboard">
@@ -533,6 +533,7 @@ Shortcodes let you embed dynamic content in custom templates without writing Alp
 - **`[each]`** / **`[item]`** -- Iterate over an array in the entity's metadata
 - **`[partial]`** -- Include a reusable shared snippet by name
 - **`[lazy]`** / **`[details]`** -- Defer rendering until the block scrolls into view or is opened
+- **[`[tabs]`](./shortcodes.md#tabs----tabbed-sections)** -- Alternative sections as an accessible tab set; a `lazy="true"` tab renders only when first opened
 - **`[reload]`** -- Button that re-renders the innermost `[lazy]`/`[details]`/`[autorefresh]` block, or else the whole custom-content slot, in place
 - **`[autorefresh]`** -- Re-render a block in place after an inline editor saves, so content the server expanded follows the edit
 - **[`[action]`](./shortcodes.md#action----run-a-plugin-action)** -- A button that runs a plugin action on this entity as the person who clicks it, then refreshes the `[autorefresh]` blocks around it

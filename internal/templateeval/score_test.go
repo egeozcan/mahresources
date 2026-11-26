@@ -1018,6 +1018,9 @@ func TestUnknownShortcodeScanReadsSlotTagsWhereTheRuntimeDoes(t *testing.T) {
 		{"elseiffoo is not a divider", `[conditional mrql="type = note"]A[elseiffoo]B[/conditional]`, []string{"elseiffoo"}},
 		{"bare elseif divider", `[conditional mrql="type = note"]A[elseif]B[/conditional]`, nil},
 		{"invented shortcode beside real slots", `[mrql query="type = note"][header]H[/header][star-rating value="4"][/mrql]`, []string{"star-rating"}},
+		{"tabs openers and closers", `[tabs][tab label="A"]x[/tab][tab lazy="true"]y[/tab][/tabs]`, nil},
+		{"stray tab outside tabs", `<p>[tab label="A"]x[/tab]</p>`, []string{"tab"}},
+		{"tab in a block nested in a tab", `[tabs][tab][conditional mrql="type = note"][tab]z[/tab][/conditional][/tab][/tabs]`, []string{"tab"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

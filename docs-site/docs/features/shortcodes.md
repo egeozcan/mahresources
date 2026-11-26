@@ -53,6 +53,7 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 | `[partial]` | Inline | Expand a named Template Partial |
 | `[lazy]` | Block | Defer server rendering until the block scrolls into view |
 | `[details]` | Block | Defer server rendering until a disclosure is opened |
+| `[tabs]` | Block | Alternative sections as an accessible tab set; `lazy="true"` tabs render only when first opened |
 | `[reload]` | Inline or block | Re-render the nearest deferred block or custom-content slot on demand |
 | `[autorefresh]` | Block | Re-render the body after an inline editor saves |
 | `[action]` | Inline | Run a plugin action on this entity from a button |
@@ -1165,13 +1166,70 @@ The load-on-open mechanism is the same signed round-trip as `[lazy]`.
 
 ### Where deferral applies
 
-`[lazy]` and `[details]` defer across the **standard authenticated template pipeline**, wherever a `Custom*` slot renders a member entity (Group, Resource, or Note). That includes the entity detail pages, list-page `CustomSummary` cards, the dashboard, and hovercards. Everywhere else the body renders **inline** as a graceful fallback -- the content still appears, and `[details]` remains a plain collapsible `<details>` -- either because no deferred signer is installed (public share pages, the live authoring preview, JSON API responses) or because the context is a carrier rather than a member entity (carrier list slots (`CustomListHeader`, `CustomListFooter`), whose `category` / `resource_category` / `note_type` context cannot be reloaded by the deferred endpoint).
+`[lazy]` and `[details]` defer across the **standard authenticated template pipeline**, wherever a `Custom*` slot renders a member entity (Group, Resource, or Note). That includes the entity detail pages, list-page `CustomSummary` cards, the dashboard, and hovercards. Everywhere else the body renders **inline** as a graceful fallback -- the content still appears, and `[details]` remains a plain collapsible `<details>` -- either because no deferred signer is installed (public share pages, the live authoring preview, JSON API responses) or because the context is a carrier rather than a member entity (carrier list slots (`CustomListHeader`, `CustomListFooter`), whose `category` / `resource_category` / `note_type` context cannot be reloaded by the deferred endpoint). A `lazy="true"` tab of a [`[tabs]`](#tabs----tabbed-sections) block is a `[lazy]` block and follows the same rules. When a page re-render (a paste upload, or a list refreshed after a bulk edit) reaches a lazy tab the reader had opened and then left, it is not fetched again in the background: it loads fresh the next time its tab is opened. Only the lazy tab on screen re-fetches at once.
 
 ### Limitations
 
 - **JavaScript is required** for the deferral to hydrate (as it is for the rest of the app). A `<noscript>` note is shown when it is disabled.
 - The deferred body renders against the **entity**, so an `[item]` from an enclosing `[each]` is not available inside a `[lazy]`/`[details]` block (the same non-goal as `[each]`'s element-relative paths).
 - The token key is per-process and per-boot by default, so a placeholder minted before a restart -- or, in a multi-process deployment, resolved by a different process -- fails to load and shows a small "could not load -- Retry" message. Set the `TEMPLATE_SIGNING_KEY` environment variable to a shared secret across all processes for behind-a-load-balancer deployments.
+
+## `[tabs]` -- Tabbed sections
+
+Two or more alternative views of the entity in one place that keeps its size, as an accessible tab set. Use it where `[details]` stacks would push each other down the page: a project header with Overview, Open tasks and Files, or a recipe with Ingredients, Steps and Nutrition. For one optional section, `[details]` is still the right tool.
+
+`[tabs]` is a block shortcode and requires a closing `[/tabs]`. Each `[tab label="…"]…[/tab]` directly inside it is one tab. The first tab is open when the page loads.
+
+```
+[tabs label="Project views"]
+  [tab label="Overview"][property path="Description"][/tab]
+  [tab label="Open tasks" lazy="true"][mrql query='type = note AND tags = "todo"' format="list"][/tab]
+  [tab label="Files" lazy="true"][mrql query='type = resource' format="list"][/tab]
+[/tabs]
+```
+
+### Attributes
+
+On `[tabs]`:
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `label` | No | none | The accessible name of the tab list. Set it whenever a page has more than one `[tabs]`, so a screen-reader user can tell them apart |
+
+On each `[tab]`:
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `label` | No | `Tab N` | The tab's visible text and accessible name. It is HTML-escaped and shortcodes in it are not expanded. A blank label shows `Tab 2` and so on |
+| `lazy` | No | `false` | `true` makes the tab a `[lazy]` block: its body is rendered on the server only when the tab is first opened. Any other value counts as `false` |
+
+### Eager and lazy tabs
+
+A tab without `lazy="true"` renders with the page, whether it is open or not, so its queries run on every page view. Put `lazy="true"` on every tab after the first that holds an `[mrql]`, a gallery or a plugin data view. A lazy tab costs nothing until a reader opens it, and then one request to the same endpoint `[lazy]` uses, under the same scope checks. A lazy first tab is open on load, so it loads right after the page does.
+
+A lazy tab's body renders against the entity, so an `[item]` from an enclosing `[each]` is not available inside it, the same as in `[lazy]`. On share pages, in the live preview and in list headers, lazy tabs render inline. See [Where deferral applies](#where-deferral-applies).
+
+### Keyboard and screen readers
+
+The tab set follows the WAI-ARIA tabs pattern, with manual activation:
+
+- **Left and Right arrows** move between tabs, wrapping at the ends. **Home** and **End** go to the first and last tab. Moving does not open a tab, so arrowing past lazy tabs does not load them.
+- **Enter**, **Space** or a click opens the focused tab.
+- The tab list is one stop in the Tab order. **Tab** moves on into the open panel. A panel with nothing focusable in it is itself a stop, so its text can be reached.
+
+The tabs wrap onto more rows instead of scrolling sideways, and a long label wraps inside its tab, so a narrow sidebar never scrolls horizontally. The open tab is marked by weight as well as colour.
+
+Without JavaScript, or before the script has loaded, every tab shows, stacked under its label as a named group.
+
+### Rules and limits
+
+- Only a `[tab]` directly inside `[tabs]` is a tab. A `[tab]` inside a nested block such as `[conditional]` stays literal text, so tabs cannot be added conditionally: put the `[conditional]` inside a tab instead. A `[tabs]` inside a tab works, and each set responds only to its own tabs.
+- Text between the tabs, outside any `[tab]…[/tab]`, is not rendered.
+- A `[tabs]` cannot go inside a `[reload]` button face.
+- The selected tab is kept when a `[reload]` or `[autorefresh]` re-renders the content around it, and across a page re-render.
+- Use it in `CustomHeader`. In `CustomSidebar`, keep to about three short labels. Do not use it in a per-card slot such as `CustomSummary`: each card would carry its own tab set and run its eager tabs' queries.
+
+The template linter reports a `[tabs]` with no tabs, a `[tab]` without its `[/tab]` or with another `[tab]` inside it, a missing label, a `lazy` value other than `true` or `false`, unknown `[tab]` attributes, text outside the tabs, and any `[tab]` or `[/tab]` that no `[tabs]` reads.
 
 ## `[reload]` -- Re-render on demand
 

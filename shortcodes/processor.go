@@ -350,6 +350,8 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 			replacement = RenderLazyShortcode(reqCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "details":
 			replacement = RenderDetailsShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+		case sc.Name == "tabs":
+			replacement = RenderTabsShortcode(reqCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "reload":
 			replacement = RenderReloadShortcode(reqCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "autorefresh":

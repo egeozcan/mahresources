@@ -296,6 +296,17 @@
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[details summary="Nutrition"][meta path="calories"] kcal[/details]</code></pre>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[tabs]…[/tabs]</code>
+                        &mdash; alternative sections in one place, as an accessible tab set: each [tab label="…"]…[/tab] directly inside it is one tab, and the first is open on load. Put lazy="true" on later tabs holding [mrql] or a gallery: they render on the server only when first opened. Without JavaScript the tabs show stacked under their labels.
+                        <br><span class="text-stone-600 ml-4">
+                            <b class="text-stone-500">label</b>="name of the tab list" &middot; on [tab]: <b class="text-stone-500">label</b>="…" <b class="text-stone-500">lazy</b>="true|false"
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[tabs label="Views"]
+[tab label="Overview"][property path="Description"][/tab]
+[tab label="Files" lazy="true"][mrql query='type = "resource"' format="list"][/tab]
+[/tabs]</code></pre>
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[inspect]</code>
                         &mdash; authoring aid for the live preview: a collapsed panel listing the Meta paths, entity fields and, at the top level of an [each] body, the element's [item] paths available at that point, each with a copyable shortcode. Renders nothing outside the preview.
                         <br><span class="text-stone-600 ml-4">

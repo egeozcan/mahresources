@@ -11,6 +11,8 @@
 // injected fragment is hydrated with Alpine.initTree (mirroring hoverCard.js).
 // CSRF is added automatically by the fetch wrapper in src/csrf.js.
 
+import { captureTabSelections, restoreTabSelections } from './tabsShortcode.js';
+
 const ENDPOINT = '/v1/shortcodes/deferred';
 
 // A single IntersectionObserver serves every <lazy-shortcode> on the page. It
@@ -249,7 +251,9 @@ export function reloadInto(host, contentEl, token, isStale, beforeSwap) {
       // refusing would leave nothing at all.
       if (!entityIsCurrent(contentEl, entity)) return false;
       if (typeof beforeSwap === 'function') beforeSwap();
+      const tabSelections = captureTabSelections(contentEl);
       contentEl.innerHTML = html;
+      restoreTabSelections(contentEl, tabSelections);
       applyEntity(contentEl, entity);
       hydrate(contentEl);
       return true;
@@ -286,6 +290,9 @@ class LazyShortcode extends HTMLElement {
     this._loading = false;
     this._revealed = false;
     this._requestId = 0;
+    // Set by an enclosing <tabs-shortcode> while this block sits in a hidden
+    // panel, possibly before this element upgraded; see _rearmOrReveal.
+    this.suspended = this.suspended === true;
 
     // JS is present, so drop the <noscript> fallback and build our own region.
     this.innerHTML = '';
@@ -296,12 +303,13 @@ class LazyShortcode extends HTMLElement {
     this._observeOrReveal();
   }
 
+  // A morph lands here first, before refreshFromMorph: every server render
+  // seals a fresh token, so the attribute changes on each one.
   attributeChangedCallback(name, oldValue, newValue) {
     if (name !== 'data-token' || oldValue === newValue || !this._init) return;
     this._token = newValue || '';
     this._resetContent();
-    if (this._revealed) this._reveal();
-    else this._observeOrReveal();
+    this._rearmOrReveal(this._revealed);
   }
 
   disconnectedCallback() {
@@ -315,17 +323,28 @@ class LazyShortcode extends HTMLElement {
     if (nextToken !== this._token) {
       this._token = nextToken;
       this._resetContent();
-      if (this._revealed) this._reveal();
-      else this._observeOrReveal();
+      this._rearmOrReveal(this._revealed);
       return;
     }
 
     if (this._revealed || this._loaded || this._loading) {
       this._resetContent();
-      this._reveal();
+      this._rearmOrReveal(true);
     } else {
       this._observeOrReveal();
     }
+  }
+
+  // A block inside a hidden [tabs] panel re-arms instead of fetching; it loads
+  // again when it next becomes visible. Without that, a morph would re-fetch
+  // every lazy tab the reader had ever opened, not just the one on screen.
+  _rearmOrReveal(wasActive) {
+    if (wasActive && !this.suspended) {
+      this._reveal();
+      return;
+    }
+    this._revealed = false;
+    this._observeOrReveal();
   }
 
   // Public entry point for [reload]. The block is already revealed when a button
