@@ -611,10 +611,12 @@ export class ApiClient {
     description?: string;
     fromCategoryId?: number;
     toCategoryId?: number;
+    reverseName?: string;
   }): Promise<RelationType> {
     const formData = new URLSearchParams();
     formData.append('name', data.name);
     if (data.description) formData.append('Description', data.description);
+    if (data.reverseName) formData.append('ReverseName', data.reverseName);
     // The Go backend uses FromCategory/ToCategory (not FromCategoryId/ToCategoryId)
     if (data.fromCategoryId) formData.append('FromCategory', data.fromCategoryId.toString());
     if (data.toCategoryId) formData.append('ToCategory', data.toCategoryId.toString());

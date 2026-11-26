@@ -231,6 +231,19 @@ Reach for it when a template needs fields from a related entity, typically the o
 [/using]
 ```
 
+### `[relations]`
+
+A group's **typed relations** (GroupRelations) as nested native lists: one list per relation type, in type-name order, each entry a link to the group at the far end with its category in parentheses. `direction="out"` (default) lists edges from this group; `direction="in"` lists edges to it, labelled "Incoming: <type>". A type with a back relation stores the reverse edge as its own relation, so `out` already shows both halves of such a pair; use `in` only for types without one. `type="Depends on"` is an exact, case-sensitive name match across every type of that name (types are unique by name plus from/to categories). `limit` 1–100, default 20.
+
+As a block, each relation renders the body (inside its own `<li>`) against **this** group, with `[item]`/`[calc]` reading the edge: `Name`, `Description`, `Type`, `Direction`, `GroupID`, `GroupName`, `GroupCategory`, `GroupURL`, and the far group's `GroupDescription` and `GroupMeta` (e.g. `[item path="GroupMeta.status"]`). `[else]` renders when there are none. In an `href` write `/group?id=[item path='GroupID']`; the linter warns on a bare `[item]` there.
+
+Only groups have relations (a comment elsewhere; wrap in `[using rel="owner"]` on a resource or note). Read as the viewer: an edge is listed only when both groups are visible. One page-query budget unit per statement: one per `[relations]`, plus one when the body reads `GroupDescription`/`GroupMeta`. It is fine in `CustomSummary` (50 cards = 50 of the default 200 units). Pair it with SectionConfig `{"relations":{"state":"off"}}` (or `forwardRelations`/`reverseRelations: false`) so the built-in panels do not repeat it. Unavailable on share pages, the entity picker and AI template tools; not allowed inside a `[reload]` face.
+
+```
+[relations type="Depends on" limit="5"]
+[relations direction="in"]<a href="/group?id=[item path='GroupID']">[item path="GroupName"]</a> [item path="GroupMeta.status"][else]None[/relations]
+```
+
 ### `[inspect]`
 
 An **authoring aid, not page content**. In the template editor's live preview it renders a collapsed panel listing what that point of the template can read: Meta paths with type, sample and a copyable `[meta]`/`[each]` snippet; the entity's own fields for `[property]` (associations named, never read; credential fields omitted); and, at the top level of an `[each]` body, the first element's `[item]` paths. Inside `[mrql]`/`[using]` it describes the switched entity. `path="project"` limits the Meta section to one subtree.

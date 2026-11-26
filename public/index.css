@@ -4361,6 +4361,44 @@ calendar-shortcode.deferred-reloading {
   cursor: progress;
 }
 
+/* [relations] nested lists. Like [calendar] it takes the slot's text colour,
+   so it reads on the page and on the lightbox's dark panel; links are told
+   apart by their underline, not by colour. Every link is at least 24px tall
+   (WCAG 2.2 SC 2.5.8). */
+.relations-shortcode {
+  margin: 0.25rem 0;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+.relations-shortcode__types,
+.relations-shortcode__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.relations-shortcode__type + .relations-shortcode__type {
+  margin-top: 0.375rem;
+}
+.relations-shortcode__label {
+  font-weight: 600;
+}
+.relations-shortcode__list {
+  padding-left: 0.75rem;
+}
+.relations-shortcode__entry a {
+  display: inline-block;
+  min-height: 1.5rem;
+  line-height: 1.5rem;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  border-radius: 0.125rem;
+}
+.relations-shortcode__entry a:focus-visible {
+  outline: 2px solid #b45309;
+  outline-offset: 1px;
+}
+
 /* ── WS5 finding 48: small "remove" icon buttons ─────────────────────────────
    The "×" buttons were 9.6x24 (block-editor to-do items) and 8.4x20 (reference
    chips, table columns and rows, entity-picker chips, lightbox tag pills) —
