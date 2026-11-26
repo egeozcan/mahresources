@@ -1928,7 +1928,7 @@ A blank label or caption counts as unset. `[pivot]` is inline only; a `[/pivot]`
 `rows` and `cols` each accept one of:
 
 - **A Meta path**, `meta.<key>[.<key>…]`: `meta.status`, `meta.project.phase`.
-- **A field of the entity**: a text field such as `name`, `contentType` or `originalName`; `fileSize`, `width` or `height` on resources; `shared` on notes, shown as `yes` and `no`.
+- **A field of the entity**: a text field such as `name` or `contentType`; `fileSize`, `width` or `height` on resources; `shared` on notes, shown as `yes` and `no`.
 - **A relation, by name**: `owner`, `groups` (or `group`), `tags`, `notes` and `resources` where the entity has them, and `parent` and `children` on groups.
 - **A date bucket of a timestamp**: `created`, `updated`, or a note's `startDate` and `endDate`, followed by `.day`, `.week`, `.month` or `.year`, such as `created.month`. Buckets are shown oldest first.
 
@@ -1936,7 +1936,9 @@ These are refused, with a message saying what to use instead:
 
 - a bare timestamp (`created`): pick a date bucket;
 - an ID field (`id`, `category`, `noteType`): they would head the table with numbers. Filter by the category or note type in `query` and pivot by a Meta field;
-- a traversal (`owner.name`, `tags.count`) and `similarImages`.
+- a traversal (`owner.name`, `tags.count`) and `similarImages`;
+- unbounded text (`description`, `originalName`, `originalLocation`, `url`): use these in `query` filters instead of grouping by them;
+- a dimension or generated sum alias longer than 63 bytes (PostgreSQL's identifier limit). Use shorter Meta paths: at most 58 bytes after `meta.` for a dimension or 54 for a sum, which adds `sum_` to the alias.
 
 Using a field the entity does not have, such as `shared` on a resource, is refused with `"shared" is not a resource field`.
 
@@ -1945,7 +1947,7 @@ Using a field the entity does not have, such as `shared` on a resource, is refus
 - **Equal values share a row or column.** Values that differ only in ASCII letter case (`Open` and `open`) are one row, because MRQL's `=` compares text that way. So are a Meta number and the same digits written as a string (`3` and `"3"`), and two related groups with the same name: the result carries a group's name, not its ID, so the table cannot tell them apart. The spelling shown is the one in the combination with the most items.
 - **Booleans in Meta** show as `1` and `0` on SQLite (merged with the numbers 1 and 0 and the strings "1" and "0") and as `true` and `false` on PostgreSQL (merged with the strings "true" and "false").
 - **Missing values** go in a `(none)` row or column, shown last: a missing Meta key, an entity with no owner or no tags, or an owner the viewer cannot see. An empty string is `(empty)`.
-- **Sums** add numbers. How other Meta values count depends on the database. PostgreSQL adds a string only when it is wholly a plain decimal (`"2"`, `"-1.5"`) and skips everything else. SQLite reads the number a string starts with (`"2"` and `"2 hours"` both add 2, `"x"` adds nothing) and adds a JSON `true` as 1. A cell with no number to add shows 0.
+- **Sums** add numbers. How other Meta values count depends on the database. PostgreSQL adds a string only when it is wholly a plain decimal (`"2"`, `"-1.5"`) and skips everything else. SQLite reads the number a string starts with (`"2"` and `"2 hours"` both add 2, `"x"` adds nothing) and adds a JSON `true` as 1. A cell with no number to add shows 0. Sums use `float64` when merging and formatting, so large integers can be rounded (not all integers above `2^53` in magnitude are represented exactly).
 - **Numbers** are written as `[calc]` writes them: plain decimals, at most ten fraction digits, no thousands separators. A combination with no entities shows a muted `0`.
 
 ### Totals
@@ -1961,18 +1963,19 @@ A multi-valued relation (`tags`, `groups`, `notes`, `resources`, `children`) put
 
 Rows are ranked by their total, highest first, with ties broken by label, and the top `max-rows` are shown; columns likewise with `max-cols`. A note under the table says how many values are not shown. A date bucket is still shown oldest first among the values kept.
 
-One query reads at most 5000 (row, column) combinations, those with the most items first (with ties broken by the two fields, so a render is stable). Past that the table says "Only the 5000 combinations with the most items were counted", combinations it did not read show `—` (read as "not counted"), totals are marked `+` (read as "or more"), and nothing is linked. Narrow the query.
+The table uses at most 5000 (row, column) combinations, those with the most items first (with ties broken by the two fields, so a render is stable). Past that the table says "Only the 5000 combinations with the most items were counted", combinations it did not read show `—` (read as "not counted"), and nothing is linked. Count totals are marked `+` (read as "or more"); sum totals are marked `(partial)`, because omitted values can raise or lower a sum. Narrow the query.
 
 ### Links
 
-In count mode every cell and total that can be matched exactly links to the [MRQL page](./mrql.md) for what it counted, in the scope the table was counted in: `(<query>) AND meta.status = "open" AND owner = "Inbox"` for a cell, one condition for a row or column total, and the bare `query` for the grand total. The link's count equals the cell's.
+In count mode eligible cells and totals link to the [MRQL page](./mrql.md) for what they counted: `(<query>) AND meta.status = "open" AND owner = "Inbox"` for a cell, one condition for a row or column total, and the bare `query` for the grand total.
 
 No links appear:
 
-- in sum mode;
-- in a truncated table;
+- in sum mode, a truncated table, or a hover card;
+- when a confined viewer's pivot counts a strict descendant of their allowed group: the MRQL page would list the viewer's full subtree instead;
+- when a cell or total exceeds the default MRQL result limit, or its composed filter (including any `SCOPE` clause) exceeds MRQL's 32 KiB query limit;
 - for date buckets and the `(none)` row or column;
-- for a Meta row or column that held a JSON number with a fraction on SQLite, which `=` cannot match by its label;
+- for cells or totals that depend on a Meta dimension with any numeric key on SQLite. SQLite can group an integer and a real number together even though their text comparisons differ; a text key on that axis can match the same number too. Totals that do not filter by the affected dimension can still link;
 - for a multi-valued relation's row or column that merged two values in one cell, such as two groups named Inbox and inbox, where one note in both would be counted twice by the cell and once by the link.
 
 One known mismatch remains: PostgreSQL's `LOWER` folds non-ASCII letters too, so `É` and `é` are two rows there whose links each list both.
@@ -1996,7 +1999,7 @@ One known mismatch remains: PostgreSQL's `LOWER` folds non-ASCII letters too, so
 </div>
 ```
 
-- The scroll region is reachable with Tab and named by the caption, so a wide table can be scrolled from the keyboard.
+- The scroll region is named by the caption. On pages, including the lightbox, it is reachable with Tab so a wide table can be scrolled from the keyboard. In a hover card it has no tab stop.
 - Every column header is `scope="col"` and every row header, the Total row included, `scope="row"`.
 - Each link's name starts with its visible number and names the row and column it counts.
 - Colour never carries meaning on its own: an empty combination is a written `0`.
@@ -2004,8 +2007,8 @@ One known mismatch remains: PostgreSQL's `LOWER` folds non-ASCII letters too, so
 
 ### Scoping and cost
 
-- Counts and labels are read as the viewer. A group-confined user or guest only counts entities inside their subtree, whatever `scope` says, and a group outside their subtree is never named; an entity whose owner they cannot see falls in `(none)`. The links open the MRQL page, which applies the same confinement.
-- Each `[pivot]` is one SQL statement of at most 5001 rows and costs one unit of the [per-page query budget](#per-page-query-budget). An identical pivot on the same page is free.
+- Counts and labels are read as the viewer. A group-confined user or guest only counts entities inside their subtree, whatever `scope` says, and a group outside their subtree is never named; an entity whose owner they cannot see falls in `(none)`. An association to an invisible group does not add a bucket or increase a count.
+- Each `[pivot]` runs one aggregate SQL statement returning at most 5001 rows (the extra row detects truncation), plus a scope check for a confined viewer with a concrete group scope. This costs one unit of the [per-page query budget](#per-page-query-budget). An identical pivot on the same page uses the cached result.
 - No index serves a `meta.*` grouping. On a large library, narrow `query` by type plus a category, note type, owner or date range, and keep the default entity scope rather than `scope="global"`. Two multi-valued dimensions multiply the rows the query joins; see the junction-join note in the [MRQL reference](./mrql-reference.md).
 - Put pivots in `CustomHeader`, `CustomSidebar` or `CustomListHeader`, not in a per-card slot, where every card runs its own query.
 

@@ -22,6 +22,7 @@ const (
 	pivotMaxRowsCeiling = 50
 	pivotDefaultMaxCols = 10
 	pivotMaxColsCeiling = 20
+	pivotMaxAliasBytes  = 63 // PostgreSQL truncates longer identifiers.
 )
 
 // pivotFieldRe is checked on every field name before it is composed into the
@@ -145,6 +146,11 @@ func pivotQuery(attrs map[string]string) (string, pivotPlan, error) {
 		return "", pivotPlan{}, fmt.Errorf("[pivot] %w", err)
 	}
 	keys := mrql.AggregatedColumns(cq)
+	for _, key := range keys {
+		if len(key) > pivotMaxAliasBytes {
+			return "", pivotPlan{}, fmt.Errorf("[pivot] %q exceeds the %d-byte SQL alias limit; use a shorter field path", key, pivotMaxAliasBytes)
+		}
+	}
 
 	rowDim.label = pivotLabel(attrs["rows-label"], rows)
 	colDim.label = pivotLabel(attrs["cols-label"], cols)
@@ -210,6 +216,8 @@ func classifyPivotDim(attr, name string, entity mrql.EntityType) (pivotDim, erro
 		return pivotDim{}, fmt.Errorf("[pivot] %s: %q is a timestamp; use a date bucket like %s.month or %s.year", attr, name, name, name)
 	case pivotIDFields[name]:
 		return pivotDim{}, fmt.Errorf("[pivot] %s: %q holds IDs, which would head the table as bare numbers; pivot by a meta.* field instead, or filter by %s in query", attr, name, name)
+	case name == "description" || name == "originalName" || name == "originalLocation" || name == "url":
+		return pivotDim{}, fmt.Errorf("[pivot] %s: %q is unbounded text; filter by it in query instead", attr, name)
 	case name == "similarImages":
 		return pivotDim{}, fmt.Errorf("[pivot] %s: %q is not supported; %s", attr, name, pivotUnsupportedHint)
 	}
@@ -250,19 +258,21 @@ type pivotBucket struct {
 }
 
 type pivotAxis struct {
-	dim     pivotDim
-	buckets []*pivotBucket
-	byKey   map[string]*pivotBucket
+	dim            pivotDim
+	buckets        []*pivotBucket
+	byKey          map[string]*pivotBucket
+	numericMetaKey bool
 }
 
 // pivotRawKind says what a raw group-by value was before it became text.
 type pivotRawKind int
 
 const (
-	pivotRawText   pivotRawKind = iota
-	pivotRawNone                // SQL NULL
-	pivotRawFloat               // a JSON number SQLite returned as a float
-	pivotRawOpaque              // a type no current dimension produces
+	pivotRawText pivotRawKind = iota
+	pivotRawNone              // SQL NULL
+	pivotRawInteger
+	pivotRawFloat
+	pivotRawOpaque // a type no current dimension produces
 )
 
 func pivotKeyText(raw any) (string, pivotRawKind) {
@@ -274,7 +284,7 @@ func pivotKeyText(raw any) (string, pivotRawKind) {
 	case []byte:
 		return string(x), pivotRawText
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return fmt.Sprint(x), pivotRawText
+		return fmt.Sprint(x), pivotRawInteger
 	case float64:
 		return strconv.FormatFloat(x, 'f', -1, 64), pivotRawFloat
 	default:
@@ -290,6 +300,12 @@ func mrqlStringLiteral(s string) string {
 
 func (a *pivotAxis) bucket(raw any) *pivotBucket {
 	text, kind := pivotKeyText(raw)
+	// SQLite can group INTEGER and REAL together but compare them as different
+	// strings in a drill-down. Even an integer key can therefore hide a REAL
+	// that matches a different bucket's link. PostgreSQL returns Meta as text.
+	if a.dim.kind == pivotKindMeta && (kind == pivotRawInteger || kind == pivotRawFloat) {
+		a.numericMetaKey = true
+	}
 	// asciiLower folds A-Z only, as SQLite's LOWER does.
 	key := "v" + asciiLower(text)
 	if kind == pivotRawNone {
@@ -322,9 +338,7 @@ func (a *pivotAxis) bucket(raw any) *pivotBucket {
 		a.byKey[key] = b
 		a.buckets = append(a.buckets, b)
 	}
-	// SQLite renders a stored 3.0 as "3.0" under LOWER, so a float-fed meta
-	// bucket cannot be matched by its label.
-	if kind == pivotRawOpaque || (kind == pivotRawFloat && a.dim.kind == pivotKindMeta) {
+	if kind == pivotRawOpaque {
 		b.literal = ""
 	}
 	return b
@@ -416,8 +430,7 @@ func pivotNumber(f float64) string {
 
 // RenderPivotShortcode renders [pivot]: a cross-tab of two fields of an MRQL
 // filter's results, with a count or sum in each cell and row, column and grand
-// totals. In count mode each cell and total links to the MRQL page filtered to
-// exactly what it counted.
+// totals. In count mode linkable values drill down to the matching MRQL list.
 //
 // It runs one aggregated query through the executor, so the principal's
 // subtree confinement, the page query budget and its cache apply as they do to
@@ -448,7 +461,7 @@ func RenderPivotShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcod
 		return mrqlErrorHTML(errors.New("[pivot] unexpected result mode"), false)
 	}
 	if result == nil || len(result.Rows) == 0 {
-		return `<div class="mrql-pivot"><p class="text-sm text-stone-500 font-mono py-2 text-center">No results.</p></div>`
+		return `<div class="mrql-pivot"><p class="text-sm font-mono py-2 text-center">No results.</p></div>`
 	}
 	rows := result.Rows
 	truncated := len(rows) > pivotFetchLimit
@@ -461,9 +474,12 @@ func RenderPivotShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcod
 		if scope != 0 && scope != mrql.UnresolvedScopeSentinel {
 			filter = mrql.InsertScopeClause(filter, scope)
 		}
+		if len(filter) > mrql.MaxQueryBytes {
+			return ""
+		}
 		return "/mrql?q=" + url.QueryEscape(filter)
 	}
-	return writePivotHTML(m, plan, t, href)
+	return writePivotHTML(m, plan, t, result.DrillDownLimit, withinTooltip(reqCtx), href)
 }
 
 // pivotFocus is the link and region focus ring, as [similar] and [calendar]
@@ -471,7 +487,7 @@ func RenderPivotShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcod
 const pivotFocus = similarFocus
 
 const (
-	pivotTh       = `px-3 py-2 font-semibold text-stone-700 whitespace-nowrap`
+	pivotTh       = `px-3 py-2 font-semibold whitespace-nowrap`
 	pivotTd       = `px-3 py-2 text-right tabular-nums`
 	pivotLinkAttr = `class="text-amber-700 hover:text-amber-900 underline rounded-sm ` + pivotFocus + `"`
 )
@@ -479,49 +495,58 @@ const (
 // writePivotHTML writes the table under the render meter: every row is
 // reserved right after it is formatted, so a stop holds at most one row past
 // the budget.
-func writePivotHTML(m *renderMeter, plan pivotPlan, t pivotTable, href func(string) string) string {
+func writePivotHTML(m *renderMeter, plan pivotPlan, t pivotTable, drillDownLimit int, tooltip bool, href func(string) string) string {
 	shownRows, hiddenRows := t.rows.shown(plan.maxRows)
 	shownCols, hiddenCols := t.cols.shown(plan.maxCols)
 	showTotalCol := !plan.cols.multi
 	showFooter := !plan.rows.multi
-	links := !plan.sum && !t.truncated
+	links := !plan.sum && !t.truncated && !tooltip && drillDownLimit > 0
+	rowLinks, colLinks := links && !t.rows.numericMetaKey, links && !t.cols.numericMetaKey
 	esc := html.EscapeString
 
 	base := "(" + plan.filter + ")"
 	clause := func(d pivotDim, b *pivotBucket) string { return " AND " + d.field + " = " + b.literal }
-	// value writes one number, linked when filter is not "".
+	// value writes one number, linking only if the destination can list it.
 	value := func(b *strings.Builder, n float64, filter, name string) {
 		text := pivotNumber(n)
-		if !links || filter == "" {
-			b.WriteString(text)
-			return
+		if links && filter != "" && n <= float64(drillDownLimit) {
+			if url := href(filter); url != "" {
+				fmt.Fprintf(b, `<a href="%s" %s aria-label="%s">%s</a>`, esc(url), pivotLinkAttr, esc(text+": "+name), text)
+				return
+			}
 		}
-		fmt.Fprintf(b, `<a href="%s" %s aria-label="%s">%s</a>`, esc(href(filter)), pivotLinkAttr, esc(text+": "+name), text)
+		b.WriteString(text)
 	}
-	// total writes a total, marked as a lower bound under truncation.
 	total := func(b *strings.Builder, n float64, filter, name string) {
-		if t.truncated {
+		if !t.truncated {
+			value(b, n, filter, name)
+		} else if plan.sum {
+			b.WriteString(pivotNumber(n) + " (partial)")
+		} else {
 			b.WriteString(pivotNumber(n) + `<span aria-hidden="true">+</span><span class="sr-only"> or more</span>`)
-			return
 		}
-		value(b, n, filter, name)
 	}
 
 	var b strings.Builder
 	c := charged{m: m}
 	caption := esc(plan.caption)
+	tabindex := 0
+	if tooltip {
+		// Omission alone can leave a scroll container in the tab order.
+		tabindex = -1
+	}
 	// relative keeps the sr-only spans inside the scroll container, so they
 	// cannot widen the page.
-	fmt.Fprintf(&b, `<div class="mrql-pivot my-2"><div class="relative overflow-x-auto rounded-md %s" role="region" aria-label="%s" tabindex="0">`, pivotFocus, caption)
-	fmt.Fprintf(&b, `<table class="min-w-full text-sm border border-stone-200"><caption class="text-left text-sm font-semibold text-stone-700 px-1 pb-2">%s</caption>`, caption)
-	fmt.Fprintf(&b, `<thead class="bg-stone-100"><tr><th scope="col" class="%s text-left">%s</th>`, pivotTh, esc(plan.rows.label))
+	fmt.Fprintf(&b, `<div class="mrql-pivot my-2"><div class="relative overflow-x-auto rounded-md %s" role="region" aria-label="%s" tabindex="%d">`, pivotFocus, caption, tabindex)
+	fmt.Fprintf(&b, `<table class="min-w-full text-sm border border-stone-200"><caption class="text-left text-sm font-semibold px-1 pb-2">%s</caption>`, caption)
+	fmt.Fprintf(&b, `<thead class="bg-stone-100 text-stone-700"><tr><th scope="col" class="%s text-left">%s</th>`, pivotTh, esc(plan.rows.label))
 	for _, col := range shownCols {
 		fmt.Fprintf(&b, `<th scope="col" class="%s text-right">%s</th>`, pivotTh, esc(col.label))
 	}
 	if showTotalCol {
 		fmt.Fprintf(&b, `<th scope="col" class="%s text-right">Total</th>`, pivotTh)
 	}
-	b.WriteString(`</tr></thead><tbody class="divide-y divide-stone-100">`)
+	b.WriteString(`</tr></thead><tbody class="bg-white text-stone-900 divide-y divide-stone-100">`)
 	if !c.flush(&b) {
 		return ""
 	}
@@ -540,7 +565,7 @@ func writePivotHTML(m *renderMeter, plan pivotPlan, t pivotTable, href func(stri
 			case present:
 				b.WriteString(`<td class="` + pivotTd + `">`)
 				filter := ""
-				if row.literal != "" && col.literal != "" {
+				if rowLinks && colLinks && row.literal != "" && col.literal != "" {
 					filter = base + clause(plan.rows, row) + clause(plan.cols, col)
 				}
 				value(&b, n, filter, plan.rows.label+" "+row.label+", "+plan.cols.label+" "+col.label)
@@ -554,7 +579,7 @@ func writePivotHTML(m *renderMeter, plan pivotPlan, t pivotTable, href func(stri
 		if showTotalCol {
 			b.WriteString(`<td class="` + pivotTd + ` font-semibold">`)
 			filter := ""
-			if row.literal != "" {
+			if rowLinks && row.literal != "" {
 				filter = base + clause(plan.rows, row)
 			}
 			total(&b, row.total, filter, "total for "+plan.rows.label+" "+row.label)
@@ -568,14 +593,14 @@ func writePivotHTML(m *renderMeter, plan pivotPlan, t pivotTable, href func(stri
 	b.WriteString(`</tbody>`)
 
 	if showFooter {
-		fmt.Fprintf(&b, `<tfoot class="bg-stone-50"><tr><th scope="row" class="%s text-left">Total</th>`, pivotTh)
+		fmt.Fprintf(&b, `<tfoot class="bg-stone-50 text-stone-700"><tr><th scope="row" class="%s text-left">Total</th>`, pivotTh)
 		for _, col := range shownCols {
 			if !m.tick() {
 				return ""
 			}
 			b.WriteString(`<td class="` + pivotTd + ` font-semibold">`)
 			filter := ""
-			if col.literal != "" {
+			if colLinks && col.literal != "" {
 				filter = base + clause(plan.cols, col)
 			}
 			total(&b, col.total, filter, "total for "+plan.cols.label+" "+col.label)
@@ -606,10 +631,16 @@ func writePivotHTML(m *renderMeter, plan pivotPlan, t pivotTable, href func(stri
 		if (hiddenRows > 0 && showFooter) || (hiddenCols > 0 && showTotalCol) {
 			note += "; the totals include them"
 		}
-		fmt.Fprintf(&b, `<p class="text-xs text-stone-500 mt-1">%s.</p>`, esc(note))
+		fmt.Fprintf(&b, `<p class="text-xs mt-1">%s.</p>`, esc(note))
 	}
 	if t.truncated {
-		fmt.Fprintf(&b, `<p class="text-xs text-amber-800 mt-1">Only the %d combinations with the most items were counted, so cells marked — and totals marked + are incomplete. Narrow the query.</p>`, pivotFetchLimit)
+		fmt.Fprintf(&b, `<p class="text-xs mt-1">Only the %d combinations with the most items were counted. Cells marked — were not counted. `, pivotFetchLimit)
+		if plan.sum {
+			b.WriteString("Totals are partial sums. ")
+		} else {
+			b.WriteString("Totals marked + are incomplete. ")
+		}
+		b.WriteString("Narrow the query.</p>")
 	}
 	b.WriteString(`</div>`)
 	if !c.flush(&b) {

@@ -33,7 +33,7 @@ func (f *fakePivotExecutor) exec(_ context.Context, query string, opts QueryOpti
 	if mode == "" {
 		mode = "aggregated"
 	}
-	return &QueryResult{Mode: mode, Rows: f.rows}, nil
+	return &QueryResult{Mode: mode, Rows: f.rows, DrillDownLimit: 1000}, nil
 }
 
 func pivotCtx() MetaShortcodeContext {
@@ -263,6 +263,10 @@ func TestPivotRejectsInvalidInputWithoutQuerying(t *testing.T) {
 		{statusAttrs("cols", "tags.name"), unsupported("cols", "tags.name")},
 		{statusAttrs("cols", "tags.count"), unsupported("cols", "tags.count")},
 		{statusAttrs("query", "type = resource", "rows", "similarImages"), unsupported("rows", "similarImages")},
+		{statusAttrs("rows", "description"), `[pivot] rows: "description" is unbounded text; filter by it in query instead`},
+		{statusAttrs("query", "type = group", "cols", "url"), `[pivot] cols: "url" is unbounded text; filter by it in query instead`},
+		{statusAttrs("query", "type = resource", "rows", "originalLocation"), `[pivot] rows: "originalLocation" is unbounded text; filter by it in query instead`},
+		{statusAttrs("query", "type = resource", "cols", "originalName"), `[pivot] cols: "originalName" is unbounded text; filter by it in query instead`},
 		{statusAttrs("rows", "created"), `[pivot] rows: "created" is a timestamp; use a date bucket like created.month or created.year`},
 		{statusAttrs("cols", "startDate"), `[pivot] cols: "startDate" is a timestamp; use a date bucket like startDate.month or startDate.year`},
 		{statusAttrs("cols", "noteType"), ids("cols", "noteType")},
@@ -492,8 +496,8 @@ func TestPivotCountLinksFilterToTheCell(t *testing.T) {
 }
 
 func TestPivotLinkLiterals(t *testing.T) {
-	// A meta number groups with its string and links as the string.
-	g := parsePivot(t, renderPivot(t, statusAttrs("scope", "global"), &fakePivotExecutor{rows: []map[string]any{row(int64(1), "ann", int64(1))}}))
+	// PostgreSQL returns a Meta number as text, so the key links as text.
+	g := parsePivot(t, renderPivot(t, statusAttrs("scope", "global"), &fakePivotExecutor{rows: []map[string]any{row("1", "ann", int64(1))}}))
 	assert.Equal(t, `(type = note) AND meta.status = "1" AND meta.assignee = "ann"`, linkQuery(t, g.body[0][1].href))
 
 	// A float-fed meta bucket (SQLite) is not linked; its partner still is.
@@ -584,7 +588,7 @@ func TestPivotSharesThePageBudgetAndCache(t *testing.T) {
 	calls := 0
 	base := func(_ context.Context, query string, opts QueryOptions) (*QueryResult, error) {
 		calls++
-		return &QueryResult{Mode: "aggregated", Rows: statusRows()}, nil
+		return &QueryResult{Mode: "aggregated", Rows: statusRows(), DrillDownLimit: 1000}, nil
 	}
 	exec := BudgetedExecutor(base, nil)
 	reqCtx := WithQueryBudget(context.Background(), 1)
@@ -600,7 +604,7 @@ func TestPivotErrorsAndEmptyStates(t *testing.T) {
 	assert.Equal(t, mrqlErrorHTML(boom, false), renderPivot(t, statusAttrs(), &fakePivotExecutor{err: boom}))
 	unavailable := NewQueryUnavailable("")
 	assert.Equal(t, unavailableComment(unavailable), renderPivot(t, statusAttrs(), &fakePivotExecutor{err: unavailable}))
-	assert.Equal(t, `<div class="mrql-pivot"><p class="text-sm text-stone-500 font-mono py-2 text-center">No results.</p></div>`, renderPivot(t, statusAttrs(), &fakePivotExecutor{}))
+	assert.Equal(t, `<div class="mrql-pivot"><p class="text-sm font-mono py-2 text-center">No results.</p></div>`, renderPivot(t, statusAttrs(), &fakePivotExecutor{}))
 	assert.Equal(t, mrqlErrorHTML(errors.New("[pivot] unexpected result mode"), false), renderPivot(t, statusAttrs(), &fakePivotExecutor{mode: "flat"}))
 
 	tpl := `[pivot query="type = note" rows="meta.status" cols="meta.assignee"]`
@@ -622,4 +626,44 @@ func TestPivotErrorsAndEmptyStates(t *testing.T) {
 	out, err := ProcessChecked(bctx, tpl, pivotCtx(), nil, f.exec)
 	assert.ErrorIs(t, err, ErrRenderBudgetExceeded)
 	assert.Empty(t, out)
+}
+
+func TestPivotTruncatedSignedSumsArePartial(t *testing.T) {
+	var rows []map[string]any
+	for i := range pivotFetchLimit + 1 {
+		r := row("open", fmt.Sprintf("a%04d", i), int64(1))
+		r["sum_meta.hours"] = 1
+		if i == pivotFetchLimit {
+			r["sum_meta.hours"] = -100
+		}
+		rows = append(rows, r)
+	}
+	out := renderPivot(t, statusAttrs("value", "sum", "field", "meta.hours"), &fakePivotExecutor{rows: rows})
+	g := parsePivot(t, out)
+	for _, c := range []pivotCell{g.body[0][len(g.head)-1], g.foot[len(g.head)-1]} {
+		assert.Equal(t, "5000 (partial)", c.visible)
+		assert.Equal(t, "5000 (partial)", c.spoken)
+	}
+	assert.Equal(t, "1 (partial)", g.foot[1].visible)
+	assert.Contains(t, out, "Totals are partial sums.")
+	assert.NotContains(t, out, "or more</span>")
+}
+
+func TestPivotLinkQuerySizeIncludesScope(t *testing.T) {
+	const filter = `(type = note) AND meta.status = "%s" AND meta.assignee = "ann" SCOPE 7`
+	labelBytes := mrql.MaxQueryBytes - len(fmt.Sprintf(filter, ""))
+	for _, extraBytes := range []int{0, 1} {
+		label := strings.Repeat("x", labelBytes+extraBytes)
+		g := parsePivot(t, renderPivot(t, statusAttrs(), &fakePivotExecutor{rows: []map[string]any{row(label, "ann", int64(1))}}))
+		assert.Equal(t, "1", g.body[0][1].visible)
+		if extraBytes == 0 {
+			q := linkQuery(t, g.body[0][1].href)
+			assert.Len(t, q, mrql.MaxQueryBytes)
+			_, err := mrql.Parse(q)
+			assert.NoError(t, err)
+		} else {
+			assert.Empty(t, g.body[0][1].href)
+		}
+		assert.NotEmpty(t, g.body[0][2].href, "shorter row total is still linkable")
+	}
 }
