@@ -117,7 +117,7 @@ The body and `[else]` are processed with the **carrier's** context, as in `[each
 2. **Unfiltered handle.** A confined principal whose handle carries no scope filter (a `WithMRQLPrincipal` binding) gets `ErrRelationsUnavailable` before any query.
 3. **Carrier.** `visibleGroupIDs([]uint{groupID})`: not visible → empty result, no query.
 4. **Edges.** One statement reads `group_relations` joined to the type, the far group and its category. It is never scoped by the callback (its table is `group_relations`), so it carries no allow-list. Then `visibleGroupIDs(farIDs)` drops every row whose far endpoint is outside the subtree. Both endpoints must be visible, the rule of `relationInScope`.
-5. **Details.** `GroupRelationTargetDetails(ids)` re-gates the IDs through `visibleGroupIDs` and reads `id, description, meta` through `unscopedDB()`. An ID with no row (deleted meanwhile) is simply absent.
+5. **Details.** `LoadRelatedGroupDetails(ids)` re-gates the IDs through `visibleGroupIDs` and reads `id, description, meta` through `unscopedDB()`. An ID with no row (deleted meanwhile) is simply absent.
 6. Categories are not scoped and need not be: a visible group's category name is shown on its own page.
 7. Generation-run tools install no lister (privacy, not authorization: they build a model-facing corpus with its own masking, which edge names and far-group data would bypass).
 8. Share pages render notes only; no lister is installed there.
@@ -160,7 +160,7 @@ A built-in Go handler in `shortcodes/` with data through a request-context liste
 
 New:
 1. `shortcodes/relations_handler.go`: `RelationsRequest`, `GroupRelationEntry`, `RelationLister`, `WithRelationLister`, `ErrRelationsBudget`, `ErrRelationsUnavailable`, `RenderRelationsShortcode`.
-2. `application_context/relation_template_context.go`: `ListGroupRelationsForTemplate` and `GroupRelationTargetDetails`.
+2. `application_context/relation_template_context.go`: `ListGroupRelationsForTemplate` and `LoadRelatedGroupDetails`.
 3. `server/template_handlers/template_filters/shortcode_relation_lister.go`: `RelationListerContext`, `BuildRelationLister` (cache, budget per statement, timeout, log).
 
 Edited:
@@ -224,15 +224,49 @@ E2E (`e2e/tests/112-relations-shortcode.spec.ts`): group page shows label, link,
 5. `go test --tags 'json1 fts5' ./...`, the Postgres tests, `./scripts/css-scan-test.sh`, the new E2E and a11y specs pass.
 
 ## 12. Checklist
-- [ ] Plan revised (rev. 5)
-- [ ] Shortcode handler, dispatch (tests first)
-- [ ] Lint, builtin docs (tests first)
-- [ ] Application context and index (tests first; SQLite and Postgres)
-- [ ] Lister, page and API wiring (tests first)
-- [ ] HTTP scope tests
-- [ ] CSS, reference panels, docs-site, skill reference
-- [ ] E2E and a11y specs
-- [ ] Suites run
+- [x] Plan revised (rev. 5)
+- [x] Shortcode handler, dispatch (tests first)
+- [x] Lint, builtin docs (tests first)
+- [x] Application context and index (tests first; SQLite and Postgres)
+- [x] Lister, page and API wiring (tests first)
+- [x] HTTP scope tests
+- [x] CSS, reference panels, docs-site, skill reference
+- [x] E2E and a11y specs
+- [x] Suites run
 
 ## 13. Review
-(filled in at the end)
+
+### Deviations from rev. 5 as written
+- **Names.** The details method is `LoadRelatedGroupDetails` (returns `[]models.Group` with `id, description, meta` only); `RelationListerContext` also carries `LoadRelatedGroupDetails`, `MRQLQueryTimeout` and `Logger`, because the lister owns the budget, the timeout and the failure log as `[adjacent]`'s resolver does.
+- **`countingPageContext`** (a test fake) gained explicit no-op relation methods rather than an embedded `RelationListerContext`: embedding a second interface that also declares `Logger` makes the struct's `Logger` ambiguous.
+- **U12** (processor dispatch) has no separate `processor_test.go` case: every handler test renders through `Process`, so the dispatch line is exercised by all of them.
+- **The parser** (`shortcodes/parser.go`) needed `relations` in both name regexes; rev. 5 did not list the file.
+- **Reference panels.** On resource categories and note types the entry shows `[using rel="owner"][relations][/using]`, since only groups have relations.
+- **API client.** `e2e/helpers/api-client.ts` `createRelationType` takes an optional `reverseName`, so the E2E can create a paired type.
+- **The CSS** has no rule for the category span: a reduced opacity there would have been a contrast risk for no gain.
+
+### Found while implementing
+- `direction="in"` on a group with a paired type also lists the stored reverse half of each pair (E2E: "Incoming: Required by" beside "Incoming: Blocks"). That is the behaviour §2 and the docs describe ("use `in` for types without a back relation"); the E2E now asserts it rather than hiding it.
+- An HTML scope test's `href` used `[item path='GroupURL']`; the linter warns on a bare `[item]` as a URL. The docs and examples use `/group?id=[item path='GroupID']`, and say why.
+
+### How each evaluator point (rev. 4, appended below) was resolved
+1. **Far-group load through the scope callback.** Resolved: no statement reads `groups` through the scoped handle. The edge statement joins the far group (its table is `group_relations`, which the callback does not map); details go through `unscopedDB()` after `visibleGroupIDs`. `TestRelationsForTemplateLargeAllowList` (40,000 IDs, SQLite) and `_Postgres` (70,000 IDs) pass; mutating details back to the scoped handle fails the SQLite test with "too many SQL variables".
+2. **Statements versus units.** Resolved: one statement per expansion (+1 for details), one unit per statement. `TestRelationsForTemplateRunsOneStatement` counts statements; `TestRelationListerChargesOneUnitPerStatement` and `TestRelationListerRefusesDetailsPastTheBudget` count units (removing the second charge fails both); `TestRelationsShortcode_SharesThePageBudget` checks it on a real page.
+3. **Far group unreachable.** Resolved: `GroupDescription` and `GroupMeta` in block bodies, loaded only when named (`TestRelations_FarGroupDetailsLoadOnlyWhenNamed`, the deferred HTTP test and the E2E block body).
+4. **Complexity of `both` and dedup.** Resolved by removal: `direction` is `out|in`, default `out`; `both` is an error marker and a lint error.
+5. **Small checks.** `handler_interfaces.go` line 106 untouched; only `mrqlRenderContext` embeds the interface. The type-name-across-categories rule is in the attribute table of the docs-site page, the builtin docs and the skill reference, and `runRelationsForTemplateListing` pins it.
+6. **A11y check named.** `e2e/tests/accessibility/relations-shortcode-a11y.spec.ts` runs `checkA11y` (axe, WCAG A/AA tags) on the group detail page, the group list page and the `/mrql` results page, and asserts the nested list roles; all pass.
+
+### Not verified
+- The HTTP-level tests (`server/api_tests/relations_shortcode_scope_test.go`) run on SQLite only; Postgres parity is at the application-context level (listing, scope, large allow-list).
+- No Postgres `EXPLAIN` for the `in` index: on a fixture-sized table the planner seq-scans, and a meaningful plan needs a seeded large table. The SQLite plan is pinned.
+- The full E2E suite, the CLI E2E suite and the Postgres E2E suite were not run (shared machine); the new specs and the neighbouring shortcode, template-preview and category-authoring a11y specs were.
+
+## Appendix: last evaluator feedback on rev. 4
+
+1. Scoping (blocks approval): the "secondary check" in §5.3 loads far groups with `ctx.db.WithContext(reqCtx).Preload("Category").Where("id IN ?", visibleFarIDs)`. That goes through the scoped `groups` read callback, which appends the principal's whole allow-list as a second `IN` clause. Past SQLITE_MAX_VARIABLE_NUMBER or Postgres's 65535-parameter cap the query errors. Load names and categories through a handle that skips the scope callback, handle the deletion race by dropping missing rows, and add a test with an allow-list larger than the SQLite variable limit.
+2. Statement count on list pages: each card runs 4–5 statements but costs one unit. Say plainly that the cap is exceeded, batch, or charge per statement or per direction.
+3. Usefulness: relations panels already exist; the far group's Meta cannot be reached. Exposing far-group Description or a Meta path through `[item]` would raise the value considerably.
+4. Complexity against value: consider dropping `both` dedup in favour of `out` as the default, or justify `both` over two invocations.
+5. `handler_interfaces.go` line 106 is the MRQL handler interface; `mrqlRenderContext` alone is enough. The docs must explain that the type filter is a name match across categories.
+6. Name the exact a11y check for "Incoming: " labels in nested lists, and confirm axe passes on the MRQL result page as well as the group list page.
