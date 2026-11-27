@@ -23,7 +23,9 @@ func excerptMaskMarkdownLabels(src string) string {
 	var masked []byte
 	var labels map[int]bool
 	for _, m := range shortcodePattern.FindAllStringSubmatchIndex(src, -1) {
-		if m[4] >= 0 && strings.TrimSpace(src[m[4]:m[5]]) != "" {
+		// A real shortcode carries key=value attributes. Prose after the name
+		// ("[link to the guide](/guide)") is a Markdown label, as is a bare name.
+		if m[4] >= 0 && attrPattern.MatchString(src[m[4]:m[5]]) {
 			continue
 		}
 		start, end := m[0], m[1]

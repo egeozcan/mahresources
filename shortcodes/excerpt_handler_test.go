@@ -86,6 +86,10 @@ func TestExcerptPreservesMarkdownLabelsNamedLikeShortcodes(t *testing.T) {
 		{"full reference image", "Before ![excerpt][link] after\n\n[link]: image.png", "Before after"},
 		{"not a reference", "before [link] after\n\n`[link]: x`", "before after : x"},
 		{"not a block opener", "[details](https://example.org) kept [/details]", "details kept"},
+		{"multiword inline link", "See [link to the setup guide](/guide).", "See link to the setup guide."},
+		{"multiword inline image", "Before ![link to the map](/map.png) after", "Before after"},
+		{"multiword shortcut reference", "See [link to it].\n\n[link to it]: https://example.org", "See link to it."},
+		{"attributed shortcode before a parenthesis is still removed", `x [property path="Name"](note) y`, "x (note) y"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			assert.Equal(t, c.want, excerptRender(`[excerpt words="200"]`, excerptNote(c.desc)))
