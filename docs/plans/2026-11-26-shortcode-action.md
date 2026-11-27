@@ -72,7 +72,7 @@ When the action is available (§4):
 
 1. `ctx.ForceReadOnly`: share pages, and principals that cannot write (the tag sets this from `!principal.CanWrite()`). The resolver is not called.
 2. `ctx.UntrustedSource`: a Description or note text block under `-auth`. Without this rule, a `user`-role author could plant a button that an admin clicks, which would run with the admin's rights behind a confirm text the author controls. Template slots are written by admins and editors and stay trusted. The resolver is not called.
-3. There is no `ActionResolver` on the request context. This applies to the share server, live template preview, description preview, the entity picker, `/mrql` API result cards, template-run tools and the CustomCSS tag.
+3. There is no `ActionResolver` on the request context. This applies to the share server, live template preview, description preview, the entity picker, direct MRQL API result rendering (`render=1`), template-run tools and the CustomCSS tag. The browser's `/mrql` cards use `render=list`, which goes through the authorized `process_shortcodes` path and can render buttons.
 4. The resolver answers `ErrActionUnavailable` when any of these is true:
    - the action predicate refuses the plugin (§8.2), which covers a guest, a non-writer, and a group-limited principal for a plugin the operator has not opened to scoped accounts;
    - `pm.FindAction(plugin, name)` fails (the plugin is missing or disabled, the action is not registered, or there is no VM);
@@ -85,7 +85,7 @@ When the action is available (§4):
 The resolver starts from the registration, as `pluginActionModal.open` does:
 - An `info` param is skipped.
 - `entity_ref` with default `trigger` or `both` (or no default), where `param.Entity == action.Entity`, gets the current id: `float64(id)`, or `[]any{float64(id)}` when `multi`.
-- `entity_ref` with default `selection` gets empty (`nil`, or `[]any{}`). If the param is `required`, the error is `needs a bulk selection and cannot run from a template`.
+- `entity_ref` with default `selection` gets empty (`nil`, or `[]any{}`). After overrides and `show_when`, a visible, required selection param gives `needs a bulk selection and cannot run from a template`.
 - Any other param gets `param.Default` if set, otherwise `false` for a `boolean` and `""` for everything else.
 
 Then each `param-<name>` attribute is overlaid. `<name>` must be declared. Coercion:
@@ -99,7 +99,7 @@ Then each `param-<name>` attribute is overlaid. `<name>` must be declared. Coerc
 | `entity_ref`, `info` | not allowed | `cannot be set from a template` |
 | undeclared | not allowed | `no such parameter` |
 
-Then `plugin_system.StripHiddenParams` and `plugin_system.ValidateActionParams` run, and the first error becomes the marker. Attribute values are literal, because the parser does not expand shortcodes in attributes and that is unchanged. The DB-backed `ValidateActionEntityRefs` and `ValidateActionEntityFilters` are not run at render time. The run endpoint runs both on every click. Param values are visible in the page source, which is acceptable because the action modal shows the same defaults to the same user.
+Then `plugin_system.StripHiddenParams` and `plugin_system.ValidateActionParams` run, and the first error becomes the marker. Attribute values are literal, because the parser does not expand shortcodes in attributes and that is unchanged. A visible trigger reference whose own filter excludes the loaded entity makes the button unavailable; one without an override has already passed the action's primary filter. The DB-backed `ValidateActionEntityRefs` and `ValidateActionEntityFilters` are not run at render time. The run endpoint runs both on every click. Param values are visible in the page source, which is acceptable because the action modal shows the same defaults to the same user.
 
 ### 4.3 Name collision
 
@@ -110,23 +110,24 @@ Existing text that contains `[action …]` will start rendering as the comment o
 ### 5.1 Activation
 - There is one `click` listener on the inner button. Keyboard activation is native.
 - While a run is in flight, the button gets `aria-disabled="true"` (not `disabled`, so focus stays on it) and further clicks are ignored.
-- With `data-confirm`, the component calls `askToConfirm(text)` from `src/components/confirmDialog.js`, which fails closed. A declined confirmation does nothing.
+- Activation snapshots the payload, label and confirmation, before calling `askToConfirm(text)` from `src/components/confirmDialog.js`. The confirmation fails closed: a decline, a disconnect, or a payload change before acceptance sends no request. The confirmation owns Escape, and the lightbox suspends its focus trap and shortcuts while the confirmation is open.
 - The status becomes "Running…" and the component calls `mahAnnounce("<label>: running")`.
 - It sends `fetch('/v1/jobs/action/run', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({plugin, action, entity_ids:[entityId], params})})`. CSRF comes from the existing `src/csrf.js` fetch wrapper.
 
 ### 5.2 Response (same decoding as `pluginActionModal.submit`)
 - `!resp.ok`: the message is `data.errors[*].message` joined with `; `, or `data.error`, or `Action failed`. It is shown and announced assertively. No events are dispatched.
-- `data.redirect` with `data.success !== false`: `window.location.href = data.redirect`.
+- `data.success === false`: show and announce the refusal before considering a redirect or Job handle. Do not poll or refresh.
+- `data.redirect` without refusal: `window.location.href = data.redirect`.
 - Sync: `data.success === true` shows and announces (politely) `data.message || "Done"`, then signals the refresh (§5.4). Anything else is a failure with `data.message || "Action failed"`, announced assertively, and nothing is dispatched.
 - Async (202): the status becomes "Started" (polite). With `data.canonicalJobId`, the component polls (§5.3). Without it, it shows "Started. Follow it in the Jobs panel." and stops.
 
 ### 5.3 Async completion
 - `GET /v1/jobs/{canonicalJobId}` every 2 s until `state` is in `terminalStates()` (`src/components/jobStates.js`).
-- Polling stops on `disconnectedCallback`, which clears the timer and makes a sequence guard drop answers still in flight, or after 150 polls (5 min). At the cap, the status reads "Still running. Follow it in the Jobs panel."
+- A host that disconnected while the POST was pending never starts its progress watcher. Polling stops on disconnect or after five minutes of wall time, clearing both timers and aborting any in-flight progress request. At the deadline the status reads "Still running. Follow it in the Jobs panel." The Job itself is not cancelled.
 - `succeeded`: announce `presentState(job).label` (this covers partial), then refresh. `failed`, `cancelled` and `interrupted`: show the label and announce it assertively. A non-OK poll gives "Could not read the job's progress". The component never opens the Jobs panel, because that would steal focus.
 
 ### 5.4 Refresh signal
-- Only after a successful outcome, the component dispatches `document` `meta-shortcode-saving` with `{source: host}` and, immediately after, `meta-shortcode-updated` with `{entityType, entityId, source: host}` and no `meta`. `autorefreshShortcode.js` captures the blocks that enclose the host and deletes the `savingIn` entry in the same tick, so a failed or abandoned run never creates an entry. Capturing at completion is equivalent to capturing at the start, because the button is still in the DOM until the refresh it triggers. If another refresh already replaced it, `enclosingHosts` of a detached element is `[]`, and the entity-wide match still refreshes same-entity blocks.
+- Only after a successful outcome, the component dispatches `document` `meta-shortcode-saving` with `{source}` and, immediately after, `meta-shortcode-updated` with `{entityType, entityId, source}` and no `meta`. The identity comes from the submitted payload. If the host is still attached and unchanged, it supplies the source; otherwise, the source is null so the entity match still refreshes same-entity blocks without capturing whatever now encloses the host. `autorefreshShortcode.js` captures and consumes a non-null source's enclosing blocks in the same tick, so a failed or abandoned run never creates an entry.
 - Both existing listeners, the two `meta-shortcode.ts` copies and `display-mode.ts`, ignore an event without `meta`.
 - The page is never reloaded. Authors wrap dependent content in `[autorefresh]`.
 - **Focus.** When the button sits inside the refreshing block, autorefresh's existing restore moves focus to the element at the same index among the block's focusables. If the template places a variable number of focusables *before* the button in that block (for example a link that appears only after the action), focus can land elsewhere. The docs recommend putting the button first in the block, or outside it.
@@ -329,7 +330,7 @@ Problems to fix before or during implementation:
 - **An `entity_ref` with `default = ""`** gets no id, as in `pluginActionModal.resolveEntityRefDefault` (only `trigger` and `both` take the trigger). "No default" in §4.2 still means the trigger, because registration turns a missing default into `"trigger"`.
 - **The click listener is delegated from the host**, as `reloadShortcode.js` does, instead of bound to the inner button: a page morph may replace the button, and a listener on it would go with it.
 - **Announcements carry the button's label** (`"Mark reviewed: Marked resource 7 reviewed"`), so a screen-reader user hears which button finished. The status text beside the button shows the message alone.
-- **A disconnect stops polling only.** A synchronous run in flight when the button leaves the page still announces and signals the refresh, because the action ran; §5.3's sequence guard applies to the Job polls.
+- **A submitted synchronous action can still complete after disconnect.** Its announcement and refresh address the submitted action and entity; it cannot update an old or repurposed control.
 - **The guest E2E case is in `e2e/tests/auth/action-shortcode-roles.spec.ts`**, not in the functional spec: the default Playwright project runs with login off, and only the `auth` project has a guest. It also covers the unopened group-limited user and compares both to a nonexistent plugin.
 - **"Light and dark themes"**: the app has no dark theme. The dark surface a button can appear on is the lightbox's stone-900 info panel, so the a11y spec scans the button there (`checkComponentA11y`) besides the page, idle and after a run. The button takes `currentColor` for text and border, which is why one style reads on both.
 - **CSS** (evaluator point 4): `.btn-secondary` exists only scoped under `.plugin-action-modal-actions`, so there is no global secondary-button class to reuse. The block in `public/index.css` names `action-shortcode` (inline-flex host), `.action-shortcode-button` (currentColor text and border, 28 px minimum height, amber-700 `:focus-visible` outline), `.action-shortcode-button[aria-disabled="true"]` (dashed border, progress cursor; the busy state is on the button, not the status span) and `.action-shortcode-status:empty` (no space until there is text).
@@ -361,4 +362,11 @@ Problems to fix before or during implementation:
 
 - No Postgres-specific test was added: `[action]` issues no SQL at render time, and the run endpoint it posts to already has Postgres coverage. The new API tests were run with the `postgres` tag too, which exercises the same SQLite harness.
 - The full browser, CLI and Postgres E2E suites were not run (the machine is shared by five lanes).
+
+### Round 1 follow-up
+
+- `actionShortcode.test.ts` exercises confirmation invalidation on target/param changes and detach/reattach, successful completion after a morph, refusal with a Job handle, removal before the POST returns, abort of an in-flight GET, and the five-minute deadline with an unresolved response body.
+- The lightbox a11y spec checks keyboard confirmation, focus containment, Escape cancellation, and focus return to the button without closing the Info panel or posting the action.
+- `TestActionResolver_VisibleTriggerReferenceMustMatchItsOwnFilter` checks the unavailable result for a visible mismatching trigger ref, and allows a matching or hidden ref. `TestActionResolver_SelectionRequiredOnlyWhenVisible` checks defaults and a `param-*` override that exposes the required selection.
+- `TestActionShortcode_MRQLRenderModes` pins the existing surface split: `render=list` can draw authorized buttons; `render=1` has no action resolver. `TestActionShortcode_DeferredDescriptionKeepsSourceTrust` sends real page-minted tokens through the deferred endpoint under auth: the Description yields the unavailable comment and the trusted template yields the button.
 

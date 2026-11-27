@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -221,6 +222,80 @@ func TestActionShortcode_CardsResultsAndFilters(t *testing.T) {
 	}
 }
 
+func TestActionShortcode_MRQLRenderModes(t *testing.T) {
+	tc := setupPluginEnv(t, true, writeTemplateActionPlugin, "tpl-act")
+	f := buildActionFixture(t, tc)
+	admin := roleBearer(t, tc, models.RoleAdmin)
+	if err := tc.DB.Model(f.category).Update("custom_mrql_result", `<i class="mrql-act">[action plugin="tpl-act" name="greet"]</i>`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	for _, mode := range []string{"list", "1"} {
+		t.Run(mode, func(t *testing.T) {
+			body, _ := json.Marshal(map[string]string{"query": `type = resource AND name = "act-png"`})
+			rr := doReq(tc, http.MethodPost, "/v1/mrql?render="+mode,
+				map[string]string{"Accept": "application/json", "Content-Type": "application/json", "Authorization": admin}, nil, bytes.NewReader(body))
+			var result struct{ Resources []models.Resource }
+			if rr.Code != http.StatusOK || json.Unmarshal(rr.Body.Bytes(), &result) != nil || len(result.Resources) != 1 {
+				t.Fatalf("MRQL render=%s: %d %s", mode, rr.Code, rr.Body.String())
+			}
+			card := result.Resources[0].RenderedHTML
+			const slot = `<i class="mrql-act">`
+			if mode == "list" && !strings.Contains(card, slot+greetButton(f.png.ID)) {
+				t.Errorf("authorized list card did not render the button: %s", card)
+			}
+			if mode == "1" && (!strings.Contains(card, slot+actionUnavailable+`</i>`) || strings.Contains(card, "<action-shortcode")) {
+				t.Errorf("direct MRQL render should render only the unavailable comment: %s", card)
+			}
+		})
+	}
+}
+
+func renderDeferredActionToken(t *testing.T, tc *TestContext, bearer, token string) string {
+	t.Helper()
+	payload, _ := json.Marshal(map[string]string{"token": token})
+	rr := doReq(tc, http.MethodPost, "/v1/shortcodes/deferred",
+		map[string]string{"Accept": "application/json", "Content-Type": "application/json", "Authorization": bearer}, nil, bytes.NewReader(payload))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("deferred: %d %s", rr.Code, rr.Body.String())
+	}
+	var resp deferredRenderResp
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	return resp.HTML
+}
+
+func TestActionShortcode_DeferredDescriptionKeepsSourceTrust(t *testing.T) {
+	tc := setupPluginEnv(t, true, writeTemplateActionPlugin, "tpl-act")
+	f := buildActionFixture(t, tc)
+	admin := roleBearer(t, tc, models.RoleAdmin)
+	const lazy = `[lazy][action plugin="tpl-act" name="greet"][/lazy]`
+	if err := tc.DB.Model(f.png).Update("description", `action-description `+lazy).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := tc.DB.Model(f.category).Update("custom_sidebar", `<div id="lazy-template">`+lazy+`</div>`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	page := getHTML(t, tc, admin, fmt.Sprintf("/resource?id=%d", f.png.ID))
+	render := func(before string) string {
+		t.Helper()
+		pattern := regexp.MustCompile(regexp.QuoteMeta(before) + `\s*<lazy-shortcode data-token="([^"]+)"`)
+		match := pattern.FindStringSubmatch(page)
+		if match == nil {
+			t.Fatal("page did not mint a lazy token after " + before)
+		}
+		return renderDeferredActionToken(t, tc, admin, html.UnescapeString(match[1]))
+	}
+	if rendered := render("action-description"); rendered != actionUnavailable {
+		t.Errorf("deferred Description should not render a button: %q", rendered)
+	}
+	if rendered := render(`<div id="lazy-template">`); !strings.HasPrefix(rendered, greetButton(f.png.ID)) {
+		t.Errorf("trusted template did not render the button: %q", rendered)
+	}
+}
+
 func TestActionShortcode_DeferredAndLightbox(t *testing.T) {
 	tc := setupPluginEnv(t, true, writeTemplateActionPlugin, "tpl-act")
 	f := buildActionFixture(t, tc)
@@ -229,19 +304,7 @@ func TestActionShortcode_DeferredAndLightbox(t *testing.T) {
 
 	deferred := func(bearer, body string) string {
 		t.Helper()
-		payload, _ := json.Marshal(map[string]any{"token": signToken(tc, "resource", f.png.ID, body)})
-		rr := doReq(tc, http.MethodPost, "/v1/shortcodes/deferred",
-			map[string]string{"Accept": "application/json", "Content-Type": "application/json", "Authorization": bearer}, nil, bytes.NewReader(payload))
-		if rr.Code != http.StatusOK {
-			t.Fatalf("deferred: %d %s", rr.Code, rr.Body.String())
-		}
-		var resp struct {
-			HTML string `json:"html"`
-		}
-		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-			t.Fatal(err)
-		}
-		return resp.HTML
+		return renderDeferredActionToken(t, tc, bearer, signToken(tc, "resource", f.png.ID, body))
 	}
 	// An [autorefresh] body re-rendered after a run keeps its button.
 	if html := deferred(admin, `[action plugin="tpl-act" name="greet"]`); !strings.HasPrefix(html, greetButton(f.png.ID)) {

@@ -52,6 +52,20 @@ function init()
         params = { { name = "sel", type = "entity_ref", entity = "resource", multi = true, default = "selection", required = true, label = "Selection" } },
     })
     mah.action({
+        id = "mixed-mode", label = "Mixed mode", entity = "resource", handler = ok,
+        params = {
+            { name = "mode", type = "select", options = { "single", "bulk" }, default = "single" },
+            { name = "sel", type = "entity_ref", entity = "resource", default = "selection", required = true, show_when = { mode = "bulk" } },
+        },
+    })
+    mah.action({
+        id = "trigger-filter", label = "Trigger filter", entity = "resource", handler = ok,
+        params = {
+            { name = "advanced", type = "boolean", default = true },
+            { name = "target", type = "entity_ref", entity = "resource", required = true, filters = { content_types = { "image/jpeg" } }, show_when = { advanced = true } },
+        },
+    })
+    mah.action({
         id = "needs-text", label = "Needs text", entity = "resource", handler = ok,
         params = { { name = "why", type = "text", label = "Why", required = true } },
     })
@@ -203,6 +217,35 @@ func TestActionResolver_SelectionOnlyAction(t *testing.T) {
 	pm := enableActionProbePlugin(t)
 	_, err := BuildActionResolver(pm, allowAll)("acts", "bulk-only", nil, resourceCtx(&models.Resource{ID: 9}))
 	assert.EqualError(t, err, "sel: needs a bulk selection and cannot run from a template")
+}
+
+func TestActionResolver_SelectionRequiredOnlyWhenVisible(t *testing.T) {
+	resolve := BuildActionResolver(enableActionProbePlugin(t), allowAll)
+	res := resourceCtx(&models.Resource{ID: 9})
+
+	button, err := resolve("acts", "mixed-mode", nil, res)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"mode": "single"}, button.Params)
+
+	_, err = resolve("acts", "mixed-mode", map[string]string{"mode": "bulk"}, res)
+	assert.EqualError(t, err, "sel: needs a bulk selection and cannot run from a template")
+}
+
+func TestActionResolver_VisibleTriggerReferenceMustMatchItsOwnFilter(t *testing.T) {
+	resolve := BuildActionResolver(enableActionProbePlugin(t), allowAll)
+	png := resourceCtx(&models.Resource{ID: 9, ContentType: "image/png"})
+	jpeg := resourceCtx(&models.Resource{ID: 10, ContentType: "image/jpeg"})
+
+	_, err := resolve("acts", "trigger-filter", nil, png)
+	assert.ErrorIs(t, err, shortcodes.ErrActionUnavailable)
+
+	button, err := resolve("acts", "trigger-filter", nil, jpeg)
+	require.NoError(t, err)
+	assert.Equal(t, float64(10), button.Params["target"])
+
+	button, err = resolve("acts", "trigger-filter", map[string]string{"advanced": "false"}, png)
+	require.NoError(t, err)
+	assert.NotContains(t, button.Params, "target")
 }
 
 // renderActionTag pushes content through the process_shortcodes tag with no

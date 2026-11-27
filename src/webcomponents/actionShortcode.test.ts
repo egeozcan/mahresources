@@ -8,7 +8,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 const askToConfirm = vi.fn();
 vi.mock('../components/confirmDialog.js', () => ({ askToConfirm: (...args: any[]) => askToConfirm(...args) }));
 
-let MAX_POLLS: number;
+const FIVE_MINUTES = 5 * 60 * 1000;
 let POLL_MS: number;
 let announce: ReturnType<typeof vi.fn>;
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -17,7 +17,7 @@ let events: { type: string; detail: any }[];
 const record = (e: Event) => events.push({ type: e.type, detail: (e as CustomEvent).detail });
 
 beforeAll(async () => {
-  ({ MAX_POLLS, POLL_MS } = await import('./actionShortcode.js'));
+  ({ POLL_MS } = await import('./actionShortcode.js'));
 });
 
 beforeEach(() => {
@@ -86,6 +86,45 @@ describe('action-shortcode', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['entityId', 'params'] as const)('cancels confirmation if the host changes %s', async (field) => {
+    const { host, button } = mount({ confirm: 'Run upscale?' });
+    let acceptConfirmation!: (value: boolean) => void;
+    askToConfirm.mockReturnValue(new Promise((resolve) => { acceptConfirmation = resolve; }));
+    button.click();
+    host.dataset[field] = field === 'entityId' ? '43' : '{"scale":4}';
+    acceptConfirmation(true);
+    await settle();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
+  });
+
+  it('cancels confirmation even if a disconnected host was reinserted before acceptance', async () => {
+    const { host, button } = mount({ confirm: 'Run upscale?' });
+    let acceptConfirmation!: (value: boolean) => void;
+    askToConfirm.mockReturnValue(new Promise((resolve) => { acceptConfirmation = resolve; }));
+    button.click();
+    host.remove();
+    document.body.append(host);
+    acceptConfirmation(true);
+    await settle();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('completes against the submitted entity without capturing or updating a repurposed host', async () => {
+    const { host, button, status } = mount();
+    let reply!: (value: any) => void;
+    fetchMock.mockReturnValue(new Promise((resolve) => { reply = resolve; }));
+    button.click();
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).entity_ids).toEqual([42]);
+    host.dataset.entityId = '43';
+    host.dataset.label = 'Other action';
+    reply(answer(200, { success: true, message: 'Upscaled' }));
+    await settle();
+    expect(events.at(-1)?.detail).toEqual({ entityType: 'resource', entityId: 42, source: null });
+    expect(status.textContent).toBe('');
+    expect(announce).toHaveBeenLastCalledWith('Upscale image: Upscaled', { assertive: false });
+  });
+
   it('reports a synchronous success and signals autorefresh: saving, then updated, with no meta', async () => {
     const { host, button, status } = mount();
     let release: (v: any) => void = () => {};
@@ -130,6 +169,20 @@ describe('action-shortcode', () => {
     expect(announce).toHaveBeenLastCalledWith(`Upscale image: ${message}`, { assertive: true });
     expect(events).toEqual([]);
     expect(button.hasAttribute('aria-disabled')).toBe(false);
+  });
+
+  it('reports a synchronous refusal with job handles without polling or refreshing', async () => {
+    vi.useFakeTimers();
+    const { button, status } = mount();
+    fetchMock.mockResolvedValueOnce(answer(200, {
+      success: false, message: 'A job already exists', job_id: 'legacy-1', canonicalJobId: 'job-1',
+    }));
+    button.click();
+    await vi.advanceTimersByTimeAsync(POLL_MS * 2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(status.textContent).toBe('A job already exists');
+    expect(announce).toHaveBeenLastCalledWith('Upscale image: A job already exists', { assertive: true });
+    expect(events).toEqual([]);
   });
 
   it('reports a network failure', async () => {
@@ -236,22 +289,45 @@ describe('action-shortcode', () => {
       let release: (v: any) => void = () => {};
       fetchMock.mockReturnValueOnce(new Promise((r) => { release = r; }));
       await vi.advanceTimersByTimeAsync(POLL_MS);
+      const signal = fetchMock.mock.calls[1][1].signal;
       host.remove();
+      expect(signal?.aborted).toBe(true);
       release(answer(200, { id: 'job-1', state: 'succeeded' }));
       await vi.advanceTimersByTimeAsync(POLL_MS * 5);
       expect(fetchMock).toHaveBeenCalledTimes(2);
       expect(events).toEqual([]);
     });
 
-    it('gives up after MAX_POLLS polls and points at the Jobs panel', async () => {
-      const { status, button } = await startAsync();
-      fetchMock.mockResolvedValue(answer(200, { id: 'job-1', state: 'running' }));
-      await vi.advanceTimersByTimeAsync(POLL_MS * MAX_POLLS);
-      expect(fetchMock).toHaveBeenCalledTimes(1 + MAX_POLLS);
-      expect(status.textContent).toBe('Still running. Follow it in the Jobs panel.');
+    it('never starts polling if the host was removed before the POST returned', async () => {
+      vi.useFakeTimers();
+      const { host, button, status } = mount({ async: true });
+      let reply!: (value: any) => void;
+      fetchMock.mockReturnValueOnce(new Promise((resolve) => { reply = resolve; }));
+      button.click();
+      host.remove();
+      document.body.append(host); // Being connected again is not the same attachment.
+      reply(started);
+      await vi.advanceTimersByTimeAsync(POLL_MS * 2);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(announce).not.toHaveBeenCalledWith('Upscale image: started', expect.anything());
+      expect(status.textContent).toBe('');
       expect(button.hasAttribute('aria-disabled')).toBe(false);
+    });
+
+    it('enforces a five-minute deadline even while a Job response body is pending', async () => {
+      const { status, button } = await startAsync();
+      let reply!: (value: any) => void;
+      fetchMock.mockResolvedValueOnce({ ok: true, json: () => new Promise((resolve) => { reply = resolve; }) });
+      await vi.advanceTimersByTimeAsync(FIVE_MINUTES - 1);
+      expect(button.getAttribute('aria-disabled')).toBe('true');
+      const signal = fetchMock.mock.calls[1][1].signal;
+      await vi.advanceTimersByTimeAsync(1);
+      expect(status.textContent).toBe('Still running. Follow it in the Jobs panel.');
+      expect(signal?.aborted).toBe(true);
+      expect(button.hasAttribute('aria-disabled')).toBe(false);
+      reply({ id: 'job-1', state: 'succeeded' });
       await vi.advanceTimersByTimeAsync(POLL_MS * 10);
-      expect(fetchMock).toHaveBeenCalledTimes(1 + MAX_POLLS);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
       expect(events).toEqual([]);
     });
 

@@ -62,7 +62,7 @@ test.describe('[action] shortcode accessibility', () => {
     await checkA11y();
   });
 
-  test('the button on the lightbox info panel has no a11y violations', async ({ page, checkComponentA11y }) => {
+  test('the lightbox action is accessible and Escape returns focus without closing the panel', async ({ page, checkComponentA11y }) => {
     await page.goto(`/resources?OwnerId=${ownerId}`);
     await page.waitForLoadState('load');
     await page.locator('[data-lightbox-item]').first().click();
@@ -70,7 +70,25 @@ test.describe('[action] shortcode accessibility', () => {
     await expect(lightbox).toBeVisible();
     await lightbox.locator('button[title="Resource info"]').click();
     const host = lightbox.locator('[data-edit-panel] .act-lightbox action-shortcode');
-    await expect(host.getByRole('button', { name: 'Mark reviewed' })).toBeVisible();
+    const button = host.getByRole('button', { name: 'Mark reviewed' });
+    await expect(button).toBeVisible();
     await checkComponentA11y('[data-edit-panel] .act-lightbox');
+
+    let posted = false;
+    page.on('request', (request) => {
+      if (request.method() === 'POST' && new URL(request.url()).pathname === '/v1/jobs/action/run') posted = true;
+    });
+    await button.focus();
+    await page.keyboard.press('Enter');
+    const confirm = page.getByRole('alertdialog');
+    await expect(confirm.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(confirm.getByRole('button', { name: 'Mark reviewed' })).toBeFocused();
+    await page.keyboard.press('F2'); // The viewer's info-panel shortcut is suspended.
+    await page.keyboard.press('Escape');
+    await expect(confirm).toHaveCount(0);
+    await expect(lightbox).toBeVisible();
+    await expect(button).toBeFocused();
+    expect(posted).toBe(false);
   });
 });
