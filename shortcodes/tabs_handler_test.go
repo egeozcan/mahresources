@@ -176,6 +176,40 @@ func TestTabsParsesAsABlockAndTabIsNotAToken(t *testing.T) {
 	}
 }
 
+func TestTabsQuotedStyleTextDoesNotChangeStylesheetContext(t *testing.T) {
+	const style = `<style>form[action]{color:red}</style>`
+	for _, src := range []string{
+		`[tabs][tab label="The <style> tag"]Overview[/tab][/tabs][reload]` + style,
+		style + `[tabs label="The <style> tag"][tab label="The <style> tag"]Overview[/tab][/tabs][reload]`,
+	} {
+		out := Process(context.Background(), src, MetaShortcodeContext{}, nil, nil)
+		assert.Contains(t, out, `>The &lt;style&gt; tag</button>`)
+		assert.Contains(t, out, `<reload-shortcode>`)
+		assert.Contains(t, out, style)
+		assert.Empty(t, Lint(src, LintOptions{Known: KnownFromBuiltins(), CheckHTMLBalance: true}))
+	}
+}
+
+func TestTabLikeTextDoesNotHideShortcodesOutsideTabSlots(t *testing.T) {
+	const literal = `Help: [tab [property path="Name"]]`
+	const expanded = `Help: [tab Roadmap]`
+	ctx := MetaShortcodeContext{Entity: testEntity{Name: "Roadmap"}}
+	for _, tc := range []struct{ src, want string }{
+		{literal, expanded},
+		{`[tabs]` + literal, expanded}, // An unpaired [tabs] has no body.
+		{`[tabs][tab label="A"][conditional field="Name" eq="Roadmap"]` + literal + `[/conditional][/tab][/tabs]`, expanded},
+		{`<style>.widget[tabs]{color:red}</style>` + literal + `[/tabs]`, expanded},
+	} {
+		t.Run(tc.src, func(t *testing.T) {
+			assert.Contains(t, Process(context.Background(), tc.src, ctx, nil, nil), tc.want)
+			assert.NotNil(t, findIssue(Lint(tc.src, LintOptions{Known: KnownFromBuiltins()}), tabUnconsumedWarning))
+		})
+	}
+	openers := Parse(literal)
+	require.Len(t, openers, 1)
+	assert.Equal(t, "property", openers[0].Name)
+}
+
 func TestTabsQuotedBracketTextIsLiteral(t *testing.T) {
 	for _, label := range []string{"About [tabs]", "About [/tabs]", "About [/tab]", "[tab] and [property path='Name']", "[else] or [/else]"} {
 		t.Run(label, func(t *testing.T) {

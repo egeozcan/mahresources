@@ -267,7 +267,7 @@ func lintText(input string, opts LintOptions) []LintIssue {
 	// the collection loops consult the context. A source past a cap is "too
 	// complex to check", through the lint's own work object.
 	lm := &renderMeter{ctx: opts.Context, budget: RenderBudget{ParsedSourceBytes: 1 << 62}, cssMode: opts.CSSMode, renderUsage: &renderUsage{}}
-	tokens := matchTokensM(lm, input)
+	tokens, scan := scanTokensM(lm, input, false)
 	if lm.Err() != nil {
 		w.fail()
 		return nil
@@ -683,18 +683,10 @@ func lintText(input string, opts LintOptions) []LintIssue {
 		}
 	}
 
-	var tabOpeners [][2]int
-	if strings.Contains(input, "[tab") {
-		for _, match := range shortcodeOrTabOpenPattern.FindAllStringSubmatchIndex(input, budgetedTokenCap+1) {
-			if match[2] < 0 {
-				tabOpeners = append(tabOpeners, [2]int{match[0], match[1]})
-			}
-		}
-	}
-	lintStrayCloseTags(w, lm, input, tokens, tabOpeners, add)
-	lintTabs(w, lm, input, tokens, tabOpeners, opts.CSSMode, add)
+	lintStrayCloseTags(w, lm, input, tokens, scan.tabOpeners, add)
+	lintTabs(w, lm, input, tokens, scan, opts.CSSMode, add)
 	if opts.CheckHTMLBalance && !opts.CSSMode {
-		lintUnbalancedHTML(w, input, tokens, add)
+		lintUnbalancedHTML(w, input, tokens, scan.tabOpeners, add)
 	}
 	if lm.Err() != nil {
 		w.fail()
@@ -702,11 +694,7 @@ func lintText(input string, opts LintOptions) []LintIssue {
 	}
 
 	// --- Loose bracket scan for shortcode-looking typos (info) ---
-	// Inside a stylesheet a bracket is an attribute selector ([disabled]).
-	var cssSpans [][2]int
-	if !opts.CSSMode {
-		cssSpans = styleElementSpans(input)
-	}
+	// Inside a stylesheet a bracket can be an attribute selector ([disabled]).
 	looseMatches := looseBracketPattern.FindAllStringSubmatchIndex(input, budgetedTokenCap+1)
 	if len(looseMatches) > budgetedTokenCap {
 		w.fail()
@@ -717,7 +705,7 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			return nil
 		}
 		pos := m[0]
-		if realStarts[pos] || insideSortedSpans(pos, tabOpeners) {
+		if realStarts[pos] || insideSortedSpans(pos, scan.tabOpeners) {
 			continue
 		}
 		name := input[m[2]:m[3]]
@@ -730,7 +718,11 @@ func lintText(input string, opts LintOptions) []LintIssue {
 				"malformed plugin shortcode; expected [plugin:<plugin>:<name> …]")
 			continue
 		}
+		inCSS := opts.CSSMode || insideSortedSpans(pos, scan.styles)
 		if suggestion := nearMissBuiltin(name); suggestion != "" {
+			if suggestion == name && inCSS && cssLiteralOpener(input, pos, m[3]) {
+				continue
+			}
 			if suggestion == name && attachedToWord(input, pos) {
 				// A CSS arbitrary value such as max-w-[calc(100%-1rem)]: the
 				// name is followed by neither whitespace nor "]", so it is text.
@@ -743,7 +735,7 @@ func lintText(input string, opts LintOptions) []LintIssue {
 				add(pos, m[1], SeverityInfo,
 					"unknown shortcode \"["+name+"]\"; did you mean ["+suggestion+"]?")
 			}
-		} else if !opts.CSSMode && !withinSpans(pos, cssSpans) && looksLikeShortcode(input, pos, m[3], name) {
+		} else if !inCSS && looksLikeShortcode(input, pos, m[3], name) {
 			add(pos, m[1], SeverityInfo,
 				"["+name+"] is not a shortcode, so it renders as literal text")
 		}

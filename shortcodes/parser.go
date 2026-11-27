@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // Shortcode represents a parsed shortcode occurrence in text.
@@ -33,8 +34,8 @@ var shortcodePattern = regexp.MustCompile(
 	`\[(meta|datetime|pills|property|mrql|conditional|link|each|item|relations|partial|lazy|details|reload|autorefresh|using|similar|calc|calendar|adjacent|inspect|excerpt|action|tabs|pivot|plugin:[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*)(?:\s((?:"[^"]*"|'[^']*'|[^\]])*))?\]`,
 )
 
-// Scan slot openers alongside real openers so bracket text in a quoted [tab]
-// label cannot start a token. The slot alternative has no capture groups.
+// Discover possible slot openers alongside real openers. The slot alternative
+// has no capture groups and is only opaque in a paired [tabs] body.
 var shortcodeOrTabOpenPattern = regexp.MustCompile(shortcodePattern.String() + "|" + tabOpenPattern.String())
 
 // attrPattern matches key="value", key='value', or key=value pairs.
@@ -45,31 +46,11 @@ var attrPattern = regexp.MustCompile(
 // Parse returns built-in and plugin shortcode openers, including nested ones.
 // Slot tags such as [tab] are left for their enclosing block to read.
 func Parse(input string) []Shortcode {
-	matches := shortcodeOrTabOpenPattern.FindAllStringSubmatchIndex(input, -1)
 	var result []Shortcode
-	for _, m := range matches {
-		if m[2] < 0 {
-			continue // [tab] is a slot opener, not a shortcode token.
+	for _, tk := range matchTokens(input) {
+		if !tk.closing {
+			result = append(result, Shortcode{Name: tk.name, Attrs: tk.attrs, Raw: tk.raw, Start: tk.start, End: tk.end})
 		}
-		if result == nil {
-			result = make([]Shortcode, 0, len(matches))
-		}
-		fullStart, fullEnd := m[0], m[1]
-		name := input[m[2]:m[3]]
-		attrStr := ""
-		if m[4] >= 0 && m[5] >= 0 {
-			attrStr = input[m[4]:m[5]]
-		}
-
-		attrs := parseAttrs(strings.TrimSpace(attrStr))
-
-		result = append(result, Shortcode{
-			Name:  name,
-			Attrs: attrs,
-			Raw:   input[fullStart:fullEnd],
-			Start: fullStart,
-			End:   fullEnd,
-		})
 	}
 
 	return result
@@ -89,6 +70,7 @@ type token struct {
 	end     int
 	closing bool
 	matched bool
+	closeAt int // index of the matching closer, for a paired opener only
 	inStyle bool
 }
 
@@ -102,58 +84,162 @@ func matchTokens(input string) []token { return matchTokensM(nil, input) }
 // meter caps the retained tokens and the attributes of one token, and every
 // token loop consults the context.
 func matchTokensM(m *renderMeter, input string) []token {
-	var tokens []token
+	tokens, _ := scanTokensM(m, input, false)
+	return tokens
+}
 
-	tokCap := -1
-	attrCap := -1
+type tagScan struct {
+	tabCandidates [][2]int // possible literal [tab] text for lint
+	tabOpeners    [][2]int // actual slot opener spans, opaque to shortcode parsing
+	styles        [][2]int
+}
+
+// A tab opener is local syntax. Discover scope with its label provisionally
+// opaque (even a quoted [/tabs] is just text), then rescan any source where
+// a candidate turned out to be literal. Splitters call this on an already
+// paired [tabs] body, so top-level slots there also have an owning block.
+func scanTokensM(m *renderMeter, input string, tabsBody bool) ([]token, tagScan) {
+	var scan tagScan
+	tokCap, attrCap := -1, -1
 	if m.limited() {
 		tokCap, attrCap = budgetedTokenCap+1, budgetedAttrCap
 	}
-
 	opens := shortcodeOrTabOpenPattern.FindAllStringSubmatchIndex(input, tokCap)
 	closes := closingTagPattern.FindAllStringSubmatchIndex(input, tokCap)
-	if tokCap > 0 && len(opens)+len(closes) > budgetedTokenCap {
-		m.fail("more than %d shortcode tokens", budgetedTokenCap)
-		return nil
+	withinCap := func(n int) bool {
+		if tokCap > 0 && n > budgetedTokenCap {
+			m.fail("more than %d shortcode tokens", budgetedTokenCap)
+			return false
+		}
+		return true
 	}
-	if len(opens)+len(closes) > 0 {
-		tokens = make([]token, 0, len(opens)+len(closes))
+	if !withinCap(len(opens) + len(closes)) {
+		return nil, scan
+	}
+	for _, mm := range opens {
+		if !m.tick() {
+			return nil, scan
+		}
+		if mm[2] < 0 {
+			scan.tabCandidates = append(scan.tabCandidates, [2]int{mm[0], mm[1]})
+		}
 	}
 
 	cssMode := m != nil && m.cssMode
-	var styleSpans [][2]int
-	if !cssMode && len(opens) > 0 && strings.Contains(input, "<") {
-		styleSpans = styleElementSpans(input)
+	if !cssMode {
+		scan.styles = shortcodeStyleSpans(input, opens)
 	}
-	var tabOpeners [][2]int
+	tokens := pairTokensM(m, input, opens, closes, scan.tabCandidates, scan.styles, cssMode)
+	if len(scan.tabCandidates) > 0 {
+		scan.tabOpeners = scopedTabOpeners(m, tokens, scan.tabCandidates, tabsBody)
+		if m.Err() != nil {
+			return nil, scan
+		}
+		if len(scan.tabOpeners) != len(scan.tabCandidates) {
+			masked := []byte(input)
+			for _, span := range scan.tabOpeners {
+				blankTagSpan(masked, span[0], span[1])
+			}
+			source := string(masked)
+			opens = shortcodePattern.FindAllStringSubmatchIndex(source, tokCap)
+			if !withinCap(len(opens) + len(closes) + len(scan.tabOpeners)) {
+				return nil, scan
+			}
+			if !cssMode {
+				scan.styles = shortcodeStyleSpans(source, opens)
+			}
+			tokens = pairTokensM(m, input, opens, closes, scan.tabOpeners, scan.styles, cssMode)
+		}
+	}
+	for i := range tokens {
+		if !m.tick() {
+			return nil, scan
+		}
+		tk := &tokens[i]
+		if tk.closing {
+			continue
+		}
+		attrStr := strings.TrimSpace(tk.raw[len(tk.name)+1 : len(tk.raw)-1])
+		attrs, over := parseAttrsReserve(attrStr, attrCap, m.reserveAttrs)
+		if over {
+			m.fail("more than %d attributes on one shortcode, or past the aggregate allowance", attrCap)
+			return nil, scan
+		}
+		tk.attrs = attrs
+	}
+	return tokens, scan
+}
+
+func scopedTabOpeners(m *renderMeter, tokens []token, candidates [][2]int, tabsBody bool) [][2]int {
+	var slots [][2]int
+	var blocks []int // opener indices, innermost last
+	next := 0
+	leaveBlocks := func(pos int) {
+		for len(blocks) > 0 && tokens[tokens[blocks[len(blocks)-1]].closeAt].start <= pos {
+			blocks = blocks[:len(blocks)-1]
+		}
+	}
+	for _, span := range candidates {
+		if !m.tick() {
+			return nil
+		}
+		for ; next < len(tokens) && tokens[next].start < span[0]; next++ {
+			if !m.tick() {
+				return nil
+			}
+			tk := tokens[next]
+			leaveBlocks(tk.start)
+			// A block that crosses its parent's closing tag isn't paired when
+			// that parent's body is later rendered on its own.
+			if !tk.closing && tk.matched && (len(blocks) == 0 || tk.closeAt < tokens[blocks[len(blocks)-1]].closeAt) {
+				blocks = append(blocks, next)
+			}
+		}
+		leaveBlocks(span[0])
+		if len(blocks) == 0 && tabsBody || len(blocks) > 0 && tokens[blocks[len(blocks)-1]].name == "tabs" {
+			slots = append(slots, span)
+		}
+	}
+	return slots
+}
+
+// Mask complete openers before reading HTML: <style> inside a quoted shortcode
+// attribute is text, not the start of a stylesheet.
+func shortcodeStyleSpans(input string, opens [][]int) [][2]int {
+	if !styleStartPattern.MatchString(input) {
+		return nil
+	}
+	masked := []byte(input)
+	for _, mm := range opens {
+		blankTagSpan(masked, mm[0], mm[1])
+	}
+	return styleElementSpans(string(masked))
+}
+
+func cssLiteralOpener(input string, start, nameEnd int) bool {
+	return start > 0 && input[start+1] != '/' && cssSelectorChar(input[start-1]) &&
+		!strings.HasPrefix(input[start+1:nameEnd], "plugin:") && strings.HasPrefix(strings.TrimLeftFunc(input[nameEnd:], unicode.IsSpace), "]")
+}
+
+func pairTokensM(m *renderMeter, input string, opens, closes [][]int, tabOpeners, styleSpans [][2]int, cssMode bool) []token {
+	if len(opens)+len(closes) == 0 {
+		return nil
+	}
+	tokens := make([]token, 0, len(opens)+len(closes))
 	for _, mm := range opens {
 		if !m.tick() {
 			return nil
 		}
-		fullStart, fullEnd := mm[0], mm[1]
 		if mm[2] < 0 {
-			tabOpeners = append(tabOpeners, [2]int{fullStart, fullEnd})
-			continue
+			continue // A slot is never itself a global token.
 		}
-		name := input[mm[2]:mm[3]]
-		attrStr := ""
-		if mm[4] >= 0 && mm[5] >= 0 {
-			attrStr = input[mm[4]:mm[5]]
-		}
-		attrStr = strings.TrimSpace(attrStr)
+		fullStart, fullEnd := mm[0], mm[1]
 		inStyle := insideSortedSpans(fullStart, styleSpans)
-		if (cssMode || inStyle) && attrStr == "" && fullStart > 0 &&
-			cssSelectorChar(input[fullStart-1]) && !strings.HasPrefix(name, "plugin:") {
+		if (cssMode || inStyle) && cssLiteralOpener(input, fullStart, mm[3]) {
 			continue
-		}
-		attrs, over := parseAttrsReserve(attrStr, attrCap, m.reserveAttrs)
-		if over {
-			m.fail("more than %d attributes on one shortcode, or past the aggregate allowance", attrCap)
-			return nil
 		}
 		tokens = append(tokens, token{
-			name:    name,
-			attrs:   attrs,
+			name:    input[mm[2]:mm[3]],
 			raw:     input[fullStart:fullEnd],
 			start:   fullStart,
 			end:     fullEnd,
@@ -212,6 +298,7 @@ func matchTokensM(m *renderMeter, input string) []token {
 		j := st[len(st)-1]
 		stacks[tokens[i].name] = st[:len(st)-1]
 		tokens[j].matched = true
+		tokens[j].closeAt = i
 		tokens[i].matched = true
 	}
 
@@ -224,12 +311,10 @@ func matchTokensM(m *renderMeter, input string) []token {
 func ParseWithBlocks(input string) []Shortcode { return parseWithBlocksM(nil, input) }
 
 func parseWithBlocksM(m *renderMeter, input string) []Shortcode {
-	tokens := matchTokensM(m, input)
-	if len(tokens) == 0 {
-		return nil
-	}
+	return topLevelShortcodes(m, input, matchTokensM(m, input))
+}
 
-	// Build top-level results.
+func topLevelShortcodes(m *renderMeter, input string, tokens []token) []Shortcode {
 	var result []Shortcode
 	skipUntil := -1
 
@@ -246,35 +331,7 @@ func parseWithBlocksM(m *renderMeter, input string) []Shortcode {
 		}
 
 		if tokens[i].matched {
-			// Find matching closer by depth tracking
-			depth := 0
-			closeIdx := -1
-			for j := i + 1; j < len(tokens); j++ {
-				if !m.tick() {
-					return nil
-				}
-				if !tokens[j].closing && tokens[j].name == tokens[i].name {
-					depth++
-				} else if tokens[j].closing && tokens[j].name == tokens[i].name {
-					if depth == 0 {
-						closeIdx = j
-						break
-					}
-					depth--
-				}
-			}
-
-			if closeIdx < 0 {
-				result = append(result, Shortcode{
-					Name:    tokens[i].name,
-					Attrs:   tokens[i].attrs,
-					Raw:     tokens[i].raw,
-					Start:   tokens[i].start,
-					End:     tokens[i].end,
-					inStyle: tokens[i].inStyle,
-				})
-				continue
-			}
+			closeIdx := tokens[i].closeAt
 
 			innerStart := tokens[i].end
 			innerEnd := tokens[closeIdx].start
