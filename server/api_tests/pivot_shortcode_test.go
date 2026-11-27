@@ -7,6 +7,7 @@ import (
 	"html"
 	"net/http"
 	"net/url"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -111,21 +112,26 @@ func pivotRows(t *testing.T, out string) map[string][]pivotGridCell {
 	return rows
 }
 
-// mrqlNoteCount runs a filter through POST /v1/mrql as bearer.
+// mrqlNoteCount reads the result total the /mrql list displays as bearer.
 func mrqlNoteCount(t *testing.T, tc *TestContext, bearer, query string) int {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"query": query})
-	rr := doReq(tc, http.MethodPost, "/v1/mrql", map[string]string{"Accept": "application/json", "Content-Type": "application/json", "Authorization": bearer}, nil, bytes.NewReader(body))
+	rr := doReq(tc, http.MethodPost, "/v1/mrql?render=list", map[string]string{"Accept": "application/json", "Content-Type": "application/json", "Authorization": bearer}, nil, bytes.NewReader(body))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("mrql %q: %d %s", query, rr.Code, rr.Body.String())
 	}
 	var res struct {
-		Notes []json.RawMessage `json:"notes"`
+		ListPage *struct {
+			Total int `json:"total"`
+		} `json:"listPage"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &res); err != nil {
 		t.Fatal(err)
 	}
-	return len(res.Notes)
+	if res.ListPage == nil {
+		t.Fatalf("the /mrql list total is missing: %s", rr.Body.String())
+	}
+	return res.ListPage.Total
 }
 
 // checkEveryLinkCountsItsCell opens every link of a count pivot as bearer and
@@ -196,8 +202,9 @@ func checkPivotLinkCountsMatchCells(t *testing.T, tc *TestContext, postgres bool
 	if strings.Contains(fmt.Sprint(rows), "pv-outside") {
 		t.Errorf("the outside note's owner is out of scope: %v", rows)
 	}
-	if n := checkEveryLinkCountsItsCell(t, tc, admin, rows); n < 11 {
-		t.Errorf("only %d links checked", n)
+	n := checkEveryLinkCountsItsCell(t, tc, admin, rows)
+	if postgres && n < 11 || !postgres && n != 3 {
+		t.Errorf("unexpected link count for the Meta axis: %d (PostgreSQL: %t)", n, postgres)
 	}
 	if rows["(none)"][2].query != "" {
 		t.Errorf("the none-bucket is not linked: %+v", rows["(none)"])
@@ -246,23 +253,32 @@ func checkPivotSumSemantics(t *testing.T, tc *TestContext, postgres bool) {
 	}
 }
 
-// checkPivotRunsOneStatement counts the aggregated statements one render runs.
-func checkPivotRunsOneStatement(t *testing.T, tc *TestContext) {
+// An identical pivot hits the query cache even for a confined viewer whose
+// concrete scope needs checking.
+func checkPivotRunsOneAggregateStatement(t *testing.T, tc *TestContext) {
 	f := buildPivotFixture(t, tc)
-	admin := roleBearer(t, tc, models.RoleAdmin)
+	scoped := scopedUserBearer(t, tc, f.root.ID)
 	var grouped []string
+	var scopeChecks int
 	name := "pivottest:groupby"
 	if err := tc.DB.Callback().Query().After("gorm:query").Register(name, func(tx *gorm.DB) {
-		if sql := tx.Statement.SQL.String(); strings.Contains(sql, "GROUP BY") {
+		sql := tx.Statement.SQL.String()
+		switch {
+		case strings.Contains(sql, "GROUP BY"):
 			// Postgres binds the limit; SQLite inlines it.
 			grouped = append(grouped, sql+" -- "+fmt.Sprint(tx.Statement.Vars...))
+		case strings.HasPrefix(sql, "SELECT count(*) FROM") && strings.Contains(sql, "WITH RECURSIVE"):
+			scopeChecks++
 		}
 	}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = tc.DB.Callback().Query().Remove(name) })
 	tpl := fmt.Sprintf(`[pivot query="type = note" rows="meta.status" cols="owner" scope="%d"]`, f.root.ID)
-	deferredHTML(t, tc, admin, "group", f.root.ID, tpl+tpl)
+	deferredHTML(t, tc, scoped, "group", f.root.ID, tpl+tpl)
+	if scopeChecks != 1 {
+		t.Errorf("expected one scope check for two identical pivots: got %d", scopeChecks)
+	}
 	if len(grouped) != 1 {
 		t.Fatalf("two identical pivots ran %d GROUP BY statements, want 1: %q", len(grouped), grouped)
 	}
@@ -310,17 +326,17 @@ func checkPivotScopedPrincipal(t *testing.T, tc *TestContext) {
 	// A user confined to an empty group sees nothing at all.
 	empty := &models.Group{Name: "pv-empty"}
 	mkSim(t, tc, empty)
-	denied := deferredHTML(t, tc, pivotScopedBearer(t, tc, empty.ID, "pv-empty-user"), "group", empty.ID, `[pivot query="type = note" rows="owner" cols="meta.status" scope="global"]`)
+	denied := deferredHTML(t, tc, pivotScopedBearer(t, tc, empty.ID, "pv-empty-user", models.RoleUser), "group", empty.ID, `[pivot query="type = note" rows="owner" cols="meta.status" scope="global"]`)
 	if !strings.Contains(denied, "No results.") {
 		t.Errorf("an empty subtree: %s", denied)
 	}
 }
 
-// pivotScopedBearer is scopedUserBearer for a second confined user.
-func pivotScopedBearer(t *testing.T, tc *TestContext, scopeGroupID uint, username string) string {
+// pivotScopedBearer creates a named principal confined to a subtree.
+func pivotScopedBearer(t *testing.T, tc *TestContext, scopeGroupID uint, username string, role models.Role) string {
 	t.Helper()
 	u, err := tc.AppCtx.CreateUser(&application_context.UserInput{
-		Username: username, Password: "password1", Role: models.RoleUser, ScopeGroupId: &scopeGroupID,
+		Username: username, Password: "password1", Role: role, ScopeGroupId: &scopeGroupID,
 	})
 	if err != nil {
 		t.Fatalf("create scoped user: %v", err)
@@ -340,8 +356,8 @@ func TestPivotShortcode_SumSemantics(t *testing.T) {
 	checkPivotSumSemantics(t, setupAuthEnv(t), false)
 }
 
-func TestPivotShortcode_OneStatement(t *testing.T) {
-	checkPivotRunsOneStatement(t, setupAuthEnv(t))
+func TestPivotShortcode_OneAggregateStatement(t *testing.T) {
+	checkPivotRunsOneAggregateStatement(t, setupAuthEnv(t))
 }
 
 func TestPivotShortcode_ScopedPrincipalCannotSeeOutside(t *testing.T) {
@@ -356,5 +372,217 @@ func TestPivotShortcode_PreviewIsScoped(t *testing.T) {
 	out := previewHTML(t, previewDescription(tc, scoped, "group", f.root.ID, `[pivot query="type = note" rows="owner" cols="meta.status" scope="global"]`))
 	if !strings.Contains(out, "Work") || strings.Contains(out, "pv-outside") {
 		t.Errorf("preview as the scoped user: %s", out)
+	}
+}
+
+func checkPivotConfinedDescendantDoesNotLink(t *testing.T, tc *TestContext) {
+	root, left, right := &models.Group{Name: "pivot-root"}, &models.Group{Name: "pivot-left"}, &models.Group{Name: "pivot-right"}
+	mkSim(t, tc, root)
+	for _, g := range []*models.Group{left, right} {
+		g.OwnerId = &root.ID
+		mkSim(t, tc, g)
+		mkSim(t, tc, &models.Note{Name: "matching", OwnerId: &g.ID, Meta: types.JSON(`{"status":"open"}`)})
+	}
+	scoped := scopedUserBearer(t, tc, root.ID)
+	admin := roleBearer(t, tc, models.RoleAdmin)
+	const tpl = `[pivot query="type = note" rows="name" cols="meta.status"%s]`
+	for _, tt := range []struct {
+		name, bearer, scope, count string
+		links                      bool
+	}{
+		{"confined descendant", scoped, "", "1", false},
+		{"confined global", scoped, ` scope="global"`, "2", true},
+		{"confined root", scoped, fmt.Sprintf(` scope="%d"`, root.ID), "2", true},
+		{"admin descendant", admin, "", "1", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			out := deferredHTML(t, tc, tt.bearer, "group", left.ID, fmt.Sprintf(tpl, tt.scope))
+			rows := pivotRows(t, out)
+			if len(rows["matching"]) != 3 || len(rows["#total"]) != 3 {
+				t.Fatalf("missing cells or totals: %v", rows)
+			}
+			for _, c := range append(rows["matching"][1:], rows["#total"][1:]...) {
+				if c.text != tt.count || (c.query != "") != tt.links {
+					t.Errorf("expected count %s (linked: %t), got %+v", tt.count, tt.links, c)
+				}
+			}
+			if tt.links {
+				checkEveryLinkCountsItsCell(t, tc, tt.bearer, rows)
+			}
+		})
+	}
+}
+
+func TestPivotShortcode_ConfinedDescendantDoesNotLink(t *testing.T) {
+	checkPivotConfinedDescendantDoesNotLink(t, setupAuthEnv(t))
+}
+
+func TestPivotShortcode_CountLinksRespectDefaultResultLimit(t *testing.T) {
+	tc := setupTestEnvWithConfig(t, func(c *application_context.MahresourcesConfig) {
+		c.MRQLDefaultLimit = 2
+	})
+	group := &models.Group{Name: "pivot-limited"}
+	mkSim(t, tc, group)
+	for _, status := range []string{"open", "open", "open", "done", "done"} {
+		mkSim(t, tc, &models.Note{Name: "matching", OwnerId: &group.ID, Meta: types.JSON(`{"status":"` + status + `"}`)})
+	}
+	out := deferredHTML(t, tc, "", "group", group.ID, `[pivot query="type = note" rows="meta.status" cols="name"]`)
+	rows := pivotRows(t, out)
+	for key, want := range map[string][]string{"open": {"open", "3", "3"}, "done": {"done", "2", "2"}, "#total": {"Total", "5", "5"}} {
+		if got := pivotTexts(rows[key]); fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("row %s: got %v, want %v", key, got, want)
+		}
+		for _, c := range rows[key][1:] {
+			if (c.query != "") != (key == "done") {
+				t.Errorf("row %s: wrong link eligibility for %+v (limit 2)", key, c)
+			}
+		}
+	}
+	if got := checkEveryLinkCountsItsCell(t, tc, "", rows); got != 2 {
+		t.Errorf("expected two usable links at the limit, got %d", got)
+	}
+}
+
+func TestPivotShortcode_SQLiteRealBucketsDisableLinksOnTheirAxis(t *testing.T) {
+	tc := setupAuthEnv(t)
+	admin := roleBearer(t, tc, models.RoleAdmin)
+	group := &models.Group{Name: "pivot-real"}
+	mkSim(t, tc, group)
+	for _, meta := range []string{`{"status":3.0}`, `{"status":"3.0"}`, `{"status":"open"}`} {
+		mkSim(t, tc, &models.Note{Name: "matching", OwnerId: &group.ID, Meta: types.JSON(meta)})
+	}
+	for _, transpose := range []bool{false, true} {
+		fields := `rows="meta.status" cols="name"`
+		if transpose {
+			fields = `rows="name" cols="meta.status"`
+		}
+		out := deferredHTML(t, tc, admin, "group", group.ID, `[pivot query="type = note" `+fields+`]`)
+		rows := pivotRows(t, out)
+		if transpose {
+			if got := fmt.Sprint(pivotTexts(rows["matching"])); got != "[matching 1 1 1 3]" {
+				t.Fatalf("number and text are distinct buckets: %s", got)
+			}
+			for _, key := range []string{"matching", "#total"} {
+				for _, c := range rows[key][1:4] {
+					if c.query != "" {
+						t.Errorf("Meta-axis cell/total should be plain text: %+v", c)
+					}
+				}
+			}
+		} else {
+			for _, key := range []string{"3", "3.0", "open"} {
+				if got := fmt.Sprint(pivotTexts(rows[key])); got != "["+key+" 1 1]" {
+					t.Fatalf("unexpected bucket: %s", got)
+				}
+				for _, c := range rows[key][1:] {
+					if c.query != "" {
+						t.Errorf("Meta-axis cell/total should be plain text: %+v", c)
+					}
+				}
+			}
+		}
+		if got := checkEveryLinkCountsItsCell(t, tc, admin, rows); got != 2 {
+			t.Errorf("only the name total and grand total should link; got %d total links", got)
+		}
+	}
+}
+
+// An INTEGER can be the representative key of a group that also contains REAL.
+func TestPivotShortcode_SQLiteIntegerBucketsCanHideReal(t *testing.T) {
+	tc := SetupTestEnv(t)
+	group := &models.Group{Name: "pivot-integer-real"}
+	mkSim(t, tc, group)
+	for _, meta := range []string{`{"status":3}`, `{"status":3.0}`, `{"status":"3.0"}`} {
+		mkSim(t, tc, &models.Note{Name: "matching", OwnerId: &group.ID, Meta: types.JSON(meta)})
+	}
+	const tpl = `[pivot query="type = note" rows="meta.status" cols="name"]`
+	out := deferredHTML(t, tc, "", "group", group.ID, tpl)
+	rows := pivotRows(t, out)
+	for _, pair := range [][2]string{{"3", "2"}, {"3.0", "1"}} {
+		key, count := pair[0], pair[1]
+		if got := fmt.Sprint(pivotTexts(rows[key])); got != "["+key+" "+count+" "+count+"]" {
+			t.Fatalf("unexpected bucket: %s", got)
+		}
+		for _, c := range rows[key][1:] {
+			if c.query != "" {
+				t.Errorf("axis may contain REAL even without a REAL key: %+v", c)
+			}
+		}
+	}
+	if got := checkEveryLinkCountsItsCell(t, tc, "", rows); got != 2 {
+		t.Errorf("only the name total and grand total should link; got %d total links", got)
+	}
+
+	// Three open notes rank above the numeric bucket. Capping the displayed
+	// rows must not re-enable links that filter on this axis.
+	for range 3 {
+		mkSim(t, tc, &models.Note{Name: "matching", OwnerId: &group.ID, Meta: types.JSON(`{"status":"open"}`)})
+	}
+	out = deferredHTML(t, tc, "", "group", group.ID, strings.TrimSuffix(tpl, "]")+` max-rows="1"]`)
+	rows = pivotRows(t, out)
+	if len(rows) != 3 || fmt.Sprint(pivotTexts(rows["open"])) != "[open 3 3]" {
+		t.Fatalf("expected only the open row and totals: %v", rows)
+	}
+	for _, c := range rows["open"][1:] {
+		if c.query != "" {
+			t.Errorf("a hidden numeric key still makes the axis unlinkable: %+v", c)
+		}
+	}
+}
+
+func checkPivotConfinedJoinedLabels(t *testing.T, tc *TestContext) {
+	root, inside, outside := &models.Group{Name: "pivot-root"}, &models.Group{Name: "pivot-inside"}, &models.Group{Name: "pivot-outside"}
+	mkSim(t, tc, root)
+	inside.OwnerId = &root.ID
+	mkSim(t, tc, inside)
+	mkSim(t, tc, outside)
+	note := &models.Note{Name: "matching", OwnerId: &root.ID}
+	mkSim(t, tc, note)
+	if err := tc.DB.Model(note).Association("Groups").Append(inside); err != nil {
+		t.Fatal(err)
+	}
+	guest := pivotScopedBearer(t, tc, root.ID, "pivot-guest", models.RoleGuest)
+	admin := roleBearer(t, tc, models.RoleAdmin)
+	const tpl = `[pivot query="type = note" rows="groups" cols="name"]`
+	before := pivotRows(t, deferredHTML(t, tc, guest, "group", root.ID, tpl))
+	if got := fmt.Sprint(pivotTexts(before[inside.Name])); got != "[pivot-inside 1 1]" {
+		t.Fatalf("visible relation: %s", got)
+	}
+	if err := tc.DB.Model(note).Association("Groups").Append(outside); err != nil {
+		t.Fatal(err)
+	}
+	adminRows := pivotRows(t, deferredHTML(t, tc, admin, "group", root.ID, tpl))
+	if got := fmt.Sprint(pivotTexts(adminRows[outside.Name])); got != "[pivot-outside 1 1]" {
+		t.Errorf("admin must see the outside label on the in-scope note: %s", got)
+	}
+	after := pivotRows(t, deferredHTML(t, tc, guest, "group", root.ID, tpl))
+	if !reflect.DeepEqual(before, after) {
+		t.Errorf("the outside association changed the guest's pivot:\n before: %v\n  after: %v", before, after)
+	}
+}
+
+func TestPivotShortcode_ConfinedJoinedLabels(t *testing.T) {
+	checkPivotConfinedJoinedLabels(t, setupAuthEnv(t))
+}
+
+func TestPivotShortcode_TooltipIsNotInteractive(t *testing.T) {
+	tc := SetupTestEnv(t)
+	const tpl = `[pivot query="type = note" rows="meta.status" cols="name"]`
+	cat := &models.Category{Name: "pivot-tooltip", CustomHoverCard: tpl, CustomHeader: tpl}
+	mkSim(t, tc, cat)
+	group := &models.Group{Name: "pivot-tooltip", CategoryId: &cat.ID}
+	mkSim(t, tc, group)
+	mkSim(t, tc, &models.Note{Name: "matching", OwnerId: &group.ID, Meta: types.JSON(`{"status":"open"}`)})
+
+	out := getHTML(t, tc, "", fmt.Sprintf("/hovercard?type=group&id=%d", group.ID))
+	if got := fmt.Sprint(pivotTexts(pivotRows(t, out)["open"])); got != "[open 1 1]" {
+		t.Errorf("hover card should keep the counts, got %s", got)
+	}
+	if strings.Contains(out, `<a href="/mrql?q=`) || !strings.Contains(out, `role="region" aria-label="Count by status and name" tabindex="-1"`) {
+		t.Errorf("hover card must suppress pivot links and its scroll-region tab stop: %s", out)
+	}
+	page := getHTML(t, tc, "", fmt.Sprintf("/group?id=%d", group.ID))
+	if !strings.Contains(page, `<a href="/mrql?q=`) || !strings.Contains(page, `role="region" aria-label="Count by status and name" tabindex="0"`) {
+		t.Error("normal group detail pivot should have links and a scroll-region tab stop")
 	}
 }

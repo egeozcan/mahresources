@@ -58,6 +58,9 @@ type QueryResult struct {
 	// Total is the true row count ignoring Limit, populated only when
 	// QueryOptions.WantTotal was set; nil otherwise.
 	Total *int64
+	// DrillDownLimit caps the number of entities /mrql can list from an
+	// aggregate. Zero means the destination cannot reproduce the scope.
+	DrillDownLimit int
 }
 
 // QueryResultItem represents a single entity returned by a query.

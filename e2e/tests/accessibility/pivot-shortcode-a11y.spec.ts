@@ -5,6 +5,7 @@
  * its region instead of widening the page.
  */
 import { test, expect } from '../../fixtures/a11y.fixture';
+import path from 'path';
 
 const ASSIGNEES = ['ann', 'bob', 'carmen-the-reviewer', 'dimitri-from-ops', 'eleanor-in-legal', 'fatima-on-call', 'gustav-the-intern'];
 
@@ -105,5 +106,36 @@ test.describe('[pivot] shortcode accessibility', () => {
     await expect(first).toBeFocused();
     await expect(first).toHaveText('1');
     await expect(page.locator(':focus')).toHaveAttribute('aria-label', '1: status open, assignee ann');
+  });
+
+  test('count and sum tables pass contrast on the lightbox info panel', async ({ page, apiClient, checkComponentA11y }) => {
+    const name = `Pivot Lightbox ${Date.now()}`;
+    const category = await apiClient.createResourceCategory(name, 'Pivot lightbox contrast', {
+      CustomLightbox: '<div class="pivot-lightbox">' +
+        '[pivot query="type = note" rows="meta.status" cols="meta.assignee" caption="Lightbox counts" max-cols="2"]' +
+        '[pivot query="type = note" rows="meta.status" cols="meta.assignee" caption="Lightbox sums" value="sum" field="meta.hours" max-cols="2"]' +
+        '</div>',
+    });
+    let resourceId: number | undefined;
+    try {
+      resourceId = (await apiClient.createResource({
+        filePath: path.join(__dirname, '../../test-assets/sample-image-21.png'),
+        name,
+        ownerId: groupId,
+        resourceCategoryId: category.ID,
+      })).ID;
+      await page.goto(`/resources?OwnerId=${groupId}`);
+      await page.locator('[data-lightbox-item]').first().click();
+      const lightbox = page.getByRole('dialog', { name, exact: true });
+      await lightbox.locator('button[title="Resource info"]').click();
+      const tables = lightbox.locator('[data-edit-panel] .pivot-lightbox');
+      await expect(tables.getByRole('table', { name: 'Lightbox counts' }).getByRole('link', { name: '1: status open, assignee ann' })).toBeVisible();
+      await expect(tables.getByRole('table', { name: 'Lightbox sums' }).locator('tfoot td').first()).toBeVisible();
+      await expect(tables).toContainText('more assignee values are not shown');
+      await checkComponentA11y('[data-edit-panel] .pivot-lightbox');
+    } finally {
+      if (resourceId) await apiClient.deleteResource(resourceId);
+      await apiClient.deleteResourceCategory(category.ID);
+    }
   });
 });

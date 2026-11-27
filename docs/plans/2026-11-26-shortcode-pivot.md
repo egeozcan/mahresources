@@ -305,7 +305,7 @@ Additional points:
 
 ## 9. Performance at millions of resources
 
-- **One statement per `[pivot]`.** It is a single SQL statement, `GROUP BY … ORDER BY count DESC, r, c LIMIT 5001`, under the existing MRQL timeout. 5001 is below `MaxMRQLInteractiveLimit` (10,000).
+- **One aggregate statement per `[pivot]` cache miss.** The `GROUP BY … ORDER BY count DESC, r, c LIMIT 5001` runs under the existing MRQL timeout. 5001 is below `MaxMRQLInteractiveLimit` (10,000). A confined viewer with a concrete scope also needs a scope check.
 - **Budget and caching.** It costs one unit of the per-page budget (`-mrql-page-query-budget`). Identical pivots on one page are cache hits. There are no per-cell or count queries.
 - **Bounded memory and output.** Memory holds at most 5001 rows and buckets. Output is at most 52 × 22 cells, under the render meter.
 - **Author guidance in the docs.**
@@ -454,7 +454,7 @@ These follow `using_shortcode_scope_test.go` (`setupAuthEnv`, `buildScopingFixtu
 
 ## 12. Success criteria
 
-1. **One statement per table.** The §3 examples render on a real detail page as one `<table>` with a caption, headers, correct cells and correct totals. Each comes from one SQL statement, confirmed by the mock call count and by the query log.
+1. **One aggregate statement per table.** The §3 examples render on a real detail page as one `<table>` with a caption, headers, correct cells and correct totals. Each cache miss runs one aggregate statement, plus the concrete-scope check for a confined viewer.
 2. **Exact links.** In a non-truncated **count** pivot, for every linked cell and total, the `/mrql` count equals the cell number on SQLite and on Postgres. The seeded data differs in case, number versus string, and boolean. Sum pivots render no links.
 3. **Scoping fails closed.** A subtree-confined guest sees no count and no label from outside its subtree, whatever `scope` is set to.
 4. **Accessibility.** axe reports no violations, and the region and links are keyboard-reachable and have names.
@@ -510,7 +510,7 @@ I checked the plan's code claims and most of them hold. These are correct as sta
 - [x] §10.10 Plan saved here (`docs/plans/2026-11-26-shortcode-pivot.md`, per the lane brief rather than the `2026-11-24` name). `generate-index.sh` and `docs/ideas/shortcodes/README.md` are left to the merge, as instructed.
 - [x] §11.1 `shortcodes/pivot_handler_test.go` (composition, rejections, suffix pin, shape, escaping, caps, merging, multi-valued totals, truncation, links, literals, sum mode, Postgres-shaped values, budget and cache, error paths, render meter).
 - [x] §11.2 `shortcodes/pivot_lint_test.go` and `shortcodes/pivot_docs_test.go` (`TestPivotBuiltinExamplesLintClean`, plus relation dimensions building on both static dialects). In a new file rather than `builtin_docs_consistency_test.go`, to keep the shared file out of the merge.
-- [x] §11.3 `server/api_tests/pivot_shortcode_test.go` and `pivot_shortcode_pg_test.go`: scope, link counts, sum semantics, one statement, on SQLite and PostgreSQL; a preview-route scope check on SQLite.
+- [x] §11.3 `server/api_tests/pivot_shortcode_test.go` and `pivot_shortcode_pg_test.go`: scope, link counts, sum semantics, one aggregate statement, on SQLite and PostgreSQL; a preview-route scope check on SQLite.
 - [x] §11.4 `e2e/tests/111-pivot-shortcode.spec.ts` (111, not 108: 108–110 are taken by sibling lanes) and `e2e/tests/accessibility/pivot-shortcode-a11y.spec.ts`.
 - [x] §12 criteria 1–5 shown by the tests above; 6 by the validation listed below.
 
@@ -538,7 +538,7 @@ I checked the plan's code claims and most of them hold. These are correct as sta
 
 1. *noteType/category render as IDs* — resolved with option (b): refused with a pointer to meta fields or filtering in `query`; examples and tests changed (deviation 1).
 2. *Owner/group merging by name* — kept for single-valued relations (links exact, trade-off documented); multi-valued buckets that merge in a cell become unlinkable (deviation 4). Making same-named owners separate is not possible from the result, which carries only the name.
-3. *Too complex for v1* — reduced: the quote-kind rules and their limitation are gone (deviation 2), the bool branch is gone (14), limitation 2 is gone (4), and limitation 3 (SQLite `3.0`) is covered by the float rule. One documented mismatch remains: PostgreSQL's `LOWER` folds non-ASCII case. Links were kept for meta dimensions: status-by-owner is the main use case, and the integration test proves every link count equals its cell on both databases.
+3. *Too complex for v1* — reduced: the quote-kind rules and their limitation are gone (deviation 2), the bool branch is gone (14), limitation 2 is gone (4), and limitation 3 (SQLite `3.0`) is covered by the updated numeric-axis rule below. One documented mismatch remains: PostgreSQL's `LOWER` folds non-ASCII case. Links were kept for meta dimensions: status-by-owner is the main use case, and the integration test proves every link count equals its cell on both databases.
 4. *Edge cases* —
    - unknown `scope` keyword: lint warning (deviation 10);
    - none-bucket: rendered as `(none)` in a `<th scope="row">` (or column header), always shown last, ranked like any value for the caps, never linked; an empty string is `(empty)`. Both are words a screen reader announces;
@@ -547,10 +547,21 @@ I checked the plan's code claims and most of them hold. These are correct as sta
 5. *Totals with multi-valued `cols`* — stated from the row side in the docs and the description: each row's items spread over several columns, so a row total would overcount; the Total column and grand total are omitted. Tested.
 6. *Smaller points* — the plan lives under `docs/plans/` with the lane's name and the parent regenerates the index. The alias check: `TestPivotRelationDimensionsBuildOnBothDialects` builds `rows="group"` and other relation dimensions through `CheckTemplateMRQL` on both static dialects, and `checkPivotLinkCountsMatchCells` runs `cols="group"` for real on SQLite and PostgreSQL (`ORDER BY "group" ASC` resolves through the alias map). The none/empty header text is a word, see 4.
 
+### Round 1 integration review follow-up
+
+- Drill-downs stay plain text for a confined viewer whose pivot uses a strict descendant of their allowed group, because `/mrql` would use the full subtree. The linked result count is also bounded by the list page's effective default limit, including its interactive ceiling. Tests cover sibling groups and links at vs. above a configured limit of two.
+- SQLite disables links that depend on a Meta axis with any numeric result key, even when that key is not displayed. INTEGER `3` can mask REAL `3.0` in the same SQL bucket; a separate TEXT `"3.0"` bucket's drill-down can overlap too. Per-axis SQL REAL-presence flags were rejected in favor of the conservative numeric-key check. Pure-text axes and independent totals still link. SQLite integration tests pin both representations.
+- Lint and render reject SQL aliases over 63 bytes; a real PostgreSQL test exercises a 63-byte dimension and sum alias, then refuses each at 64 bytes. Long free-text fields (`description`, `originalName`, `originalLocation`, `url`) cannot be dimensions. The composed link, including its scope, must fit MRQL's 32 KiB query limit. Authors should group by short Meta labels, not free-form Meta text; the combination limit is not a byte cap on aggregate rows.
+- Truncated signed sums label totals `(partial)`, not `+` or "or more"; the regression test excludes a negative contribution. `float64` sum precision is documented rather than changed.
+- SQLite and PostgreSQL tests show that an out-of-subtree association on a visible note cannot change a confined guest's joined labels or counts. The aggregate statement test now also observes the concrete scope check for a confined viewer; identical pivots share both via the cache and consume one budget unit.
+- Hover cards retain the table without links or a scroll-region tab stop. Transparent captions and notices inherit the surface text color; table sections pair their foregrounds and backgrounds. A real hover-card render and a lightbox axe contrast check pin both changes.
+
+Round 1 validation: the shortcode, internal, template-handler and focused MRQL application suites passed, as did the SQLite and PostgreSQL pivot API tests, the CSS scan, and all 7 pivot browser tests. Removing the SQL junction-visibility check via a Go overlay made both joined-label tests fail. Vet reported only the existing copylocks finding below.
+
 ### Not verified / risks
 
 - The full E2E suite was not run (shared machine, per the brief); the pivot specs and the nearest neighbours (shortcode, calendar, adjacent, calc, lint, autocomplete, template preview, category authoring a11y) were.
 - Truncation (5001 combinations) is covered by unit tests only, not on a real database.
 - On PostgreSQL, non-ASCII case variants are separate rows whose links overlap (documented).
-- `guid`/`hash`/`description` are accepted as dimensions; they are legal but rarely useful (one row per entity, bounded by the caps).
+- `guid` and `hash` are accepted as dimensions; they are legal but rarely useful (one row per entity, bounded by the caps).
 - `go vet --tags 'json1 fts5 postgres'` reports a pre-existing copylocks issue in `resource_reduction_review_fixes_pg_test.go`, and `go vet --tags 'json1 fts5' ./...` one in `application_context/job_download_progress_test.go`; neither file is touched by this branch.

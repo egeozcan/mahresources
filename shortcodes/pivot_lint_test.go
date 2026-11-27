@@ -1,6 +1,7 @@
 package shortcodes
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -18,6 +19,9 @@ func TestLintPivot(t *testing.T) {
 		{`[pivot query="type = note" rows="meta.status" cols="owner" field="meta.hours"]`, `[pivot] field is read only with value="sum"; it is ignored`, SeverityWarning},
 		{`[pivot query="type = note" rows="meta.status" cols="owner" scope="here"]`, `[pivot] scope must be entity, parent, root, global or a group ID; "here" counts in the entity's own group`, SeverityWarning},
 		{`[pivot query="type = note" rows="meta.status" cols="owner" colour="red"]`, `unknown attribute "colour"`, SeverityWarning},
+		{`[pivot query="type = note" rows="description" cols="owner"]`, `"description" is unbounded text`, SeverityError},
+		{fmt.Sprintf(`[pivot query="type = note" rows="meta.%s" cols="owner"]`, strings.Repeat("a", 59)), `63-byte SQL alias limit`, SeverityError},
+		{fmt.Sprintf(`[pivot query="type = note" rows="name" cols="owner" value="sum" field="meta.%s"]`, strings.Repeat("a", 55)), `63-byte SQL alias limit`, SeverityError},
 		{`[pivit query="type = note"]`, "did you mean [pivot]", ""},
 	}
 	for _, tc := range cases {
@@ -33,6 +37,7 @@ func TestLintPivot(t *testing.T) {
 	}
 
 	for _, ok := range []string{
+		fmt.Sprintf(`[pivot query="type = note" rows="meta.%s" cols="owner" value="sum" field="meta.%s"]`, strings.Repeat("a", 58), strings.Repeat("a", 54)),
 		`[pivot query="type = note" rows="meta.status" cols="owner"]`,
 		`[pivot query="type = resource" rows="contentType" cols="created.year" value="sum" field="fileSize" scope="global" max-rows="5" max-cols="3"]`,
 		`[pivot query='type = group AND name ~ "a*"' rows="parent" cols="tags" scope="12" rows-label="Parent" cols-label="Tag" caption="Groups"]`,

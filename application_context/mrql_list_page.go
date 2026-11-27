@@ -15,6 +15,20 @@ func WithMRQLCardPage(parent context.Context, size, itemOffset int) context.Cont
 	return context.WithValue(parent, mrqlCardPageKey{}, mrqlCardPage{min(100, max(1, size)), max(0, itemOffset)})
 }
 
+func (ctx *MahresourcesContext) mrqlListDefaultLimit() int {
+	return min(ctx.defaultMRQLLimit(), MaxMRQLInteractiveLimit)
+}
+
+// MRQLListDrillDownLimit is the result cap for a drill-down without a LIMIT.
+// Zero means the list page would not honor the inline query's scope.
+func (ctx *MahresourcesContext) MRQLListDrillDownLimit(scopeID uint) int {
+	root, forced, deny := ctx.principalForcedScope()
+	if deny || scopeID == mrql.UnresolvedScopeSentinel || (forced && scopeID != 0 && scopeID != root) {
+		return 0
+	}
+	return ctx.mrqlListDefaultLimit()
+}
+
 // ExecuteMRQLListPage pages within the authored bounds. Single-entity pages push
 // LIMIT/OFFSET into SQL; mixed pages merge only identities and sort fields using
 // the same ordering as ordinary execution. Only the display page is hydrated.
@@ -23,7 +37,7 @@ func (ctx *MahresourcesContext) ExecuteMRQLListPage(parent context.Context, quer
 	parsed := *query
 	defaultApplied := parsed.Limit < 0
 	if defaultApplied {
-		parsed.Limit = min(ctx.defaultMRQLLimit(), MaxMRQLInteractiveLimit)
+		parsed.Limit = ctx.mrqlListDefaultLimit()
 	}
 	if err := validateMRQLExecutionBounds(&parsed, interactiveMRQLPolicy); err != nil {
 		return nil, 0, 0, err
