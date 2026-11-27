@@ -66,7 +66,7 @@ func GetDeferredRenderHandler(ctx DeferredRenderContext) func(http.ResponseWrite
 			return
 		}
 
-		entityType, entityID, body, untrusted, ok := deferredtoken.OpenWithTrust(ctx.DeferredSigningKey(), req.Token)
+		entityType, entityID, body, renderContext, ok := deferredtoken.OpenWithContext(ctx.DeferredSigningKey(), req.Token)
 		if !ok {
 			http_utils.HandleError(errors.New("invalid or expired deferred-render token"), writer, request, http.StatusBadRequest)
 			return
@@ -85,11 +85,15 @@ func GetDeferredRenderHandler(ctx DeferredRenderContext) func(http.ResponseWrite
 		}
 		// A body sealed from user content renders with raw ignored, as it would
 		// have inline (#92).
-		metaCtx.UntrustedSource = untrusted
+		metaCtx.UntrustedSource = renderContext.Untrusted
 
-		// Rebuild the same bounded render context the display page uses. The
-		// signer keeps nested deferred blocks lazy on subsequent round trips.
-		reqCtx, cancel := buildMRQLAPIRenderContext(request.Context(), ctx, true)
+		// Recover the original surface before building the signer so that
+		// nested deferred blocks keep tooltip mode on subsequent round trips.
+		parent := request.Context()
+		if renderContext.WithinTooltip {
+			parent = shortcodes.WithinTooltip(parent)
+		}
+		reqCtx, cancel := buildMRQLAPIRenderContext(parent, ctx, true)
 		defer cancel()
 		// Not inside buildMRQLAPIRenderContext: the MRQL render API shares it
 		// and is bound with WithMRQLPrincipal, which carries no ORM scope.

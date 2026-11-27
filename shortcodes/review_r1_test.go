@@ -402,7 +402,7 @@ func TestLintRefusesSourceOverTheCap(t *testing.T) {
 }
 
 func limitedMeter(ctx context.Context) *renderMeter {
-	return &renderMeter{ctx: ctx, budget: RenderBudget{ParsedSourceBytes: 1 << 62}}
+	return &renderMeter{ctx: ctx, budget: RenderBudget{ParsedSourceBytes: 1 << 62}, renderUsage: &renderUsage{}}
 }
 
 // An [mrql] body of plain text: the origin array is 8 bytes a byte, reserved

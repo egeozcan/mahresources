@@ -807,7 +807,7 @@ func (e *templateToolExecutor) preview(ctx context.Context, mc *application_cont
 
 	result := map[string]any{"field": a.Field}
 	if strings.HasSuffix(a.Field, "CSS") {
-		out, err := processTemplateToolSource(renderCtx, content, *metaCtx, renderer, executor)
+		out, err := processTemplateToolSource(shortcodes.WithinCSS(renderCtx), content, *metaCtx, renderer, executor)
 		if err != nil {
 			return "", err
 		}
@@ -822,7 +822,7 @@ func (e *templateToolExecutor) preview(ctx context.Context, mc *application_cont
 		// each [meta] element replaced by its value.
 		result["text"] = previewText(html)
 		if css != "" {
-			cssOut, err := processTemplateToolSource(renderCtx, css, *metaCtx, renderer, executor)
+			cssOut, err := processTemplateToolSource(shortcodes.WithinCSS(renderCtx), css, *metaCtx, renderer, executor)
 			if err != nil {
 				return "", err
 			}

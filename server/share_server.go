@@ -617,7 +617,7 @@ func (s *ShareServer) processShareTemplates(note *models.Note) (header, css stri
 				parts = append(parts, part)
 			}
 		}
-		css = shortcodes.Process(reqCtx, shortcodes.JoinCSS(parts...), *metaCtx, nil, nil)
+		css = shortcodes.Process(shortcodes.WithinCSS(reqCtx), shortcodes.JoinCSS(parts...), *metaCtx, nil, nil)
 	}
 	return header, css
 }

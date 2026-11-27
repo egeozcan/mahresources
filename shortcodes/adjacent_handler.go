@@ -89,6 +89,9 @@ func WithinTooltip(ctx context.Context) context.Context {
 	return context.WithValue(ctx, tooltipKey{}, true)
 }
 
+// IsWithinTooltip reports whether this render must omit tooltip controls.
+func IsWithinTooltip(ctx context.Context) bool { return withinTooltip(ctx) }
+
 func withinTooltip(ctx context.Context) bool {
 	return ctx != nil && ctx.Value(tooltipKey{}) != nil
 }

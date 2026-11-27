@@ -113,16 +113,39 @@ func withinSpans(pos int, spans [][2]int) bool {
 
 var elseifPattern = regexp.MustCompile(`\[elseif\b(?:"[^"]*"|'[^']*'|[^\]"'])*\]`)
 
-var styleElementPattern = regexp.MustCompile(`(?is)<style\b[^>]*>.*?(?:</style\s*>|$)`)
+var styleStartPattern = regexp.MustCompile(`(?i)<style[\t\n\f\r />]`)
 
-// styleElementSpans are the <style> elements of markup, whose brackets are
-// CSS attribute selectors.
+// styleElementSpans marks only the CSS bodies, not style-like text in a
+// script, comment or attribute. Skip the markup scan when no opener can occur.
 func styleElementSpans(input string) [][2]int {
-	var out [][2]int
-	for _, m := range styleElementPattern.FindAllStringIndex(input, -1) {
-		out = append(out, [2]int{m[0], m[1]})
+	if !styleStartPattern.MatchString(input) {
+		return nil
 	}
-	return out
+	var spans [][2]int
+	z := html.NewTokenizer(strings.NewReader(input))
+	inside := -1
+	for pos := 0; ; {
+		tt := z.Next()
+		end := pos + len(z.Raw())
+		switch tt {
+		case html.ErrorToken:
+			if inside >= 0 {
+				spans = append(spans, [2]int{inside, len(input)})
+			}
+			return spans
+		case html.StartTagToken, html.EndTagToken:
+			name, _ := z.TagName()
+			if string(name) == "style" {
+				if tt == html.StartTagToken {
+					inside = end
+				} else if inside >= 0 {
+					spans = append(spans, [2]int{inside, pos})
+					inside = -1
+				}
+			}
+		}
+		pos = end
+	}
 }
 
 // htmlVoid elements have no closing tag; htmlOptionalClose ones may omit it.

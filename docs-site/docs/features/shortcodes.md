@@ -84,6 +84,8 @@ Shortcodes are processed via the `process_shortcodes` Pongo2 template tag. Every
 
 A `CustomCSS` slot is expanded once per category per page. Its shortcodes resolve against the first entity of that category that the page renders: the entity being viewed on a detail page, or the first matching entity in a list. A stylesheet therefore cannot vary per card on a list page, so keep shortcodes in CSS for values that are the same across the category.
 
+In stylesheets, a bare built-in opener immediately after an ASCII letter, digit, `-`, `_`, `*`, `]`, or `|` is kept as a CSS attribute selector: `form[action]` and `.w[tabs]` work as written. Attributed shortcodes still expand normally. This rule does not apply to `[comment]`, which is stripped before shortcodes are parsed.
+
 ### Failure markers
 
 A shortcode that cannot be expanded never leaks its raw `[…]` source. Instead, the rendered page carries a diagnosable marker:
@@ -1461,7 +1463,7 @@ A button that runs one registered plugin action (`mah.action`) on the entity the
 
 `[action]` is inline only. A `[action]…[/action]` block renders a `⚠ action` marker, and the linter flags it.
 
-Text that already contains `[action …]` now renders as this shortcode. That includes a CSS attribute selector written `form[action]` in a CustomCSS slot, which becomes a `⚠ action` marker; write it `form[ action]` (the space is valid CSS) to keep it a selector.
+In `CustomCSS`, `form[action]` stays a selector; `form[ action]` is an optional equivalent CSS spelling. The attributed `[action plugin="…" name="…"]` form still expands, but category stylesheets (including inline `[mrql]` result CSS) render the unavailable comment instead of a button.
 
 ### Attributes
 
@@ -1502,6 +1504,8 @@ The button is drawn only where the click could succeed. Every other case renders
 - **Surfaces that cannot run it:** share pages, the live template preview, the description preview, hover cards, `CustomListHeader` and `CustomListFooter` (they render a category, not an entity), `CustomMRQLResult` cards on `/mrql`, the entity picker, and template generation tools.
 
 The button works on display pages (every slot), list cards, `[mrql]` and `[using]` results, `[lazy]`, `[details]` and `[autorefresh]` bodies, and the lightbox. The run endpoint checks everything again on the click: a button for an entity outside a group-limited account's subtree gets the endpoint's 403, as a hand-made request would.
+
+The hover-card exception also applies after a deferred body loads or an `[autorefresh]` block refreshes: the response still omits the button.
 
 `placement` does not matter here. It decides where the actions menu lists an action, and the run endpoint never checks it, so `[action]` accepts any registered action whose entity type matches.
 

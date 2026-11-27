@@ -182,7 +182,7 @@ func GetEntityPickerHandler(app EntityPickerAPIContext) func(http.ResponseWriter
 				}
 				if key != "" && !stylesSeen[key] {
 					stylesSeen[key] = true
-					result := shortcodes.ProcessWithDiagnostics(reqCtx, css, *meta, renderer, executor)
+					result := shortcodes.ProcessWithDiagnostics(shortcodes.WithinCSS(reqCtx), css, *meta, renderer, executor)
 					if len(result.Errors) > 0 {
 						warn(key)
 					} else if strings.TrimSpace(result.HTML) != "" {

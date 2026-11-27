@@ -12,7 +12,6 @@ import (
 	"mahresources/application_context"
 	"mahresources/auth"
 	"mahresources/constants"
-	"mahresources/deferredtoken"
 	"mahresources/models"
 	"mahresources/mrql"
 	"mahresources/plugin_system"
@@ -412,9 +411,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 		reqCtx = application_context.WithMRQLRenderDataCache(reqCtx)
 		reqCtx = shortcodes.WithQueryBudget(reqCtx, appCtx.MRQLPageQueryBudget())
 		reqCtx = shortcodes.WithRelationLister(reqCtx, template_filters.BuildRelationLister(appCtx))
-		reqCtx = shortcodes.WithRefreshSigner(reqCtx, func(entityType string, entityID uint, body string, untrusted bool) string {
-			return deferredtoken.SealWithTrust(appCtx.DeferredSigningKey(), entityType, entityID, body, untrusted)
-		})
+		reqCtx = shortcodes.WithRefreshSigner(reqCtx, template_filters.BuildDeferredSigner(reqCtx, appCtx.DeferredSigningKey()))
 	}
 	mainEntity := ctx["mainEntity"]
 	entityType, _ := ctx["mainEntityType"].(string)
@@ -454,8 +451,9 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 	}
 	processSlot := func(raw string, metaCtx shortcodes.MetaShortcodeContext) string {
 		rendered := shortcodes.Process(slotCtx, raw, metaCtx, pluginRenderer, executor)
-		return template_filters.WrapReloadableRegion(rendered, raw, metaCtx, appCtx)
+		return template_filters.WrapReloadableRegion(slotCtx, rendered, raw, metaCtx, appCtx)
 	}
+	cssCtx := shortcodes.WithinCSS(reqCtx)
 
 	switch entityType {
 	case "resource":
@@ -481,7 +479,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 			r.ResourceCategory.CustomPanelSummary = processSlot(r.ResourceCategory.CustomPanelSummary, metaCtx)
 			r.ResourceCategory.CustomPreview = processSlot(r.ResourceCategory.CustomPreview, metaCtx)
 			r.ResourceCategory.CustomLightbox = processSlot(r.ResourceCategory.CustomLightbox, metaCtx)
-			r.ResourceCategory.CustomCSS = shortcodes.Process(reqCtx, shortcodes.JoinCSS(r.ResourceCategory.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
+			r.ResourceCategory.CustomCSS = shortcodes.Process(cssCtx, shortcodes.JoinCSS(r.ResourceCategory.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
 		}
 	case "group":
 		if g, ok := mainEntity.(*models.Group); ok && g.Category != nil {
@@ -505,7 +503,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 			g.Category.CustomHoverCard = processSlot(g.Category.CustomHoverCard, metaCtx)
 			g.Category.CustomPanelSummary = processSlot(g.Category.CustomPanelSummary, metaCtx)
 			g.Category.CustomOwnEntities = processSlot(g.Category.CustomOwnEntities, metaCtx)
-			g.Category.CustomCSS = shortcodes.Process(reqCtx, shortcodes.JoinCSS(g.Category.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
+			g.Category.CustomCSS = shortcodes.Process(cssCtx, shortcodes.JoinCSS(g.Category.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
 		}
 	case "note":
 		if n, ok := mainEntity.(*models.Note); ok && n.NoteType != nil {
@@ -527,7 +525,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 			n.NoteType.CustomDetailFooter = processSlot(n.NoteType.CustomDetailFooter, metaCtx)
 			n.NoteType.CustomHoverCard = processSlot(n.NoteType.CustomHoverCard, metaCtx)
 			n.NoteType.CustomPanelSummary = processSlot(n.NoteType.CustomPanelSummary, metaCtx)
-			n.NoteType.CustomCSS = shortcodes.Process(reqCtx, shortcodes.JoinCSS(n.NoteType.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
+			n.NoteType.CustomCSS = shortcodes.Process(cssCtx, shortcodes.JoinCSS(n.NoteType.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
 		}
 	}
 }
