@@ -280,6 +280,17 @@ E2E (`e2e/tests/112-relations-shortcode.spec.ts`): group page shows label, link,
 
 Round 1 validation: the targeted SQLite and PostgreSQL tests, focused HTTP tests, and `go test --tags 'json1 fts5' ./shortcodes/... ./internal/... ./server/template_handlers/... -count=1 -timeout 45m` passed. `npm run build`, `./scripts/css-scan-test.sh`, and the two relations Playwright specs (7/7) passed. Vet reported only the pre-existing lock-copy warning at `application_context/job_download_progress_test.go:99`. An extra unfiltered run of the main, application-context, models and API handler packages failed only on the unrelated `TestPluginCommandInputsAgainstTheRealStore` (`Discard: output unverified`); it passed 5/5 in isolation.
 
+### Integration review, round 2
+
+- **Charge details only for item field references.** The far-group lookup is requested only for a top-level `[item]` value path or a parsed `[calc]` item operand rooted at `GroupDescription` or `GroupMeta`. An index-only `[item]`, fallback text, carrier references and `[inspect]` do not request details. `TestRelationsShortcodeChargesDetailsOnlyForItemReads` runs the renderer with the real lister and one budget unit: fallback text, an unrelated path, index-only output and a carrier reference render normally, while the real `[item]` and `[calc]` details reads exhaust the budget. `TestRelations_FarGroupDetailsLoadOnlyWhenNamed` verifies that details still render when budget permits.
+
+Round 2 validation: the new one-unit regression failed on the old handler and passed with the fix. The targeted Go suites (`shortcodes`, `internal`, `server/template_handlers`) and all `TestRelationsShortcode_` API tests passed with `json1 fts5`. `npm run build` and both relations Playwright specs passed (7/7). Vet reported only the pre-existing lock-copy warning in `application_context/job_download_progress_test.go:99`. No SQL changed; PostgreSQL tests were not rerun.
+
+#### Known limits
+
+- A literal `[else]` inside a quoted shortcode attribute can be mistaken for the branch divider by rendering and evaluator slot detection. The shared divider finder already behaves this way for `[each]` and `[using]`; a fix is deferred.
+- On pathological nested sources the binding linter can reparse enough attributes to exhaust its work budget. It fails safe with “too complex to check”; reusing the original token stream is deferred.
+
 ## Appendix: last evaluator feedback on rev. 4
 
 1. Scoping (blocks approval): the "secondary check" in §5.3 loads far groups with `ctx.db.WithContext(reqCtx).Preload("Category").Where("id IN ?", visibleFarIDs)`. That goes through the scoped `groups` read callback, which appends the principal's whole allow-list as a second `IN` clause. Past SQLITE_MAX_VARIABLE_NUMBER or Postgres's 65535-parameter cap the query errors. Load names and categories through a handle that skips the scope callback, handle the deletion race by dropping missing rows, and add a test with an allow-list larger than the SQLite variable limit.
