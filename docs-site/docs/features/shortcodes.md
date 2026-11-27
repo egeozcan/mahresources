@@ -382,17 +382,17 @@ The source goes through these steps on the server, in order:
 
 1. Only its first 16 KiB are read.
 2. [Template comments](#comment----comment-out-a-section) are removed.
-3. Every shortcode is removed without running: a block goes with its body, so `[details]…[/details]` disappears entirely, and an `[mrql]` in the text runs no query. This happens before Markdown is read, so a shortcode inside a code span or fenced code block is removed too; the rest of the code text stays.
+3. Shortcodes are removed without running: a block goes with its body, so `[details]…[/details]` disappears entirely, and an `[mrql]` in the text runs no query. This also removes shortcodes inside code spans and fenced code blocks. Bare tokens followed immediately by `(`, or used as Markdown reference link or image labels, are left for Markdown. For example, `[link](https://example.org)` contributes `link`, while `![excerpt](image.png)` contributes no text.
 4. Each mention (`@[resource:5:Sunset photo]`) becomes its name, `Sunset photo`, exactly as written: a `*` or `<` in a name is not read as Markdown or HTML.
-5. Markdown is rendered and only the visible text kept. HTML tags, attributes (image alt text included), HTML comments and the contents of `<script>`, `<style>` and similar elements are dropped. Paragraphs, list items, table cells and line breaks become spaces.
+5. Markdown is rendered and only its visible text kept. HTML tags, attributes (image alt text included), HTML comments and the contents of `<script>`, `<style>`, `<template>` (including nested templates) and similar elements are dropped. Paragraphs, list items, table cells and line breaks become spaces.
 
 The result is one line: every run of whitespace becomes one space.
 
 ### Truncation
 
-- The text is cut after `words` words, and in any case after 12 characters per allowed word, so text without spaces (CJK, a long URL) stays bounded too.
+- The text is cut after `words` words, with a ceiling of 12 Unicode code points per allowed word, so text without spaces (CJK, a long URL) stays bounded too. The cut backs up to avoid splitting combining marks, variation selectors, emoji modifiers or zero-width joiner sequences from their base characters.
 - A cut text ends with `…`, after any trailing `, ; : . -` has been removed.
-- A source longer than 16 KiB always ends with `…`, even when its first 16 KiB show fewer than `words` words, because the excerpt cannot know what follows.
+- If the source exceeds 16 KiB, any preview text ends with `…` even when the prefix shows fewer than `words` words.
 
 ### Empty state
 
@@ -400,7 +400,7 @@ When there is no text to show (an empty field, a non-string Meta value, or a Des
 
 ### Output and the `more` link
 
-Without `more`, the output is a bare escaped value with no wrapper element, so it can sit inside a quoted attribute like `[property]`:
+Without `more`, the output is a bare escaped value with no wrapper element. Use it in HTML text or inert quoted attributes such as `title`, `data-*` and `aria-label`. Like `[property]`, HTML escaping does not make the value safe in event handlers, Alpine expressions, `srcdoc` or a URL whose scheme the value can choose.
 
 ```
 <span title="[excerpt words='25']">[property path="Name"]</span>
@@ -415,8 +415,8 @@ Lorem ipsum dolor… <a href="/note?id=42" class="underline" aria-label="Read mo
 - Its accessible name adds the entity's name (or `note 42` when it has none), so a list of "Read more" links reads as distinct links, and it starts with the visible label.
 - It is underlined, so it does not rely on colour alone.
 - It renders for read-only viewers as well: it is navigation, not an edit control.
-- It is left out inside a [`[reload]`](#reload----re-render-on-demand) button face, which cannot contain a link, and on the [public share page](./note-sharing.md), which serves no detail pages.
-- Do not use `more` inside an HTML attribute: the link is markup.
+- It is left out inside a [`[reload]`](#reload----re-render-on-demand) button face, in hover cards, and on the [public share page](./note-sharing.md). The ellipsis stays.
+- Lint reports an error for a nonblank `more` inside an HTML attribute: the link is markup.
 
 ### Examples
 

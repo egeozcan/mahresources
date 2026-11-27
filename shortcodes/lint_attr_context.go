@@ -1561,19 +1561,17 @@ func isInertAlpineDirective(attr string) bool {
 }
 
 // emitsBareValue reports whether a shortcode writes a value straight into the
-// surrounding markup, which is what makes where it sits matter. [meta] only does
-// so with inline=, [mrql] only with value= and [excerpt] only without more=;
-// [property] and [item] always do.
+// surrounding markup, which is what makes where it sits matter. [meta] only
+// does so with inline=, and [mrql] only with value=. [excerpt] can still emit
+// bare text with more= if the source is short; lint checks that placement too.
 func emitsBareValue(name string, attrs map[string]string) bool {
 	switch name {
 	case "meta":
 		return attrs["inline"] == "true"
-	case "property", "item":
+	case "property", "item", "excerpt":
 		return true
 	case "mrql":
 		return attrs["value"] != ""
-	case "excerpt":
-		return strings.TrimSpace(attrs["more"]) == ""
 	}
 	return false
 }

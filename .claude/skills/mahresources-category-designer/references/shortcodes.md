@@ -110,7 +110,7 @@ Use for a short preview of long text on cards, panels, hover cards and `[mrql]`/
 
 Attrs:
 
-- `words` -- 1 to 200, default 30. Also cut at 12 characters per word (CJK, URLs).
+- `words` -- 1 to 200, default 30. Also capped at 12 Unicode code points per allowed word (CJK, URLs); the cut backs up over partial accents and joined emoji.
 - `field` -- one string field of this entity, default `Description`. No dot paths.
 - `path` -- a Meta string instead (not with `field`).
 - `more="Read more"` -- link to the entity's page, only when the text was cut. Its accessible name gets the entity's name appended.
@@ -118,10 +118,10 @@ Attrs:
 
 Rules:
 
-- Markdown, HTML, mentions (kept as their names), template comments and shortcodes are stripped; embedded shortcodes never run. Output is one escaped line ending in `…` when cut, or always when the source exceeds 16 KiB.
-- Without `more` it is a bare value, usable in a quoted attribute (`title="[excerpt words='25']"`); never put a `more` excerpt in an attribute.
+- Markdown, HTML (including inert `<template>` content), mentions (kept as their names), template comments and shortcodes are stripped. Embedded shortcodes never run; bare Markdown link/image labels are left for Markdown. The preview is one escaped line ending in `…` when cut, including any preview from a source longer than 16 KiB.
+- Without `more`, use it in text or inert quoted attributes such as `title="[excerpt words='25']"`, `data-*` and `aria-label`. Do not place it in script-bearing attributes, `srcdoc` or URL schemes; HTML escaping does not make those safe. A nonblank `more` in an attribute is a lint error because it can emit link markup.
 - It never loads data: preview a related entity inside `[using]` or an `[mrql]` block.
-- No `more` link inside a `[reload]` face or on the public share page.
+- No `more` link inside a `[reload]` face, in hover cards, or on the public share page.
 
 ```html
 <p class="text-sm text-stone-600">[excerpt words="25" more="Read more"]</p>

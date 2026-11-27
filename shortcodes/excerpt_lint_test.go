@@ -48,15 +48,36 @@ func TestLintExcerpt(t *testing.T) {
 	}
 }
 
-func TestLintExcerptWithMoreIsNotABareValue(t *testing.T) {
-	// With more= the output carries a link, so it is not analysed as a bare
-	// value; without it, a URL attribute is warned about as for [property].
-	known := KnownFromBuiltins()
-	if issues := Lint(`<a href="[excerpt more='x']">y</a>`, LintOptions{Known: known}); len(issues) != 0 {
-		t.Errorf("unexpected issues %v", issues)
-	}
-	if issues := Lint(`<a href="[excerpt]">y</a>`, LintOptions{Known: known}); len(issues) == 0 {
-		t.Error("no warning for a bare excerpt in href")
+func TestLintExcerptAttributePlacementWithAndWithoutMore(t *testing.T) {
+	for _, c := range []struct{ name, input, warning string }{
+		{"event handler", `<button onclick="[excerpt%s]">x</button>`, "event handler"},
+		{"Alpine directive", `<button @click="[excerpt%s]">x</button>`, "Alpine directive"},
+		{"URL scheme", `<a href="[excerpt%s]">x</a>`, `can still choose the scheme of the "href" URL`},
+		{"srcdoc", `<iframe srcdoc="[excerpt%s]"></iframe>`, `browser decodes and parses as HTML`},
+		{"unquoted", `<span title=[excerpt%s]>x</span>`, "unquoted attribute value"},
+		{"inert", `<span aria-label="[excerpt%s]">x</span>`, ""},
+		{"duplicate", `<span title="first" title="[excerpt%s]">x</span>`, ""},
+		{"text", `<span>[excerpt%s]</span>`, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			for _, more := range []string{"", " more='Read more'", " more=' '"} {
+				input := strings.Replace(c.input, "%s", more, 1)
+				issues := Lint(input, LintOptions{Known: KnownFromBuiltins()})
+				if c.warning != "" {
+					if issue := findIssue(issues, c.warning); issue == nil || issue.Severity != SeverityWarning {
+						t.Errorf("%s: want warning %q, got %v", input, c.warning, issues)
+					}
+				}
+				issue := findIssue(issues, "[excerpt] more= cannot be used in an attribute")
+				if more == " more='Read more'" && c.name != "text" {
+					if issue == nil || issue.Severity != SeverityError {
+						t.Errorf("%s: want link-markup error, got %v", input, issues)
+					}
+				} else if issue != nil || c.warning == "" && len(issues) != 0 {
+					t.Errorf("%s: unexpected issues %v", input, issues)
+				}
+			}
+		})
 	}
 }
 

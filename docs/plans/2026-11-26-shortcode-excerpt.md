@@ -363,6 +363,18 @@ Usefulness is high. Every note, resource and MRQL card author wants a clean, bou
 
 ## Review
 
+### Round 1 review fixes
+
+- **Attribute placement (P0): existing template-author policy is lint-only.** A runtime probe passed `[property]`, `[meta inline="true"]` and `[excerpt]` through `Process` in `onclick`, a `javascript:` URL and `srcdoc`. The existing value shortcodes emitted ordinary HTML-escaped text in all three, and HTML parsing recovered the original attribute value; there is no sink-specific runtime protection to inherit. `[excerpt]` now runs the same placement checks whether or not `more` is present; a nonblank `more` in an attribute is also a lint error because it can emit link markup. Docs limit the safe attribute use to inert quoted text. `TestLintExcerptAttributePlacementWithAndWithoutMore` pins both diagnostics.
+- **Mention sentinel forgery and amplification (P1).** Escape/decoding is not enough to reserve a delimiter: HTML entities can synthesize private-use characters. A fresh cryptographic nonce per conversion scopes the identity of each marker, and restoration consumes each exact emitted marker at most once. The expansion reserved before restoration cannot exceed the total name bytes in the capped source. `TestExcerptMentionSentinelsCannotBeForgedByEntities` and `TestExcerptRestoreMentionsOnlyRestoresEmittedSentinelsOnce` cover this. This supersedes the fixed sentinels in §4.
+- **Markdown labels (P1).** Bare shortcode tokens followed immediately by `(` or used as Markdown reference link/image labels are left for Markdown, including reference definitions. The distinction happens before shortcode block pairing, while real shortcode tokens in code are still removed. `TestExcerptPreservesMarkdownLabelsNamedLikeShortcodes` covers inline links and images, full/collapsed/shortcut references and a shortcode block name.
+- **Inert HTML (P1).** The text tokenizer skips template content including nested templates. `TestExcerptDropsNestedHTMLTemplateContents` asserts an independently specified expected result rather than copying the production skip list.
+- **Hover cards (P1).** Tooltip mode keeps the ellipsis and leaves out the `more` link. `TestExcerptShortcode_HoverCardOmitsMoreLinkFromCustomSummary` compares the real hover fragment with the normal list card for the same note.
+- **Rune cut (P2).** The rune ceiling backs up over combining marks (including variation selectors), emoji modifiers and ZWJ sequences before adding the ellipsis. This is not full Unicode grapheme segmentation. `TestExcerptRuneCapBacksUpOverPartialCharacters` covers both sides of the boundary.
+- **Known pre-existing limit (P1, out of scope):** Meta paths decode the whole Meta blob on first lookup for the entity context, like `[meta]`, `[property]` and `[conditional]`. The 16 KiB cap and scratch estimate apply to excerpt conversion after source lookup, not to that shared decode. The CSS selector collision is handled separately by the shared CSS-rendering fix.
+
+Round 1 validation: focused excerpt Go tests, the full shortcode/internal/template-handler package set, and the excerpt HTTP tests passed with the `json1 fts5` tags. `npm run build` and both excerpt Playwright specs passed (5 tests). Vet reported only the pre-existing lock copy in `application_context/job_download_progress_test.go:99`; no dialect-specific, frontend-source, or CSS/template changes were made.
+
 ### Deviations from the plan
 
 - **`aria-label`, not an `sr-only` span**, on the `more` link. `docs/lessons.md` ("Tailwind's `.sr-only` is `position: absolute`…") records that a visually hidden span escapes a scroll container and widens the page; cards and MRQL results sit in such containers. The accessible name is the same (`Read more: <Name>`), it still starts with the visible label (WCAG 2.5.3), and axe passes on the notes list and the group page.
@@ -384,10 +396,10 @@ Usefulness is high. Every note, resource and MRQL card author wants a clean, bou
 1. *`isValidFieldName` does not exist; `itemContext` names nothing.* Resolved: §5 now says there is no validator, only "no `.`" plus `traversePropertyPath` on the single segment (missing, unexported and withheld credential fields fail there); §7 cites `contextFromItem` in `mrql_handler.go`.
 2. *Share-page claims overreach.* Resolved by suppression: `processShareTemplates` sets `WithPublicSharePage` and `[excerpt]` drops `more` there. §6 and §12 no longer promise the share page; docs say the link is left out there. `TestExcerptShortcode_SharePageHasNoMoreLink` checks the share page has no link while the same note's main-server page does; a unit test covers the context flag.
 3. *Scratch derivation hand-waved.* Resolved: §8 and the code comment call 12× a heuristic, not a bound, name the node-heavy inputs, and say the 16 KiB cap is what bounds the work. No machinery added.
-4. *Sentinel delimiters invisible; unpaired restore unspecified.* Resolved: §4 writes `"\uE000" + i + "\uE001"`, and says an unpaired or out-of-range opener/closer is stripped with its digits kept as text. `TestExcerptRestoreMentionsStripsBrokenSentinels` pins each case.
+4. *Sentinel delimiters invisible; unpaired restore unspecified.* Resolved in §4 by spelling out the delimiters. Round 1 superseded the fixed marker; `TestExcerptRestoreMentionsOnlyRestoresEmittedSentinelsOnce` pins how unknown or malformed markers are handled now.
 5. *`capped` forces an ellipsis silently.* Resolved: the BuiltinDoc, the docs-site Truncation section and the skill reference say a source over 16 KiB always ends with `…`. `TestExcerptSourceCap` asserts it directly, including a capped source whose visible text is two words.
 6. *Parity corpus must exclude mentions.* Resolved: §11 and the test's comment say the corpus holds no mentions and no shortcodes, and why.
-7. *Cite `credential_fields.go`; the attribute claim needs "without more".* Resolved: §3 cites `credentialFields` in `shortcodes/credential_fields.go`; §6, the BuiltinDoc and the docs say the bare value is attribute-safe only without `more`, matching `emitsBareValue`.
+7. *Cite `credential_fields.go`; the attribute claim needs "without more".* §3 cites `credentialFields` in `shortcodes/credential_fields.go`. Round 1 further narrows the attribute guidance and checks placement even when `more` is present.
 
 ### Not verified
 

@@ -3,11 +3,13 @@ package shortcodes
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"html"
 	"reflect"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/yuin/goldmark"
@@ -30,10 +32,8 @@ const (
 	excerptScratchPerByte = 12
 )
 
-// The mention sentinel: U+E000, the mention's index in decimal, U+E001. A
-// mention name is swapped out for it before the Markdown step and restored once
-// the HTML is text, so a name is never read as Markdown or HTML. Private-use
-// runes and ASCII digits mean nothing to either.
+// A mention sentinel wraps a per-conversion nonce and the mention's decimal
+// index in private-use runes. Markdown and HTML leave that spelling alone.
 const (
 	excerptMentionOpen  = '\uE000'
 	excerptMentionClose = '\uE001'
@@ -78,10 +78,9 @@ func onPublicSharePage(ctx context.Context) bool {
 // shows nothing the surface that rendered the entity has not already loaded in
 // the viewer's scope.
 //
-// Without more= the output is a bare value, usable inside a quoted attribute.
+// Without more= the output is a bare value, usable in inert quoted attributes.
 // With more= and a truncated text it appends a link to the entity's detail
-// page, except inside a [reload] button face (a button cannot contain a link)
-// and on the public share page (WithPublicSharePage).
+// page, except inside [reload] button faces, hover cards and public share pages.
 func RenderExcerptShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcodeContext) string {
 	path := sc.Attrs["path"]
 	field := sc.Attrs["field"]
@@ -97,7 +96,7 @@ func RenderExcerptShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortc
 			return ""
 		}
 	}
-	if text == "" {
+	if text == "" && !truncated {
 		return html.EscapeString(sc.Attrs["default"])
 	}
 
@@ -108,7 +107,7 @@ func RenderExcerptShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortc
 	out += "…"
 
 	more := strings.TrimSpace(sc.Attrs["more"])
-	if more == "" || withinReloadFace(reqCtx) || onPublicSharePage(reqCtx) {
+	if more == "" || withinReloadFace(reqCtx) || withinTooltip(reqCtx) || onPublicSharePage(reqCtx) {
 		return out
 	}
 	url, ok := resolveLinkURL("self", ctx)
@@ -186,25 +185,23 @@ func excerptText(m *renderMeter, src string, words int) (text string, truncated,
 		}
 		src, capped = src[:cut], true
 	}
-	// An upper estimate of the copies made below, per source byte: three
-	// string copies (comments, shortcodes, mentions), the rendered HTML (up to
-	// 6 bytes per byte when every byte is escaped), the extracted text, and the
-	// goldmark AST. The AST share is a heuristic, not a bound: a node is about
-	// a hundred bytes and input such as "*a*" or "|a|" makes one every few
-	// bytes. The source cap is what bounds it.
+	// Estimate the scratch used by the intermediate strings, rendered HTML
+	// and Goldmark AST. This is a heuristic, not a byte ceiling: quote-heavy
+	// HTML, mention markers and node-heavy Markdown have different ratios.
+	// The source cap and single-use mention restoration bound the work.
 	if !m.chargeScratch(excerptScratchPerByte * int64(len(src))) {
 		return "", false, false
 	}
 
 	src = stripTemplateComments(src)
 	src = excerptDeleteShortcodes(src)
-	src, names := excerptMentionSentinels(src)
+	src, nonce, names := excerptMentionSentinels(src)
 
 	var rendered bytes.Buffer
 	if err := excerptMarkdown.Convert([]byte(src), &rendered); err != nil {
 		return "", false, true
 	}
-	plain := excerptRestoreMentions(excerptVisibleText(rendered.Bytes()), names)
+	plain := excerptRestoreMentions(excerptVisibleText(rendered.Bytes()), nonce, names)
 
 	kept := strings.Fields(plain)
 	if len(kept) > words {
@@ -225,16 +222,29 @@ func excerptText(m *renderMeter, src string, words int) (text string, truncated,
 	return text, truncated, true
 }
 
-// excerptCutRunes returns the first n runes of s, without trailing space.
+// excerptCutRunes cuts to at most n runes without splitting a base from its
+// combining marks, variation selectors, emoji modifiers or ZWJ sequence.
 func excerptCutRunes(s string, n int) string {
 	i := 0
-	for pos := range s {
+	for pos, next := range s {
 		if i == n {
+			for pos > 0 {
+				prev, size := utf8.DecodeLastRuneInString(s[:pos])
+				if prev != '\u200d' && !excerptJoinsPreviousRune(next) {
+					break
+				}
+				pos, next = pos-size, prev
+			}
 			return strings.TrimRight(s[:pos], " ")
 		}
 		i++
 	}
 	return s
+}
+
+func excerptJoinsPreviousRune(r rune) bool {
+	return r == '\u200d' || unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r) ||
+		(r >= '\U0001f3fb' && r <= '\U0001f3ff') // emoji skin-tone modifiers
 }
 
 // excerptDeleteShortcodes removes every shortcode from src without running it:
@@ -244,7 +254,7 @@ func excerptCutRunes(s string, n int) string {
 // a Description's text end a budgeted render, and excerptSourceCap already
 // bounds the parse.
 func excerptDeleteShortcodes(src string) string {
-	spans := parseWithBlocksM(nil, src)
+	spans := parseWithBlocksM(nil, excerptMaskMarkdownLabels(src))
 	if len(spans) > 0 {
 		var b strings.Builder
 		b.Grow(len(src))
@@ -260,44 +270,59 @@ func excerptDeleteShortcodes(src string) string {
 }
 
 // excerptMentionSentinels replaces each mention with its sentinel and returns
-// the names by index. Sentinel runes already in the text are removed first, so
-// none can be mistaken for one.
-func excerptMentionSentinels(src string) (string, []string) {
+// the nonce and names needed to restore it. A nonce is needed even after
+// removing literal sentinel runes: Markdown/HTML can decode numeric entities.
+func excerptMentionSentinels(src string) (string, string, []string) {
 	src = strings.Map(func(r rune) rune {
 		if r == excerptMentionOpen || r == excerptMentionClose {
 			return -1
 		}
 		return r
 	}, src)
+	var nonce string
 	var names []string
 	src = mentions.ReplaceAll(src, func(m mentions.Mention) string {
-		s := string(excerptMentionOpen) + strconv.Itoa(len(names)) + string(excerptMentionClose)
+		if nonce == "" {
+			nonce = rand.Text()
+		}
+		s := string(excerptMentionOpen) + nonce + strconv.Itoa(len(names)) + string(excerptMentionClose)
 		names = append(names, m.Name)
 		return s
 	})
-	return src, names
+	return src, nonce, names
 }
 
-// excerptRestoreMentions puts the names back in place of their sentinels. An
-// opener or closer that is not part of a well-formed sentinel with an index in
-// range is removed, and the digits after it stay as text.
-func excerptRestoreMentions(text string, names []string) string {
+// excerptRestoreMentions puts names back only for exact markers emitted by
+// this conversion. Unrecognised opener and closer runes are stripped.
+func excerptRestoreMentions(text, nonce string, names []string) string {
 	if !strings.ContainsRune(text, excerptMentionOpen) && !strings.ContainsRune(text, excerptMentionClose) {
 		return text
 	}
+	// Each name is part of the capped source and can be used at most once.
+	// Reserve that bounded expansion before writing any restored text.
+	capacity := len(text)
+	for _, name := range names {
+		capacity += len(name)
+	}
 	var b strings.Builder
-	b.Grow(len(text))
+	b.Grow(capacity)
 	for i := 0; i < len(text); {
 		r, size := utf8.DecodeRuneInString(text[i:])
 		switch r {
 		case excerptMentionOpen:
-			j := i + size
+			if nonce == "" || !strings.HasPrefix(text[i+size:], nonce) {
+				break
+			}
+			start := i + size + len(nonce)
+			j := start
 			for j < len(text) && text[j] >= '0' && text[j] <= '9' {
 				j++
 			}
 			closer, closerSize := utf8.DecodeRuneInString(text[j:])
-			if idx, err := strconv.Atoi(text[i+size : j]); err == nil && closer == excerptMentionClose && idx < len(names) {
+			if idx, err := strconv.Atoi(text[start:j]); err == nil && closer == excerptMentionClose &&
+				idx < len(names) && (j-start == 1 || text[start] != '0') {
 				b.WriteString(names[idx])
+				names[idx] = ""
 				i = j + closerSize
 				continue
 			}
@@ -328,25 +353,31 @@ var excerptBlockElements = map[string]bool{
 
 // excerptVisibleText is the text of an HTML fragment as a reader sees it, with
 // entities decoded: comments, tags, attributes (alt text included) and the
-// contents of raw-text elements are dropped.
+// contents of raw-text elements and inert templates are dropped.
 func excerptVisibleText(fragment []byte) string {
 	var b strings.Builder
 	b.Grow(len(fragment))
 	z := xhtml.NewTokenizer(bytes.NewReader(fragment))
 	skipping := ""
+	templateDepth := 0
 	for {
 		switch z.Next() {
 		case xhtml.ErrorToken:
 			return b.String()
 		case xhtml.TextToken:
-			if skipping == "" {
+			if skipping == "" && templateDepth == 0 {
 				b.Write(z.Text())
 			}
 		case xhtml.StartTagToken, xhtml.SelfClosingTagToken:
 			name, _ := z.TagName()
-			if excerptRawTextElements[string(name)] {
+			if skipping != "" {
+				continue
+			}
+			if string(name) == "template" {
+				templateDepth++
+			} else if excerptRawTextElements[string(name)] {
 				skipping = string(name)
-			} else if excerptBlockElements[string(name)] {
+			} else if templateDepth == 0 && excerptBlockElements[string(name)] {
 				b.WriteByte(' ')
 			}
 		case xhtml.EndTagToken:
@@ -355,7 +386,9 @@ func excerptVisibleText(fragment []byte) string {
 				if string(name) == skipping {
 					skipping = ""
 				}
-			} else if excerptBlockElements[string(name)] {
+			} else if string(name) == "template" && templateDepth > 0 {
+				templateDepth--
+			} else if templateDepth == 0 && excerptBlockElements[string(name)] {
 				b.WriteByte(' ')
 			}
 		}

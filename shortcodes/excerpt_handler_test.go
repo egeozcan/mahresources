@@ -57,6 +57,25 @@ func TestExcerptRemovesShortcodesWithoutRunningThem(t *testing.T) {
 	assert.Equal(t, "lead body", excerptRender(`[excerpt]`, excerptNote(`lead [details]body`)))
 }
 
+func TestExcerptPreservesMarkdownLabelsNamedLikeShortcodes(t *testing.T) {
+	for _, c := range []struct{ name, desc, want string }{
+		{"inline link", "See [link](https://example.org)", "See link"},
+		{"inline image", "Before ![excerpt](image.png) after", "Before after"},
+		{"full reference", "See [link][target].\n\n[target]: https://example.org", "See link."},
+		{"nested full reference", "See [a [nested] label][link].\n\n[link]: https://example.org", "See a [nested] label."},
+		{"collapsed reference", "See [link][].\n\n[link]: https://example.org", "See link."},
+		{"shortcut reference", "See [link].\n\n[link]: https://example.org", "See link."},
+		{"shortcut image", "Before ![excerpt] after\n\n[excerpt]: image.png", "Before after"},
+		{"full reference image", "Before ![excerpt][link] after\n\n[link]: image.png", "Before after"},
+		{"not a reference", "before [link] after\n\n`[link]: x`", "before after : x"},
+		{"not a block opener", "[details](https://example.org) kept [/details]", "details kept"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, excerptRender(`[excerpt words="200"]`, excerptNote(c.desc)))
+		})
+	}
+}
+
 func TestExcerptRemovesShortcodesInsideCode(t *testing.T) {
 	assert.Equal(t, "before code here x", excerptRender(`[excerpt]`, excerptNote("before `code [property path=\"Name\"] here` x")))
 	assert.Equal(t, "top code bottom", excerptRender(`[excerpt]`, excerptNote("top\n\n```\ncode [meta path=\"a\"]\n```\n\nbottom")))
@@ -79,12 +98,24 @@ func TestExcerptMentions(t *testing.T) {
 	assert.Equal(t, "@[note:0:Zero]", excerptRender(`[excerpt]`, excerptNote("@[note:0:Zero]")))
 }
 
-func TestExcerptRestoreMentionsStripsBrokenSentinels(t *testing.T) {
-	names := []string{"Alpha"}
-	assert.Equal(t, "Alpha b", excerptRestoreMentions("\uE0000\uE001 b", names))
-	assert.Equal(t, "7 b", excerptRestoreMentions("\uE0007\uE001 b", names), "out of range")
-	assert.Equal(t, "0 b", excerptRestoreMentions("\uE0000 b", names), "no closer")
-	assert.Equal(t, "a b", excerptRestoreMentions("a\uE001 b", names), "stray closer")
+func TestExcerptMentionSentinelsCannotBeForgedByEntities(t *testing.T) {
+	encoded := "&#57344;0&#57345;"
+	desc := "<div>before " + strings.Repeat(encoded, 450) + " after <!-- @[note:1:HIDDEN " +
+		strings.Repeat("a ", 4000) + "] --></div>"
+	require.Less(t, len(desc), excerptSourceCap)
+	assert.Equal(t, "before "+strings.Repeat("0", 450)+" after", excerptRender(`[excerpt words="200"]`, excerptNote(desc)))
+}
+
+func TestExcerptRestoreMentionsOnlyRestoresEmittedSentinelsOnce(t *testing.T) {
+	marker, nonce, names := excerptMentionSentinels("@[note:1:Alpha]")
+	otherMarker, _, _ := excerptMentionSentinels("@[note:2:Beta]")
+	require.NotEqual(t, marker, otherMarker, "each conversion needs a fresh nonce")
+	assert.Equal(t, strings.Trim(otherMarker, "\uE000\uE001"), excerptRestoreMentions(otherMarker, nonce, names), "different conversion")
+	assert.Equal(t, nonce+"7 b", excerptRestoreMentions("\uE000"+nonce+"7\uE001 b", nonce, names), "out of range")
+	assert.Equal(t, nonce+"00 b", excerptRestoreMentions("\uE000"+nonce+"00\uE001 b", nonce, names), "non-canonical index")
+	assert.Equal(t, nonce+"0 b", excerptRestoreMentions("\uE000"+nonce+"0 b", nonce, names), "no closer")
+	assert.Equal(t, "a b", excerptRestoreMentions("a\uE001 b", nonce, names), "stray closer")
+	assert.Equal(t, "Alpha b", excerptRestoreMentions(marker+marker+" b", nonce, names), "a marker restores at most once")
 }
 
 func TestExcerptTruncation(t *testing.T) {
@@ -102,6 +133,23 @@ func TestExcerptTruncation(t *testing.T) {
 func TestExcerptRuneCap(t *testing.T) {
 	got := excerptRender(`[excerpt words="10"]`, excerptNote(strings.Repeat("漢", 500)))
 	assert.Equal(t, strings.Repeat("漢", 10*excerptRunesPerWord)+"…", got)
+}
+
+func TestExcerptRuneCapBacksUpOverPartialCharacters(t *testing.T) {
+	for _, c := range []struct{ name, prefix, cluster, suffix, want string }{
+		{"combining accent", strings.Repeat("a", 11), "e\u0301", "x", strings.Repeat("a", 11) + "…"},
+		{"enclosing mark", strings.Repeat("a", 11), "e\u20dd", "x", strings.Repeat("a", 11) + "…"},
+		{"joiner at cut", strings.Repeat("a", 11), "👩‍💻", "x", strings.Repeat("a", 11) + "…"},
+		{"joiner before cut", strings.Repeat("a", 10), "👩‍💻", "x", strings.Repeat("a", 10) + "…"},
+		{"variation selector", strings.Repeat("a", 11), "✌️", "x", strings.Repeat("a", 11) + "…"},
+		{"emoji modifier", strings.Repeat("a", 11), "👍🏿", "x", strings.Repeat("a", 11) + "…"},
+		{"completed accent at cut", strings.Repeat("a", 10), "e\u0301", "x", strings.Repeat("a", 10) + "e\u0301…"},
+		{"cluster bigger than cap", "", "e" + strings.Repeat("\u0301", 12), "x", "…"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, excerptRender(`[excerpt words="1"]`, excerptNote(c.prefix+c.cluster+c.suffix)))
+		})
+	}
 }
 
 func TestExcerptWordsAttribute(t *testing.T) {
