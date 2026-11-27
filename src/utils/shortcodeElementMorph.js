@@ -1,5 +1,5 @@
 import { hoistCustomCSS } from './customCssHoist.js';
-import { focusedElement, restoreFocus } from './focus.js';
+import { focusedElement, focusOn, restoreFocus } from './focus.js';
 import { captureTabFocus, captureTabSelections, restoreTabSelections } from './tabSelections.js';
 // Elements whose children are CLIENT-owned: the server only ever sends a
 // placeholder inside them, so morph must patch their attributes but never walk
@@ -31,36 +31,65 @@ function isMorphAware(el) {
   return el?.nodeType === 1 && (MORPH_AWARE_TAGS.has(el.tagName) || el.hasAttribute?.('data-morph-client-owned'));
 }
 
-const pendingTabRestores = [];
+function actionPayloadIdentity(host) {
+  const { plugin, action, entityType, entityId, params } = host.dataset;
+  // The server marshals params with stable key order.
+  return JSON.stringify([plugin, action, entityType, entityId, params]);
+}
 
-function restoreMorphedTabSelections() {
-  for (const restore of pendingTabRestores.splice(0)) restore();
+function captureActionFocus(container, active) {
+  const host = active?.parentElement;
+  if (!host?.matches('action-shortcode') || !active.matches('button') || !container.contains(host)) return null;
+  const identity = actionPayloadIdentity(host);
+  return (now) => {
+    if (now === active && active.parentElement === host && actionPayloadIdentity(host) === identity) return;
+    const matches = Array.from(container.querySelectorAll('action-shortcode'))
+      .filter((candidate) => actionPayloadIdentity(candidate) === identity);
+    if (matches.length === 1 && focusOn(matches[0].querySelector(':scope > button'))) return;
+
+    // Park on the list, not on another control. A boxless list may refuse
+    // focus; try its ancestors instead of letting Enter activate a new target.
+    const list = container === host ? host.parentElement : container;
+    for (let region = list; region && region !== document.body; region = region.parentElement) {
+      if (focusOn(region)) return;
+    }
+    now?.blur();
+  };
+}
+
+const pendingMorphRestores = [];
+
+function restoreMorphedShortcodes() {
+  for (const restore of pendingMorphRestores.splice(0)) restore();
 }
 
 export function morphOptionsWithShortcodeElements(options = {}) {
   const { updating, updated, ...rest } = options;
-  let capturedTabs = false;
+  let captured = false;
 
   return {
     ...rest,
     updating(el, toEl, childrenOnly, skip, skipChildren) {
-      if (!capturedTabs && typeof el.querySelectorAll === 'function') {
+      if (!captured && typeof el.querySelectorAll === 'function') {
         // The first callback is the morph root. Reconcile every root patched in
         // this turn before the shared tab-host flush re-applies their state.
-        capturedTabs = true;
+        captured = true;
         const selections = captureTabSelections(el);
         const active = focusedElement();
         const findTab = captureTabFocus(el, active);
-        if (!pendingTabRestores.length) queueMicrotask(restoreMorphedTabSelections);
-        pendingTabRestores.push(() => {
-          capturedTabs = false;
+        const restoreActionFocus = captureActionFocus(el, active);
+        if (!pendingMorphRestores.length) queueMicrotask(restoreMorphedShortcodes);
+        pendingMorphRestores.push(() => {
+          captured = false;
           if (!el.isConnected) return;
           restoreTabSelections(el, selections);
-          if (findTab) queueMicrotask(() => {
-            // The tab hosts' flush has now re-shown the tab lists. A surviving
-            // DOM button can still belong to a different set after a positional patch.
+          if (findTab || restoreActionFocus) queueMicrotask(() => {
+            // The tab hosts' flush has restored panel visibility. A surviving
+            // DOM button can still target something different after a positional patch.
             const now = focusedElement();
-            if (!now || now === active) restoreFocus(findTab(), el);
+            if (now && now !== active) return;
+            if (restoreActionFocus) restoreActionFocus(now);
+            else restoreFocus(findTab(), el);
           });
         });
       }

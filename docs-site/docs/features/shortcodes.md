@@ -1535,6 +1535,8 @@ This is for the PM Task note type of the bundled project-management plugin, whos
 
 The button is a real `<button>` whose visible text is its accessible name. Progress and outcomes are announced through the page's live region: success politely, failures assertively. The status text next to the button is for sighted readers and is not itself a live region, so nothing is announced twice.
 
+If an in-place list refresh reuses a focused button for a different plugin, action, entity, or parameters, focus follows the original action when there is exactly one match in the refreshed list and that button can take focus. Otherwise focus moves to the list, not to the button with the new target.
+
 ### For plugin authors
 
 An action that only makes sense with a selection cannot run from `[action]`. Declare its selection parameter `required = true`, so template authors see a clear error instead of a button that fails. See [Plugin Actions](./plugin-actions.md#running-an-action-from-a-template).
