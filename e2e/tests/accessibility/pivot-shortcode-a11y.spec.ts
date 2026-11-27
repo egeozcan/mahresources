@@ -28,7 +28,7 @@ test.describe('[pivot] shortcode accessibility', () => {
           name: `Pivot a11y ${assignee} ${status} ${stamp}`,
           ownerId: groupId,
           noteTypeId,
-          meta: JSON.stringify({ status, assignee }),
+          meta: JSON.stringify({ status, assignee, hours: i + 1 }),
         })).ID);
       }
     }
@@ -106,6 +106,52 @@ test.describe('[pivot] shortcode accessibility', () => {
     await expect(first).toBeFocused();
     await expect(first).toHaveText('1');
     await expect(page.locator(':focus')).toHaveAttribute('aria-label', '1: status open, assignee ann');
+  });
+
+  test('Tab reaches a wide sum pivot in lightbox Info and arrows scroll without changing the resource', async ({ page, apiClient }) => {
+    const name = `Pivot Scroll ${Date.now()}`;
+    const category = await apiClient.createResourceCategory(name, 'Pivot lightbox keyboard scrolling', {
+      CustomLightbox: `[pivot query="type = note AND owner = ${groupId}" rows="meta.status" cols="meta.assignee" caption="Lightbox sums" value="sum" field="meta.hours"]`,
+    });
+    const resourceIds: number[] = [];
+    try {
+      resourceIds.push((await apiClient.createResource({
+        filePath: path.join(__dirname, '../../test-assets/sample-image-2.png'),
+        name: `${name} neighbor`,
+        ownerId: groupId,
+      })).ID);
+      // The gallery is newest-first. This image must have a next item.
+      const { ID: id } = await apiClient.createResource({
+        filePath: path.join(__dirname, '../../test-assets/sample-image-21.png'),
+        name,
+        ownerId: groupId,
+        resourceCategoryId: category.ID,
+      });
+      resourceIds.push(id);
+      await page.goto(`/resources?OwnerId=${groupId}`);
+      await page.locator(`[data-lightbox-item][data-resource-id="${id}"]`).click();
+      const lightbox = page.getByRole('dialog', { name, exact: true });
+      await expect(lightbox.getByRole('button', { name: 'Next', exact: true })).toBeEnabled();
+      await lightbox.getByRole('button', { name: 'Resource info' }).click();
+      await expect(lightbox.getByRole('button', { name: 'Close info panel' })).toBeFocused();
+      const region = lightbox.getByRole('region', { name: 'Lightbox sums' });
+      await expect(region).toBeVisible();
+      expect(await region.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+
+      for (let i = 0; i < 30; i++) {
+        await page.keyboard.press('Tab');
+        if (await region.evaluate((el) => el === document.activeElement)) break;
+      }
+      await expect(region).toBeFocused();
+      const before = await region.evaluate((el) => el.scrollLeft);
+      await page.keyboard.press('ArrowRight');
+      await expect(lightbox).toBeVisible();
+      await expect.poll(() => region.evaluate((el) => el.scrollLeft)).toBeGreaterThan(before);
+      await expect(region).toBeFocused();
+    } finally {
+      for (const id of resourceIds) await apiClient.deleteResource(id).catch(() => {});
+      await apiClient.deleteResourceCategory(category.ID).catch(() => {});
+    }
   });
 
   test('count and sum tables pass contrast on the lightbox info panel', async ({ page, apiClient, checkComponentA11y }) => {

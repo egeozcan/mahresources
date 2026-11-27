@@ -202,11 +202,11 @@ Deferral applies only on the main display pages; on share pages, the live previe
 A block of **alternative sections as an accessible tab set** (WAI-ARIA tabs, manual activation). Each `[tab label="..." lazy="true|false"]...[/tab]` directly inside `[tabs label="..."]...[/tabs]` is one tab; the first is open on load. Reach for it when a header would otherwise stack several `[details]` blocks, or when the sections are alternatives a reader flips between (Overview / Open tasks / Files, Ingredients / Steps / Nutrition). For one optional section, keep `[details]`.
 
 - An eager tab renders with the page even while hidden. Put `lazy="true"` on every tab after the first that holds `[mrql]`, a gallery or a plugin data view: a lazy tab is a `[lazy]` block, fetched the first time it is opened, with `[lazy]`'s inline fallback on share pages, the live preview and the carrier slots.
-- An `[item]` from an enclosing `[each]` or `[relations]` is not available inside eager or lazy tabs.
+- A lazy tab inside `[using]` renders its shortcodes against the target without changing a different entity in the surrounding Alpine scope. An `[item]` from an enclosing `[each]` or `[relations]` is not available inside eager or lazy tabs.
 - Give the `[tabs]` a `label` when the page has more than one, and give every `[tab]` a short `label` (a blank one shows "Tab N").
 - Slots: use it in `CustomHeader`; in `CustomSidebar` keep to about three short labels; never in `CustomSummary` or another per-card slot.
 - Only a `[tab]` directly inside `[tabs]` counts. Tab-shaped text elsewhere stays literal without suppressing other shortcodes. A `[conditional]` cannot add a tab: put the `[conditional]` inside a tab. A `[tabs]` inside a tab works. Text between tabs is dropped, and `[tabs]` cannot go in a `[reload]` face.
-- Only the open panel takes up space; its content determines the height. Without JavaScript and in hover cards, all panels show stacked under their labels.
+- Only the open panel takes up space; its content determines the height. In lightbox Info, Left and Right move tab focus without changing the displayed resource. Without JavaScript and in hover cards, all panels show stacked under their labels.
 - On `[reload]`, `[autorefresh]` or a page re-render, the selected tab is kept only for an unambiguous match. Identical repeated sets in the refreshed content start on their first tab. Focus follows the matched tab on `[autorefresh]` and page re-renders, or the equivalent `[reload]` button in the same panel when it replaces the set.
 
 ```
@@ -368,6 +368,8 @@ Event category example: a group category whose `MetaSchema` has `"date": {"type"
 ### `[pivot]`
 
 A cross-tab of two fields over the entities an MRQL filter matches: one row per `rows` value, one column per `cols` value, a count (or sum) per cell, and row, column and grand totals, in an accessible `<table>` with a caption inside a keyboard-scrollable region. Attributes: `query` (required; a filter naming exactly one type through a top-level `type = …`, with no `GROUP BY`, `ORDER BY`, `LIMIT`, `OFFSET`, `SCOPE` or `$params`), `rows` and `cols` (required, different fields), `value` (`count` default or `sum`), `field` (with `sum`: `meta.<path>`, or `fileSize`/`width`/`height` on resources), `scope` (as `[mrql]`), `max-rows` (default 20, at most 50), `max-cols` (default 10, at most 20), `rows-label`, `cols-label`, `caption`.
+
+Tab reaches the scroll region. In lightbox Info, Left and Right scroll the focused region without changing the resource.
 
 A dimension is a `meta.<path>`, a text field (`name`, `contentType`, …), `fileSize`/`width`/`height`, a note's `shared` (yes/no), a relation by name (`owner`, `groups`, `tags`, `notes`, `resources`, `parent`, `children`) or a date bucket (`created.month`, `updated.year`, …). Refused: bare timestamps, ID fields, traversals, unbounded text (`description`, `originalName`, `originalLocation`, `url`), and SQL aliases over 63 bytes (including the `sum_` prefix for sums). Filter by refused fields in `query` instead, or shorten a Meta path to fit. Values equal up to ASCII case share a row, as do same-named groups. A multi-valued relation drops the totals that would double-count.
 

@@ -13,6 +13,14 @@
             if (activeEl.isContentEditable) return false;
             if (activeEl.tagName === 'VIDEO') return paging;
             if (paging && activeEl.matches('[data-tag-editor-input]')) return true;
+            // Leave Left/Right to scroll regions in the custom Info content, even at their edge.
+            const customContent = !paging && activeEl.closest('[data-lightbox-custom-content]');
+            if (customContent) {
+                for (let el = activeEl; el !== customContent; el = el.parentElement) {
+                    if (el.getAttribute('role') === 'region' && el.tabIndex === 0) return false;
+                    if (el.scrollWidth > el.clientWidth && ['auto', 'scroll'].includes(getComputedStyle(el).overflowX)) return false;
+                }
+            }
             return !['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName);
         },
         canShortcut() {
@@ -60,8 +68,8 @@
     @keydown.escape.window="$store.lightbox.isOpen && ($store.lightbox.cropOpen ? $store.lightbox.closeCrop() : ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.handleEscape()))"
     {# Alt/Cmd + arrow is the browser's Back/Forward, which closes the viewer; Alpine's #}
     {# single-key listeners fire through those modifiers, so skip them here.            #}
-    @keydown.arrow-left.window="$store.lightbox.isOpen && !$event.altKey && !$event.metaKey && canNavigate() && $store.lightbox.prev()"
-    @keydown.arrow-right.window="$store.lightbox.isOpen && !$event.altKey && !$event.metaKey && canNavigate() && $store.lightbox.next()"
+    @keydown.arrow-left.window="$store.lightbox.isOpen && !$event.defaultPrevented && !$event.altKey && !$event.metaKey && canNavigate() && $store.lightbox.prev()"
+    @keydown.arrow-right.window="$store.lightbox.isOpen && !$event.defaultPrevented && !$event.altKey && !$event.metaKey && canNavigate() && $store.lightbox.next()"
     {# canNavigate, like the arrows: PageUp/PageDown scroll a textarea, and navigating #}
     {# from inside the Description field threw the edit away.                         #}
     @keydown.page-up.window="$store.lightbox.isOpen && canNavigate(true) && ($event.preventDefault(), $store.lightbox.prev())"
@@ -1163,6 +1171,7 @@
                         </template>
                         <template x-if="$store.lightbox.displayDetails()?.resourceCategory?.CustomLightbox || $store.lightbox.displayDetails()?.resourceCategory?.CustomSidebar">
                             <div
+                                data-lightbox-custom-content
                                 x-data="{ entity: $store.lightbox.displayDetails() }"
                                 x-html="$store.lightbox.displayDetails()?.resourceCategory?.CustomLightbox || $store.lightbox.displayDetails()?.resourceCategory?.CustomSidebar"
                                 class="mt-3 text-sm text-stone-300 font-sans"
