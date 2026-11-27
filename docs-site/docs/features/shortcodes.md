@@ -43,21 +43,26 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 | `[pills]` | Inline | Pill selector with schema enum or manual options |
 | `[datetime]` | Inline | Display/edit a date/time Meta field, preserving its format |
 | `[property]` | Inline | Render a scalar field or dot-path from the current entity |
+| `[excerpt]` | Inline | Plain-text, length-bounded preview of a Description, string field or Meta string |
 | `[calc]` | Inline | Compute a number from Meta, entity fields or [each] elements |
 | `[mrql]` | Inline or block | Run an MRQL query and render results, a scalar value, or a custom item template |
 | `[conditional]` | Block | Render the first matching branch from a meta, field, or MRQL condition |
 | `[link]` | Inline or block | Resolve a detail-page URL or wrap content in a link |
 | `[each]` | Block | Iterate an array in Meta |
-| `[item]` | Inline | Render the current element inside an `[each]` block |
+| `[item]` | Inline | Render the current element inside an `[each]` or `[relations]` block |
+| `[relations]` | Inline or block | List the group's typed relations to other groups |
 | `[partial]` | Inline | Expand a named Template Partial |
 | `[lazy]` | Block | Defer server rendering until the block scrolls into view |
 | `[details]` | Block | Defer server rendering until a disclosure is opened |
+| `[tabs]` | Block | Alternative sections as an accessible tab set; `lazy="true"` tabs render only when first opened |
 | `[reload]` | Inline or block | Re-render the nearest deferred block or custom-content slot on demand |
 | `[autorefresh]` | Block | Re-render the body after an inline editor saves |
+| `[action]` | Inline | Run a plugin action on this entity from a button |
 | `[using]` | Block | Render the body with another group, resource or note as the entity |
 | `[adjacent]` | Inline | Previous/next links to the entity's siblings or Series |
 | `[similar]` | Inline | Thumbnails of perceptually similar resources, with tier, distance and a compare link |
 | `[calendar]` | Inline | Month grid of entities by a date field, with titles, day links and month navigation |
+| `[pivot]` | Inline | Cross-tab of two fields with a count or sum per cell, totals and count links |
 | `[inspect]` | Inline | Live preview only: list the Meta paths, fields and `[each]` element paths available at that point |
 | `[comment]` | Block | Remove a section on the server so it never runs or renders |
 
@@ -78,6 +83,8 @@ Block shortcodes can be nested. The inner content is processed after the outer s
 Shortcodes are processed via the `process_shortcodes` Pongo2 template tag. Every `Custom*` slot processes shortcodes automatically: `CustomLightbox` is expanded before the JSON detail response is serialized, and `CustomCSS` is expanded by the `custom_css` tag. Entity description fields also process shortcodes on detail pages; truncated previews in list views do not.
 
 A `CustomCSS` slot is expanded once per category per page. Its shortcodes resolve against the first entity of that category that the page renders: the entity being viewed on a detail page, or the first matching entity in a list. A stylesheet therefore cannot vary per card on a list page, so keep shortcodes in CSS for values that are the same across the category.
+
+In stylesheets, a bare built-in opener immediately after an ASCII letter, digit, `-`, `_`, `*`, `]`, or `|` is kept as a CSS attribute selector: `form[action]` and `.w[tabs]` work as written. Attributed shortcodes still expand normally. This rule does not apply to `[comment]`, which is stripped before shortcodes are parsed.
 
 ### Failure markers
 
@@ -347,6 +354,92 @@ The exception is a credential field: a note's `ShareToken` (and `TokenHash`, `Cs
 
 **Note:** `ID`, `Name`, `Description`, `CreatedAt`, `UpdatedAt`, `NoteTypeId`, `OwnerId`, `StartDate`, `EndDate`, `Meta`
 
+## `[excerpt]` -- Text Preview
+
+Renders a short, single-line, plain-text preview of an entity's long text: its Description by default, another string field, or a string in its Meta. Use it on cards and in query results, where `[property path="Description"]` would print the whole Markdown source, mention markers and all.
+
+```
+[excerpt words="25" more="Read more"]
+```
+
+`[excerpt]` is inline only. It never runs a query and never loads data: it reads the entity the surface already shows, so it works in every slot, in `CustomMRQLResult` and in `[mrql]` and `[using]` bodies.
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `words` | No | `30` | Maximum number of words, a whole number from 1 to 200. A value that is not a whole number, or is below 1, falls back to 30; above 200 is clamped to 200. |
+| `field` | No | `Description` | One string field of the current entity, such as `Name` or `OriginalName`. No dot paths: to preview a related entity, put `[excerpt]` inside [`[using]`](#using----switch-to-another-entity). A field that is missing, not a string, or a credential the reader may not see (as with `[property]`) renders the default. |
+| `path` | No | -- | Dot-notation path to a string in the entity's Meta, e.g. `recipe.intro`. A number, boolean, object, array, `null` or missing key renders the default. Cannot be combined with `field`. |
+| `more` | No | -- | Visible label of a link to the entity's detail page, shown only when the text was cut. |
+| `default` | No | -- | Text rendered when there is nothing to preview. It is always HTML-escaped. |
+
+There is no `raw`: the output is always escaped text. Setting both `path` and `field` renders the `⚠ excerpt` [failure marker](#failure-markers), and the linter reports it.
+
+### What is stripped
+
+The source goes through these steps on the server, in order:
+
+1. Only its first 16 KiB are read.
+2. [Template comments](#comment----comment-out-a-section) are removed.
+3. Shortcodes are removed without running: a block goes with its body, so `[details]…[/details]` disappears entirely, and an `[mrql]` in the text runs no query. This also removes shortcodes inside code spans and fenced code blocks. Bare tokens (including ones with just trailing whitespace, like `[link ]`) followed immediately by `(`, or used as Markdown reference link or image labels, are left for Markdown. For example, `[link ](https://example.org)` contributes `link`, while `![excerpt ](image.png)` contributes no text.
+4. Mention markers that survive shortcode stripping are shown as their names: `@[resource:5:Sunset photo]` becomes `Sunset photo`. A `*` or `<` in a name is not read as Markdown or HTML.
+5. Markdown is rendered, then the HTML is scanned for text. Tags, all attributes (including image `alt` text) and HTML comments are dropped. So are the contents of `<script>`, `<style>`, `<textarea>`, `<title>`, `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>`, `<noscript>`, `<plaintext>`, `<template>` and any element with a `hidden` attribute, regardless of its value. Paragraphs, list items, table cells and line breaks become spaces. The scan matches tags; it does not apply CSS, `aria-hidden` or other browser visibility rules.
+
+The result is one line: every run of whitespace becomes one space.
+
+### Truncation
+
+- The text is cut after `words` words, with a ceiling of 12 Unicode code points per allowed word, so text without spaces (CJK, a long URL) stays bounded too. The cut backs up to avoid splitting combining marks, variation selectors, emoji modifiers or zero-width joiner sequences from their base characters.
+- A cut text ends with `…`, after any trailing `, ; : . -` has been removed.
+- If the source exceeds 16 KiB, any preview text ends with `…` even when the prefix shows fewer than `words` words.
+
+### Empty state
+
+When there is no text to show (an empty field, a non-string Meta value, or a Description that is only shortcodes, comments or images), `[excerpt]` renders `default`, escaped, or nothing.
+
+### Output and the `more` link
+
+Without `more`, the output is a bare escaped value with no wrapper element. Use it in HTML text or inert quoted attributes such as `title`, `data-*` and `aria-label`. Like `[property]`, HTML escaping does not make the value safe in event handlers, Alpine expressions, `srcdoc` or a URL whose scheme the value can choose.
+
+```
+<span title="[excerpt words='25']">[property path="Name"]</span>
+```
+
+With `more` and a cut text, a link follows the ellipsis:
+
+```html
+Lorem ipsum dolor… <a href="/note?id=42" class="underline" aria-label="Read more: Meeting notes">Read more</a>
+```
+
+- Its accessible name adds the entity's name (or `note 42` when it has none), so a list of "Read more" links reads as distinct links, and it starts with the visible label.
+- It is underlined, so it does not rely on colour alone.
+- It renders for read-only viewers as well: it is navigation, not an edit control.
+- It is left out inside a [`[reload]`](#reload----re-render-on-demand) button face, in hover cards, and on the [public share page](./note-sharing.md). The ellipsis stays.
+- Lint reports an error for a nonblank `more` in an HTML attribute name or value: the link is markup.
+
+### Examples
+
+A note type's `CustomSummary`:
+
+```
+<p class="text-sm text-stone-600">[excerpt words="25" more="Read more"]</p>
+```
+
+The latest notes in a group header, each with a preview:
+
+```
+[mrql query="type = note ORDER BY updated DESC" limit="5"]
+  <p><a href="[link]">[property path="Name"]</a>: [excerpt words="12"]</p>
+[/mrql]
+```
+
+A Meta string with a fallback:
+
+```
+[excerpt path="recipe.intro" words="15" default="No intro yet"]
+```
+
 ## `[calc]` -- Arithmetic over Fields
 
 Computes a number from values the page already holds: the entity's Meta, its numeric fields and, inside `[each]`, the current element. Use it for derived values that would go stale if stored, such as a line total, a discounted price, a remaining budget or a resource's megapixels.
@@ -374,7 +467,7 @@ There is no `raw`, `hide-empty`, `editable` or `layout`: the output is always a 
 |---------|-------|-------------------------|
 | `meta.<path>` | The entity's Meta at a dot path, e.g. `meta.price.net` | It is a JSON number, or a string that is wholly a decimal number after trimming spaces (`"12.50"`, `" 3 "`, `"1e3"`). `"12,5"`, `"0x10"`, `"NaN"`, `"1_000"`, `""` and a string longer than 64 bytes are not numbers. |
 | `property.<Path>` | An entity field, the same traversal as `[property]` (e.g. `property.Width`, `property.Tags.0.ID`) | It is an integer or floating-point field. Strings, booleans, times and structs are never numbers. A nil pointer (an ownerless entity's `OwnerId`) has no value. Credential fields are withheld exactly as in `[property]`. |
-| `item`, `item.<path>` | The current `[each]` element, or a dot path into it | As for `meta.`. See [Inside `[each]`](#inside-each). |
+| `item`, `item.<path>` | The current `[each]` element or `[relations]` edge, or a dot path into it | As for `meta.`. See [Inside a loop](#inside-a-loop). |
 | `12`, `0.5` | A literal | Always. Literals are plain decimals: no exponent, no leading `.`, at most 32 characters. |
 
 Names are case-sensitive. A bare name (`qty`), any other root (`entity.x`) or any other function (`sqrt`) is a syntax error.
@@ -411,9 +504,9 @@ The output is bare text with no wrapper element: digits, an optional leading `-`
 
 Because the output is plain text, `[calc]` can sit inside an HTML attribute: `style="width: [calc expr='meta.done / meta.total * 100' decimals='0' default='0']%"`.
 
-### Inside `[each]`
+### Inside a loop
 
-At the top level of an `[each]` body, `item` is the current element:
+At the top level of the item branch of `[each]` or `[relations]`, `item` is the current array element or relation edge:
 
 ```
 [each path="lines"]
@@ -421,7 +514,7 @@ At the top level of an `[each]` body, `item` is the current element:
 [/each]
 ```
 
-The same rules as for `[item]` apply. A `[calc]` inside another block within the body (`[conditional]`, `[lazy]`, `[details]`, `[autorefresh]`, `[using]`) cannot see the element, so its `item` operands have no value; `meta.` and `property.` still read the entity. A nested `[each]` binds its own element. Outside any `[each]`, `item` has no value and the linter warns.
+The same rules as for `[item]` apply. In `[else]` or inside a nested block (such as `[conditional]`, `[tabs]`, or `[using]`), `item` operands have no value, though `coalesce` can supply one. `meta.` and `property.` still read the entity. A nested `[each]` or `[relations]` binds its own item. The linter warns when the expression uses `item` where it has no value.
 
 ### Limits
 
@@ -588,6 +681,7 @@ Each result entity gets its own shortcode context (entity type, ID, meta, and th
 | Shortcode | Behavior inside the block body |
 |-----------|--------------------------------|
 | `[property path="..."]` | Reads a struct field off the current item (`Name`, `Description`, `ContentType`, `CreatedAt`, ...) |
+| `[excerpt ...]` | A plain-text preview of the current item's Description, string field or Meta string |
 | `[meta path="..."]` | Reads the current item's meta JSON, rendered schema-aware using that item's own category MetaSchema |
 | `[meta path="..." editable=true]` | Edits target the current item; the pencil writes back to that specific entity |
 | `[conditional ...]...[/conditional]` | Branches on the current item's meta, fields, or a nested query, including `[elseif ...]` and `[else]` |
@@ -954,11 +1048,11 @@ Renders its inner content once per element of an array meta value.
 
 ### How It Works
 
-`[each]` is a block shortcode. Reference the current element with `[item]` inside the block. A non-array or empty value renders the `[else]` branch, or nothing when there is no `[else]`. `[else]` is a divider with no closing tag; end the block with `[/each]`. Inner `[meta]`, `[conditional]`, `[mrql]`, and `[property]` shortcodes run against the **parent entity**, not the element -- use `[item]` for element data.
+`[each]` is a block shortcode. Reference the current element with `[item]` directly in the item branch, before `[else]`. A non-array or empty value renders the `[else]` branch, or nothing when there is no `[else]`. `[else]` is a divider with no closing tag; end the block with `[/each]`. Inner `[meta]`, `[conditional]`, `[mrql]`, and `[property]` shortcodes run against the **parent entity**, not the element -- use `[item]` for element data.
 
 ### `[item]`
 
-`[item]` renders the current element inside an `[each]` block. It uses the same `format`, `layout`, and `default` helpers as `[property]`, and is HTML-escaped unless `raw="true"`. Outside an `[each]` block it renders nothing.
+`[item]` renders the current `[each]` element or [`[relations]`](#relations----group-relations) edge. It uses the same `format`, `layout`, and `default` helpers as `[property]`, and is HTML-escaped unless `raw="true"`. It binds only at the top level of the item branch (before `[else]`). In `[else]`, in another nested block (including eager and lazy tabs), or outside a loop, it renders nothing. A nested loop binds its own item.
 
 | Attribute | Required | Default | Description |
 |-----------|----------|---------|-------------|
@@ -999,7 +1093,111 @@ For an array of objects, `[item path="..."]` reads a field of each element. Inne
 [/each]
 ```
 
-`[item]` binds to the nearest enclosing `[each]`; `[item]` tokens inside a nested `[each]` belong to that inner loop.
+## `[relations]` -- Group relations
+
+`[relations]` lists the current group's typed [relations](../concepts/relationships.md) to other groups, grouped by relation type, each entry a link to the group at the far end. Use it to show "depends on X, Y" on the cards of a list or an MRQL result, to show only one type of relation, or to place relations in a slot of your own.
+
+```
+[relations]
+[relations type="Depends on" limit="5"]
+[relations direction="in"]
+```
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `type` | No | | Only relations of this type: an exact, case-sensitive name (surrounding spaces are ignored). A relation type is unique by its name **and** its from and to categories, so two types named "Depends on" for different categories are both matched. Empty lists every type. |
+| `direction` | No | `out` | `out` lists the relations from this group; `in` lists the relations to it. Any other value renders an error marker. |
+| `limit` | No | `20` | The most relations listed. Above 100 is capped at 100; `0`, a negative or a non-number falls back to 20. The linter warns on each. |
+
+### Outgoing and incoming
+
+A relation is directed: "Backend API **Depends on** Auth Service" is outgoing from Backend API and incoming to Auth Service.
+
+- A relation type with a **back relation** stores the reverse edge as a relation of its own: adding "Backend API depends on Auth Service" also adds "Auth Service is required by Backend API". So `direction="out"` already lists both halves of such a pair, each from its own group's side, and `in` would list the same pair again.
+- Use `direction="in"` for types without a back relation, whose edges only the far group lists as outgoing. Its labels read `Incoming: <type>`.
+- To show both, write two shortcodes, each where it belongs.
+
+### Output
+
+```html
+<div class="relations-shortcode" data-direction="out">
+  <ul class="relations-shortcode__types" role="list">
+    <li class="relations-shortcode__type">
+      <span class="relations-shortcode__label">Depends on</span>
+      <ul class="relations-shortcode__list" role="list">
+        <li class="relations-shortcode__entry"><a href="/group?id=12">Auth Service</a> <span class="relations-shortcode__category">(Service)</span></li>
+      </ul>
+    </li>
+  </ul>
+</div>
+```
+
+- One list per relation type, in type-name order, and within a type in the order the relations were created.
+- The markup is nested native lists with explicit list roles (for Safari/VoiceOver when bullets are hidden), so a screen reader announces each type's label and then its list with the number of items. It has no headings and no IDs, so it fits any slot and any number of cards on one page.
+- The far group's category is shown in parentheses when it has one. A group with a blank name is shown as "Group 12". All text is HTML-escaped.
+- The `relations-shortcode__*` classes are hooks for `CustomCSS`.
+- In a hover card, which the keyboard cannot enter, the names are plain text rather than links.
+- With no relation to show it renders nothing (or the `[else]` branch of a block).
+
+### Block form
+
+As a block, each relation renders the body instead of the default entry, inside its own list item. `[item]` reads the relation directly in the item branch, not inside a nested shortcode block or `[else]`:
+
+| `[item path=…]` | Value |
+|---|---|
+| `Name` | The relation's own name (may be empty) |
+| `Description` | The relation's description |
+| `Type` | The relation type's name |
+| `Direction` | `out` or `in` |
+| `GroupID` | The far group's ID |
+| `GroupName` | The far group's name |
+| `GroupCategory` | The far group's category name, or empty |
+| `GroupURL` | `/group?id=<GroupID>` |
+| `GroupDescription` | The far group's description |
+| `GroupMeta` | The far group's Meta: `[item path="GroupMeta.status"]` reads one field |
+
+```
+[relations direction="in"]
+  <a href="/group?id=[item path='GroupID']">[item path="GroupName"]</a>
+  -- [item path="GroupMeta.status" default="no status"]
+[else]
+  <p>Nothing depends on this.</p>
+[/relations]
+```
+
+- The body renders against **this** group, as an `[each]` body does: `[property]`, `[meta]` and `[mrql]` inside it read the carrier, not the far group. Read the far group through `GroupName`, `GroupDescription` and `GroupMeta`.
+- Attributes are not expanded, so `[using type="group" id="[item path='GroupID']"]` does not work.
+- In an `href`, write `/group?id=[item path='GroupID']` rather than `[item path='GroupURL']`: the linter cannot tell that a bare `[item]` holds a safe URL and warns about it.
+- Values are spliced in after the body renders, so a relation named `[property path="Name"]` shows that text literally and never runs it.
+- `[calc]` reads the relation in the same position, e.g. `[calc expr="item.GroupMeta.cost * 2"]`.
+- `raw="true"` opts into **unsanitized** output. Do not use it for far-group `GroupDescription` or `GroupMeta` unless you trust what other users may put into those fields.
+
+### Scoping
+
+A relation is listed only when the viewer may see **both** of its groups. A group-confined user or guest therefore sees only relations inside their subtree, and relations to groups outside it are omitted. No count of hidden relations is shown. A guest whose account has no scope group sees none.
+
+The visibility filter uses the same group scope as other reads on the page and is applied before `limit`. Hidden edges do not take any of the visible slots.
+
+### Cost
+
+- One query per `[relations]`, which counts one unit of the [per-page query budget](#per-page-query-budget). If there are visible relations, a top-level `[item]` value path or a `[calc]` `item` operand referring to `GroupDescription` or `GroupMeta` adds a second, small query by primary key and counts a second unit. Mentioning those names in fallback text or in a reference to the current group's Meta does not trigger that query. An identical `[relations]` repeated on the same page is free. Unavailable lookups and invisible carriers do not spend budget. Past the budget it renders an error marker.
+- In a per-card slot it runs once per card: a group list page shows at most 50 cards, so an inline `[relations]` in `CustomSummary` spends 50 of the default 200 units, leaving 150 for `[mrql]` and the rest. Raise `-mrql-page-query-budget` if a dense page needs more.
+- Each lookup is bounded by the MRQL query timeout (`-mrql-query-timeout`), and one that runs out of time renders "lookup timed out".
+- `direction="out"` reads the relation table's unique index; `direction="in"` uses `idx__group_relations__to_group_id`. PostgreSQL builds it concurrently on a dedicated connection and serves correct (possibly slower) results while it builds; SQLite builds it before serving, under the writer lock on first build.
+
+### Hiding the built-in panel
+
+A group page already shows Relations and Reverse Relations panels. When a category shows its relations through `[relations]`, turn the built-in ones off under **Section Visibility** in the category form, or in its [section configuration](./custom-templates.md#section-configuration): `{"relations": {"state": "off"}}`, or `forwardRelations` / `reverseRelations` set to `false`.
+
+### Where it renders
+
+`[relations]` works only on groups; on a resource or note it renders `<!-- mr:relations: only groups have relations -->`. To list the relations of a group a resource or note refers to, wrap it in [`[using]`](#using----switch-to-another-entity), e.g. `[using rel="owner"][relations][/using]`.
+
+It renders on display pages and their list cards, the lightbox, hover cards, deferred `[lazy]`/`[details]`/`[autorefresh]` bodies, MRQL results and the template and description previews. Everywhere else it renders `<!-- mr:relations unavailable in this context -->`: share pages, the entity picker and the AI template generation tools. For group-confined viewers, MRQL `render=list` cards can list relations, but `render=1` gets the unavailable comment: that path has no ORM subtree binding.
+
+`[relations]` cannot be used inside a `[reload]` button face.
 
 ## `[partial]` -- Reusable snippets
 
@@ -1076,13 +1274,72 @@ The load-on-open mechanism is the same signed round-trip as `[lazy]`.
 
 ### Where deferral applies
 
-`[lazy]` and `[details]` defer across the **standard authenticated template pipeline**, wherever a `Custom*` slot renders a member entity (Group, Resource, or Note). That includes the entity detail pages, list-page `CustomSummary` cards, the dashboard, and hovercards. Everywhere else the body renders **inline** as a graceful fallback -- the content still appears, and `[details]` remains a plain collapsible `<details>` -- either because no deferred signer is installed (public share pages, the live authoring preview, JSON API responses) or because the context is a carrier rather than a member entity (carrier list slots (`CustomListHeader`, `CustomListFooter`), whose `category` / `resource_category` / `note_type` context cannot be reloaded by the deferred endpoint).
+`[lazy]` and `[details]` defer across the **standard authenticated template pipeline**, wherever a `Custom*` slot renders a member entity (Group, Resource, or Note). That includes the entity detail pages, list-page `CustomSummary` cards, the dashboard, and hovercards. Everywhere else the body renders **inline** as a graceful fallback -- the content still appears, and `[details]` remains a plain collapsible `<details>` -- either because no deferred signer is installed (public share pages, the live authoring preview, JSON API responses) or because the context is a carrier rather than a member entity (carrier list slots (`CustomListHeader`, `CustomListFooter`), whose `category` / `resource_category` / `note_type` context cannot be reloaded by the deferred endpoint). A `lazy="true"` tab of a [`[tabs]`](#tabs----tabbed-sections) block is a `[lazy]` block and follows the same rules. When a page re-render (a paste upload, or a list refreshed after a bulk edit) reaches a lazy tab the reader had opened and then left, it is not fetched again in the background: it loads fresh the next time its tab is opened. Only the lazy tab on screen re-fetches at once.
 
 ### Limitations
 
 - **JavaScript is required** for the deferral to hydrate (as it is for the rest of the app). A `<noscript>` note is shown when it is disabled.
 - The deferred body renders against the **entity**, so an `[item]` from an enclosing `[each]` is not available inside a `[lazy]`/`[details]` block (the same non-goal as `[each]`'s element-relative paths).
 - The token key is per-process and per-boot by default, so a placeholder minted before a restart -- or, in a multi-process deployment, resolved by a different process -- fails to load and shows a small "could not load -- Retry" message. Set the `TEMPLATE_SIGNING_KEY` environment variable to a shared secret across all processes for behind-a-load-balancer deployments.
+
+## `[tabs]` -- Tabbed sections
+
+Two or more alternative views of the entity in one accessible tab set. Only the open panel takes up space, and the layout height follows its content. Use it where readers should switch between views instead of opening several `[details]` sections at once: a project header with Overview, Open tasks and Files, or a recipe with Ingredients, Steps and Nutrition. For one optional section, `[details]` is still the right tool.
+
+`[tabs]` is a block shortcode and requires a closing `[/tabs]`. Each `[tab label="…"]…[/tab]` directly inside it is one tab. The first tab is open when the page loads.
+
+```
+[tabs label="Project views"]
+  [tab label="Overview"][property path="Description"][/tab]
+  [tab label="Open tasks" lazy="true"][mrql query='type = note AND tags = "todo"' format="list"][/tab]
+  [tab label="Files" lazy="true"][mrql query='type = resource' format="list"][/tab]
+[/tabs]
+```
+
+### Attributes
+
+On `[tabs]`:
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `label` | No | none | The accessible name of the tab list. Set it whenever a page has more than one `[tabs]`, so a screen-reader user can tell them apart |
+
+On each `[tab]`:
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `label` | No | `Tab N` | The tab's visible text and accessible name. It is HTML-escaped and shortcodes in it are not expanded. A blank label shows `Tab 2` and so on |
+| `lazy` | No | `false` | `true` makes the tab a `[lazy]` block: its body is rendered on the server only when the tab is first opened. Any other value counts as `false` |
+
+### Eager and lazy tabs
+
+A tab without `lazy="true"` renders with the page, whether it is open or not, so its queries run on every page view. Put `lazy="true"` on every tab after the first that holds an `[mrql]`, a gallery or a plugin data view. A lazy tab costs nothing until a reader opens it, and then one request to the same endpoint `[lazy]` uses, under the same scope checks. A lazy first tab is open on load, so it loads right after the page does.
+
+Neither eager nor lazy tabs can read `[item]` from an enclosing `[each]` or `[relations]`: only the direct item branch of a loop binds it. On share pages, in the live preview and in list headers, lazy tabs render inline. See [Where deferral applies](#where-deferral-applies).
+
+A lazy tab inside `[using]` renders its shortcodes against the target entity. Loading it does not change the surrounding Alpine `entity` bindings if they refer to a different entity, even when their numeric IDs match.
+
+### Keyboard and screen readers
+
+The tab set follows the WAI-ARIA tabs pattern, with manual activation:
+
+- **Left and Right arrows** move between tabs, wrapping at the ends. In the lightbox Info panel, they move between tabs without changing the displayed resource. **Home** and **End** go to the first and last tab. Moving does not open a tab, so arrowing past lazy tabs does not load them.
+- **Enter**, **Space** or a click opens the focused tab.
+- The tab list is one stop in the Tab order. **Tab** moves on into the open panel. A panel with no descendants in the Tab order is itself a stop, so its text can be reached.
+
+The tabs wrap onto more rows instead of scrolling sideways, and a long label wraps inside its tab, so a narrow sidebar never scrolls horizontally. The open tab is marked by weight as well as colour.
+
+Without JavaScript, before the script has loaded, and in hover cards, all panels are stacked under their labels as named groups. Hover cards do not show tab controls; lazy panels there can still defer.
+
+### Rules and limits
+
+- Only a `[tab]` directly inside `[tabs]` is a tab. Elsewhere, tab-shaped text stays literal and does not stop other shortcodes from expanding. To make a tab's content conditional, put the `[conditional]` inside the tab, not around it. A `[tabs]` inside a tab works, and each set responds only to its own tabs.
+- Text between the tabs, outside any `[tab]…[/tab]`, is not rendered.
+- A `[tabs]` cannot go inside a `[reload]` button face.
+- When `[reload]`, `[autorefresh]` or a page re-render replaces the surrounding content, selection is kept only if the same tab set can be matched unambiguously. Repeated identical tab sets in the refreshed content start over on their first tab. A focused tab follows its matched set during `[autorefresh]` or a page re-render, even if the set moves. When a `[reload]` button in a tab replaces the set, focus returns to the equivalent button in the same panel, if it can take focus.
+- Use it in `CustomHeader`. In `CustomSidebar`, keep to about three short labels. Do not use it in a per-card slot such as `CustomSummary`: each card would carry its own tab set and run its eager tabs' queries.
+
+The template linter reports a `[tabs]` with no tabs, a `[tab]` without its `[/tab]` or with another `[tab]` inside it, a missing label, a `lazy` value other than `true` or `false`, unknown `[tab]` attributes, text outside the tabs, and any `[tab]` or `[/tab]` that no `[tabs]` reads.
 
 ## `[reload]` -- Re-render on demand
 
@@ -1134,11 +1391,11 @@ Because this is a proximity walk, a `[reload]` placed inside a `[lazy]` body ref
 ### During a reload
 
 - The content being replaced stays on screen and is dimmed while the request is in flight, rather than collapsing to a loading placeholder. A `[lazy]` or `[details]` block *inside* a reloaded slot does come back unrevealed, and loads again on its own terms.
-- The Alpine `entity` scope is refreshed along with the markup, so bindings written against it (`x-text="entity.Meta.status"` and friends, see [Custom Templates](./custom-templates.md)) show current values rather than the snapshot the page was loaded with. Shortcodes are expanded server-side against the same fresh entity, so both halves of a template stay in step.
+- If the surrounding Alpine `entity` scope holds the same type and ID as the response, its data refreshes along with the markup. Its bindings (`x-text="entity.Meta.status"` and friends, see [Custom Templates](./custom-templates.md)) then reflect the same entity snapshot as the server-expanded shortcodes. A response for a different entity updates only the markup, not the surrounding bindings.
 - `aria-busy` is set on the content being refreshed and on the button, and the button greys out. On the icon form the glyph also spins, which `prefers-reduced-motion` suppresses.
 - Activation announces "Reloading" politely, then "Content reloaded" on success. A fast reload coalesces the two.
 - On failure the previous content is left exactly as it was, "Could not reload the content" is announced assertively, and a "Reload failed." marker appears beside the button so the stale content is not mistaken for fresh.
-- The button is normally inside the content it replaces. If it had focus when it was activated, and focus has not moved elsewhere in the meantime, focus goes to the equivalent reload button in the fresh content; if no reload button survives the re-render, it goes to the refreshed container, then to the first thing inside it that can hold focus, and failing that outwards to the nearest ancestor that can -- so the reader is never dropped onto `<body>`. A region wrapper is `display: contents` and generates no box, so it cannot always take focus itself, and content that came back as bare text offers nothing inside to land on.
+- The button is normally inside the content it replaces. If it had focus when it was activated, and focus has not moved elsewhere in the meantime, focus goes to the equivalent reload button in the fresh content; if there is no equivalent button or it cannot take focus, it goes to the refreshed container, then to the first thing inside it that can hold focus, and failing that outwards to the nearest ancestor that can -- so the reader is never dropped onto `<body>`. A region wrapper is `display: contents` and generates no box, so it cannot always take focus itself, and content that came back as bare text offers nothing inside to land on.
 - Repeat activations while a reload is in flight are ignored. If the page itself re-renders while a reload is in flight (an Alpine morph), that reload is abandoned: the button becomes clickable again immediately against the newly rendered content, and the abandoned request reports neither success nor failure.
 - When one reload encloses another -- a region reload and a `[lazy]` block inside it -- the later activation wins in both directions, regardless of which response arrives first. Replacing a region also replaces every block inside it, so letting the slower answer land would put back a render older than the one the reader just asked for. The superseded button is released the moment it is overtaken rather than when its own request answers, so a slow or hung request cannot leave a live button spinning and unclickable.
 
@@ -1174,6 +1431,7 @@ A block refreshes after a save when either holds:
 
 - **The save was for the entity the block was rendered for**, wherever the editor sits on the page. An editor in `CustomHeader` refreshes a block in `CustomSidebar`.
 - **The editor that saved sits inside the block**, whatever entity it edited. An editor inside a `[using]` or an `[mrql]` item template inside the block counts.
+- **An [`[action]`](#action----run-a-plugin-action) button finished a successful run** for the block's entity, or sits inside the block. It counts as a save of that entity.
 
 Saves less than 250 ms apart are coalesced: each save restarts the timer, and when it runs out every block that matched any of them refreshes once. When a block that is refreshing sits inside another that is also refreshing, only the outer one is fetched, since its re-render rebuilds the inner one.
 
@@ -1181,7 +1439,7 @@ Saves made any other way do not trigger it: the metadata panel, the lightbox edi
 
 ### How it works
 
-The server wraps the rendered body in `<autorefresh-shortcode data-token="TOKEN" data-entity-type="…" data-entity-id="…">`. The token seals the block's **raw** body the same way `[lazy]` seals its own, so a refresh re-evaluates every shortcode in it against the current entity. The element is `display: contents` and adds no layout box. A refresh fetches `POST /v1/shortcodes/deferred`, the endpoint `[lazy]`, `[details]` and `[reload]` use, and behaves like a `[reload]` of a deferred block: the current content stays on screen dimmed while the request is in flight, the Alpine `entity` scope is refreshed along with the markup, and a newer refresh or reload of an overlapping area wins over an older one.
+The server wraps the rendered body in `<autorefresh-shortcode data-token="TOKEN" data-entity-type="…" data-entity-id="…">`. The token seals the block's **raw** body the same way `[lazy]` seals its own, so a refresh re-evaluates every shortcode in it against the current entity. The element is `display: contents` and adds no layout box. A refresh fetches `POST /v1/shortcodes/deferred`, the endpoint `[lazy]`, `[details]` and `[reload]` use, and behaves like a `[reload]` of a deferred block: the current content stays on screen dimmed while the request is in flight, a matching Alpine `entity` scope is refreshed along with the markup, and a newer refresh or reload of an overlapping area wins over an older one.
 
 The host is emitted on full pages, in content those pages load through `[lazy]` and `[details]`, and in the lightbox's info panel. Everywhere else the body renders with no wrapper and never refreshes: the public share server, the category-template live preview, `CustomMRQLResult` cards on `/mrql`, and the `CustomListHeader` and `CustomListFooter` carrier slots.
 
@@ -1195,6 +1453,93 @@ A `[reload]` inside an `[autorefresh]` reloads that block, not the slot around i
 - It cannot go inside a `[reload]` button face; it renders a `⚠` marker there, and the linter flags it.
 - The token carries the block's source, so each block adds about 1.34x its raw body size to the page, as `[lazy]` does.
 - **JavaScript is required** for the refresh. The body itself renders without it.
+
+## `[action]` -- Run a plugin action
+
+A button that runs one registered plugin action (`mah.action`) on the entity the template is rendering, with the permissions of the person who clicks it. It posts to `POST /v1/jobs/action/run`, the endpoint the actions menu uses, so CSRF, roles, subtree scoping, the action's filters and its parameter checks all apply to the click exactly as they do there. Use it to put one step of a workflow next to the data it belongs to, instead of behind the generic actions menu.
+
+```
+[action plugin="fal-ai" name="upscale" label="Upscale (Topaz)" confirm="Upscale this image on fal.ai? This is billed." param-model="topaz"]
+```
+
+`[action]` is inline only. A `[action]…[/action]` block renders a `⚠ action` marker, and the linter flags it.
+
+In `CustomCSS`, `form[action]` stays a selector; `form[ action]` is an optional equivalent CSS spelling. The attributed `[action plugin="…" name="…"]` form still expands, but category stylesheets (including inline `[mrql]` result CSS) render the unavailable comment instead of a button.
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `plugin` | Yes | -- | The plugin's name, as in `[plugin:<name>:…]`. Surrounding spaces are trimmed |
+| `name` | Yes | -- | The action's `id` from `mah.action({ id = … })`. Action ids are registered in lowercase |
+| `label` | No | the action's `label` | The button text, which is also its accessible name. Blank means the default |
+| `confirm` | No | the action's `confirm` | The confirmation question asked before the run, replacing the action's own. `confirm=""` keeps the action's confirmation: a template can add or reword one, never remove it |
+| `param-<name>` | No | the action's default | Sets the action parameter `<name>` (see below) |
+
+### Parameters
+
+The button starts from the action's own defaults, the way the action dialog does: an `entity_ref` parameter whose default is `trigger` (or `both`) and whose entity type matches gets this entity, a `selection` default gets nothing, `info` parameters are skipped, and every other parameter gets its `default` (or `false` for a `boolean` and `""` otherwise). Each `param-<name>` attribute then replaces one value. `<name>` must be a parameter the action declares, and the value is converted by its type:
+
+| Parameter type | Accepted value | Otherwise |
+|---|---|---|
+| `text`, `textarea`, `hidden` | the value as written | -- |
+| `select` | one of the parameter's options | `⚠ action` marker |
+| `number` | a finite number, e.g. `2` or `0.5` | `⚠ action` marker: "must be a number" |
+| `boolean` | exactly `true` or `false` | `⚠ action` marker: "must be true or false" |
+| `entity_ref`, `info` | cannot be set | `⚠ action` marker: "cannot be set from a template" |
+| not declared | -- | `⚠ action` marker: "no such parameter" |
+
+After defaults and overrides are applied, `show_when` removes hidden parameters. If a visible trigger reference excludes this entity, the shortcode emits the unavailable comment before checking required values, `min`/`max` or options. Otherwise the first validation failure becomes the marker's text, so a mistake shows on the page rather than as a refusal on every click. Values are literal: a shortcode written inside an attribute value is not expanded. Parameter values are visible in the page source, as the defaults are in the action dialog.
+
+An action with a visible, required `entity_ref` parameter whose default is `selection` needs a bulk selection and cannot run from a template. It renders the marker "needs a bulk selection and cannot run from a template". A parameter hidden by `show_when` after template overrides does not impose that requirement.
+
+### Who sees the button
+
+The button is drawn only where the click could succeed. Every other case renders one HTML comment, `<!-- mr:action unavailable in this context -->`, the same one a plugin or action that does not exist renders, so a page cannot be read for which plugins are installed or which ones its viewer may run:
+
+- **Guests and other accounts that cannot write.** Running an action is a write.
+- **Group-limited accounts, for a plugin the operator has not opened to them.**
+- **An entity the action does not apply to:** the action's `entity` is a different type, its `filters` (content types, categories, note types) exclude this entity, or the filters of a visible `entity_ref` exclude the trigger it would receive. In an `[mrql]` result, only matching rows get a button.
+- **A missing or disabled plugin or action.**
+- **A Description or note text block when login is on.** That text may be written by a user-role account, and a button there would run with the rights of whoever clicks it, behind a confirmation text its author chose. Category, Resource Category and Note Type templates are written by admins and editors and are not affected.
+- **Surfaces that cannot run it:** share pages, the live template preview, the description preview, hover cards, `CustomListHeader` and `CustomListFooter` (they render a category, not an entity), the direct MRQL API render (`render=1`), the entity picker, and template generation tools.
+
+The button works on display pages, list cards (including `CustomMRQLResult` cards on `/mrql`, which use `render=list`), `[mrql]` and `[using]` results, `[lazy]`, `[details]` and `[autorefresh]` bodies, and the lightbox. The run endpoint checks everything again on the click: a button for an entity outside a group-limited account's subtree gets the endpoint's 403, as a hand-made request would.
+
+The hover-card exception also applies after a deferred body loads or an `[autorefresh]` block refreshes: the response still omits the button.
+
+`placement` does not matter here. It decides where the actions menu lists an action, and the run endpoint never checks it, so `[action]` accepts any registered action whose entity type matches.
+
+### What happens on a click
+
+- The app asks for confirmation first when required. Declining does nothing. If a refresh removes the button or changes what it would run while the dialog is open, accepting the old confirmation does nothing either.
+- While the run is in flight the button is marked `aria-disabled="true"` (it keeps focus) and further clicks are ignored. The text next to the button reads "Running…". An in-place list refresh keeps the busy state if the button is unchanged; if the button now targets another entity or action, it is ready to use and the previous run no longer controls it.
+- A synchronous action shows its message (or "Done") next to the button and announces it, even if its result includes a legacy `job_id`. A refusal, a validation error or a failed request shows and announces the reason instead; a Job handle returned with a refusal is not followed.
+- An `async` action starts a Job; the button reads "Started" and then follows the Job every 2 seconds until it finishes, the button is removed or retargeted, or 5 minutes pass. At the deadline it reads "Still running. Follow it in the Jobs panel." The Jobs panel is never opened for you, and stopping the watcher does not cancel the Job.
+- An action that answers with a redirect navigates there unless it refused the run.
+- When the button observes a successful run, the `[autorefresh]` blocks for the submitted entity re-render, along with the enclosing block if the button still represents that run. The page is never reloaded, so wrap what the action changes in `[autorefresh]`:
+
+```
+[autorefresh]
+  [action plugin="project-management" name="pm-set-status" label="Mark done" param-status="done"]
+  Status: [meta path="status"]
+[/autorefresh]
+```
+
+This is for the PM Task note type of the bundled project-management plugin, whose `pm-set-status` action takes a `select` parameter `status`.
+
+- **Focus.** When the button sits inside the block that refreshes, focus moves to the control at the same position in the fresh content. Put the button first in the block (or outside it), so content that appears only after the action cannot shift that position.
+- **Status text.** The text next to a button inside a refreshing block goes with the old content. The announcement is not lost: it is made through the page's live region, outside the block.
+
+### Accessibility
+
+The button is a real `<button>` whose visible text is its accessible name. Progress and outcomes are announced through the page's live region: success politely, failures assertively. The status text next to the button is for sighted readers and is not itself a live region, so nothing is announced twice.
+
+If an in-place list refresh reuses a focused button for a different plugin, action, entity, or parameters, focus follows the original action when there is exactly one match in the refreshed list and that button can take focus. Otherwise focus moves to the list, not to the button with the new target.
+
+### For plugin authors
+
+An action that only makes sense with a selection cannot run from `[action]`. Declare its selection parameter `required = true`, so template authors see a clear error instead of a button that fails. See [Plugin Actions](./plugin-actions.md#running-an-action-from-a-template).
 
 ## `[using]` -- Switch to another entity
 
@@ -1557,6 +1902,128 @@ Prev and Next buttons swap the month in place, without a page load, through the 
 
 `calendar` is now a reserved shortcode name: text written as `[calendar …]` in an existing template renders the calendar (or an error marker) instead of showing as text.
 
+## `[pivot]` -- Cross-tab
+
+`[pivot]` counts the entities an MRQL filter matches by two fields at once and shows the result as a table: one row per value of `rows`, one column per value of `cols`, a count (or a sum) in each cell, and row, column and grand totals. Use it for dashboards an `[mrql … GROUP BY]` list or a one-dimensional chart cannot show: tasks by status and assignee, resources by content type and year, notes by status and owner.
+
+```
+[pivot query="type = resource" rows="contentType" cols="created.year"]
+[pivot query="type = note AND meta.status IS NOT NULL" rows="meta.status" cols="owner" caption="Open work by owner"]
+[pivot query="type = resource" rows="contentType" cols="created.year" value="sum" field="fileSize"]
+```
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `query` | Yes | | An MRQL **filter** naming exactly one entity type through a top-level `type = …`. It cannot carry `GROUP BY`, `ORDER BY`, `LIMIT`, `OFFSET`, `SCOPE` or `$parameters`: the pivot adds its own grouping and order. |
+| `rows` | Yes | | The row field. See [Dimensions](#dimensions). |
+| `cols` | Yes | | The column field, in the same forms. It must be a different field from `rows`; `group` and `groups` count as the same field. |
+| `value` | No | `count` | `count` (entities per cell) or `sum` (of `field`). Averages, minimums and maximums are left out because their totals cannot be built by adding cells. |
+| `field` | With `value="sum"` | | The field to add up: `meta.<path>`, or `fileSize`, `width` or `height` on resources. Set without `value="sum"` it is ignored, and the linter says so. |
+| `scope` | No | `entity` | As on [`[mrql]`](#scope): `entity` (the entity's own group), `parent`, `root`, `global`, or a group ID. The linter warns on any other value, which counts in the entity's own group. |
+| `max-rows` | No | `20` | How many row values are kept, ranked by highest total count or sum, as set by `value`. At most 50; an invalid value or one below 1 means the default. |
+| `max-cols` | No | `10` | How many column values are kept, ranked by highest total count or sum, as set by `value`. At most 20, with the same fallback. |
+| `rows-label` | No | the `rows` field without `meta.` | The heading of the row-label column, also used in the caption and the link names. |
+| `cols-label` | No | the `cols` field without `meta.` | The name of the column field in the caption and the link names. |
+| `caption` | No | `Count by <rows> and <cols>`, or `Sum of <field> by <rows> and <cols>` | The table caption, which also names the scroll region. |
+
+A blank label or caption counts as unset. `[pivot]` is inline only; a `[/pivot]` closer is a lint error. An invalid attribute renders the red error box and the linter reports the same message once, at `query=`. The linter also checks the composed query, on SQLite and PostgreSQL alike.
+
+### Dimensions
+
+`rows` and `cols` each accept one of:
+
+- **A Meta path**, `meta.<key>[.<key>…]`: `meta.status`, `meta.project.phase`.
+- **A field of the entity**: a text field such as `name` or `contentType`; `fileSize`, `width` or `height` on resources; `shared` on notes, shown as `yes` and `no`.
+- **A relation, by name**: `owner`, `groups` (or `group`), `tags`, `notes` and `resources` where the entity has them, and `parent` and `children` on groups.
+- **A date bucket of a timestamp**: `created`, `updated`, or a note's `startDate` and `endDate`, followed by `.day`, `.week`, `.month` or `.year`, such as `created.month`. Buckets are shown oldest first.
+
+These are refused, with a message saying what to use instead:
+
+- a bare timestamp (`created`): pick a date bucket;
+- an ID field (`id`, `category`, `noteType`): they would head the table with numbers. Filter by the category or note type in `query` and pivot by a Meta field;
+- a traversal (`owner.name`, `tags.count`) and `similarImages`;
+- unbounded text (`description`, `originalName`, `originalLocation`, `url`): use these in `query` filters instead of grouping by them;
+- a dimension or generated sum alias longer than 63 bytes (PostgreSQL's identifier limit). Use shorter Meta paths: at most 58 bytes after `meta.` for a dimension or 54 for a sum, which adds `sum_` to the alias.
+
+Using a field the entity does not have, such as `shared` on a resource, is refused with `"shared" is not a resource field`.
+
+### What a cell holds
+
+- **Equal values share a row or column.** Values that differ only in ASCII letter case (`Open` and `open`) are one row, because MRQL's `=` compares text that way. So are a Meta number and the same digits written as a string (`3` and `"3"`), and two related groups with the same name: the result carries a group's name, not its ID, so the table cannot tell them apart. The spelling shown is the one in the combination with the most items.
+- **Booleans in Meta** show as `1` and `0` on SQLite (merged with the numbers 1 and 0 and the strings "1" and "0") and as `true` and `false` on PostgreSQL (merged with the strings "true" and "false").
+- **Missing values** go in a `(none)` row or column, shown last: a missing Meta key, an entity with no owner or no tags, or an owner the viewer cannot see. An empty string is `(empty)`.
+- **Sums** add numbers. How other Meta values count depends on the database. PostgreSQL adds a string only when it is wholly a plain decimal (`"2"`, `"-1.5"`) and skips everything else. SQLite reads the number a string starts with (`"2"` and `"2 hours"` both add 2, `"x"` adds nothing) and adds a JSON `true` as 1. A cell with no number to add shows 0. Sums use `float64` when merging and formatting, so large integers can be rounded (not all integers above `2^53` in magnitude are represented exactly).
+- **Numbers** are written as `[calc]` writes them: plain decimals, at most ten fraction digits, no thousands separators. A combination with no entities shows a muted `0`.
+
+### Totals
+
+The Total column holds each row's total and the Total row each column's; the bottom-right cell is the grand total. Totals include the values hidden by `max-rows` and `max-cols`.
+
+A multi-valued relation (`tags`, `groups`, `notes`, `resources`, `children`) puts an entity in one row or column per value, so adding across it would count that entity several times:
+
+- with `rows` multi-valued, the Total row and the grand total are left out;
+- with `cols` multi-valued, the Total column and the grand total are left out. Each row's items are spread over several columns, so a row total would overcount for the same reason.
+
+### Caps and truncation
+
+Rows are ranked by their total count or sum, highest first, with ties broken by label, and the top `max-rows` are shown; columns likewise with `max-cols`. A note under the table says how many values are not shown. A date bucket is still shown oldest first among the values kept.
+
+Before the display caps apply, the query keeps at most 5000 (row, column) combinations, those with the most items first even in sum mode. It orders ties by the two field values; distinct relations with the same displayed name can still tie at the cutoff. Past that the table says "Only the 5000 combinations with the most items were counted", combinations it did not read show `—` (read as "not counted"), and nothing is linked. Count totals are marked `+` (read as "or more"); sum totals are marked `(partial)`, because omitted values can raise or lower a sum. Narrow the query.
+
+### Links
+
+In count mode eligible cells and totals link to the [MRQL page](./mrql.md) for what they counted: `(<query>) AND meta.status = "open" AND owner = "Inbox"` for a cell, one condition for a row or column total, and the bare `query` for the grand total.
+
+No links appear:
+
+- in sum mode or a truncated table;
+- when a confined viewer's pivot counts a strict descendant of their allowed group: the MRQL page would list the viewer's full subtree instead;
+- when a cell or total exceeds the default MRQL result limit, or its composed filter (including any `SCOPE` clause) exceeds MRQL's 32 KiB query limit;
+- when the composed filter contains a carriage return (`\r`), which the MRQL editor would normalize to a line feed. Totals whose filters do not contain a carriage return can still link;
+- for date buckets and the `(none)` row or column;
+- for cells or totals that depend on a Meta dimension with any numeric key on SQLite. SQLite can group an integer and a real number together even though their text comparisons differ; a text key on that axis can match the same number too. Totals that do not filter by the affected dimension can still link;
+- for a multi-valued relation's row or column that merged two values in one cell, such as two groups named Inbox and inbox, where one note in both would be counted twice by the cell and once by the link.
+
+One known mismatch remains: PostgreSQL's `LOWER` folds non-ASCII letters too, so `É` and `é` are two rows there whose links each list both.
+
+### Output and accessibility
+
+```html
+<div class="mrql-pivot my-2">
+  <div class="relative overflow-x-auto …" role="region" aria-label="Count by status and assignee" tabindex="0">
+    <table class="min-w-full text-sm border border-stone-200">
+      <caption>Count by status and assignee</caption>
+      <thead><tr><th scope="col">status</th><th scope="col">ann</th><th scope="col">bob</th><th scope="col">Total</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">open</th><td><a href="/mrql?q=…" aria-label="3: status open, assignee ann">3</a></td>…</tr>
+        …
+      </tbody>
+      <tfoot><tr><th scope="row">Total</th>…<td><a href="/mrql?q=…" aria-label="10: total of all">10</a></td></tr></tfoot>
+    </table>
+  </div>
+  <p>1 more status value is not shown; the totals include them.</p>
+</div>
+```
+
+- The scroll region is named by the caption. Tab reaches it, and Left and Right scroll a wide table. In the lightbox Info panel, these keys scroll the focused region instead of changing the displayed resource.
+- Every column header is `scope="col"` and every row header, the Total row included, `scope="row"`.
+- Each link's name starts with its visible number and names the row and column it counts.
+- Colour never carries meaning on its own: an empty combination is a written `0`.
+- Labels and the caption are always HTML-escaped.
+
+### Scoping and cost
+
+- Counts and labels are read as the viewer. A group-confined user or guest only counts entities inside their subtree, whatever `scope` says, and a group outside their subtree is never named; an entity whose owner they cannot see falls in `(none)`. An association to an invisible group does not add a bucket or increase a count.
+- Each `[pivot]` runs one aggregate SQL statement returning at most 5001 rows (the extra row detects truncation), plus a scope check for a confined viewer with a concrete group scope. This costs one unit of the [per-page query budget](#per-page-query-budget). An identical pivot on the same page uses the cached result.
+- No index serves a `meta.*` grouping. On a large library, narrow `query` by type plus a category, note type, owner or date range, and keep the default entity scope rather than `scope="global"`. Two multi-valued dimensions multiply the rows the query joins; see the junction-join note in the [MRQL reference](./mrql-reference.md).
+- Put pivots in `CustomHeader`, `CustomSidebar` or `CustomListHeader`, not in a per-card slot, where every card runs its own query.
+
+`[pivot]` cannot be used inside a `[reload]` button face. On share pages and in hover cards (including deferred or refreshed hover-card bodies) it renders `<!-- mr:pivot unavailable in this context -->` without running a query. A hover card cannot be entered with the keyboard to scroll a wide table.
+
+`pivot` is now a reserved shortcode name: text written as `[pivot …]` in an existing template renders the table (or an error box) instead of showing as text.
+
 ## `[comment]` -- Comment out a section
 
 `[comment]...[/comment]` removes everything between the tags on the server, before any other shortcode is read. Nothing inside runs: a commented-out `[mrql]` never queries, and a half-written `[conditional]` cannot pair with a closer outside the comment. None of it is rendered: it is absent from the HTML of the slot, the description, list-card and search previews, and the live preview. The edit form still holds the source, as it does for the rest of the template.
@@ -1686,7 +2153,7 @@ Owned by [using rel="owner"]<a href="[link]">[property path="Name"]</a>[else]no 
 - **Closing a divider.** `[/else]` and `[/elseif]` are not closers. They render as literal text. Only `[/conditional]`, `[/each]` and the other block closers take a `[/name]` tag.
 - **Unquoted values with spaces.** The value stops at the first space and the rest is dropped without an error. Quote it (see [Quoting](#quoting)).
 - **`value=` with a block body.** The body is ignored at render time, and the linter reports it as an error.
-- **`[item]` outside its loop.** `[item]` renders nothing outside an `[each]`. An `[item]` from an enclosing `[each]` is not available inside any other block shortcode, including `[conditional]`, `[mrql]`, `[using]`, `[lazy]` and `[details]`.
+- **`[item]` outside its item branch.** `[item]` renders only directly in the item branch of `[each]` or `[relations]`. It renders nothing in `[else]` or inside another block shortcode such as `[conditional]`, `[mrql]`, `[using]`, `[tabs]`, `[lazy]` or `[details]`.
 - **Counting with `value="count"`.** It counts returned rows, capped by `limit`. Use `{total}` for the real number.
 - **Per-card queries on a list page.** Every card runs an entity-scoped `[mrql]` in `CustomSummary`. Wrap it in `[lazy]` so the query runs only for cards on screen.
 - **Per-card values in CSS.** A `CustomCSS` slot is rendered once per category per page, so on a list page its `[meta]` values come from the first entity of that category in the list.

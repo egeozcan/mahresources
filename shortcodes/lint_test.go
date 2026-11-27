@@ -111,13 +111,13 @@ func TestLint(t *testing.T) {
 		{
 			name:       "item outside each",
 			input:      `<li>[item path="name"]</li>`,
-			wantSubstr: `only meaningful inside an [each] block`,
+			wantSubstr: `only bound at the top level of the item branch of [each] or [relations]`,
 			wantSev:    SeverityWarning,
 		},
 		{
 			name:     "item inside each not flagged",
 			input:    "[each path=\"x\"][item path=\"n\"][/each]",
-			wantNone: []string{"only meaningful inside"},
+			wantNone: []string{"only bound at the top level of the item branch"},
 		},
 		{
 			name:       "unknown attribute on documented shortcode",

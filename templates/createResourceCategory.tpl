@@ -199,6 +199,20 @@
 &lt;span class="text-stone-600"&gt;[property path="Width"]&times;[property path="Height"]&lt;/span&gt;</code></pre>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[excerpt words="30" more="Read more"]</code>
+                        &mdash; a short plain-text preview of the resource's Description. Markdown, HTML, mentions and shortcodes are stripped (nothing in it runs), and the text is cut at a word boundary with an ellipsis. Always escaped. Never runs a query: put it inside [mrql] or [using] to preview a related entity.
+                        <br><span class="text-stone-600 ml-4">
+                            <b class="text-stone-500">words</b>="1&ndash;200" (default 30)
+                            &middot; <b class="text-stone-500">field</b>="Name" another string field instead
+                            &middot; <b class="text-stone-500">path</b>="meta.path" a Meta string instead
+                            &middot; <b class="text-stone-500">more</b>="Read more" link to the resource when the text was cut (not inside an attribute)
+                            &middot; <b class="text-stone-500">default</b>="text" when there is nothing to show
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[excerpt words="25" more="Read more"]
+[excerpt path="summary" words="15" default="No summary"]
+&lt;span title="[excerpt words='25']"&gt;[property path="Name"]&lt;/span&gt;</code></pre>
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[calc expr="…"]</code>
                         &mdash; compute a number from <span class="font-mono">meta.path</span>, numeric fields (<span class="font-mono">property.Field</span>) and, inside [each], <span class="font-mono">item</span> / <span class="font-mono">item.path</span>. Operators <span class="font-mono">+ - * / %</span> and parentheses; functions <span class="font-mono">min max abs round coalesce</span>. Renders the bare number, so it also works in attributes. Never runs a query.
                         <br><span class="text-stone-600 ml-4">
@@ -258,6 +272,16 @@
 [/each]</code></pre>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[relations]</code>
+                        &mdash; a group's typed relations as nested lists, one per relation type, each a link to the group at the far end. Only groups have relations, so here wrap it in [using type="group" …] to list the relations of a group this entity references. As a block, each relation renders the body, where [item] reads <span class="font-mono">Name Type GroupID GroupName GroupCategory GroupMeta.path</span>. One page-query budget unit (two when the body reads GroupMeta or GroupDescription).
+                        <br><span class="text-stone-600 ml-4">
+                            <b class="text-stone-500">type</b>="exact type name"
+                            &middot; <b class="text-stone-500">direction</b>="out|in" (out)
+                            &middot; <b class="text-stone-500">limit</b>="1–100" (20)
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[using rel="owner"][relations type="Depends on"][/using]</code></pre>
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[link to="self"]</code>
                         &mdash; resolve a detail-page URL. Inline it renders just the URL; as a block it wraps its content in an anchor.
                         <br><span class="text-stone-600 ml-4">
@@ -283,6 +307,17 @@
                             <b class="text-stone-500">summary</b>="label" &nbsp; <b class="text-stone-500">open</b>="true|false"
                         </span>
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[details summary="Nutrition"][meta path="calories"] kcal[/details]</code></pre>
+                    </div>
+                    <div>
+                        <code class="bg-stone-100 px-1 rounded">[tabs]…[/tabs]</code>
+                        &mdash; alternative sections in one place, as an accessible tab set: each [tab label="…"]…[/tab] directly inside it is one tab, and the first is open on load. Put lazy="true" on later tabs holding [mrql] or a gallery: they render on the server only when first opened. Without JavaScript the tabs show stacked under their labels.
+                        <br><span class="text-stone-600 ml-4">
+                            <b class="text-stone-500">label</b>="name of the tab list" &middot; on [tab]: <b class="text-stone-500">label</b>="…" <b class="text-stone-500">lazy</b>="true|false"
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[tabs label="Views"]
+[tab label="Overview"][property path="Description"][/tab]
+[tab label="Files" lazy="true"][mrql query='type = "resource"' format="list"][/tab]
+[/tabs]</code></pre>
                     </div>
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[inspect]</code>
@@ -327,6 +362,21 @@
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[calendar mrql='type = "resource"' date="created" scope="parent"]</code></pre>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[pivot]</code>
+                        &mdash; a cross-tab of two fields over the entities an MRQL filter matches: a count (or a sum) in each cell, with row, column and grand totals, and each count linking to the MRQL page for exactly that cell. One aggregated query and one page-query budget unit, so prefer CustomHeader or CustomSidebar to a per-card slot.
+                        <br><span class="text-stone-600 ml-4">
+                            <b class="text-stone-500">query</b>="filter with one type = &hellip;" (required)
+                            &middot; <b class="text-stone-500">rows</b>, <b class="text-stone-500">cols</b>="meta.path|field|owner|tags|created.year" (required)
+                            &middot; <b class="text-stone-500">value</b>="count|sum" with <b class="text-stone-500">field</b>
+                            &middot; <b class="text-stone-500">scope</b>="global|parent|root|ID"
+                            &middot; <b class="text-stone-500">max-rows</b>="1&ndash;50" (20)
+                            &middot; <b class="text-stone-500">max-cols</b>="1&ndash;20" (10)
+                            &middot; <b class="text-stone-500">rows-label</b>, <b class="text-stone-500">cols-label</b>, <b class="text-stone-500">caption</b>
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[pivot query="type = resource" rows="contentType" cols="created.year" scope="parent"]
+[pivot query="type = resource" rows="contentType" cols="owner" value="sum" field="fileSize" scope="parent"]</code></pre>
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[reload]</code>
                         &mdash; a button that re-renders content in place, without navigating. It refreshes the innermost [lazy], [details] or [autorefresh] block around it, or the whole custom-content slot when it sits outside both. Self-closing renders a circular-arrow icon; wrap a body to use that as the button face instead.
                         <br><span class="text-stone-600 ml-4">
@@ -343,6 +393,14 @@
                         </span>
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[pills path="status" editable="true"]
 [autorefresh][conditional path="status" eq="done"]Done[/conditional][/autorefresh]</code></pre>
+                    </div>
+                    <div>
+                        <code class="bg-stone-100 px-1 rounded">[action plugin="…" name="…"]</code>
+                        &mdash; a button that runs a plugin action (mah.action) on this entity as the person who clicks it, with the action's confirmation first. When the run succeeds it refreshes the [autorefresh] blocks for this entity and the one it sits in. Renders nothing for viewers who cannot run the action, in Descriptions under login, on share pages and in the live preview.
+                        <br><span class="text-stone-600 ml-4">
+                            <b class="text-stone-500">plugin</b>="name" &nbsp; <b class="text-stone-500">name</b>="action id" &nbsp; <b class="text-stone-500">label</b>="button text" &nbsp; <b class="text-stone-500">confirm</b>="question" &nbsp; <b class="text-stone-500">param-&lt;name&gt;</b>="value"
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed whitespace-pre-wrap break-words"><code>[action plugin="fal-ai" name="upscale" label="Upscale (Topaz)" param-model="topaz"]</code></pre>
                     </div>
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[using type="group" id="…"]…[else]…[/using]</code>

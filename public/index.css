@@ -4080,6 +4080,47 @@ details.details-shortcode > .details-content {
   margin-top: 0.375rem;
 }
 
+/* [tabs]: the tab set <tabs-shortcode> upgrades the stacked fallback into.
+   The selected tab is marked by weight as well as its accent underline, so
+   selection is not shown by colour alone. :not([hidden]) keeps display: flex
+   from overriding the hidden attribute the server and a morph put back. */
+tabs-shortcode {
+  display: block;
+}
+tabs-shortcode > .tabs-list:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  border-bottom: 1px solid #d6d3d1;
+}
+tabs-shortcode > .tabs-list > .tabs-tab {
+  max-width: 100%;
+  padding: 0.375rem 0.75rem;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  overflow-wrap: anywhere;
+  text-align: start;
+  cursor: pointer;
+}
+tabs-shortcode > .tabs-list > .tabs-tab[aria-selected="true"] {
+  border-bottom-color: #b45309;
+  font-weight: 600;
+}
+tabs-shortcode > .tabs-list > .tabs-tab:focus-visible,
+tabs-shortcode > .tabs-panel:focus-visible {
+  outline: 2px solid #b45309;
+  outline-offset: 2px;
+}
+.tabs-shortcode > .tabs-panel {
+  margin-top: 0.5rem;
+}
+.tabs-shortcode > .tabs-panel > .tabs-fallback-label {
+  margin: 0.75rem 0 0.25rem;
+  font-weight: 600;
+}
+
 /* [inspect]: the author-only context panel the live preview renders. Plain
    class names, no utilities, so nothing here depends on the source scan. */
 details.inspect-shortcode {
@@ -4236,6 +4277,52 @@ autorefresh-shortcode.deferred-reloading > * {
   }
 }
 
+/* [action] button. It takes the slot's text colour, border included, so it
+   reads on the white page and on the lightbox's stone-900 panel alike. The focus
+   ring is amber-700 (#b45309): 5.0:1 on white, 3.5:1 on stone-900. A run in
+   flight sets aria-disabled on the button (not disabled, so it keeps focus); it
+   shows as a dashed border and a progress cursor rather than opacity, which
+   would fade the focus ring with it. The status text beside it takes no space
+   until there is something to say. */
+action-shortcode {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  vertical-align: middle;
+}
+.action-shortcode-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.75rem;
+  padding: 0.125rem 0.625rem;
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.25;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 0.25rem;
+  cursor: pointer;
+}
+.action-shortcode-button:hover {
+  background: rgba(120, 113, 108, 0.12);
+}
+.action-shortcode-button:focus-visible {
+  outline: 2px solid #b45309;
+  outline-offset: 2px;
+}
+.action-shortcode-button[aria-disabled="true"] {
+  cursor: progress;
+  border-style: dashed;
+}
+.action-shortcode-status {
+  font-size: 0.8125rem;
+}
+.action-shortcode-status:empty {
+  display: none;
+}
+
 /* [calendar] month grid. It takes the slot's text colour, so it reads on the
    white page and on the lightbox's dark panel alike; lines are that colour at
    low alpha, and the focus ring and today's outline are amber-700 (#b45309),
@@ -4359,6 +4446,44 @@ calendar-shortcode {
 }
 calendar-shortcode.deferred-reloading {
   cursor: progress;
+}
+
+/* [relations] nested lists. Like [calendar] it takes the slot's text colour,
+   so it reads on the page and on the lightbox's dark panel; links are told
+   apart by their underline, not by colour. Every link is at least 24px tall
+   (WCAG 2.2 SC 2.5.8). */
+.relations-shortcode {
+  margin: 0.25rem 0;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+.relations-shortcode__types,
+.relations-shortcode__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.relations-shortcode__type + .relations-shortcode__type {
+  margin-top: 0.375rem;
+}
+.relations-shortcode__label {
+  font-weight: 600;
+}
+.relations-shortcode__list {
+  padding-left: 0.75rem;
+}
+.relations-shortcode__entry a {
+  display: inline-block;
+  min-height: 1.5rem;
+  line-height: 1.5rem;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  border-radius: 0.125rem;
+}
+.relations-shortcode__entry a:focus-visible {
+  outline: 2px solid #b45309;
+  outline-offset: 1px;
 }
 
 /* ── WS5 finding 48: small "remove" icon buttons ─────────────────────────────

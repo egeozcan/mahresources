@@ -117,6 +117,10 @@ func GetEntityPickerHandler(app EntityPickerAPIContext) func(http.ResponseWriter
 	return func(w http.ResponseWriter, r *http.Request) {
 		reqCtx, cancel := buildMRQLAPIRenderContext(r.Context(), app, false)
 		defer cancel()
+		// Picker results render per keystroke, up to a page of cards, inside
+		// options the keyboard selects: no [relations] lookups, and no links
+		// nested in an option.
+		reqCtx = shortcodes.WithRelationLister(reqCtx, nil)
 		app := withRequestContext(app, r.WithContext(reqCtx)).(EntityPickerAPIContext)
 		var query query_models.EntityPickerQuery
 		if err := decoder.Decode(&query, r.URL.Query()); err != nil {
@@ -178,7 +182,7 @@ func GetEntityPickerHandler(app EntityPickerAPIContext) func(http.ResponseWriter
 				}
 				if key != "" && !stylesSeen[key] {
 					stylesSeen[key] = true
-					result := shortcodes.ProcessWithDiagnostics(reqCtx, css, *meta, renderer, executor)
+					result := shortcodes.ProcessWithDiagnostics(shortcodes.WithinCSS(reqCtx), css, *meta, renderer, executor)
 					if len(result.Errors) > 0 {
 						warn(key)
 					} else if strings.TrimSpace(result.HTML) != "" {

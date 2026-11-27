@@ -89,6 +89,36 @@ func ParseAll(text string) []Mention {
 	return result
 }
 
+// ReplaceAll returns text with each marker ParseAll reports replaced by
+// replace(m), in order. A marker ParseAll skips (a zero or unparseable ID) is
+// left as written. It works on match positions, not on OriginalMatch text, so
+// a marker's text that also appears inside a skipped marker is not touched.
+func ReplaceAll(text string, replace func(Mention) string) string {
+	matches := mentionPattern.FindAllStringSubmatchIndex(text, -1)
+	if len(matches) == 0 {
+		return text
+	}
+
+	var b strings.Builder
+	last := 0
+	for _, m := range matches {
+		id, err := strconv.ParseUint(text[m[4]:m[5]], 10, 64)
+		if err != nil || id == 0 {
+			continue
+		}
+		b.WriteString(text[last:m[0]])
+		b.WriteString(replace(Mention{
+			Type:          strings.ToLower(text[m[2]:m[3]]),
+			ID:            uint(id),
+			Name:          text[m[6]:m[7]],
+			OriginalMatch: text[m[0]:m[1]],
+		}))
+		last = m[1]
+	}
+	b.WriteString(text[last:])
+	return b.String()
+}
+
 // htmlTagPattern matches HTML tags for stripping in line-only checks.
 var htmlTagPattern = regexp.MustCompile(`<[^>]*>`)
 

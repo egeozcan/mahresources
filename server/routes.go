@@ -12,7 +12,6 @@ import (
 	"mahresources/application_context"
 	"mahresources/auth"
 	"mahresources/constants"
-	"mahresources/deferredtoken"
 	"mahresources/models"
 	"mahresources/mrql"
 	"mahresources/plugin_system"
@@ -267,7 +266,7 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		// Compute plugin actions for detail pages
 		if mainEntity := ctx["mainEntity"]; mainEntity != nil {
 			if entityType, ok := ctx["mainEntityType"].(string); ok && entityType != "" {
-				entityData := buildEntityDataFromEntity(mainEntity, entityType)
+				entityData := template_filters.ActionEntityData(mainEntity, entityType)
 				ctx["pluginDetailActions"] = offeredActions(actionAccess, pm.GetActionsForPlacement(entityType, "detail", entityData))
 			}
 		}
@@ -364,34 +363,6 @@ func offeredMenuItems(access auth.PluginAccess, items []plugin_system.MenuRegist
 	return offered
 }
 
-// buildEntityDataFromEntity extracts filter-relevant fields from an entity for action matching.
-func buildEntityDataFromEntity(entity any, entityType string) map[string]any {
-	data := map[string]any{}
-	switch entityType {
-	case "resource":
-		if r, ok := entity.(*models.Resource); ok {
-			data["content_type"] = r.ContentType
-			// A resource's category lives under "category_id", the key the
-			// filter predicate reads for every entity type. Without it an
-			// action filtered on category_ids was never offered on a resource
-			// detail page. The column is NOT NULL, so only a zero-valued
-			// struct lands here with no category — and 0 is not a real id.
-			if r.ResourceCategoryId != 0 {
-				data["category_id"] = r.ResourceCategoryId
-			}
-		}
-	case "group":
-		if g, ok := entity.(*models.Group); ok && g.CategoryId != nil {
-			data["category_id"] = *g.CategoryId
-		}
-	case "note":
-		if n, ok := entity.(*models.Note); ok && n.NoteTypeId != nil {
-			data["note_type_id"] = *n.NoteTypeId
-		}
-	}
-	return data
-}
-
 // resolveEntityScope computes the three scope IDs (scope, parent, root) for an entity.
 // For groups, the caller should set ScopeGroupID = group.ID after this returns.
 // ownerID is the entity's OwnerId pointer.
@@ -439,9 +410,8 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 		// them each query shortcode here would run unbudgeted and uncached.
 		reqCtx = application_context.WithMRQLRenderDataCache(reqCtx)
 		reqCtx = shortcodes.WithQueryBudget(reqCtx, appCtx.MRQLPageQueryBudget())
-		reqCtx = shortcodes.WithRefreshSigner(reqCtx, func(entityType string, entityID uint, body string, untrusted bool) string {
-			return deferredtoken.SealWithTrust(appCtx.DeferredSigningKey(), entityType, entityID, body, untrusted)
-		})
+		reqCtx = shortcodes.WithRelationLister(reqCtx, template_filters.BuildRelationLister(appCtx))
+		reqCtx = shortcodes.WithRefreshSigner(reqCtx, template_filters.BuildDeferredSigner(reqCtx, appCtx.DeferredSigningKey()))
 	}
 	mainEntity := ctx["mainEntity"]
 	entityType, _ := ctx["mainEntityType"].(string)
@@ -470,10 +440,20 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 	// Each slot gets the same reloadable region the process_shortcodes tag gives
 	// it, so a [reload] button in the lightbox re-renders its slot in place
 	// instead of falling back to reloading the whole page.
-	processSlot := func(raw string, metaCtx shortcodes.MetaShortcodeContext) string {
-		rendered := shortcodes.Process(reqCtx, raw, metaCtx, pluginRenderer, executor)
-		return template_filters.WrapReloadableRegion(rendered, raw, metaCtx, appCtx)
+	//
+	// [action] buttons are drawn by the run endpoint's own rule. The slots get
+	// the resolver and CustomCSS does not, as on the HTML page, where the
+	// custom_css tag renders without one. With no plugin manager every [action]
+	// is the unavailable comment.
+	slotCtx := reqCtx
+	if appCtx != nil {
+		slotCtx = shortcodes.WithActionResolver(reqCtx, template_filters.BuildActionResolver(pm, auth.PluginActionAccessFor(reqCtx, appCtx.PluginAllowsScopedPrincipals)))
 	}
+	processSlot := func(raw string, metaCtx shortcodes.MetaShortcodeContext) string {
+		rendered := shortcodes.Process(slotCtx, raw, metaCtx, pluginRenderer, executor)
+		return template_filters.WrapReloadableRegion(slotCtx, rendered, raw, metaCtx, appCtx)
+	}
+	cssCtx := shortcodes.WithinCSS(reqCtx)
 
 	switch entityType {
 	case "resource":
@@ -499,7 +479,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 			r.ResourceCategory.CustomPanelSummary = processSlot(r.ResourceCategory.CustomPanelSummary, metaCtx)
 			r.ResourceCategory.CustomPreview = processSlot(r.ResourceCategory.CustomPreview, metaCtx)
 			r.ResourceCategory.CustomLightbox = processSlot(r.ResourceCategory.CustomLightbox, metaCtx)
-			r.ResourceCategory.CustomCSS = shortcodes.Process(reqCtx, shortcodes.JoinCSS(r.ResourceCategory.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
+			r.ResourceCategory.CustomCSS = shortcodes.Process(cssCtx, shortcodes.JoinCSS(r.ResourceCategory.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
 		}
 	case "group":
 		if g, ok := mainEntity.(*models.Group); ok && g.Category != nil {
@@ -523,7 +503,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 			g.Category.CustomHoverCard = processSlot(g.Category.CustomHoverCard, metaCtx)
 			g.Category.CustomPanelSummary = processSlot(g.Category.CustomPanelSummary, metaCtx)
 			g.Category.CustomOwnEntities = processSlot(g.Category.CustomOwnEntities, metaCtx)
-			g.Category.CustomCSS = shortcodes.Process(reqCtx, shortcodes.JoinCSS(g.Category.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
+			g.Category.CustomCSS = shortcodes.Process(cssCtx, shortcodes.JoinCSS(g.Category.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
 		}
 	case "note":
 		if n, ok := mainEntity.(*models.Note); ok && n.NoteType != nil {
@@ -545,7 +525,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 			n.NoteType.CustomDetailFooter = processSlot(n.NoteType.CustomDetailFooter, metaCtx)
 			n.NoteType.CustomHoverCard = processSlot(n.NoteType.CustomHoverCard, metaCtx)
 			n.NoteType.CustomPanelSummary = processSlot(n.NoteType.CustomPanelSummary, metaCtx)
-			n.NoteType.CustomCSS = shortcodes.Process(reqCtx, shortcodes.JoinCSS(n.NoteType.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
+			n.NoteType.CustomCSS = shortcodes.Process(cssCtx, shortcodes.JoinCSS(n.NoteType.TemplateCSSParts()...), metaCtx, pluginRenderer, executor)
 		}
 	}
 }

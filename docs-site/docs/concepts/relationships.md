@@ -130,6 +130,10 @@ On a group page, relations are displayed in both directions:
 - Shows all relations where this group is the target
 - Each one is labelled with its own Relation Type. A defined inverse produces a separate Relation, which appears under the other group's outgoing relations rather than renaming this one
 
+### Showing Relations in Templates
+
+A category template can list a group's relations with the [`[relations]`](../features/shortcodes.md#relations----group-relations) shortcode: `[relations type="Depends on"]` in a `CustomSummary` shows each card's dependencies on a list page, and a block body can read the related group's Meta. It lists only relations whose two groups the viewer may see. Turn the built-in panels off with the category's Section Visibility when the template shows them instead.
+
 ### Querying Relations
 
 Find Groups whose Category is a Relation Type's from-side or to-side Category, that is Groups eligible for that side of the relation. It does not select Groups that actually participate in a relation, so a Group with no relations at all still matches. Use `RelationSide` to pick the side (0 = from side, non-zero = to side):

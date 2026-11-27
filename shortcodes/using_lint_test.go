@@ -78,7 +78,7 @@ func TestLintUsingQueryIsValidatedWithLimitOne(t *testing.T) {
 
 func TestLintItemInsideUsingInsideEach(t *testing.T) {
 	known := KnownFromBuiltins()
-	const msg = "[item] inside a [using] block renders nothing"
+	const msg = "[item] is only bound at the top level of the item branch"
 
 	src := `[each path="rows"][using rel="owner"][item][/using][/each]`
 	issue := findIssue(Lint(src, LintOptions{Known: known}), msg)

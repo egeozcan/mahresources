@@ -100,6 +100,12 @@ type LintOptions struct {
 	// missing. Lint memoizes it, so a template referencing one partial ten times
 	// asks once.
 	PartialExists func(name string) bool
+	// ActionExists, when non-nil, reports whether the caller could see an
+	// [action] button for that plugin action: the plugin is reachable for them
+	// and the action is registered. An [action] it rejects is flagged as a
+	// warning, with one wording for "missing" and "not yours", so lint cannot be
+	// used to enumerate plugins. nil disables the check. Lint memoizes it.
+	ActionExists func(plugin, name string) bool
 	// Context, when set, cancels the lint. A lint that is cancelled or runs past
 	// its work allowance reports one error issue instead of its findings.
 	Context context.Context
@@ -140,7 +146,7 @@ func KnownFromBuiltins() KnownShortcodes {
 var conditionalOperators = []string{"eq", "neq", "gt", "lt", "gte", "lte", "in", "contains", "matches", "empty", "not-empty"}
 
 // builtinBaseNames is used for near-miss detection of misspelled shortcodes.
-var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "calc", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "similar", "calendar", "inspect", "adjacent", "comment"}
+var builtinBaseNames = []string{"meta", "datetime", "pills", "property", "calc", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload", "autorefresh", "using", "similar", "calendar", "inspect", "adjacent", "excerpt", "comment", "action", "tabs", "pivot", "relations"}
 
 // looseBracketPattern finds bracket expressions that lead with an identifier,
 // used to detect shortcode-looking brackets that did not parse as real
@@ -240,12 +246,28 @@ func lintText(input string, opts LintOptions) []LintIssue {
 		}
 	}
 
+	// Memoized like partialExists: a list template with one [action] per row
+	// type asks once per (plugin, name).
+	var actionExists func(plugin, name string) bool
+	if opts.ActionExists != nil {
+		seen := map[[2]string]bool{}
+		actionExists = func(plugin, name string) bool {
+			key := [2]string{plugin, name}
+			if got, ok := seen[key]; ok {
+				return got
+			}
+			got := opts.ActionExists(plugin, name)
+			seen[key] = got
+			return got
+		}
+	}
+
 	// Tokens are collected under the parser's caps (a meter forced into its
 	// limited mode): the match collection is bounded before it is retained and
 	// the collection loops consult the context. A source past a cap is "too
 	// complex to check", through the lint's own work object.
-	lm := &renderMeter{ctx: opts.Context, budget: RenderBudget{ParsedSourceBytes: 1 << 62}}
-	tokens := matchTokensM(lm, input)
+	lm := &renderMeter{ctx: opts.Context, budget: RenderBudget{ParsedSourceBytes: 1 << 62}, cssMode: opts.CSSMode, renderUsage: &renderUsage{}}
+	tokens, scan := scanTokensM(lm, input, false)
 	if lm.Err() != nil {
 		w.fail()
 		return nil
@@ -285,11 +307,11 @@ func lintText(input string, opts LintOptions) []LintIssue {
 	// counting [else] dividers.
 	condInner := conditionalInnerRanges(input, tokens)
 
-	// Inner byte spans of every [each] block, so [item] outside any [each] can
-	// be flagged.
-	eachSpans := namedBlockSpans(tokens, "each")
+	bindings := lintElementBindings(w, lm, input, tokens)
+	if !w.ok() {
+		return nil
+	}
 	reloadSpans := namedBlockSpans(tokens, "reload")
-	usingSpans := namedBlockSpans(tokens, "using")
 
 	// --- Structural checks over the token stream ---
 	for _, tk := range tokens {
@@ -397,18 +419,24 @@ func lintText(input string, opts LintOptions) []LintIssue {
 				label = "[meta inline]"
 			}
 			raw := tk.attrs["raw"] == "true"
+			on := valueContexts[tk.start]
+			off, differs := valueContextsOff[tk.start]
 			seen := map[string]bool{}
-			for _, msg := range unsafeAttributeContexts(valueContexts[tk.start], raw, opts.CSSMode, label) {
+			for _, msg := range unsafeAttributeContexts(on, raw, opts.CSSMode, label) {
 				if seen[msg] {
 					continue
 				}
 				seen[msg] = true
 				add(tk.start, tk.end, SeverityWarning, msg)
 			}
+			if tk.name == "excerpt" && strings.TrimSpace(tk.attrs["more"]) != "" &&
+				(on.attr != "" || on.inName || off.attr != "" || off.inName) {
+				add(tk.start, tk.end, SeverityError, "[excerpt] more= cannot be used in an attribute: it can emit link markup")
+			}
 			// The scripting-disabled reading, for the occurrences whose two
 			// browser readings differ. Its warnings carry the scripting-mode
 			// qualifier; identical strings are not repeated.
-			if off, ok := valueContextsOff[tk.start]; ok {
+			if differs {
 				for _, msg := range unsafeAttributeContexts(off, raw, opts.CSSMode, label) {
 					if seen[msg] {
 						continue
@@ -422,12 +450,8 @@ func lintText(input string, opts LintOptions) []LintIssue {
 		// Name-specific semantic checks.
 		switch tk.name {
 		case "item":
-			if !insideSpans(tk.start, eachSpans) {
-				add(tk.start, tk.end, SeverityWarning,
-					"[item] is only meaningful inside an [each] block")
-			} else if innermostSpanStart(tk.start, usingSpans) > innermostSpanStart(tk.start, eachSpans) {
-				add(tk.start, tk.end, SeverityWarning,
-					"[item] inside a [using] block renders nothing: [using] switches to another entity, so the [each] element is not available there")
+			if !bindings[tk.start] {
+				add(tk.start, tk.end, SeverityWarning, "[item] is only bound at "+elementBindingPlacement)
 			}
 		case "using":
 			lintUsing(w, tk, add)
@@ -442,8 +466,16 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			}
 		case "calendar":
 			lintCalendar(tk, reloadSpans, add)
+		case "pivot":
+			lintPivot(w, tk, reloadSpans, add)
+		case "action":
+			lintAction(tk, reloadSpans, actionExists, add)
 		case "calc":
-			lintCalc(tk, opts, otherContext, eachSpans, usingSpans, add)
+			lintCalc(tk, opts, otherContext, bindings[tk.start], add)
+		case "excerpt":
+			lintExcerpt(tk, opts, otherContext, reloadSpans, add)
+		case "relations":
+			lintRelations(tk, reloadSpans, add)
 		case "reload":
 			// A <button> may not contain another button. The renderer refuses the
 			// whole thing rather than emit invalid interactive nesting, so say so
@@ -607,6 +639,13 @@ func lintText(input string, opts LintOptions) []LintIssue {
 				for _, q := range calendarLintQueries(tk.attrs) {
 					check(q.query, q.opts, start, end, "mrql")
 				}
+			case "pivot":
+				// Only a pivot that composes runs a query; lintPivot reported
+				// why one does not.
+				if composed, _, err := pivotQuery(tk.attrs); err == nil {
+					start, end := attrOffsetW(w, tk, "query")
+					check(composed, MRQLCheckOptions{Limit: pivotFetchLimit + 1}, start, end, "query")
+				}
 			case "conditional":
 				forEachConditionalQuery(tk.attrs, func(attr, suffix string) {
 					start, end := attrOffsetW(w, tk, attr)
@@ -646,9 +685,10 @@ func lintText(input string, opts LintOptions) []LintIssue {
 		}
 	}
 
-	lintStrayCloseTags(w, lm, input, tokens, add)
+	lintStrayCloseTags(w, lm, input, tokens, scan.tabOpeners, add)
+	lintTabs(w, lm, input, tokens, scan, opts.CSSMode, add)
 	if opts.CheckHTMLBalance && !opts.CSSMode {
-		lintUnbalancedHTML(w, input, tokens, add)
+		lintUnbalancedHTML(w, input, tokens, scan.tabOpeners, add)
 	}
 	if lm.Err() != nil {
 		w.fail()
@@ -656,26 +696,30 @@ func lintText(input string, opts LintOptions) []LintIssue {
 	}
 
 	// --- Loose bracket scan for shortcode-looking typos (info) ---
-	// Inside a stylesheet a bracket is an attribute selector ([disabled]).
-	var cssSpans [][2]int
-	if !opts.CSSMode {
-		cssSpans = styleElementSpans(input)
-	}
+	// Inside a stylesheet a bracket can be an attribute selector ([disabled]).
 	looseMatches := looseBracketPattern.FindAllStringSubmatchIndex(input, budgetedTokenCap+1)
 	if len(looseMatches) > budgetedTokenCap {
 		w.fail()
 		return nil
+	}
+	// Bracket text quoted inside a real opener's attributes is attribute text.
+	var openerSpans [][2]int
+	for _, tk := range tokens {
+		if !tk.closing {
+			openerSpans = append(openerSpans, [2]int{tk.start, tk.end})
+		}
 	}
 	for _, m := range looseMatches {
 		if !w.step() {
 			return nil
 		}
 		pos := m[0]
-		if realStarts[pos] {
+		if realStarts[pos] || insideSortedSpans(pos, scan.tabOpeners) || insideSortedSpans(pos, openerSpans) {
 			continue
 		}
 		name := input[m[2]:m[3]]
-		if name == "else" || name == "elseif" {
+		// [tab] is [tabs]' slot tag, which lintTabs reports where it is literal.
+		if name == "else" || name == "elseif" || name == "tab" {
 			continue
 		}
 		if strings.HasPrefix(name, "plugin:") {
@@ -683,7 +727,11 @@ func lintText(input string, opts LintOptions) []LintIssue {
 				"malformed plugin shortcode; expected [plugin:<plugin>:<name> …]")
 			continue
 		}
+		inCSS := opts.CSSMode || insideSortedSpans(pos, scan.styles)
 		if suggestion := nearMissBuiltin(name); suggestion != "" {
+			if suggestion == name && inCSS && cssLiteralOpener(input, pos, m[3]) {
+				continue
+			}
 			if suggestion == name && attachedToWord(input, pos) {
 				// A CSS arbitrary value such as max-w-[calc(100%-1rem)]: the
 				// name is followed by neither whitespace nor "]", so it is text.
@@ -696,7 +744,7 @@ func lintText(input string, opts LintOptions) []LintIssue {
 				add(pos, m[1], SeverityInfo,
 					"unknown shortcode \"["+name+"]\"; did you mean ["+suggestion+"]?")
 			}
-		} else if !opts.CSSMode && !withinSpans(pos, cssSpans) && looksLikeShortcode(input, pos, m[3], name) {
+		} else if !inCSS && looksLikeShortcode(input, pos, m[3], name) {
 			add(pos, m[1], SeverityInfo,
 				"["+name+"] is not a shortcode, so it renders as literal text")
 		}
@@ -802,19 +850,6 @@ func lintUsing(w *schemaWork, tk token, add func(start, end int, severity, msg s
 				"[using] query has no ORDER BY, so which match becomes the target is not stable")
 		}
 	}
-}
-
-// innermostSpanStart returns the start of the innermost span containing i, or
-// -1 when none does. Spans of one block name nest, so the innermost is the one
-// that starts last.
-func innermostSpanStart(i int, spans [][2]int) int {
-	best := -1
-	for _, s := range spans {
-		if i >= s[0] && i < s[1] && s[0] > best {
-			best = s[0]
-		}
-	}
-	return best
 }
 
 // knownAttr reports whether attrName is a recognized attribute on known,
@@ -992,9 +1027,9 @@ func conditionalInnerRanges(input string, tokens []token) map[int]string {
 }
 
 // namedBlockSpans returns the inner-content byte ranges [openerEnd, closerStart)
-// of every block with the given name, pairing openers with closers by depth over
-// the token stream. Used to place a token relative to a block: [item] tokens
-// sitting outside any [each], [reload] tokens sitting inside another [reload].
+// of every block with the given name, pairing openers with closers by depth
+// over the token stream. Used to place a token relative to a block, e.g. a
+// [reload] token sitting inside another [reload].
 // (Distinct from blockInnerSpans in split_else.go, which scans raw text for any
 // block rather than the token stream for one name.)
 func namedBlockSpans(tokens []token, name string) [][2]int {
@@ -1065,7 +1100,7 @@ func forEachConditionalQuery(attrs map[string]string, visit func(attr, suffix st
 // written [/else] is never consumed. [header] and [footer] are real pairs, but
 // only the first complete top-level pair inside an [mrql] block is read
 // (SlotTagSpans), so any other [/header] or [/footer] is literal too.
-func lintStrayCloseTags(w *schemaWork, lm *renderMeter, input string, tokens []token, add func(start, end int, severity, msg string)) {
+func lintStrayCloseTags(w *schemaWork, lm *renderMeter, input string, tokens []token, tabOpeners [][2]int, add func(start, end int, severity, msg string)) {
 	consumed := map[int]bool{}
 	for _, span := range namedBlockSpans(tokens, "mrql") {
 		// SlotTagSpans copies and re-parses the body, once per nested [mrql].
@@ -1085,6 +1120,9 @@ func lintStrayCloseTags(w *schemaWork, lm *renderMeter, input string, tokens []t
 			}
 			i += from
 			from = i + len(closer)
+			if insideSortedSpans(i, tabOpeners) {
+				continue
+			}
 			switch name {
 			case "else", "elseif":
 				add(i, from, SeverityError,
@@ -1101,8 +1139,8 @@ func lintStrayCloseTags(w *schemaWork, lm *renderMeter, input string, tokens []t
 
 // lintCalc checks a [calc] opener with the parser the renderer uses: every
 // error here is one RenderCalcShortcode renders as its error marker, and every
-// warning a reference that renders the default.
-func lintCalc(tk token, opts LintOptions, otherContext, eachSpans, usingSpans [][2]int, add func(start, end int, severity, msg string)) {
+// warning a reference that has no value.
+func lintCalc(tk token, opts LintOptions, otherContext [][2]int, itemBound bool, add func(start, end int, severity, msg string)) {
 	if _, _, err := calcOptions(tk.attrs); err != nil {
 		add(tk.start, tk.end, SeverityError, "[calc] "+err.Error())
 	}
@@ -1131,14 +1169,93 @@ func lintCalc(tk token, opts LintOptions, otherContext, eachSpans, usingSpans []
 			}
 		}
 	}
-	if !usesItem {
-		return
+	if usesItem && !itemBound {
+		add(tk.start, tk.end, SeverityWarning,
+			"[calc] item operands have no value here: item is only bound at "+elementBindingPlacement)
 	}
-	if !insideSpans(tk.start, eachSpans) {
-		add(tk.start, tk.end, SeverityWarning,
-			"[calc] uses item outside an [each] block; it renders the default")
-	} else if innermostSpanStart(tk.start, usingSpans) > innermostSpanStart(tk.start, eachSpans) {
-		add(tk.start, tk.end, SeverityWarning,
-			"[calc] inside a [using] block cannot read item: [using] switches to another entity, so the [each] element is not available there and it renders the default")
+}
+
+const elementBindingPlacement = "the top level of the item branch of [each] or [relations], before [else]"
+
+// lintElementBindings uses the same branch split and top-level parser as
+// markItems. An unrelated nested block has no binding of its own, but it can
+// contain another loop that binds its own item.
+func lintElementBindings(w *schemaWork, lm *renderMeter, input string, tokens []token) map[int]bool {
+	hasLoop, hasItem := false, false
+	for _, tk := range tokens {
+		if !tk.closing {
+			hasLoop = hasLoop || tk.matched && (tk.name == "each" || tk.name == "relations")
+			hasItem = hasItem || tk.name == "item" || tk.name == "calc"
+		}
+	}
+	if !hasLoop || !hasItem {
+		return nil
+	}
+
+	bound := map[int]bool{}
+	var walk func(body string, offset int, itemBranch bool)
+	walk = func(body string, offset int, itemBranch bool) {
+		if !w.charge(1 + len(body)/8) {
+			return
+		}
+		blocks := parseWithBlocksM(lm, body)
+		if lm.Err() != nil {
+			w.fail()
+			return
+		}
+		for _, sc := range blocks {
+			if !w.step() {
+				return
+			}
+			if itemBranch && (sc.Name == "item" || sc.Name == "calc") {
+				bound[offset+sc.Start] = true
+				continue
+			}
+			if !sc.IsBlock {
+				continue
+			}
+			inner := sc.InnerContent
+			start := offset + sc.End - len("[/"+sc.Name+"]") - len(inner)
+			if sc.Name != "each" && sc.Name != "relations" {
+				walk(inner, start, false)
+				continue
+			}
+			if !w.charge(1 + len(inner)/8) {
+				return
+			}
+			items, empty := splitElseM(lm, inner)
+			if lm.Err() != nil {
+				w.fail()
+				return
+			}
+			walk(items, start, true)
+			if empty != "" {
+				walk(empty, start+len(items)+len(elseTag), false)
+			}
+		}
+	}
+	walk(input, 0, false)
+	return bound
+}
+
+// lintRelations checks a [relations] opener against what
+// RenderRelationsShortcode does with it: a direction it refuses, a limit it
+// silently replaces, and the button face it will not render in.
+func lintRelations(tk token, reloadSpans [][2]int, add func(start, end int, severity, msg string)) {
+	if v, set := tk.attrs["direction"]; set {
+		if d := strings.TrimSpace(v); d != RelationsDirectionOut && d != RelationsDirectionIn {
+			add(tk.start, tk.end, SeverityError, `[relations] direction must be "out" or "in"`)
+		}
+	}
+	if v, set := tk.attrs["limit"]; set {
+		if n, err := strconv.Atoi(v); err != nil || n <= 0 {
+			add(tk.start, tk.end, SeverityWarning,
+				"[relations] limit must be a whole number from 1 to "+strconv.Itoa(MaxRelationsLimit)+"; it falls back to "+strconv.Itoa(defaultRelationsLimit))
+		} else if n > MaxRelationsLimit {
+			add(tk.start, tk.end, SeverityWarning, "[relations] limit is capped at "+strconv.Itoa(MaxRelationsLimit))
+		}
+	}
+	if insideSpans(tk.start, reloadSpans) {
+		add(tk.start, tk.end, SeverityError, "[relations] cannot be used inside a [reload] button face")
 	}
 }

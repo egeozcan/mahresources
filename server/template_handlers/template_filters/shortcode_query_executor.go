@@ -157,6 +157,9 @@ func executeMRQLForShortcode(reqCtx context.Context, appCtx mrqlShortcodeRunner,
 		}
 		qr.EffectiveQuery = linkQuery
 		qr.SavedID = linkSavedID
+		if qr.Mode == "aggregated" {
+			qr.DrillDownLimit = appCtx.MRQLListDrillDownLimit(scopeGroupID)
+		}
 		return qr, nil
 	}
 

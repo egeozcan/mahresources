@@ -28,6 +28,8 @@ function fakeEl(descendants: any[] = []) {
     // A region contains the deferred blocks inside it; reloadInto has to be able
     // to see that overlap.
     contains: (other: any) => descendants.includes(other),
+    // No <tabs-shortcode> inside, so a swap has no tab selection to carry.
+    querySelectorAll: () => [],
     setAttribute: (k: string, v: string) => void attrs.set(k, v),
     removeAttribute: (k: string) => void attrs.delete(k),
     hasAttribute: (k: string) => attrs.has(k),
@@ -301,16 +303,16 @@ describe('reloadInto and the Alpine entity scope', () => {
   it('refreshes the entity so bindings do not stay on the page-load snapshot', async () => {
     const el = fakeEl();
     // What the display page put in scope when it was first rendered.
-    const scope: any = { entity: { Name: 'old', Meta: { status: 'active' } } };
+    const scope: any = { entity: { ID: 1, CategoryId: null, Name: 'old', Meta: { status: 'active' } } };
     (globalThis as any).window.Alpine = { $data: () => scope, initTree: () => {} };
 
     const run = reloadInto(el, el, 'token-a');
-    pending[0].resolveWith({ html: 'fresh markup', entity: { Name: 'new', Meta: { status: 'archived' } } });
+    pending[0].resolveWith({ html: 'fresh markup', entity: { ID: 1, CategoryId: null, Name: 'new', Meta: { status: 'archived' } } });
 
     await expect(run).resolves.toBe(true);
     // x-text="entity.Meta.status" is a documented way to write custom content, and
     // re-rendering the HTML beside it does nothing for those bindings.
-    expect(scope.entity).toEqual({ Name: 'new', Meta: { status: 'archived' } });
+    expect(scope.entity).toEqual({ ID: 1, CategoryId: null, Name: 'new', Meta: { status: 'archived' } });
   });
 
   it('leaves a scope alone when the response carries no entity', async () => {
@@ -340,10 +342,27 @@ describe('reloadInto and the Alpine entity scope', () => {
 });
 
 describe('applyEntity does not roll the scope back', () => {
+  it('installs older markup for a different entity type with the same ID without merging the scope', async () => {
+    const el = fakeEl();
+    const note = { ID: 1, NoteTypeId: null, Name: 'note', UpdatedAt: '2026-07-29T10:00:00Z' };
+    const scope = { entity: note };
+    (globalThis as any).window.Alpine = { $data: () => scope, initTree: () => {} };
+
+    const run = reloadInto(el, el, 'token-a');
+    pending[0].resolveWith({
+      html: 'owner group markup',
+      entity: { ID: 1, CategoryId: null, Name: 'group', UpdatedAt: '2026-07-29T09:00:00Z' },
+    });
+
+    await expect(run).resolves.toBe(true);
+    expect(el.innerHTML).toBe('owner group markup');
+    expect(scope.entity).toBe(note);
+  });
+
   it('abandons the whole swap when its snapshot is older than the scope', async () => {
     const el = fakeEl();
     // A sibling [lazy] (or an inline edit) already installed newer data.
-    const scope: any = { entity: { ID: 1, Name: 'newer', UpdatedAt: '2026-07-29T10:00:00Z' } };
+    const scope: any = { entity: { ID: 1, resourceCategoryId: 2, Name: 'newer', UpdatedAt: '2026-07-29T10:00:00Z' } };
     (globalThis as any).window.Alpine = { $data: () => scope, initTree: () => {} };
 
     const run = reloadInto(el, el, 'token-a');
@@ -351,7 +370,7 @@ describe('applyEntity does not roll the scope back', () => {
     // its response comes back last.
     pending[0].resolveWith({
       html: 'older markup',
-      entity: { ID: 1, Name: 'older', UpdatedAt: '2026-07-29T09:00:00Z' },
+      entity: { ID: 1, resourceCategoryId: 2, Name: 'older', UpdatedAt: '2026-07-29T09:00:00Z' },
     });
 
     await expect(run).resolves.toBe(false);
@@ -363,13 +382,13 @@ describe('applyEntity does not roll the scope back', () => {
 
   it('applies a snapshot newer than the scope', async () => {
     const el = fakeEl();
-    const scope: any = { entity: { ID: 1, Name: 'older', UpdatedAt: '2026-07-29T09:00:00Z' } };
+    const scope: any = { entity: { ID: 1, resourceCategoryId: 2, Name: 'older', UpdatedAt: '2026-07-29T09:00:00Z' } };
     (globalThis as any).window.Alpine = { $data: () => scope, initTree: () => {} };
 
     const run = reloadInto(el, el, 'token-a');
     pending[0].resolveWith({
       html: 'markup',
-      entity: { ID: 1, Name: 'newer', UpdatedAt: '2026-07-29T10:00:00Z' },
+      entity: { ID: 1, resourceCategoryId: 2, Name: 'newer', UpdatedAt: '2026-07-29T10:00:00Z' },
     });
 
     await expect(run).resolves.toBe(true);
@@ -378,11 +397,11 @@ describe('applyEntity does not roll the scope back', () => {
 
   it('applies when neither side carries a usable timestamp', async () => {
     const el = fakeEl();
-    const scope: any = { entity: { ID: 1, Name: 'old' } };
+    const scope: any = { entity: { ID: 1, CategoryId: null, Name: 'old' } };
     (globalThis as any).window.Alpine = { $data: () => scope, initTree: () => {} };
 
     const run = reloadInto(el, el, 'token-a');
-    pending[0].resolveWith({ html: 'markup', entity: { ID: 1, Name: 'new' } });
+    pending[0].resolveWith({ html: 'markup', entity: { ID: 1, CategoryId: null, Name: 'new' } });
 
     await expect(run).resolves.toBe(true);
     expect(scope.entity.Name).toBe('new');
@@ -390,11 +409,11 @@ describe('applyEntity does not roll the scope back', () => {
 
   it('refuses to write a different entity into the scope', async () => {
     const el = fakeEl();
-    const scope: any = { entity: { ID: 1, Name: 'mine' } };
+    const scope: any = { entity: { ID: 1, CategoryId: null, Name: 'mine' } };
     (globalThis as any).window.Alpine = { $data: () => scope, initTree: () => {} };
 
     const run = reloadInto(el, el, 'token-a');
-    pending[0].resolveWith({ html: 'markup', entity: { ID: 2, Name: 'someone else' } });
+    pending[0].resolveWith({ html: 'markup', entity: { ID: 2, CategoryId: null, Name: 'someone else' } });
 
     await expect(run).resolves.toBe(true);
     expect(scope.entity.ID).toBe(1);
@@ -407,14 +426,14 @@ describe('applyEntity merges rather than replaces', () => {
     // A note detail page puts the full note in scope, including fields the
     // deferred response deliberately withholds so list cards never receive them.
     const scope: any = {
-      entity: { ID: 1, Name: 'old', UpdatedAt: '2026-07-29T09:00:00Z', blocks: [{ id: 7 }] },
+      entity: { ID: 1, NoteTypeId: null, Name: 'old', UpdatedAt: '2026-07-29T09:00:00Z', blocks: [{ id: 7 }] },
     };
     (globalThis as any).window.Alpine = { $data: () => scope, initTree: () => {} };
 
     const run = reloadInto(el, el, 'token-a');
     pending[0].resolveWith({
       html: 'markup',
-      entity: { ID: 1, Name: 'new', UpdatedAt: '2026-07-29T10:00:00Z', hasShare: true },
+      entity: { ID: 1, NoteTypeId: null, Name: 'new', UpdatedAt: '2026-07-29T10:00:00Z', hasShare: true },
     });
 
     await expect(run).resolves.toBe(true);
@@ -429,11 +448,11 @@ describe('applyEntity merges rather than replaces', () => {
     const el = fakeEl();
     // A list card's scope was built without a share token; merging must not be a
     // way for one to appear.
-    const scope: any = { entity: { ID: 1, Name: 'old', hasShare: true } };
+    const scope: any = { entity: { ID: 1, NoteTypeId: null, Name: 'old', hasShare: true } };
     (globalThis as any).window.Alpine = { $data: () => scope, initTree: () => {} };
 
     const run = reloadInto(el, el, 'token-a');
-    pending[0].resolveWith({ html: 'markup', entity: { ID: 1, Name: 'new', hasShare: true } });
+    pending[0].resolveWith({ html: 'markup', entity: { ID: 1, NoteTypeId: null, Name: 'new', hasShare: true } });
 
     await expect(run).resolves.toBe(true);
     expect('shareToken' in scope.entity).toBe(false);

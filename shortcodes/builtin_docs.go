@@ -38,8 +38,9 @@ type DocExample struct {
 }
 
 // BuiltinDoc documents one built-in shortcode (meta, datetime, pills,
-// property, calc, mrql, conditional, link, each, item, partial, lazy, details,
-// reload, using, inspect, adjacent, similar, calendar, comment).
+// property, excerpt, calc, mrql, conditional, link, each, item, partial, lazy,
+// details, tabs, reload, autorefresh, action, using, inspect, adjacent,
+// similar, calendar, pivot, relations, comment).
 type BuiltinDoc struct {
 	Name        string          `json:"name"`
 	Syntax      string          `json:"syntax"`
@@ -133,12 +134,32 @@ func BuiltinDocs() []BuiltinDoc {
 			},
 		},
 		{
-			Name:        "calc",
-			Syntax:      `[calc expr="..."]`,
-			Description: "Computes a number from this entity's Meta (meta.<path>), its numeric fields (property.<Path>) and, at the top level of an [each] block, the current element (item or item.<path>), with + - * / % and parentheses and the functions min, max, abs, round(x[, digits]) and coalesce(a, b, …). It renders the bare number, so it works in text, table cells and attributes such as <meter value=\"…\">. A Meta string counts only when it is wholly a decimal number of at most 64 bytes; a missing or non-numeric operand, division by zero or overflow gives no value, which renders the default unless coalesce catches it. A syntax error, an unknown name or a bad decimals/format renders an error marker. It never runs a query. Only Meta keys of ASCII letters, digits and _ that do not start with a digit can be referenced. Limits: 512 bytes, 128 tokens, 32 levels of nesting, 32 references.",
+			Name:        "excerpt",
+			Syntax:      `[excerpt words="30"]`,
+			Description: "Renders a short plain-text preview of the entity's Description, another string field (field=) or a Meta string (path=). It strips template comments and shortcodes without running them and shows mentions as their names. Bare Markdown link and image labels (including trailing whitespace) are preserved for Markdown. After Markdown conversion it drops HTML comments, tags and all attributes (including image alt text), and skips the contents of script, style, textarea, title, xmp, iframe, noembed, noframes, noscript, plaintext, template and elements with a hidden attribute. It does not apply CSS or other browser visibility rules. Text is cut to words= words and at most 12 Unicode code points per word, backing up over partial accents and joined emoji, then followed by an ellipsis when cut. Only the first 16 KiB is read; any preview from a longer source ends in an ellipsis. Text, including default=, is always HTML-escaped. Without more=, use it in text or inert quoted attributes (title, data-*, aria-label), not script-bearing attributes. A nonblank more= in an attribute name or value is a lint error because it can emit link markup. It never loads data: use it inside [using] or [mrql] to preview a related entity.",
 			IsBlock:     BlockNo,
 			Attrs: []DocAttr{
-				{Name: "expr", Type: "string", Required: true, Description: "The expression, e.g. meta.qty * meta.unit_price. Names are case-sensitive; numbers are plain decimals with no exponent. An item operand has no value outside [each] or inside another block within it."},
+				{Name: "words", Type: "number", Default: "30", Description: "Maximum number of words, a whole number from 1 to 200. Anything else falls back to 30; above 200 is clamped to 200."},
+				{Name: "field", Type: "string", Default: "Description", Description: "One string field of this entity, e.g. Name or OriginalName. No dot paths: preview a related entity through [using]. Credential fields stay empty unless the reader may see them, as with [property]. Cannot be combined with path."},
+				{Name: "path", Type: "string", Description: "Dot-notation path to a string in the entity Meta, e.g. recipe.intro. Any other JSON type renders the default. Cannot be combined with field."},
+				{Name: "more", Type: "string", Description: "Visible label of a link to the entity's detail page, shown only when the text was cut. Its accessible name adds the entity's name (\"Read more: Sunset\"). Left out inside a [reload] button face, in hover cards and on the public share page."},
+				{Name: "default", Type: "string", Description: "Text rendered, HTML-escaped, when there is no text to preview, including a source that is empty once stripped."},
+			},
+			Examples: []DocExample{
+				{Title: "Description preview", Code: `[excerpt]`},
+				{Title: "With a link", Code: `[excerpt words="20" more="Read more"]`},
+				{Title: "A Meta string", Code: `[excerpt path="recipe.intro" words="15" default="No intro"]`},
+				{Title: "Related notes", Code: `[mrql query="type = note ORDER BY updated DESC" limit="5"]<p><b>[property path="Name"]</b> [excerpt words="12"]</p>[/mrql]`},
+				{Title: "Inside an attribute", Code: `<span title="[excerpt words='25']">[property path="Name"]</span>`, Notes: "Only without more=, which adds a link."},
+			},
+		},
+		{
+			Name:        "calc",
+			Syntax:      `[calc expr="..."]`,
+			Description: "Computes a number from this entity's Meta (meta.<path>), its numeric fields (property.<Path>) and, at the top level of the item branch of [each] or [relations], the current element (item or item.<path>), with + - * / % and parentheses and the functions min, max, abs, round(x[, digits]) and coalesce(a, b, …). It renders the bare number, so it works in text, table cells and attributes such as <meter value=\"…\">. A Meta string counts only when it is wholly a decimal number of at most 64 bytes; a missing or non-numeric operand, division by zero or overflow gives no value, which renders the default unless coalesce catches it. A syntax error, an unknown name or a bad decimals/format renders an error marker. It never runs a query. Only Meta keys of ASCII letters, digits and _ that do not start with a digit can be referenced. Limits: 512 bytes, 128 tokens, 32 levels of nesting, 32 references.",
+			IsBlock:     BlockNo,
+			Attrs: []DocAttr{
+				{Name: "expr", Type: "string", Required: true, Description: "The expression, e.g. meta.qty * meta.unit_price. Names are case-sensitive; numbers are plain decimals with no exponent. An item operand has no value outside the top-level item branch of [each] or [relations], including inside another block or in [else]."},
 				{Name: "decimals", Type: "number", Description: "A whole number from 0 to 10: round half away from zero to exactly that many fraction digits, keeping trailing zeros (10 gives 10.00). Unset, the result is rounded to 10 digits and trailing zeros are dropped."},
 				{Name: "format", Type: "enum", Default: "number", Description: "number is a plain decimal (1234567.89); grouped puts a comma between every three integer digits (1,234,567.89, not locale-aware); percent multiplies by 100 and appends % (0.256 gives 25.6%).", Enum: []string{"number", "grouped", "percent"}},
 				{Name: "default", Type: "string", Description: "Text rendered, HTML-escaped, when the expression has no numeric result. Empty by default. Prefer words such as \"not set\" over a lone dash where the reader needs to know why the value is missing."},
@@ -226,7 +247,7 @@ func BuiltinDocs() []BuiltinDoc {
 		{
 			Name:        "each",
 			Syntax:      `[each path="..."]...[item ...]...[/each]`,
-			Description: "Iterates an array value from the entity's Meta JSON, rendering its inner content once per element. Reference the current element with [item] inside the block. A non-array or empty value renders the [else] branch (nothing when there is no [else]); [else] is a divider with no closing tag, so end the block with [/each], never [/else]. Inner [meta]/[conditional]/[mrql] shortcodes run against the parent entity, not the element.",
+			Description: "Iterates an array value from the entity's Meta JSON, rendering its inner content once per element. Reference the current element with [item] directly in the item branch, before [else]. A non-array or empty value renders the [else] branch (nothing when there is no [else]); [else] is a divider with no closing tag, so end the block with [/each], never [/else]. Inner [meta]/[conditional]/[mrql] shortcodes run against the parent entity, not the element.",
 			IsBlock:     BlockRequired,
 			Attrs: []DocAttr{
 				{Name: "path", Type: "string", Required: true, Description: "Dot-notation path to an array in the entity Meta, e.g. ingredients."},
@@ -241,7 +262,7 @@ func BuiltinDocs() []BuiltinDoc {
 		{
 			Name:        "item",
 			Syntax:      `[item path="..."]`,
-			Description: "Renders the current element inside an [each] block: the element itself (scalar) or a dot-path into it (object). Uses the same format/layout/default helpers as [property] and is HTML-escaped unless raw is set. Outside an [each] block it renders nothing.",
+			Description: "Renders the current [each] element or [relations] edge: the element itself (scalar) or a dot-path into it (object). Uses the same format/layout/default helpers as [property] and is HTML-escaped unless raw is set. It binds only at the top level of the item branch, before [else], and renders nothing in a nested block (including eager and lazy tabs). A nested loop binds its own item.",
 			IsBlock:     BlockNo,
 			Attrs: []DocAttr{
 				{Name: "path", Type: "string", Required: false, Description: "Dot-path into the current element when it is an object, e.g. name. Omit to render a scalar element directly."},
@@ -255,6 +276,22 @@ func BuiltinDocs() []BuiltinDoc {
 				{Title: "Scalar element", Code: `[item]`},
 				{Title: "Object field with fallback", Code: `[item path="qty" default="?"]`},
 				{Title: "1-based position", Code: `[item index="true"]`},
+			},
+		},
+		{
+			Name:        "relations",
+			Syntax:      `[relations type="..." direction="out|in" limit="20"]`,
+			Description: "Lists this group's typed relations to other groups as nested lists, one per relation type in type-name order, each entry a link to the group at the far end with its category. direction=\"out\" (the default) lists the edges from this group; direction=\"in\" lists the edges to it, labelled \"Incoming: <type>\". A relation type with a back relation stores its reverse edge too, so out already shows both halves of such a pair from this group's side; use in for types without one. With a block body each relation renders the body instead, against this group's context, with a top-level [item] reading the edge: Name, Description, Type, Direction, GroupID, GroupName, GroupCategory, GroupURL, and the far group's GroupDescription and GroupMeta (its Meta, e.g. [item path=\"GroupMeta.status\"]). With no visible relations, it renders the [else] branch or nothing. Setting raw on [item] emits unsanitized values, including the far group’s description and Meta. Only groups have relations; on a resource or note it renders a comment. An edge is listed only when the viewer may see both groups, and hidden edges do not count toward limit. Each lookup costs one page-query budget unit. When there are visible relations, a top-level [item] value path or [calc] item operand referring to GroupDescription or GroupMeta adds one more unit; fallback text and references to the current group do not trigger that query. Unavailable lookups spend no budget. The incoming index is built concurrently on PostgreSQL and before serving on SQLite. It renders on display pages and their cards, the lightbox, deferred bodies, MRQL results and the template and description previews; elsewhere (share pages, the entity picker, generation-run tools) it renders an \"unavailable\" comment. Confined viewers can use MRQL render=list but not render=1.",
+			IsBlock:     BlockOptional,
+			Attrs: []DocAttr{
+				{Name: "type", Type: "string", Description: "Only relations of this type: an exact, case-sensitive name. Types are unique by name and their from and to categories, so every type of that name matches. Empty lists every type."},
+				{Name: "direction", Type: "enum", Default: "out", Description: "out lists the relations from this group, in the relations to it.", Enum: []string{"out", "in"}},
+				{Name: "limit", Type: "number", Default: "20", Description: "The most relations listed, a whole number from 1 to 100. Larger values are capped at 100; anything else falls back to 20."},
+			},
+			Examples: []DocExample{
+				{Title: "All outgoing relations", Code: `[relations]`},
+				{Title: "One type", Code: `[relations type="Depends on" limit="10"]`},
+				{Title: "Custom rows with an empty state", Code: "[relations direction=\"in\"]\n  <a href=\"/group?id=[item path='GroupID']\">[item path=\"GroupName\"]</a>: [item path=\"GroupMeta.status\" default=\"no status\"]\n[else]\n  <p>Nothing depends on this.</p>\n[/relations]", Notes: "Each relation renders inside its own list item."},
 			},
 		},
 		{
@@ -294,6 +331,19 @@ func BuiltinDocs() []BuiltinDoc {
 			},
 		},
 		{
+			Name:        "tabs",
+			Syntax:      `[tabs label="..."][tab label="..."]...[/tab][/tabs]`,
+			Description: "Alternative sections as an accessible tab set. Only the open panel takes up space; its content determines the height. Each [tab label=\"…\" lazy=\"true|false\"]…[/tab] directly inside the block is one tab; the first is selected when the page loads. label is the tab's visible text and accessible name (blank shows \"Tab N\"). An eager tab renders with the page, hidden or not, so put lazy=\"true\" on every tab after the first that holds [mrql], a gallery or a plugin view: a lazy tab is a [lazy] block, rendered on the server only when the tab is first shown (a lazy first tab loads right after the page). A lazy tab's body renders against the entity, so an [item] from an enclosing [each] is not available inside it. Keyboard: Left and Right arrows (wrapping), Home and End move between tabs, and Enter or Space opens the focused one; Tab moves into the open panel. In lightbox Info, Left and Right move between tabs without changing the resource. A lazy tab inside [using] renders its shortcodes against the target without changing a different entity in the surrounding Alpine scope. Without JavaScript and in hover cards, all panels show stacked under their labels. Refreshes keep the selected tab only when the same set can be matched unambiguously. Focus follows a matched tab during an [autorefresh] or page re-render, or the equivalent [reload] button in the same panel when it replaces the set. A [tab] outside a [tabs] body, or inside a nested block such as [conditional], is literal text and does not hide other shortcodes. To make tab content conditional, put the [conditional] inside the tab. A [tabs] inside a tab works. Off the display page (share pages, live preview, list headers) lazy tabs render inline.",
+			IsBlock:     BlockRequired,
+			Attrs: []DocAttr{
+				{Name: "label", Type: "string", Description: "The accessible name of the tab list. Set it whenever a page has more than one [tabs]."},
+			},
+			Examples: []DocExample{
+				{Title: "Two views", Code: "[tabs label=\"Recipe\"]\n  [tab label=\"Ingredients\"]<ul>[each path=\"ingredients\"]<li>[item]</li>[/each]</ul>[/tab]\n  [tab label=\"Steps\"][each path=\"steps\"]<p>[item]</p>[/each][/tab]\n[/tabs]"},
+				{Title: "Lazy query tabs", Code: "[tabs label=\"Project views\"]\n  [tab label=\"Overview\"][property path=\"Description\"][/tab]\n  [tab label=\"Open tasks\" lazy=\"true\"][mrql query='type = note AND tags = \"todo\"' format=\"list\"][/tab]\n  [tab label=\"Files\" lazy=\"true\"][mrql query='type = resource' format=\"list\"][/tab]\n[/tabs]", Notes: "The two query tabs run nothing until a reader opens them."},
+			},
+		},
+		{
 			Name:        "reload",
 			Syntax:      `[reload]`,
 			Description: "A button that re-renders content on the server without navigating. It reloads the innermost [lazy], [details] or [autorefresh] block it sits inside. Outside those it reloads the whole custom-content slot it was written in (header, sidebar, summary or avatar). Where neither can be re-rendered on its own (share pages, live preview) it reloads the page. Self-closing it renders a circular-arrow icon button; wrap a block body to use that content as the button face instead. Keep the body to text or icons: a button may not contain links or other interactive elements.",
@@ -310,7 +360,7 @@ func BuiltinDocs() []BuiltinDoc {
 		{
 			Name:        "autorefresh",
 			Syntax:      `[autorefresh]...[/autorefresh]`,
-			Description: "Re-renders its body on the server whenever an inline editor saves, without reloading the page. It refreshes after a [meta], [pills] or [datetime] with editable=\"true\" saves this entity anywhere on the page, or saves any entity from inside the block (an editor in an [mrql] result list, say). Edits made within a quarter of a second of each other cause one refresh. Wrap only what depends on the edited values: everything in the body is replaced, so an editor inside it closes and loses unsaved input when another edit lands. A [reload] inside it reloads this block. On share pages and in the live preview the body renders once and does not refresh. An [item] from an enclosing [each] is not available inside it.",
+			Description: "Re-renders its body on the server whenever an inline editor saves, without reloading the page. It refreshes after a [meta], [pills] or [datetime] with editable=\"true\" saves this entity anywhere on the page, or saves any entity from inside the block (an editor in an [mrql] result list, say). An [action] button for this entity, or inside the block, refreshes it the same way when its run succeeds. Edits made within a quarter of a second of each other cause one refresh. Wrap only what depends on the edited values: everything in the body is replaced, so an editor inside it closes and loses unsaved input when another edit lands. A [reload] inside it reloads this block. On share pages and in the live preview the body renders once and does not refresh. Refreshing a hover card's body still omits the controls suppressed there, such as [action]. An [item] from an enclosing [each] is not available inside it.",
 			IsBlock:     BlockRequired,
 			Attrs: []DocAttr{
 				{Name: "on", Type: "enum", Default: "edit", Description: "What triggers a refresh. edit is the only trigger.", Enum: []string{"edit"}},
@@ -318,6 +368,24 @@ func BuiltinDocs() []BuiltinDoc {
 			Examples: []DocExample{
 				{Title: "A badge that follows an editable field", Code: "[pills path=\"status\" editable=\"true\"]\n[autorefresh]\n  [conditional path=\"status\" eq=\"done\"]<span class=\"badge\">Done</span>[/conditional]\n[/autorefresh]"},
 				{Title: "Bare values in attributes", Code: "[autorefresh]\n  <span data-status=\"[meta path='status' inline='true']\">[meta path=\"status\" inline=\"true\"]</span>\n[/autorefresh]", Notes: "A value written with inline=\"true\" is plain text, so it never updates on its own after an edit."},
+			},
+		},
+		{
+			Name:        "action",
+			Syntax:      `[action plugin="..." name="..."]`,
+			Description: "A button that runs a registered plugin action (mah.action) on this entity, with the permissions of whoever clicks it, through the same endpoint as the actions menu. If the button is removed or its action payload changes before confirmation, the run is cancelled. An in-place list refresh keeps an unchanged button busy; retargeting releases it and stops watching the old Job without cancelling it. If the refresh retargets a focused button, focus moves to the unique button in the list with the original plugin, action, entity and parameters, or to the list if no unique match can take focus. It reports progress and the result next to the button and to screen readers. A synchronous result shows its message even with a legacy job_id. After an observed success it refreshes the [autorefresh] blocks for the submitted entity and, if the button is unchanged, the block around it. It does not reload the page. Placement is ignored; a visible, required bulk-selection parameter cannot be filled from a template. It renders an HTML comment for guests and other read-only accounts, group-limited accounts the plugin is not opened to, a missing or disabled plugin or action, or an entity that fails the action's filters or those of a visible trigger reference, even if other required values are missing. It also renders a comment in a Description or note text block when login is on, on share pages, in the live preview, in hover cards and in direct MRQL API renders (render=1). Authorized /mrql list cards (render=list) can show the button. Wrap the content the action changes in [autorefresh], with the button first in that block or outside it.",
+			IsBlock:     BlockNo,
+			Attrs: []DocAttr{
+				{Name: "plugin", Type: "string", Required: true, Description: "The plugin's name, as in [plugin:<name>:…]."},
+				{Name: "name", Type: "string", Required: true, Description: "The action's id, as registered with mah.action({ id = … }) (ids are lowercase)."},
+				{Name: "label", Type: "string", Description: "The button text, which is also its accessible name. Blank means the action's own label."},
+				{Name: "confirm", Type: "string", Description: "Confirmation question asked before the run, replacing the action's own. Blank keeps the action's confirmation; a template cannot remove one."},
+				{Name: "param-", Type: "string", Wildcard: true, Description: "Sets an action parameter, e.g. param-scale=\"2\". The parameter must be declared by the action; number takes a number, boolean true or false, select one of its options, and entity_ref and info parameters cannot be set. Unset parameters take the action's defaults, and an entity_ref that defaults to the trigger gets this entity. Values are literal: shortcodes inside them are not expanded."},
+			},
+			Examples: []DocExample{
+				{Title: "A button beside the value it changes", Code: "[autorefresh]\n  [action plugin=\"project-management\" name=\"pm-set-status\" label=\"Mark done\" param-status=\"done\"]\n  Status: [meta path=\"status\"]\n[/autorefresh]", Notes: "For the PM Task note type of the bundled project-management plugin. The button comes first in the block, so focus returns to it after the refresh."},
+				{Title: "With a parameter and a confirmation", Code: `[action plugin="fal-ai" name="upscale" label="Upscale (Topaz)" confirm="Upscale this image on fal.ai? This is billed." param-model="topaz"]`, Notes: "The bundled fal-ai plugin's upscale action, which applies to images only; it runs as a Job and the button reports when it finishes."},
+				{Title: "One button per result row", Code: "[mrql query='type = note AND tags = \"triage\"']\n  <div>[property path=\"Name\"] [action plugin=\"project-management\" name=\"pm-set-status\" label=\"Start\" param-status=\"in_progress\"]</div>\n[/mrql]", Notes: "Each row's button runs the action on that row's note; rows the action's filters exclude get no button. The result's stylesheet, like CustomCSS elsewhere, renders the unavailable comment instead of a button. In CSS, form[action] remains a literal selector."},
 			},
 		},
 		{
@@ -400,6 +468,30 @@ func BuiltinDocs() []BuiltinDoc {
 			Examples: []DocExample{
 				{Title: "Notes by due date", Code: `[calendar mrql='type = "note"' date="meta.due"]`, Notes: "Notes whose meta.due is not a YYYY-MM-DD string are left out."},
 				{Title: "Uploads in one month, everywhere", Code: `[calendar mrql='type = "resource"' date="created" month="2026-03" scope="global"]`},
+			},
+		},
+		{
+			Name:        "pivot",
+			Syntax:      `[pivot query="..." rows="..." cols="..."]`,
+			Description: "A cross-tab of two fields over the entities an MRQL filter matches: one row per value of rows, one column per value of cols, a count (or a sum of field) in each cell, and row, column and grand totals. It renders an accessible <table> with a caption and row and column headers in a scroll region. Tab reaches the region; Left and Right scroll it instead of changing the resource in lightbox Info. Values that differ only in ASCII case share a row or column, as do related entities with the same name. A multi-valued relation (tags, groups, notes, resources, children) counts an entity once per value, so the totals across it are left out. Eligible counts link to /mrql; sum and truncated tables and scopes narrower than a confined viewer's subtree do not link. A count above the default MRQL result limit or whose composed filter exceeds 32 KiB or contains a carriage return is plain text. Date and (none) buckets, and SQLite Meta dimensions that contain numeric keys, do not support dimension-dependent links. The pivot keeps at most 5000 combinations with the most items; when truncated, count totals show + and sum totals are marked partial. One aggregate statement, plus a scope check for a confined viewer with a concrete group scope, costs one page-query budget unit on a cache miss. Counts and labels are read as the viewer. In hover cards and on share pages it renders an \"unavailable\" comment instead of running a query. Put it in CustomHeader or CustomSidebar rather than a per-card slot.",
+			IsBlock:     BlockNo,
+			Attrs: []DocAttr{
+				{Name: "query", Type: "string", Required: true, Description: "An MRQL filter naming exactly one entity type through a top-level type = …. No GROUP BY, ORDER BY, LIMIT, OFFSET, SCOPE or $parameters: the pivot adds its own grouping and order."},
+				{Name: "rows", Type: "string", Required: true, Description: "The row field: meta.<path>, a scalar field such as name or contentType, owner, groups, tags (or parent and children on groups), or a date bucket of a timestamp such as created.month or created.year. Not a bare timestamp, an ID field (id, category, noteType), a traversal such as owner.name, or unbounded text (description, originalName, originalLocation, url). The SQL alias must fit in 63 bytes."},
+				{Name: "cols", Type: "string", Required: true, Description: "The column field, with the same forms as rows. It must be a different field (group and groups are the same field)."},
+				{Name: "value", Type: "enum", Default: "count", Description: "What each cell holds: count (entities) or sum (of field).", Enum: []string{"count", "sum"}},
+				{Name: "field", Type: "string", Description: "With value=\"sum\", the field to add up: meta.<path>, or fileSize, width or height on resources. The generated sum_ alias must fit in 63 bytes. How a Meta string or boolean counts differs between SQLite and PostgreSQL. Sums use float64; integers above 2^53 in magnitude can round."},
+				{Name: "scope", Type: "enum", Default: "entity", Description: "Group subtree to count in, as on [mrql]: entity (the current entity's group), parent, root, global, or a numeric group ID.", Enum: []string{"entity", "parent", "root", "global"}},
+				{Name: "max-rows", Type: "number", Default: "20", Description: "How many row values are kept, ranked by highest total count or sum, as set by value; at most 50."},
+				{Name: "max-cols", Type: "number", Default: "10", Description: "How many column values are kept, ranked by highest total count or sum, as set by value; at most 20."},
+				{Name: "rows-label", Type: "string", Description: "The heading of the row-label column, also used in the caption and link names. Unset or blank, the rows field without meta."},
+				{Name: "cols-label", Type: "string", Description: "The name of the column field in the caption and link names. Unset or blank, the cols field without meta."},
+				{Name: "caption", Type: "string", Description: "The table caption, which also names the scroll region. Unset or blank: \"Count by <rows> and <cols>\" or \"Sum of <field> by <rows> and <cols>\"."},
+			},
+			Examples: []DocExample{
+				{Title: "Resources by type and year", Code: `[pivot query="type = resource" rows="contentType" cols="created.year"]`},
+				{Title: "Open work by owner", Code: `[pivot query="type = note AND meta.status IS NOT NULL" rows="meta.status" cols="owner" caption="Open work by owner"]`},
+				{Title: "Bytes by type and year", Code: `[pivot query="type = resource" rows="contentType" cols="created.year" value="sum" field="fileSize"]`},
 			},
 		},
 		{

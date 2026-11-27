@@ -93,14 +93,16 @@ func TestOpenMalformedTokenFails(t *testing.T) {
 	}
 }
 
-func TestSealWithTrustRoundTripsTheFlag(t *testing.T) {
-	for _, untrusted := range []bool{false, true} {
-		_, _, body, got, ok := OpenWithTrust(testKey, SealWithTrust(testKey, "note", 1, "b", untrusted))
-		if !ok || body != "b" || got != untrusted {
-			t.Fatalf("untrusted=%v: got (%q, %v, ok=%v)", untrusted, body, got, ok)
+func TestSealWithContextRoundTripsTheRestrictions(t *testing.T) {
+	for _, want := range []RenderContext{
+		{}, {Untrusted: true}, {WithinTooltip: true}, {Untrusted: true, WithinTooltip: true},
+	} {
+		_, _, body, got, ok := OpenWithContext(testKey, SealWithContext(testKey, "note", 1, "b", want))
+		if !ok || body != "b" || got != want {
+			t.Fatalf("render context %+v: got (%q, %+v, ok=%v)", want, body, got, ok)
 		}
 	}
-	if _, _, _, got, _ := OpenWithTrust(testKey, Seal(testKey, "note", 1, "b")); got {
-		t.Fatal("Seal must mint a trusted token")
+	if _, _, _, got, ok := OpenWithContext(testKey, Seal(testKey, "note", 1, "b")); !ok || got != (RenderContext{}) {
+		t.Fatalf("Seal must mint a token with no render restrictions: %+v, ok=%v", got, ok)
 	}
 }

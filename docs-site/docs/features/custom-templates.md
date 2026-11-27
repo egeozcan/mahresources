@@ -259,6 +259,18 @@ The CustomSummary template appears in list views. Keep it compact:
 </div>
 ```
 
+To show what a note says rather than only its name, use [`[excerpt]`](./shortcodes.md#excerpt----text-preview). It strips the Markdown, HTML, mentions and shortcodes from the Description and cuts it to a few words, so a long note cannot stretch its card:
+
+```html
+<p class="text-sm text-gray-600">[excerpt words="25" more="Read more"]</p>
+```
+
+On a group category, [`[relations]`](./shortcodes.md#relations----group-relations) shows each card's typed relations, here only one type. Each card costs one unit of the page query budget. When the detail page shows relations through the template too, hide the built-in Relations panels under Section Visibility:
+
+```html
+[relations type="Depends on" limit="5"]
+```
+
 ## CustomAvatar Example
 
 The CustomAvatar template controls how the entity appears when linked. Its placement differs by carrier, for a structural reason:
@@ -402,7 +414,7 @@ Unlike the other slots, both are processed with **the category/type itself as th
 - `[property path="Name"]` yields the category's own name (and `path="Description"` its description). Other `[property]` paths that expect a member entity's fields will be empty.
 - `[meta]` renders its empty state -- a category carries no `Meta`, so a `[meta path="..." default="—"]` shows the default.
 - `[mrql]` resolves against **global scope** (not a group subtree), so dashboard queries count across the whole instance. Add an explicit `scope="..."` attribute if you want to narrow it.
-- `[reload]` falls back to reloading the page -- the deferred-render endpoint cannot load a category/type by id, so the header has no region of its own to re-render. For the same reason `[lazy]` and `[details]` render inline here instead of deferring, and `[autorefresh]` renders once and never refreshes.
+- `[reload]` falls back to reloading the page -- the deferred-render endpoint cannot load a category/type by id, so the header has no region of its own to re-render. For the same reason `[lazy]`, `[details]` and lazy `[tabs]` tabs render inline here instead of deferring, and `[autorefresh]` renders once and never refreshes.
 
 ```html
 <div class="cat-dashboard">
@@ -527,10 +539,13 @@ Shortcodes let you embed dynamic content in custom templates without writing Alp
 - **`[each]`** / **`[item]`** -- Iterate over an array in the entity's metadata
 - **`[partial]`** -- Include a reusable shared snippet by name
 - **`[lazy]`** / **`[details]`** -- Defer rendering until the block scrolls into view or is opened
+- **[`[tabs]`](./shortcodes.md#tabs----tabbed-sections)** -- Alternative sections as an accessible tab set; a `lazy="true"` tab renders only when first opened
 - **`[reload]`** -- Button that re-renders the innermost `[lazy]`/`[details]`/`[autorefresh]` block, or else the whole custom-content slot, in place
 - **`[autorefresh]`** -- Re-render a block in place after an inline editor saves, so content the server expanded follows the edit
+- **[`[action]`](./shortcodes.md#action----run-a-plugin-action)** -- A button that runs a plugin action on this entity as the person who clicks it, then refreshes the `[autorefresh]` blocks around it
 - **`[using]`** -- Render a block with another group, resource or note (the owner, or an ID from metadata) as the entity
 - **[`[calendar]`](./shortcodes.md#calendar----month-grid-of-dated-entities)** -- A month grid of the entities an MRQL filter matches, by a created, updated or Meta date, with titles, day links and Prev/Next navigation
+- **[`[pivot]`](./shortcodes.md#pivot----cross-tab)** -- A cross-tab of two fields over the entities an MRQL filter matches, with a count or sum in each cell, row, column and grand totals, and count links to the MRQL page
 - **`[comment]`** -- Comment out a section. The server removes it before rendering, so its shortcodes never run and it is never rendered. An HTML comment still runs its shortcodes and is sent to the browser.
 
 Plugins can also register custom shortcodes via `mah.shortcode()`.

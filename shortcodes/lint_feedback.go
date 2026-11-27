@@ -113,16 +113,39 @@ func withinSpans(pos int, spans [][2]int) bool {
 
 var elseifPattern = regexp.MustCompile(`\[elseif\b(?:"[^"]*"|'[^']*'|[^\]"'])*\]`)
 
-var styleElementPattern = regexp.MustCompile(`(?is)<style\b[^>]*>.*?(?:</style\s*>|$)`)
+var styleStartPattern = regexp.MustCompile(`(?i)<style[\t\n\f\r />]`)
 
-// styleElementSpans are the <style> elements of markup, whose brackets are
-// CSS attribute selectors.
+// styleElementSpans marks only the CSS bodies, not style-like text in a
+// script, comment or attribute. Skip the markup scan when no opener can occur.
 func styleElementSpans(input string) [][2]int {
-	var out [][2]int
-	for _, m := range styleElementPattern.FindAllStringIndex(input, -1) {
-		out = append(out, [2]int{m[0], m[1]})
+	if !styleStartPattern.MatchString(input) {
+		return nil
 	}
-	return out
+	var spans [][2]int
+	z := html.NewTokenizer(strings.NewReader(input))
+	inside := -1
+	for pos := 0; ; {
+		tt := z.Next()
+		end := pos + len(z.Raw())
+		switch tt {
+		case html.ErrorToken:
+			if inside >= 0 {
+				spans = append(spans, [2]int{inside, len(input)})
+			}
+			return spans
+		case html.StartTagToken, html.EndTagToken:
+			name, _ := z.TagName()
+			if string(name) == "style" {
+				if tt == html.StartTagToken {
+					inside = end
+				} else if inside >= 0 {
+					spans = append(spans, [2]int{inside, pos})
+					inside = -1
+				}
+			}
+		}
+		pos = end
+	}
 }
 
 // htmlVoid elements have no closing tag; htmlOptionalClose ones may omit it.
@@ -134,31 +157,34 @@ var (
 		"rt": true, "colgroup": true, "caption": true, "html": true, "head": true, "body": true}
 )
 
+func blankTagSpan(masked []byte, start, end int) {
+	for i := start; i < end; i++ {
+		if masked[i] != '\n' {
+			masked[i] = ' '
+		}
+	}
+}
+
 // lintUnbalancedHTML warns about elements left open and closing tags that
 // close nothing. A browser repairs both, but an element left open in one slot
 // swallows whatever the page renders after it. Elements whose closing tag is
 // optional are not tracked. Shortcode branches can open and close an element
 // on different sides, so these are warnings.
-func lintUnbalancedHTML(w *schemaWork, input string, tokens []token, add func(start, end int, severity, msg string)) {
+func lintUnbalancedHTML(w *schemaWork, input string, tokens []token, tabOpeners [][2]int, add func(start, end int, severity, msg string)) {
 	if !w.charge(1 + len(input)/16) {
 		return
 	}
-	// Shortcode openers are blanked out, length for length, so an attribute
-	// value such as eq="<div>" is not read as markup and offsets still match.
+	// Mask shortcode tags and slot openers, keeping the original byte offsets.
 	masked := []byte(input)
-	blank := func(start, end int) {
-		for i := start; i < end && i < len(masked); i++ {
-			if masked[i] != '\n' {
-				masked[i] = ' '
-			}
-		}
-	}
 	for _, tk := range tokens {
-		blank(tk.start, tk.end)
+		blankTagSpan(masked, tk.start, tk.end)
+	}
+	for _, span := range tabOpeners {
+		blankTagSpan(masked, span[0], span[1])
 	}
 	// [elseif] guards are dividers, not tokens, and carry attributes too.
 	for _, m := range elseifPattern.FindAllStringIndex(input, -1) {
-		blank(m[0], m[1])
+		blankTagSpan(masked, m[0], m[1])
 	}
 	type open struct {
 		name       string

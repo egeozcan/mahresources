@@ -58,6 +58,9 @@ type QueryResult struct {
 	// Total is the true row count ignoring Limit, populated only when
 	// QueryOptions.WantTotal was set; nil otherwise.
 	Total *int64
+	// DrillDownLimit caps the number of entities /mrql can list from an
+	// aggregate. Zero means the destination cannot reproduce the scope.
+	DrillDownLimit int
 }
 
 // QueryResultItem represents a single entity returned by a query.
@@ -221,6 +224,11 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 	// plugin output and re-processed branch passes through here, so repetition
 	// is what the parsed-source budget measures.
 	m := meterFrom(reqCtx)
+	if m == nil && reqCtx != nil && reqCtx.Value(cssModeKey{}) != nil {
+		// A directly called block handler may reach CSS without ProcessChecked.
+		m = newRenderMeter(reqCtx)
+		reqCtx = context.WithValue(reqCtx, renderMeterKey{}, m)
+	}
 	if !m.chargeParsed(int64(len(input))) {
 		return ""
 	}
@@ -280,11 +288,15 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 		}
 		b.WriteString(input[lastEnd:sc.Start])
 
+		renderCtx := reqCtx
+		if sc.inStyle {
+			renderCtx = WithinCSS(reqCtx)
+		}
 		var replacement string
 
 		switch {
 		case sc.Name == "conditional":
-			replacement = RenderConditionalShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+			replacement = RenderConditionalShortcode(renderCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "datetime":
 			replacement = RenderDateTimeShortcode(sc, ctx)
 		case sc.Name == "pills":
@@ -295,16 +307,22 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 			replacement = RenderPropertyShortcode(sc, ctx)
 		case sc.Name == "calc":
 			replacement = RenderCalcShortcode(sc, ctx)
+		case sc.Name == "excerpt":
+			replacement = RenderExcerptShortcode(renderCtx, sc, ctx)
 		case sc.Name == "adjacent":
 			// Renders the "unavailable" comment unless the surface installed a
 			// scoped resolver (WithAdjacentResolver).
-			replacement = RenderAdjacentShortcode(reqCtx, sc, ctx)
+			replacement = RenderAdjacentShortcode(renderCtx, sc, ctx)
 		case sc.Name == "inspect":
 			// Renders "" unless this is a template preview (WithInspect).
-			replacement = RenderInspectShortcode(reqCtx, sc, ctx)
+			replacement = RenderInspectShortcode(renderCtx, sc, ctx)
+		case sc.Name == "action":
+			// Renders the "unavailable" comment unless the surface installed a
+			// resolver (WithActionResolver) and it offers this action.
+			replacement = RenderActionShortcode(renderCtx, sc, ctx)
 		case sc.Name == "mrql":
 			if executor != nil && depth < maxRecursionDepth {
-				replacement = RenderMRQLShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+				replacement = RenderMRQLShortcode(renderCtx, sc, ctx, renderer, executor, depth)
 			} else {
 				// No executor wired (a context that deliberately omits one, e.g.
 				// share-page rendering) — leave a comment rather than leaking the
@@ -313,7 +331,7 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 			}
 		case sc.Name == "using":
 			if executor != nil {
-				replacement = RenderUsingShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+				replacement = RenderUsingShortcode(renderCtx, sc, ctx, renderer, executor, depth)
 			} else {
 				// Same as [mrql]: the target is loaded through the executor, so a
 				// context without one cannot switch to it.
@@ -321,33 +339,47 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 			}
 		case sc.Name == "similar":
 			if executor != nil {
-				replacement = RenderSimilarShortcode(reqCtx, sc, ctx, executor)
+				replacement = RenderSimilarShortcode(renderCtx, sc, ctx, executor)
 			} else {
 				// Share pages run no queries: comment, not the raw text.
 				replacement = shortcodeComment("similar unavailable in this context")
 			}
 		case sc.Name == "calendar":
 			if executor != nil {
-				replacement = RenderCalendarShortcode(reqCtx, sc, ctx, executor)
+				replacement = RenderCalendarShortcode(renderCtx, sc, ctx, executor)
 			} else {
 				// Same as [mrql]: every count comes from the executor, so a
 				// context without one (share pages) leaves a comment.
 				replacement = shortcodeComment("calendar unavailable in this context")
 			}
+		case sc.Name == "pivot":
+			if executor != nil {
+				replacement = RenderPivotShortcode(renderCtx, sc, ctx, executor)
+			} else {
+				// Same as [mrql]: the table is one executor query, so a context
+				// without one (share pages) leaves a comment.
+				replacement = shortcodeComment("pivot unavailable in this context")
+			}
 		case sc.Name == "link":
-			replacement = RenderLinkShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+			replacement = RenderLinkShortcode(renderCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "partial":
-			replacement = RenderPartialShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+			replacement = RenderPartialShortcode(renderCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "each":
-			replacement = RenderEachShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+			replacement = RenderEachShortcode(renderCtx, sc, ctx, renderer, executor, depth)
+		case sc.Name == "relations":
+			// Renders the "unavailable" comment unless the surface installed a
+			// lister (WithRelationLister).
+			replacement = RenderRelationsShortcode(renderCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "lazy":
-			replacement = RenderLazyShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+			replacement = RenderLazyShortcode(renderCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "details":
-			replacement = RenderDetailsShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+			replacement = RenderDetailsShortcode(renderCtx, sc, ctx, renderer, executor, depth)
+		case sc.Name == "tabs":
+			replacement = RenderTabsShortcode(renderCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "reload":
-			replacement = RenderReloadShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+			replacement = RenderReloadShortcode(renderCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "autorefresh":
-			replacement = RenderAutorefreshShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+			replacement = RenderAutorefreshShortcode(renderCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "item":
 			// [item] only has meaning inside an [each] block, where the each
 			// handler substitutes it before this dispatch runs. A bare [item]
@@ -371,7 +403,7 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 						// author, and expanding either would put it through the
 						// template engine.
 						if depth+1 < maxRecursionDepth {
-							replacement = processWithDepth(reqCtx, replacement, ctx, renderer, executor, depth+1)
+							replacement = processWithDepth(renderCtx, replacement, ctx, renderer, executor, depth+1)
 						} else {
 							replacement = stripTemplateComments(replacement)
 						}

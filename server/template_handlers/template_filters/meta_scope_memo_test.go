@@ -1,13 +1,16 @@
 package template_filters
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/flosch/pongo2/v4"
 	"mahresources/models"
 	"mahresources/models/types"
+	"mahresources/shortcodes"
 )
 
 // countingPageContext is a PageRenderContext whose scope walk counts its calls.
@@ -23,6 +26,20 @@ type countingPageContext struct {
 
 func (c *countingPageContext) DeferredSigningKey() []byte { return []byte("k") }
 func (c *countingPageContext) MRQLPageQueryBudget() int   { return 0 }
+
+func (c *countingPageContext) IsGroupVisibleForTemplateRelations(uint) (bool, error) {
+	return false, nil
+}
+
+func (c *countingPageContext) ListGroupRelationsForTemplate(context.Context, shortcodes.RelationsRequest) ([]shortcodes.GroupRelationEntry, error) {
+	return nil, nil
+}
+
+func (c *countingPageContext) LoadRelatedGroupDetails(context.Context, []uint) ([]models.Group, error) {
+	return nil, nil
+}
+
+func (c *countingPageContext) MRQLQueryTimeout() time.Duration { return time.Second }
 
 func (c *countingPageContext) ResolveParentScopeID(groupID uint) uint {
 	c.mu.Lock()

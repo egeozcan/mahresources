@@ -16,6 +16,7 @@ var (
 	_ PartialResolverContext = (*application_context.MahresourcesContext)(nil)
 	_ QueryExecutorContext   = (*application_context.MahresourcesContext)(nil)
 	_ MetaScopeResolver      = (*application_context.MahresourcesContext)(nil)
+	_ RelationListerContext  = (*application_context.MahresourcesContext)(nil)
 )
 
 // PartialResolverContext resolves [partial] references by name.
@@ -26,13 +27,7 @@ type PartialResolverContext interface {
 // QueryExecutorContext runs the inline [mrql] shortcode: scope resolution,
 // execution, the per-page query budget, and the logger the budget warning uses.
 type QueryExecutorContext interface {
-	ResolveMRQLScope(q *mrql.Query) (uint, error)
-	ExecuteMRQLScoped(reqCtx context.Context, parsed *mrql.Query, scopeGroupID uint) (*application_context.MRQLResult, error)
-	ExecuteMRQLGroupedWithScope(reqCtx context.Context, parsed *mrql.Query, scopeID uint) (*application_context.MRQLGroupedResult, error)
-	CountMRQLScoped(reqCtx context.Context, parsed *mrql.Query, scopeGroupID uint) (int64, error)
-	GetSavedMRQLQueryByName(name string) (*models.SavedMRQLQuery, error)
-	LoadMRQLRenderData(reqCtx context.Context, resourceCategoryIDs, noteTypeIDs, categoryIDs, scopeGroupIDs []uint) (*application_context.MRQLRenderData, error)
-	SimilarityDistancesTo(reqCtx context.Context, targetID uint, ids []uint) (map[uint]int, error)
+	mrqlShortcodeRunner
 	MRQLPageQueryBudget() int
 	Logger() *application_context.Logger
 }
@@ -51,10 +46,11 @@ type budgetLogger interface {
 }
 
 // mrqlShortcodeRunner is the sliver executeMRQLForShortcode needs: scope
-// resolution plus the three execution shapes, saved-query lookup and the
-// similarity distances [similar] asks for.
+// resolution, execution, saved-query lookup, the [pivot] drill-down limit,
+// and the similarity distances [similar] asks for.
 type mrqlShortcodeRunner interface {
 	ResolveMRQLScope(q *mrql.Query) (uint, error)
+	MRQLListDrillDownLimit(scopeID uint) int
 	ExecuteMRQLScoped(reqCtx context.Context, parsed *mrql.Query, scopeGroupID uint) (*application_context.MRQLResult, error)
 	ExecuteMRQLGroupedWithScope(reqCtx context.Context, parsed *mrql.Query, scopeID uint) (*application_context.MRQLGroupedResult, error)
 	CountMRQLScoped(reqCtx context.Context, parsed *mrql.Query, scopeGroupID uint) (int64, error)
@@ -69,6 +65,7 @@ type PageRenderContext interface {
 	QueryExecutorContext
 	PartialResolverContext
 	MetaScopeResolver
+	RelationListerContext
 }
 
 func pageRenderContext(value any) PageRenderContext {

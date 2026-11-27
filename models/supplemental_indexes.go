@@ -32,5 +32,25 @@ func EnsureSupplementalIndexes(db *gorm.DB) error {
 			return err
 		}
 	}
+	if db.Dialector.Name() != "postgres" {
+		return ensureRelationIncomingIndex(db)
+	}
 	return nil
+}
+
+// unique_rel leads with from_group_id; the reverse lookup needs its own index.
+var relationIncomingIndexes = []plannedIndex{
+	{"idx__group_relations__to_group_id", "group_relations", "to_group_id"},
+}
+
+const relationIncomingIndexLockKey = int64(0x4D5252454C494458)
+
+func ensureRelationIncomingIndex(db *gorm.DB) error {
+	return ensurePlannedIndexes(db, "incoming relation index", relationIncomingIndexLockKey, relationIncomingIndexes)
+}
+
+// EnsureRelationIncomingIndexOnOwnConnection builds the Postgres index
+// concurrently, beside the server, without borrowing a request connection.
+func EnsureRelationIncomingIndexOnOwnConnection(dsn string) error {
+	return onOwnConnection(dsn, "incoming relation index", ensureRelationIncomingIndex)
 }

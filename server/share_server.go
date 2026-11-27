@@ -584,9 +584,11 @@ func normalizeTableBlockContent(content map[string]interface{}) {
 //   - ForceReadOnly forces every [meta] non-editable, so the page ships no edit
 //     affordance that would POST to the primary server.
 //
-// [property]/[conditional]/[each]/[link]/[partial] are pure functions over the
-// already-authorized note and run normally; [partial] resolution is a plain DB
-// read, so the resolver is wired.
+// [property]/[conditional]/[each]/[link]/[partial]/[excerpt] are pure functions
+// over the already-authorized note and run normally; [partial] resolution is a
+// plain DB read, so the resolver is wired. WithPublicSharePage tells [excerpt]
+// to leave out its more= link, which would point at a detail page this server
+// does not serve.
 func (s *ShareServer) processShareTemplates(note *models.Note) (header, css string) {
 	if note.NoteType == nil || !note.NoteType.ApplyTemplatesToShares {
 		return "", ""
@@ -601,6 +603,7 @@ func (s *ShareServer) processShareTemplates(note *models.Note) (header, css stri
 	metaCtx.ForceReadOnly = true
 
 	reqCtx := shortcodes.WithPartialResolver(context.Background(), template_filters.BuildPartialResolver(s.appContext))
+	reqCtx = shortcodes.WithPublicSharePage(reqCtx)
 	// The visitor reached this page with the note's share token, and nothing
 	// here renders another entity, so a header that prints it discloses nothing.
 	reqCtx = shortcodes.WithCredentialFieldsVisible(reqCtx, true)
@@ -614,7 +617,7 @@ func (s *ShareServer) processShareTemplates(note *models.Note) (header, css stri
 				parts = append(parts, part)
 			}
 		}
-		css = shortcodes.Process(reqCtx, shortcodes.JoinCSS(parts...), *metaCtx, nil, nil)
+		css = shortcodes.Process(shortcodes.WithinCSS(reqCtx), shortcodes.JoinCSS(parts...), *metaCtx, nil, nil)
 	}
 	return header, css
 }

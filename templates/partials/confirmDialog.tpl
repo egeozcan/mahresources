@@ -20,8 +20,9 @@
         {# froze the modal that covered it, so the reader saw a dead page. It is not    #}
         {# even reported as occluded by a hit test, because an inert element is skipped #}
         {# in hit testing, which is why the e2e that clicks this dialog kept passing.   #}
+        {# Capture Escape before any underlying overlay's window shortcuts. #}
         <div class="confirm-dialog-overlay fixed inset-0 flex items-center justify-center bg-black/50 p-4"
-             @keydown.escape.window="$store.confirmDialog.cancel()">
+             @keydown.escape.window.capture="$event.preventDefault(); $event.stopImmediatePropagation(); $store.confirmDialog.cancel()">
             {# x-init rather than a directive on the template: the subtree only exists  #}
             {# while open, so this is the moment the dialog has a root to make the rest #}
             {# of the page inert around. x-trap.inert would not do it — it sets         #}

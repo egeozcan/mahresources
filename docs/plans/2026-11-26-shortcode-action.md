@@ -1,19 +1,13 @@
-<!-- Shortcode idea that did not make the first implementation round. -->
-> **Status:** idea, not implemented. The plan went through 2 plan/evaluate round(s).
-> Last evaluation: consistency 8.7/10, usefulness 8.6/10, average 8.65/10. The bar was 8.5.
->
-> **Pitch:** Renders a real <button> that invokes a registered plugin action (mah.action) on the current entity: [action plugin="fal-ai" name="upscale" label="Upscale image" confirm="Run upscale?" param-scale="2"]. It goes through the existing CSRF-protected action endpoint with the user's own permissions and shows progress and result in an aria-live region, and it can trigger [autorefresh] when it finishes. If the plugin or action is missing or disabled, it renders nothing, and lint warns about the unknown action. Authors can put one-click workflows where they're needed, such as 'mark reviewed', 'generate thumbnail' or 'archive project', instead of the generic actions menu.
-
 # Plan: `[action]`, a button that runs a plugin action from a template (revision 3)
 
-Slug: `action-button`. This is a built-in Go shortcode plus one small web component. It adds no endpoint, no migration, no plugin API and no new pongo context key.
+Slug: `action`. Saved as `docs/plans/2026-11-26-shortcode-action.md` (moved from `docs/ideas/shortcodes/action-button.md`). This is a built-in Go shortcode plus one small web component. It adds no endpoint, no migration, no plugin API and no new pongo context key.
 
 ## 0. What changed since revision 2 (a reply to each review point)
 
 1. **`.json` break (P1). Fixed by removing the cause.** Revision 2 put a new func value, `_pluginActionAccess`, on every page context, and `render_template.go`'s deny-list `discardFields` did not list it. This revision adds **no context key**. The `process_shortcodes` tag already receives `_pluginManager`, `_requestContext` and the `_pluginAccess` predicate (through `pluginAccessFromContext`). It builds the action predicate from those (§8.2), so the `discardFields` list and the JSON encoding stay as they are. A regression test still asserts that a detail `.json` encodes and that its lightbox slot contains the button (§10).
 2. **Missing render surfaces. Fixed by the same change.** `list_card_renderer.go`, `text_block_renderer.go` and `errorPageEnricher` (server.go) all set `_pluginManager`, `_requestContext` and `_pluginAccess`. Every render that goes through the tag (detail pages, list cards, MRQL result cards and note text blocks) therefore gets the resolver without per-file wiring. Two surfaces call `shortcodes.Process` directly and need explicit wiring: the lightbox `processShortcodesForJSON` and the deferred handler. Tests cover a list card and an `[mrql]` result (§10).
 3. **The deferred handler's context type. Verified.** `DeferredRenderContext` already exposes `PluginAllowsScopedPrincipals(string) bool` (handler_interfaces.go:285). It embeds `TemplatePreviewContext`, which provides `PluginManager()`, and the handler already calls both at line 98–99. No interface needs widening.
-4. **E2E a11y placement. Fixed.** The axe check moves to `e2e/tests/accessibility/action-shortcode-a11y.spec.ts`, which `test:with-server:a11y` (`tests/accessibility/`) runs. The functional spec stays at `e2e/tests/108-action-shortcode.spec.ts`.
+4. **E2E a11y placement. Fixed.** The axe check moves to `e2e/tests/accessibility/action-shortcode-a11y.spec.ts`, which `test:with-server:a11y` (`tests/accessibility/`) runs. The functional spec is `e2e/tests/109-action-shortcode.spec.ts` (108 is taken by `[tabs]`).
 5. **Ignoring placement. Rationale and doc warning added (§2.1).** A dedicated error message covers selection-only params (§4.2), and it is in the tests.
 6. **Filter data on projections. Addressed in §7.1.** Every entity that reaches a template is a full row: `identitiesOnly` MRQL projections never feed item rendering. Tests cover a filtered action inside an `[mrql]` result and on a list card.
 7. **Minor points:**
@@ -78,7 +72,7 @@ When the action is available (§4):
 
 1. `ctx.ForceReadOnly`: share pages, and principals that cannot write (the tag sets this from `!principal.CanWrite()`). The resolver is not called.
 2. `ctx.UntrustedSource`: a Description or note text block under `-auth`. Without this rule, a `user`-role author could plant a button that an admin clicks, which would run with the admin's rights behind a confirm text the author controls. Template slots are written by admins and editors and stay trusted. The resolver is not called.
-3. There is no `ActionResolver` on the request context. This applies to the share server, live template preview, description preview, the entity picker, `/mrql` API result cards, template-run tools and the CustomCSS tag.
+3. There is no `ActionResolver` on the request context. This applies to the share server, live template preview, description preview, the entity picker, direct MRQL API result rendering (`render=1`), template-run tools and the CustomCSS tag. The browser's `/mrql` cards use `render=list`, which goes through the authorized `process_shortcodes` path and can render buttons.
 4. The resolver answers `ErrActionUnavailable` when any of these is true:
    - the action predicate refuses the plugin (§8.2), which covers a guest, a non-writer, and a group-limited principal for a plugin the operator has not opened to scoped accounts;
    - `pm.FindAction(plugin, name)` fails (the plugin is missing or disabled, the action is not registered, or there is no VM);
@@ -91,7 +85,7 @@ When the action is available (§4):
 The resolver starts from the registration, as `pluginActionModal.open` does:
 - An `info` param is skipped.
 - `entity_ref` with default `trigger` or `both` (or no default), where `param.Entity == action.Entity`, gets the current id: `float64(id)`, or `[]any{float64(id)}` when `multi`.
-- `entity_ref` with default `selection` gets empty (`nil`, or `[]any{}`). If the param is `required`, the error is `needs a bulk selection and cannot run from a template`.
+- `entity_ref` with default `selection` gets empty (`nil`, or `[]any{}`). After overrides and `show_when`, a visible, required selection param gives `needs a bulk selection and cannot run from a template`.
 - Any other param gets `param.Default` if set, otherwise `false` for a `boolean` and `""` for everything else.
 
 Then each `param-<name>` attribute is overlaid. `<name>` must be declared. Coercion:
@@ -105,7 +99,7 @@ Then each `param-<name>` attribute is overlaid. `<name>` must be declared. Coerc
 | `entity_ref`, `info` | not allowed | `cannot be set from a template` |
 | undeclared | not allowed | `no such parameter` |
 
-Then `plugin_system.StripHiddenParams` and `plugin_system.ValidateActionParams` run, and the first error becomes the marker. Attribute values are literal, because the parser does not expand shortcodes in attributes and that is unchanged. The DB-backed `ValidateActionEntityRefs` and `ValidateActionEntityFilters` are not run at render time. The run endpoint runs both on every click. Param values are visible in the page source, which is acceptable because the action modal shows the same defaults to the same user.
+Then `plugin_system.StripHiddenParams` and `plugin_system.ValidateActionParams` run, and the first error becomes the marker. Attribute values are literal, because the parser does not expand shortcodes in attributes and that is unchanged. A visible trigger reference whose own filter excludes the loaded entity makes the button unavailable; one without an override has already passed the action's primary filter. The DB-backed `ValidateActionEntityRefs` and `ValidateActionEntityFilters` are not run at render time. The run endpoint runs both on every click. Param values are visible in the page source, which is acceptable because the action modal shows the same defaults to the same user.
 
 ### 4.3 Name collision
 
@@ -116,23 +110,24 @@ Existing text that contains `[action …]` will start rendering as the comment o
 ### 5.1 Activation
 - There is one `click` listener on the inner button. Keyboard activation is native.
 - While a run is in flight, the button gets `aria-disabled="true"` (not `disabled`, so focus stays on it) and further clicks are ignored.
-- With `data-confirm`, the component calls `askToConfirm(text)` from `src/components/confirmDialog.js`, which fails closed. A declined confirmation does nothing.
+- Activation snapshots the payload, label and confirmation, before calling `askToConfirm(text)` from `src/components/confirmDialog.js`. The confirmation fails closed: a decline, a disconnect, or a payload change before acceptance sends no request. The confirmation owns Escape, and the lightbox suspends its focus trap and shortcuts while the confirmation is open.
 - The status becomes "Running…" and the component calls `mahAnnounce("<label>: running")`.
 - It sends `fetch('/v1/jobs/action/run', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({plugin, action, entity_ids:[entityId], params})})`. CSRF comes from the existing `src/csrf.js` fetch wrapper.
 
 ### 5.2 Response (same decoding as `pluginActionModal.submit`)
 - `!resp.ok`: the message is `data.errors[*].message` joined with `; `, or `data.error`, or `Action failed`. It is shown and announced assertively. No events are dispatched.
-- `data.redirect` with `data.success !== false`: `window.location.href = data.redirect`.
+- `data.success === false`: show and announce the refusal before considering a redirect or Job handle. Do not poll or refresh.
+- `data.redirect` without refusal: `window.location.href = data.redirect`.
 - Sync: `data.success === true` shows and announces (politely) `data.message || "Done"`, then signals the refresh (§5.4). Anything else is a failure with `data.message || "Action failed"`, announced assertively, and nothing is dispatched.
 - Async (202): the status becomes "Started" (polite). With `data.canonicalJobId`, the component polls (§5.3). Without it, it shows "Started. Follow it in the Jobs panel." and stops.
 
 ### 5.3 Async completion
 - `GET /v1/jobs/{canonicalJobId}` every 2 s until `state` is in `terminalStates()` (`src/components/jobStates.js`).
-- Polling stops on `disconnectedCallback`, which clears the timer and makes a sequence guard drop answers still in flight, or after 150 polls (5 min). At the cap, the status reads "Still running. Follow it in the Jobs panel."
+- A host that disconnected while the POST was pending never starts its progress watcher. Polling stops on disconnect or after five minutes of wall time, clearing both timers and aborting any in-flight progress request. At the deadline the status reads "Still running. Follow it in the Jobs panel." The Job itself is not cancelled.
 - `succeeded`: announce `presentState(job).label` (this covers partial), then refresh. `failed`, `cancelled` and `interrupted`: show the label and announce it assertively. A non-OK poll gives "Could not read the job's progress". The component never opens the Jobs panel, because that would steal focus.
 
 ### 5.4 Refresh signal
-- Only after a successful outcome, the component dispatches `document` `meta-shortcode-saving` with `{source: host}` and, immediately after, `meta-shortcode-updated` with `{entityType, entityId, source: host}` and no `meta`. `autorefreshShortcode.js` captures the blocks that enclose the host and deletes the `savingIn` entry in the same tick, so a failed or abandoned run never creates an entry. Capturing at completion is equivalent to capturing at the start, because the button is still in the DOM until the refresh it triggers. If another refresh already replaced it, `enclosingHosts` of a detached element is `[]`, and the entity-wide match still refreshes same-entity blocks.
+- Only after a successful outcome, the component dispatches `document` `meta-shortcode-saving` with `{source}` and, immediately after, `meta-shortcode-updated` with `{entityType, entityId, source}` and no `meta`. The identity comes from the submitted payload. If the host is still attached and unchanged, it supplies the source; otherwise, the source is null so the entity match still refreshes same-entity blocks without capturing whatever now encloses the host. `autorefreshShortcode.js` captures and consumes a non-null source's enclosing blocks in the same tick, so a failed or abandoned run never creates an entry.
 - Both existing listeners, the two `meta-shortcode.ts` copies and `display-mode.ts`, ignore an event without `meta`.
 - The page is never reloaded. Authors wrap dependent content in `[autorefresh]`.
 - **Focus.** When the button sits inside the refreshing block, autorefresh's existing restore moves focus to the element at the same index among the block's focusables. If the template places a variable number of focusables *before* the button in that block (for example a link that appears only after the action), focus can land elsewhere. The docs recommend putting the button first in the block, or outside it.
@@ -250,7 +245,7 @@ A plugin's Lua cannot, and should not, look up or invoke another plugin's regist
 - A redirect navigates. A second click while running is ignored.
 - Async: the component polls and dispatches on `succeeded`. `failed` dispatches nothing. Polling stops on disconnect and at the cap. With no `canonicalJobId`, there is no polling.
 
-**E2E: `e2e/tests/108-action-shortcode.spec.ts`**
+**E2E: `e2e/tests/109-action-shortcode.spec.ts`**
 - New plugin `e2e/test-plugins/test-action-button/plugin.lua`, kept separate so the `test-actions` counts do not change, and enabled through `client.enablePlugin` as in `plugin-actions.spec.ts`. It has a sync action `mark-reviewed` (entity resource, `confirm = "Mark as reviewed?"`) that patches the description to `reviewed`.
 - The category template is `[autorefresh][action plugin="test-action-button" name="mark-reviewed"] [property path="Description"][/autorefresh]`, with the button first in the block.
 - Tab to the button and press Enter. The confirm dialog opens; confirm it. The description shows `reviewed` with no navigation (the URL is unchanged and a window marker survives). The live region contains the message. **`document.activeElement` is the re-rendered `.action-shortcode-button`**, and it is a new node, not the old one.
@@ -269,7 +264,7 @@ A plugin's Lua cannot, and should not, look up or invoke another plugin's regist
 - **`docs-site/docs/features/custom-templates.md`**: add a one-line mention next to `[reload]` and `[autorefresh]`.
 - **`templates/createCategory.tpl`**, **`createResourceCategory.tpl`** and **`createNoteType.tpl`**: add an `[action]` line to the reference panels. The consistency test requires it.
 - **`.claude/skills/mahresources-category-designer/references/shortcodes.md`**: add an `[action]` entry.
-- At implementation time, per AGENTS.md: save this plan as `docs/plans/2026-11-24-action-shortcode.md` and run `./docs/plans/generate-index.sh`.
+- At implementation time, per AGENTS.md: this plan is saved as `docs/plans/2026-11-26-shortcode-action.md`. The plans index is regenerated by whoever merges the shortcode lanes.
 
 ## 12. Success criterion
 
@@ -308,3 +303,91 @@ Problems to fix before or during implementation:
 4. **Some §3 CSS wording is vague.** "reuses the existing secondary-button classes" and "status text gets aria-disabled styling" should name the actual classes and selectors, e.g. `[aria-disabled=true]` on the button rather than on the status span.
 5. **Share server.** State explicitly that it neither installs a resolver nor sets `_pluginManager`, and add one assertion in the share e2e or Go test. The plan lists it as unavailable but has no test that pins it.
 6. **Usefulness caveat.** Value depends on plugins exposing writer actions with entity-scoped params. Placement-ignored is well argued, but a short worked example from an existing bundled plugin in docs (an action that already exists) would show immediate value beyond the test plugin.
+
+## 13. Implementation checklist
+
+- [x] `shortcodes/action_handler.go`: `ActionButton`, `ActionResolver`, `ErrActionUnavailable`, `WithActionResolver`, `RenderActionShortcode` (§3, §4.1 steps 1 to 3), `lintAction`.
+- [x] `shortcodes/processor.go` dispatch and the parser alternations (`shortcodePattern`, `closingTagPattern`).
+- [x] `shortcodes/builtin_docs.go`: the `action` entry (`BlockNo`, `plugin`/`name` required, `label`, `confirm`, `param-` wildcard) and the `[autorefresh]` trigger sentence.
+- [x] `shortcodes/lint.go`: `action` in `builtinBaseNames`, memoized `LintOptions.ActionExists`, the `[reload]` face error, the missing-action warning.
+- [x] `plugin_system/actions.go`: `ActionMatchesEntityData`.
+- [x] `template_filters/action_resolver.go`: `ActionEntityData` (moved from `routes.go`, value forms added), `BuildActionResolver`, the §4.2 params.
+- [x] Wiring: the `process_shortcodes` tag (local context only), `processShortcodesForJSON` (slots only), the deferred handler; `ActionExists` in `/v1/shortcodes/lint` and the template preview's piggybacked lint.
+- [x] `src/webcomponents/actionShortcode.js`, its import in `src/main.js`, the CSS in `public/index.css`.
+- [x] Go tests: `shortcodes/action_handler_test.go`, `shortcodes/action_lint_test.go`, `template_filters/action_resolver_test.go` (resolver and tag), `template_filters/action_entity_data_test.go` (moved from `server/entity_data_test.go`, value forms added), `server/api_tests/action_shortcode_render_test.go`.
+- [x] JS tests: `src/webcomponents/actionShortcode.test.ts`.
+- [x] E2E: `e2e/tests/109-action-shortcode.spec.ts`, `e2e/tests/accessibility/action-shortcode-a11y.spec.ts`, `e2e/tests/auth/action-shortcode-roles.spec.ts`, fixture plugin `e2e/test-plugins/test-action-button`.
+- [x] Docs: `docs-site/docs/features/shortcodes.md` (row, section, `[autorefresh]` trigger), `plugin-actions.md` ("Running an action from a template"), `custom-templates.md`, the three reference panels, the category-designer skill reference.
+
+## Review
+
+### Deviations from the plan
+
+- **Hover cards render the comment.** Not in §4.1. A hover card is a tooltip the keyboard cannot enter, and `[adjacent]` and `[calendar]` already leave their controls out there (`WithinTooltip`). `actionResolverFrom` answers nil inside one, so the button is never drawn where only a mouse could reach it.
+- **The JSON render installs the resolver for the slots, not for CustomCSS.** §8.2 put it on the whole `processShortcodesForJSON` context. On the HTML page the CSS goes through the `custom_css` tag, which has no resolver, so the JSON route now matches it: a stylesheet never holds a button on either surface (pinned by `TestActionShortcode_DeferredAndLightbox` and the page check in `TestActionShortcode_DetailPageFollowsTheRunRule`).
+- **Missing `plugin=`/`name=` in lint** is reported by the generic required-attribute check (`[action] is missing required attribute "plugin"`), not by a second, dedicated error saying the same thing.
+- **`ActionExists` with no plugin manager answers false** rather than being left nil: with no plugin system every `[action]` renders nothing, so the warning is true. It never panics (evaluator point 1).
+- **An `entity_ref` with `default = ""`** gets no id, as in `pluginActionModal.resolveEntityRefDefault` (only `trigger` and `both` take the trigger). "No default" in §4.2 still means the trigger, because registration turns a missing default into `"trigger"`.
+- **The click listener is delegated from the host**, as `reloadShortcode.js` does, instead of bound to the inner button: a page morph may replace the button, and a listener on it would go with it.
+- **Announcements carry the button's label** (`"Mark reviewed: Marked resource 7 reviewed"`), so a screen-reader user hears which button finished. The status text beside the button shows the message alone.
+- **A submitted synchronous action can still complete after disconnect.** Its announcement and refresh address the submitted action and entity; it cannot update an old or repurposed control.
+- **The guest E2E case is in `e2e/tests/auth/action-shortcode-roles.spec.ts`**, not in the functional spec: the default Playwright project runs with login off, and only the `auth` project has a guest. It also covers the unopened group-limited user and compares both to a nonexistent plugin.
+- **"Light and dark themes"**: the app has no dark theme. The dark surface a button can appear on is the lightbox's stone-900 info panel, so the a11y spec scans the button there (`checkComponentA11y`) besides the page, idle and after a run. The button takes `currentColor` for text and border, which is why one style reads on both.
+- **CSS** (evaluator point 4): `.btn-secondary` exists only scoped under `.plugin-action-modal-actions`, so there is no global secondary-button class to reuse. The block in `public/index.css` names `action-shortcode` (inline-flex host), `.action-shortcode-button` (currentColor text and border, 28 px minimum height, amber-700 `:focus-visible` outline), `.action-shortcode-button[aria-disabled="true"]` (dashed border, progress cursor; the busy state is on the button, not the status span) and `.action-shortcode-status:empty` (no space until there is text).
+- **A label that is blank in the registration** falls back to the action id, so the button is never nameless.
+### Round 1 render-context fixes
+
+- **Literal CSS selectors.** Stylesheet processing keeps a bare shared-parser built-in opener literal when it immediately follows an ASCII letter, digit, `-`, `_`, `*`, `]` or `|`. `form[action]` and `.w[tabs]` survive byte-for-byte; `form[ action]` remains an optional spelling. This includes stylesheet slots and embedded `<style>` bodies; the pre-parser `[comment]` is unchanged. Lint recognizes the same rule, and attributed shortcodes still expand. Verified by `TestStylesheetShortcodesPreserveAttributeSelectorsOnPageAndLightbox`, `TestTemplatePreviewPreservesStylesheetAttributeSelectors` and the parser/lint tests in `css_context_test.go`.
+- **Inline result CSS never gets an action resolver.** `renderResultCSS` masks it without changing the result card's own context; `TestInlineMRQLStylesheetMasksActionResolverOnlyForCSS` asserts the comment in CSS and the live button on the card.
+- **Deferred hover-card renders remain tooltips.** A sealed token carries the tooltip bit alongside source trust. The endpoint restores it before installing the signers for nested bodies. `TestHoverCardDeferredAndRefreshTokensRetainTooltip` follows actual hover-card and detail-page tokens through `[lazy]`, nested `[lazy]` and `[autorefresh]` to prove controls stay suppressed only in the tooltip.
+
+### Evaluator points
+
+1. **Lint snippet.** `actionExistsFn` (`shortcode_docs_api_handlers.go`) does `_, _, err := pm.FindAction(plugin, name); return err == nil`, behind `pm == nil || !access(plugin)` → false. Both lint builders use it with `auth.PluginActionAccessFor`.
+2. **§8.2 reqCtx wording.** The tag's `reqCtx` is `_reqCtxWithCache`. It now builds `renderCtx := shortcodes.WithActionResolver(reqCtx, …)`, passes that to `Process`, and never writes it back to `ctx.Public`. `TestActionShortcodeTag_FollowsTheRunEndpointRule` renders a `custom_css` tag after the shortcode tag and asserts the CSS holds the comment.
+3. **FindAction lock order.** Checked: the resolver takes no plugin-manager lock of its own; `FindAction` takes and releases `pm.mu.RLock` inside the call. The resolver runs only from `processWithDepth`'s dispatch, and no plugin-manager method calls `shortcodes.Process` (plugin shortcode output is expanded after `RenderShortcodeContext` returns and its VM lock is released), so it is never reached with `pm.mu` held. Written down in `BuildActionResolver`'s comment.
+4. **CSS wording.** See the CSS bullet above.
+5. **Share server.** `share_server.go` calls `shortcodes.Process(…, nil, nil)` with `ForceReadOnly = true`, sets no `_pluginManager` and installs no resolver. `TestActionShortcode_SurfacesWithoutAResolver` asserts the share page renders the comment, with the note's own page as the control.
+6. **Usefulness.** The `BuiltinDocs` examples, the docs-site section, the reference panels and the skill reference use bundled actions: `project-management`'s `pm-set-status` (`param-status="done"`) and `pm-open-board`, and `fal-ai`'s `upscale` (`param-model="topaz"`).
+
+### Verified
+
+- `gofmt -l` on the changed Go files is empty. `go vet --tags 'json1 fts5' ./...` reports one finding, in `application_context/job_download_progress_test.go:99` (a copied lock), which is on the base commit and untouched here.
+- `go test --tags 'json1 fts5' ./... -count=1`: 47 packages pass, including `internal/arch` and the docs consistency tests. Under five lanes' load, `application_context` failed two timing tests (`TestAPauseAskedOfAnotherProcessIsDeliveredToTheTransfer`, `TestReductionSpoolChangedMembersLinearSQLite`, neither in code this lane touched) and `server/api_tests` hit the default 10-minute timeout. Rerun, the two tests pass and `server/api_tests` passes in full with `-timeout 45m` (813 s).
+- `npm run test:unit` (vitest), `npm run build`, `./scripts/css-scan-test.sh`.
+- E2E: the three new specs, plus `106-reload-shortcode`, `107-autorefresh-shortcode`, `tests/shortcodes/`, `template-preview`, `category-template-authoring-a11y`, `plugins/plugin-actions` and `plugins/plugin-manage`.
+- Zero queries per button holds by construction: `BuildActionResolver` is given a plugin manager and an access predicate and no database handle.
+
+### Not verified
+
+- No Postgres-specific test was added: `[action]` issues no SQL at render time, and the run endpoint it posts to already has Postgres coverage. The new API tests were run with the `postgres` tag too, which exercises the same SQLite harness.
+- The full browser, CLI and Postgres E2E suites were not run (the machine is shared by five lanes).
+
+### Round 1 follow-up
+
+- `actionShortcode.test.ts` exercises confirmation invalidation on target/param changes and detach/reattach, successful completion after a morph, refusal with a Job handle, removal before the POST returns, abort of an in-flight GET, and the five-minute deadline with an unresolved response body.
+- The lightbox a11y spec checks keyboard confirmation, focus containment, Escape cancellation, and focus return to the button without closing the Info panel or posting the action.
+- `TestActionResolver_VisibleTriggerReferenceMustMatchItsOwnFilter` checks the unavailable result for a visible mismatching trigger ref, and allows a matching or hidden ref. `TestActionResolver_SelectionRequiredOnlyWhenVisible` checks defaults and a `param-*` override that exposes the required selection.
+- `TestActionShortcode_MRQLRenderModes` pins the existing surface split: `render=list` can draw authorized buttons; `render=1` has no action resolver. `TestActionShortcode_DeferredDescriptionKeepsSourceTrust` sends real page-minted tokens through the deferred endpoint under auth: the Description yields the unavailable comment and the trusted template yields the button.
+
+### Round 2 follow-up
+
+- **Run ownership through list refreshes.** An unchanged action host reapplies its busy state after Alpine patches its children. Changing its action attributes or disconnecting releases the control and stops its progress watcher, not the submitted Job. A stale synchronous reply still reports and refreshes the submitted entity but cannot update or unlock a newer run. The same-target, retarget-during-poll and stale-POST tests in `actionShortcode.test.ts` all use the production list morph helper.
+- **Response handling.** HTTP 202 or `canonicalJobId` indicates async submission; a legacy `job_id` alone does not. The HTTP 200 success regression checks the exact reply shape, status message, announcement and refresh events.
+- **Required params.** The resolver applies defaults, overrides and visibility, then checks trigger-reference eligibility before validating final values. `TestActionResolver_TriggerReferenceEligibilityPrecedesRequiredParams` checks the exact PNG unavailable comment and the required-text marker on a JPEG.
+- **Validation.** The regressions failed before the fixes. The targeted Go and Vitest tests, broader shortcode/internal/template-handler Go tests, focused action and render-context API tests, CSS scan, and all six action functional, accessibility and auth E2E tests passed. The initial concurrent Vitest run timed out in three schema-editor adversarial tests; the full run with four workers passed all 2,694 tests. Go vet still reports only the unchanged copied-lock finding in `application_context/job_download_progress_test.go:99`. No SQL changed.
+
+### Round 3 follow-up
+
+- **Keyboard focus through list refreshes.** The shared Alpine morph captures the focused `[action]` button's plugin, action, entity type and ID, and resolved parameters before patching. If the node is retargeted or lost, focus returns to a unique button with the original payload in the refreshed list; otherwise it parks on the list. An unchanged focused button keeps focus, and the repair does not override focus that moved elsewhere.
+- **Regression.** The two `a download list morph …` browser cases dispatch the production refresh event after a newer resource is added. With the original action still listed, Enter posts only its ID; with it pushed off the page, focus parks and Enter does not run the arrival unless the reader deliberately focuses it. Vitest covers matches that differ by plugin, name, entity type or parameters, and rejects two exact matches as ambiguous. The seven new cases failed before the fix and passed after it.
+- **Validation.** All 2,700 Vitest tests, all eight action browser tests (functional, accessibility and auth), the shortcode/internal/template-handler Go suites and the focused action API tests passed. Go vet reports only the existing copied lock in `application_context/job_download_progress_test.go:99`. No SQL changed.
+
+### Known limits
+
+- When a watcher stops because the button was removed or retargeted, follow the submitted Job in the Jobs panel.
+- Round 3 deferred: a late redirect from a submitted action can still navigate away after the same button has been retargeted and used for a newer run.
+- Round 3 deferred: in the lightbox, holding Escape can close the viewer after the initial keydown cancels the confirmation; repeated keydowns arrive after the dialog has unmounted.
+- Round 4 deferred: if a list morph retargets the button while its confirmation is open, the dialog still returns focus to the reused (now retargeted) button on close. The old confirmation never posts; the next Enter opens a fresh confirmation for the new entity.
+- Round 4 fixed by the parent: when list-morph focus repair moves focus to the original action elsewhere in the list, it scrolls that button into view (`block: 'nearest'`), so the focus indicator stays visible.
+

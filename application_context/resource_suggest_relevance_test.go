@@ -288,7 +288,7 @@ func (r *suggestionQueryRecorder) Trace(_ context.Context, _ time.Time, sql func
 
 func TestSuggestedTags_LargePopulationQueryPlan(t *testing.T) {
 	ctx := newSuggestTestContext(t)
-	require.NoError(t, ctx.db.AutoMigrate(&models.LogEntry{}))
+	require.NoError(t, ctx.db.AutoMigrate(&models.LogEntry{}, &models.GroupRelationType{}, &models.GroupRelation{}))
 	require.NoError(t, models.EnsureSupplementalIndexes(ctx.db))
 	seed := suggestMakeTag(t, ctx, "seed")
 	paired := suggestMakeTag(t, ctx, "paired")

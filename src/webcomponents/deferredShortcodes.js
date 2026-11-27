@@ -11,6 +11,8 @@
 // injected fragment is hydrated with Alpine.initTree (mirroring hoverCard.js).
 // CSRF is added automatically by the fetch wrapper in src/csrf.js.
 
+import { captureTabSelections, restoreTabSelections } from '../utils/tabSelections.js';
+
 const ENDPOINT = '/v1/shortcodes/deferred';
 
 // A single IntersectionObserver serves every <lazy-shortcode> on the page. It
@@ -54,49 +56,60 @@ async function fetchDeferred(token) {
 // so without this a reload would refresh everything the server expanded and leave
 // every Alpine binding beside it showing the snapshot it was asked to replace.
 //
-// Only a scope that already exposes an entity is touched: surfaces that never had
-// one (a share page, the authoring preview) must not have one invented for them.
+// Only a scope that already holds this same entity is touched: a deferred
+// [using] body renders the target without replacing the surrounding entity.
 function applyEntity(el, entity) {
   const alpine = window.Alpine;
   if (!entity || !alpine || typeof alpine.$data !== 'function') return;
   try {
     const scope = alpine.$data(el);
-    if (!scope || !('entity' in scope)) return;
-    if (!supersedes(entity, scope.entity)) return;
+    const current = scope?.entity;
+    if (!sameEntity(entity, current) || !isAtLeastAsRecent(entity, current)) return;
     // Merged, not replaced. The response carries the shape that is safe to send
     // to every surface, which is narrower than what a detail page put in scope:
     // replacing outright would make fields like entity.blocks vanish after the
     // first deferred fetch. Merging refreshes what the server sent and leaves the
     // rest at its page-load value. It cannot introduce anything the response
     // withheld, so a scope built without a share token never acquires one.
-    scope.entity = scope.entity ? { ...scope.entity, ...entity } : entity;
+    scope.entity = { ...current, ...entity };
   } catch (e) {
     /* a scope we cannot reach must never break the swap */
   }
 }
 
-// entityIsCurrent asks the same question as supersedes, but for the caller
-// deciding whether to install the HTML that came with this entity. The markup was
-// expanded server-side from exactly this snapshot, so it is precisely as stale:
+// entityIsCurrent checks whether to install the HTML that came with this entity.
+// It was expanded server-side from exactly this snapshot, so it is just as stale:
 // swapping it in while refusing the entity would leave old server-expanded values
 // sitting beside newer bindings.
 function entityIsCurrent(el, entity) {
   const alpine = window.Alpine;
   if (!entity || !alpine || typeof alpine.$data !== 'function') return true;
   try {
-    const scope = alpine.$data(el);
-    if (!scope || !('entity' in scope)) return true;
-    const current = scope.entity;
+    const current = alpine.$data(el)?.entity;
     // Only a scope holding this same entity can date the response. Where the
     // nearest scope belongs to something else — a card whose own markup carries
     // no x-data, so the page's entity is what resolves — it says nothing about
     // whether this render is stale, and refusing the swap would break that
     // reload outright. Guarding the write is enough there.
-    if (!current || current.ID == null || entity.ID == null || current.ID !== entity.ID) return true;
-    return supersedes(entity, current);
+    return !sameEntity(entity, current) || isAtLeastAsRecent(entity, current);
   } catch (e) {
     return true;
   }
+}
+
+// IDs are per entity type. Model JSON (including slim list cards) always emits
+// these distinct fields, even when no category or note type is assigned.
+function entityType(entity) {
+  if (Object.hasOwn(entity, 'resourceCategoryId')) return 'resource';
+  if (Object.hasOwn(entity, 'NoteTypeId')) return 'note';
+  if (Object.hasOwn(entity, 'CategoryId')) return 'group';
+  return null;
+}
+
+function sameEntity(incoming, current) {
+  if (current?.ID == null || incoming.ID !== current.ID) return false;
+  const type = entityType(incoming);
+  return type !== null && type === entityType(current);
 }
 
 // One Alpine scope can be shared by several deferred blocks, and each one's
@@ -105,10 +118,7 @@ function entityIsCurrent(el, entity) {
 // scope back over newer data a sibling block or an inline edit already put
 // there. The entity's own timestamp is what orders them; when it cannot be read
 // on both sides, the fresh render is still the better guess.
-function supersedes(incoming, current) {
-  if (!current) return true;
-  // A scope holding a different entity is not this response's to write.
-  if (current.ID != null && incoming.ID != null && current.ID !== incoming.ID) return false;
+function isAtLeastAsRecent(incoming, current) {
   const to = Date.parse(incoming.UpdatedAt);
   const from = Date.parse(current.UpdatedAt);
   if (!Number.isFinite(to) || !Number.isFinite(from)) return true;
@@ -249,7 +259,9 @@ export function reloadInto(host, contentEl, token, isStale, beforeSwap) {
       // refusing would leave nothing at all.
       if (!entityIsCurrent(contentEl, entity)) return false;
       if (typeof beforeSwap === 'function') beforeSwap();
+      const tabSelections = captureTabSelections(contentEl);
       contentEl.innerHTML = html;
+      restoreTabSelections(contentEl, tabSelections);
       applyEntity(contentEl, entity);
       hydrate(contentEl);
       return true;
@@ -286,6 +298,9 @@ class LazyShortcode extends HTMLElement {
     this._loading = false;
     this._revealed = false;
     this._requestId = 0;
+    // Set by an enclosing <tabs-shortcode> while this block sits in a hidden
+    // panel, possibly before this element upgraded; see _rearmOrReveal.
+    this.suspended = this.suspended === true;
 
     // JS is present, so drop the <noscript> fallback and build our own region.
     this.innerHTML = '';
@@ -296,36 +311,50 @@ class LazyShortcode extends HTMLElement {
     this._observeOrReveal();
   }
 
+  // A morph lands here first, before refreshFromMorph: every server render
+  // seals a fresh token, so the attribute changes on each one.
   attributeChangedCallback(name, oldValue, newValue) {
-    if (name !== 'data-token' || oldValue === newValue || !this._init) return;
-    this._token = newValue || '';
-    this._resetContent();
-    if (this._revealed) this._reveal();
-    else this._observeOrReveal();
+    if (name === 'data-token' && oldValue !== newValue) this._queueRefresh();
   }
 
   disconnectedCallback() {
     this._unobserve();
   }
 
-  refreshFromMorph(toEl) {
-    if (!this._init) return;
+  refreshFromMorph() {
+    this._queueRefresh();
+  }
 
-    const nextToken = toEl?.getAttribute('data-token') || this.getAttribute('data-token') || '';
-    if (nextToken !== this._token) {
-      this._token = nextToken;
-      this._resetContent();
-      if (this._revealed) this._reveal();
-      else this._observeOrReveal();
+  _queueRefresh() {
+    if (!this._init || this._refreshQueued) return;
+    this._refreshQueued = true;
+    // A changed-token morph notifies us twice in the same turn. React once
+    // after the enclosing tabs have restored their selection and visibility.
+    queueMicrotask(() => {
+      this._refreshQueued = false;
+      if (!this.isConnected) return;
+      const nextToken = this.getAttribute('data-token') || '';
+      const active = this._revealed || this._loaded || this._loading;
+      if (nextToken !== this._token || active) {
+        this._token = nextToken;
+        this._resetContent();
+        this._rearmOrReveal(active);
+      } else {
+        this._observeOrReveal();
+      }
+    });
+  }
+
+  // A block inside a hidden [tabs] panel re-arms instead of fetching; it loads
+  // again when it next becomes visible. Without that, a morph would re-fetch
+  // every lazy tab the reader had ever opened, not just the one on screen.
+  _rearmOrReveal(wasActive) {
+    if (wasActive && !this.suspended) {
+      this._reveal();
       return;
     }
-
-    if (this._revealed || this._loaded || this._loading) {
-      this._resetContent();
-      this._reveal();
-    } else {
-      this._observeOrReveal();
-    }
+    this._revealed = false;
+    this._observeOrReveal();
   }
 
   // Public entry point for [reload]. The block is already revealed when a button

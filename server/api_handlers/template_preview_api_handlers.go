@@ -112,14 +112,16 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 		// [inspect] renders nothing there. Not for a stylesheet: the CustomCSS
 		// slot sends its CSS as Content, and the css buffer is CSS, where a panel
 		// is not something that can be shown.
-		htmlCtx := reqCtx
-		if !strings.HasSuffix(req.Slot, "CSS") {
-			htmlCtx = shortcodes.WithInspect(reqCtx)
+		contentIsCSS := strings.HasSuffix(req.Slot, "CSS")
+		cssCtx := shortcodes.WithinCSS(reqCtx)
+		contentCtx := cssCtx
+		if !contentIsCSS {
+			contentCtx = shortcodes.WithInspect(reqCtx)
 		}
-		html := shortcodes.Process(htmlCtx, req.Content, *metaCtx, renderer, executor)
+		html := shortcodes.Process(contentCtx, req.Content, *metaCtx, renderer, executor)
 		css := ""
 		if req.CSS != "" {
-			css = shortcodes.Process(reqCtx, req.CSS, *metaCtx, renderer, executor)
+			css = shortcodes.Process(cssCtx, req.CSS, *metaCtx, renderer, executor)
 		}
 
 		// Piggyback lint issues so the preview pane can show them without a second
@@ -132,6 +134,7 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 			// [partial] too, so the diagnostic is there whether the author is
 			// reading the editor gutter or the preview.
 			PartialExists: partialExistsFn(ctx),
+			ActionExists:  actionExistsFn(ctx.PluginManager(), auth.PluginActionAccessFor(request.Context(), ctx.PluginAllowsScopedPrincipals)),
 		}
 		// The slot says which document Content is, and nothing else does. An
 		// unnamed slot is deliberately *not* guessed at from the buffers: at a
@@ -140,7 +143,6 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 		// than adding to them, so reading markup as CSS silently drops the raw=
 		// "becomes real elements on the page" warning, which is the XSS one.
 		// Markup is the safe reading and was the endpoint's only one.
-		contentIsCSS := strings.HasSuffix(req.Slot, "CSS")
 		lintOpts.CSSMode = contentIsCSS
 		issues := shortcodes.Lint(req.Content, lintOpts)
 

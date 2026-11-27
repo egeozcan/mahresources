@@ -17,6 +17,8 @@ Detail-page descriptions process shortcodes. List-preview descriptions do not.
 
 ## Core Syntax
 
+In stylesheets, a bare built-in opener immediately after an ASCII letter, digit, `-`, `_`, `*`, `]`, or `|` stays literal (e.g. `form[action]` and `.w[tabs]`). An attributed shortcode still expands. `[comment]` is stripped before that rule applies.
+
 Built-in:
 
 ```text
@@ -102,13 +104,38 @@ Notes:
 
 Use `[property]` when the data is not in `Meta`.
 
+### `[excerpt]`
+
+Use for a short preview of long text on cards, panels, hover cards and `[mrql]`/`CustomMRQLResult` items: a note's gist, a resource's description, a Meta summary string. Prefer it to `[property path="Description"]` on any card, which prints the whole Markdown source with mention markers and has no length bound.
+
+Attrs:
+
+- `words` -- 1 to 200, default 30. Also capped at 12 Unicode code points per allowed word (CJK, URLs); the cut backs up over partial accents and joined emoji.
+- `field` -- one string field of this entity, default `Description`. No dot paths.
+- `path` -- a Meta string instead (not with `field`).
+- `more="Read more"` -- link to the entity's page, only when the text was cut. Its accessible name gets the entity's name appended.
+- `default="…"` -- escaped text when there is nothing to show.
+
+Rules:
+
+- Template comments and shortcodes are stripped without running them; mentions are shown as their names. Bare Markdown link/image labels, including trailing whitespace, are left for Markdown. The preview is one escaped line ending in `…` when cut, including any preview from a source longer than 16 KiB.
+- After Markdown conversion, it drops HTML comments, tags and all attributes (including image `alt` text), and skips the contents of `<script>`, `<style>`, `<textarea>`, `<title>`, `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>`, `<noscript>`, `<plaintext>`, `<template>` and elements with a `hidden` attribute. It does not apply CSS, `aria-hidden` or other browser visibility rules.
+- Without `more`, use it in text or inert quoted attributes such as `title="[excerpt words='25']"`, `data-*` and `aria-label`. Do not place it in script-bearing attributes, `srcdoc` or URL schemes; HTML escaping does not make those safe. A nonblank `more` in an attribute name or value is a lint error because it can emit link markup.
+- It never loads data: preview a related entity inside `[using]` or an `[mrql]` block.
+- No `more` link inside a `[reload]` face, in hover cards, or on the public share page.
+
+```html
+<p class="text-sm text-stone-600">[excerpt words="25" more="Read more"]</p>
+[mrql query="type = note ORDER BY updated DESC" limit="5"]<p><a href="[link]">[property path="Name"]</a>: [excerpt words="12"]</p>[/mrql]
+```
+
 ### `[calc]`
 
 Use for a number derived from other fields: a line total, a discounted price, a remaining budget, megapixels. Never store a redundant field for these; it goes stale on the next edit.
 
 Attrs:
 
-- `expr` -- required. Operands `meta.<path>`, `property.<Field>` (numeric struct fields only) and, at the top level of an `[each]` body, `item` / `item.<path>`; numeric literals (plain decimals, no exponent); `+ - * / %`, parentheses; functions `min`, `max` (1-8 args), `abs`, `round(x[, digits])` (half away from zero, digits 0-10), `coalesce(a, b, …)` (first argument that has a value).
+- `expr` -- required. Operands `meta.<path>`, `property.<Field>` (numeric struct fields only) and, at the top level of the item branch of `[each]` or `[relations]`, `item` / `item.<path>`; numeric literals (plain decimals, no exponent); `+ - * / %`, parentheses; functions `min`, `max` (1-8 args), `abs`, `round(x[, digits])` (half away from zero, digits 0-10), `coalesce(a, b, …)` (first argument that has a value).
 - `decimals=0..10` -- fixed fraction digits, trailing zeros kept. Unset: up to 10 digits, trailing zeros dropped.
 - `format=number|grouped|percent` -- `grouped` gives `1,234.50` (not locale-aware); `percent` multiplies by 100 and appends `%`.
 - `default="…"` -- escaped text when there is no numeric result.
@@ -118,7 +145,7 @@ Rules:
 - A Meta string counts only when it is wholly a decimal number of at most 64 bytes (`"12.50"` yes, `"12,5"` no). Missing, null, boolean, object, array, division by zero and overflow give no value, which renders `default` unless `coalesce` catches it: `coalesce(meta.discount, 0)`, `coalesce(meta.a / meta.b, 0)`.
 - Syntax errors, unknown names (`qty` without `meta.`), unknown functions, wrong arity, a bad `decimals`/`format`, or an expression past 512 bytes / 128 tokens / 32 levels / 32 references render the `⚠ calc` marker; the linter flags them.
 - Only Meta keys of ASCII letters, digits and `_`, not starting with a digit, can be referenced (`meta.unit-price` is `meta.unit - price`). Design the schema with `snake_case` keys for anything `[calc]` reads.
-- Output is a bare number, so it works inside attributes (`<meter value="[calc …]">`). Inside `[each]`, `item` is visible only at the top level of the body, as for `[item]`.
+- Output is a bare number, so it works inside attributes (`<meter value="[calc …]">`). `item` operands have no value outside the direct item branch (including inside nested blocks and in `[else]`), as for `[item]`.
 - It never queries, so it is safe on every card of a long list, on share pages and in `CustomMRQLResult`.
 - Accessibility: label derived numbers (a `<th scope="col">` header, or "Total due: …"), give a `<meter>` an `aria-label` and fallback text, and prefer `default="not set"` over a lone dash outside tables.
 
@@ -170,6 +197,25 @@ Deferral applies only on the main display pages; on share pages, the live previe
 [details summary="Nutrition"][meta path="calories"] kcal[/details]
 ```
 
+### `[tabs]`
+
+A block of **alternative sections as an accessible tab set** (WAI-ARIA tabs, manual activation). Each `[tab label="..." lazy="true|false"]...[/tab]` directly inside `[tabs label="..."]...[/tabs]` is one tab; the first is open on load. Reach for it when a header would otherwise stack several `[details]` blocks, or when the sections are alternatives a reader flips between (Overview / Open tasks / Files, Ingredients / Steps / Nutrition). For one optional section, keep `[details]`.
+
+- An eager tab renders with the page even while hidden. Put `lazy="true"` on every tab after the first that holds `[mrql]`, a gallery or a plugin data view: a lazy tab is a `[lazy]` block, fetched the first time it is opened, with `[lazy]`'s inline fallback on share pages, the live preview and the carrier slots.
+- A lazy tab inside `[using]` renders its shortcodes against the target without changing a different entity in the surrounding Alpine scope. An `[item]` from an enclosing `[each]` or `[relations]` is not available inside eager or lazy tabs.
+- Give the `[tabs]` a `label` when the page has more than one, and give every `[tab]` a short `label` (a blank one shows "Tab N").
+- Slots: use it in `CustomHeader`; in `CustomSidebar` keep to about three short labels; never in `CustomSummary` or another per-card slot.
+- Only a `[tab]` directly inside `[tabs]` counts. Tab-shaped text elsewhere stays literal without suppressing other shortcodes. A `[conditional]` cannot add a tab: put the `[conditional]` inside a tab. A `[tabs]` inside a tab works. Text between tabs is dropped, and `[tabs]` cannot go in a `[reload]` face.
+- Only the open panel takes up space; its content determines the height. In lightbox Info, Left and Right move tab focus without changing the displayed resource. Without JavaScript and in hover cards, all panels show stacked under their labels.
+- On `[reload]`, `[autorefresh]` or a page re-render, the selected tab is kept only for an unambiguous match. Identical repeated sets in the refreshed content start on their first tab. Focus follows the matched tab on `[autorefresh]` and page re-renders, or the equivalent `[reload]` button in the same panel when it replaces the set.
+
+```
+[tabs label="Project views"]
+  [tab label="Overview"][property path="Description"][/tab]
+  [tab label="Open tasks" lazy="true"][mrql query='type = note AND tags = "todo"' format="list"][/tab]
+[/tabs]
+```
+
 ### `[reload]`
 
 A button that **re-renders content on the server without navigating**. Both the self-closing and the block form are valid.
@@ -207,6 +253,28 @@ A block that **re-renders its body on the server after an inline editor saves** 
 [autorefresh][conditional path="status" eq="done"]<span class="badge">Done</span>[/conditional][/autorefresh]
 ```
 
+### `[action]`
+
+A **button that runs one registered plugin action (`mah.action`) on this entity**, as the person who clicks it, through the same `POST /v1/jobs/action/run` the actions menu uses. Inline only.
+
+- `plugin` and `name` (the action id) are required. `label` replaces the button text (and accessible name); `confirm` replaces the action's confirmation question, and `confirm=""` keeps it (a template can never remove one).
+- `param-<name>="…"` sets a parameter the action declares: `number` takes a number, `boolean` `true`/`false`, `select` one of its options, text types the value as written. `entity_ref` and `info` cannot be set; an `entity_ref` that defaults to the trigger gets this entity. A bad value renders a `⚠ action` marker naming the parameter. An action cannot run from a template when a required bulk-selection parameter is visible after `show_when`.
+- It renders an HTML comment, not a button, for viewers who cannot run the action (guests, read-only roles, group-limited accounts the plugin is not opened to), for entities excluded by the action or a visible trigger reference's filters, for a missing or disabled plugin, in Descriptions or note text blocks under login, on share pages, in the live preview, in hover cards and in direct MRQL API renders (`render=1`). Authorized `/mrql` list cards (`render=list`) can show the button. Check it on the real page, not in the live preview. Placement does not matter.
+- Visible trigger references are checked after overrides and `show_when`, before required-value validation: an excluded entity renders the unavailable comment even if a required value is missing.
+- If a refresh replaces or retargets the button while confirmation is open, accepting no longer submits the run. After submission, an in-place list refresh keeps an unchanged button busy; a retargeted button is usable immediately and stops watching the old Job without cancelling it.
+- If an in-place list refresh retargets a focused button, focus follows the original action only when one button in the refreshed list matches the same plugin, action, entity and parameters, and that button can take focus. Otherwise focus moves to the list.
+- A synchronous success shows its message, even if the response includes a legacy `job_id`. On observed success, the `[autorefresh]` blocks for the submitted entity refresh, along with the enclosing block if the button is unchanged. Put the content the action changes in `[autorefresh]`, with the button **first** in that block (or outside it) so focus returns to it.
+- Category stylesheets, including inline `[mrql]` result CSS, render the unavailable comment for an attributed `[action]`. Hover cards still omit the button when a deferred body loads or refreshes.
+- Name an action that exists in an enabled plugin and say so: the bundled `project-management` (`pm-set-status`, `pm-set-priority`, `pm-open-board`, …) and `fal-ai` (`upscale`, `colorize`, …) plugins register actions. The linter warns about an action that does not exist.
+
+```
+[autorefresh]
+  [action plugin="project-management" name="pm-set-status" label="Mark done" param-status="done"]
+  Status: [meta path="status"]
+[/autorefresh]
+[action plugin="fal-ai" name="upscale" label="Upscale (Topaz)" confirm="Upscale this image on fal.ai?" param-model="topaz"]
+```
+
 ### `[using]`
 
 A block that **renders its body with another group, resource or note as the entity**, so every shortcode inside (`[property]`, `[meta]`, `[conditional]`, `[each]`, `[link]`, `[mrql scope=…]`) reads the target.
@@ -229,6 +297,19 @@ Reach for it when a template needs fields from a related entity, typically the o
 [else]
   Unfiled
 [/using]
+```
+
+### `[relations]`
+
+A group's **typed relations** (GroupRelations) as nested native lists: one list per relation type, in type-name order, each entry a link to the group at the far end with its category in parentheses. `direction="out"` (default) lists edges from this group; `direction="in"` lists edges to it, labelled "Incoming: <type>". A type with a back relation stores the reverse edge as its own relation, so `out` already shows both halves of such a pair; use `in` only for types without one. `type="Depends on"` is an exact, case-sensitive name match across every type of that name (types are unique by name plus from/to categories). `limit` 1–100, default 20.
+
+As a block, each relation renders the body (inside its own `<li>`) against **this** group, with top-level `[item]`/`[calc]` reading the edge: `Name`, `Description`, `Type`, `Direction`, `GroupID`, `GroupName`, `GroupCategory`, `GroupURL`, and the far group's `GroupDescription` and `GroupMeta` (e.g. `[item path="GroupMeta.status"]`). `[else]` renders when there are none and has no item binding. `raw="true"` on `[item]` emits unsanitized values, including the far group’s description and Meta. In an `href` write `/group?id=[item path='GroupID']`; the linter warns on a bare `[item]` there.
+
+Only groups have relations (a comment elsewhere; wrap in `[using rel="owner"]` on a resource or note). Read as the viewer: an edge is listed only when both groups are visible, and hidden edges never count toward `limit`. One page-query budget unit per statement: one per `[relations]`, plus one when there are visible relations and a top-level `[item]` value path or `[calc]` `item` operand refers to `GroupDescription` or `GroupMeta`. Fallback text and references to the current group do not trigger the second query; unavailable lookups spend none. It is fine in `CustomSummary` (50 cards = 50 of the default 200 units). Pair it with SectionConfig `{"relations":{"state":"off"}}` (or `forwardRelations`/`reverseRelations: false`) so the built-in panels do not repeat it. Confined viewers can use MRQL `render=list` cards, not `render=1`. Unavailable on share pages, the entity picker and AI template tools; not allowed inside a `[reload]` face. The incoming index builds concurrently on PostgreSQL and before serving on SQLite.
+
+```
+[relations type="Depends on" limit="5"]
+[relations direction="in"]<a href="/group?id=[item path='GroupID']">[item path="GroupName"]</a> [item path="GroupMeta.status"][else]None[/relations]
 ```
 
 ### `[inspect]`
@@ -283,6 +364,25 @@ Event category example: a group category whose `MetaSchema` has `"date": {"type"
   <h2 id="events-h" class="text-sm font-semibold">Events</h2>
   [calendar mrql='type = "group" AND category = "Event"' date="meta.date" scope="entity"]
 </section>
+```
+
+### `[pivot]`
+
+A cross-tab of two fields over the entities an MRQL filter matches: one row per `rows` value, one column per `cols` value, a count (or sum) per cell, and row, column and grand totals, in an accessible `<table>` with a caption inside a keyboard-scrollable region. Attributes: `query` (required; a filter naming exactly one type through a top-level `type = …`, with no `GROUP BY`, `ORDER BY`, `LIMIT`, `OFFSET`, `SCOPE` or `$params`), `rows` and `cols` (required, different fields), `value` (`count` default or `sum`), `field` (with `sum`: `meta.<path>`, or `fileSize`/`width`/`height` on resources), `scope` (as `[mrql]`), `max-rows` (default 20, at most 50), `max-cols` (default 10, at most 20), `rows-label`, `cols-label`, `caption`.
+
+Tab reaches the scroll region. In lightbox Info, Left and Right scroll the focused region without changing the resource.
+
+A dimension is a `meta.<path>`, a text field (`name`, `contentType`, …), `fileSize`/`width`/`height`, a note's `shared` (yes/no), a relation by name (`owner`, `groups`, `tags`, `notes`, `resources`, `parent`, `children`) or a date bucket (`created.month`, `updated.year`, …). Refused: bare timestamps, ID fields, traversals, unbounded text (`description`, `originalName`, `originalLocation`, `url`), and SQL aliases over 63 bytes (including the `sum_` prefix for sums). Filter by refused fields in `query` instead, or shorten a Meta path to fit. Values equal up to ASCII case share a row, as do same-named groups. A multi-valued relation drops the totals that would double-count.
+
+Eligible counts link to `/mrql`. No links in sum pivots, truncated tables, or pivots scoped to a strict descendant of a confined viewer's allowed group. A count over MRQL's result limit or a composed filter over its query size limit or containing a carriage return (`\r`) does not link. Date buckets, `(none)`, and SQLite Meta axes with any numeric key do not support links that filter on them.
+
+`max-rows` and `max-cols` keep the values with the highest total count or sum, according to `value`. The separate SQL cutoff keeps at most 5000 combinations with the most items even in sum mode. Truncated count totals show `+`; truncated sum totals are partial, and all sums use `float64` (integers above `2^53` in magnitude can round).
+
+One aggregate statement plus a scope check for a confined viewer with concrete scope, one page-query budget unit on a cache miss; read as the viewer. Put it in `CustomHeader`, `CustomSidebar` or `CustomListHeader`, not a per-card slot. Inline only; not inside a `[reload]` face. It renders an "unavailable" comment without running a query on share pages and in hover cards, including deferred or refreshed hover-card bodies.
+
+```
+[pivot query="type = note AND meta.status IS NOT NULL" rows="meta.status" cols="owner" caption="Open work by owner"]
+[pivot query="type = resource" rows="contentType" cols="created.year" value="sum" field="fileSize"]
 ```
 
 ## Built-in Plugin Shortcodes
@@ -417,6 +517,7 @@ Use this order of preference:
 1. `[meta]` for schema-aware field rendering.
 2. `[property]` for built-in entity fields.
    - `[calc]` for numbers derived from either, instead of storing them.
+   - `[excerpt]` for a bounded preview of a Description or other long text on cards, instead of `[property path="Description"]`.
 3. `data-views` for presentation widgets.
 4. `meta-editors` for frequent inline edits.
 5. `[using]` for fields of one related entity (owner, Meta-referenced ID); `[mrql]` for related collections and rollups.

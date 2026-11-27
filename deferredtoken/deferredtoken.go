@@ -35,9 +35,14 @@ type payload struct {
 	T string `json:"t"` // entity type: "group", "resource", or "note"
 	I uint   `json:"i"` // entity ID
 	B string `json:"b"` // raw inner-template body to render on demand
-	// U marks a body that came from user content (a Description or text block
-	// under -auth), so its render must ignore raw="true" (#92).
-	U bool `json:"u,omitempty"`
+	RenderContext
+}
+
+// RenderContext carries the source and surface restrictions of the original
+// render. Both fields default to false for tokens minted before they existed.
+type RenderContext struct {
+	Untrusted     bool `json:"u,omitempty"` // user content under -auth (#92)
+	WithinTooltip bool `json:"h,omitempty"` // controls kept out of hover cards
 }
 
 // b64 is URL-safe base64 without padding, so tokens are safe in HTML attributes
@@ -59,13 +64,12 @@ func aeadFor(key []byte) (cipher.AEAD, error) {
 // Returns "" only if encryption cannot be performed, which does not happen with a
 // valid AES-GCM AEAD and a working CSPRNG.
 func Seal(key []byte, entityType string, entityID uint, body string) string {
-	return SealWithTrust(key, entityType, entityID, body, false)
+	return SealWithContext(key, entityType, entityID, body, RenderContext{})
 }
 
-// SealWithTrust is Seal that also records whether body came from user content,
-// which OpenWithTrust reports back.
-func SealWithTrust(key []byte, entityType string, entityID uint, body string, untrusted bool) string {
-	raw, err := json.Marshal(payload{T: entityType, I: entityID, B: body, U: untrusted})
+// SealWithContext seals the render restrictions alongside the raw body.
+func SealWithContext(key []byte, entityType string, entityID uint, body string, renderContext RenderContext) string {
+	raw, err := json.Marshal(payload{T: entityType, I: entityID, B: body, RenderContext: renderContext})
 	if err != nil {
 		return ""
 	}
@@ -87,33 +91,32 @@ func SealWithTrust(key []byte, entityType string, entityID uint, body string, un
 // with, or was sealed under a different key; the other returns are then zero
 // values and must not be used.
 func Open(key []byte, token string) (entityType string, entityID uint, body string, ok bool) {
-	entityType, entityID, body, _, ok = OpenWithTrust(key, token)
+	entityType, entityID, body, _, ok = OpenWithContext(key, token)
 	return entityType, entityID, body, ok
 }
 
-// OpenWithTrust is Open that also reports whether the body was sealed as user
-// content (SealWithTrust with untrusted set).
-func OpenWithTrust(key []byte, token string) (entityType string, entityID uint, body string, untrusted bool, ok bool) {
+// OpenWithContext is Open that also returns the original render restrictions.
+func OpenWithContext(key []byte, token string) (entityType string, entityID uint, body string, renderContext RenderContext, ok bool) {
 	sealed, err := b64.DecodeString(token)
 	if err != nil {
-		return "", 0, "", false, false
+		return "", 0, "", RenderContext{}, false
 	}
 	aead, err := aeadFor(key)
 	if err != nil {
-		return "", 0, "", false, false
+		return "", 0, "", RenderContext{}, false
 	}
 	ns := aead.NonceSize()
 	if len(sealed) < ns {
-		return "", 0, "", false, false
+		return "", 0, "", RenderContext{}, false
 	}
 	nonce, ciphertext := sealed[:ns], sealed[ns:]
 	raw, err := aead.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
-		return "", 0, "", false, false
+		return "", 0, "", RenderContext{}, false
 	}
 	var p payload
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return "", 0, "", false, false
+		return "", 0, "", RenderContext{}, false
 	}
-	return p.T, p.I, p.B, p.U, true
+	return p.T, p.I, p.B, p.RenderContext, true
 }

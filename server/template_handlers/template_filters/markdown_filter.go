@@ -25,6 +25,9 @@ func markDownFilter(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pong
 	// rich content authoring. With -auth on, accounts less trusted than an admin write the same
 	// text, so every page that renders a Description or a note text block passes this output
 	// through sanitize_under_auth (sanitize_filter.go) before shortcodes expand (#92).
+	// [excerpt] parses Markdown with the same extensions (excerptMarkdown in
+	// shortcodes/excerpt_handler.go); keep the two in step, which
+	// markdown_excerpt_parity_test.go checks.
 	converter := goldmark.New(
 		goldmark.WithExtensions(extension.GFM),
 		goldmark.WithParserOptions(
