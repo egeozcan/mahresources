@@ -371,23 +371,13 @@ func topLevelShortcodes(m *renderMeter, input string, tokens []token) []Shortcod
 	return result
 }
 
-// parseAttrs extracts key=value pairs from an attribute string.
-// Attribute values may be double-quoted, single-quoted, or unquoted.
-// When a key appears more than once, the last value wins.
-func parseAttrs(s string) map[string]string {
-	attrs, _ := parseAttrsLimit(s, -1)
-	return attrs
-}
-
-// parseAttrsLimit is parseAttrs that stops at limit attributes (limit < 0 means
-// no limit) and reports over=true when more were present, so a budgeted render
-// does not materialize every match of an attribute-heavy token.
-func parseAttrsLimit(s string, limit int) (attrs map[string]string, over bool) {
-	return parseAttrsReserve(s, limit, nil)
-}
-
-// parseAttrsReserve is parseAttrsLimit that asks reserve(n) for the n entries
-// about to be inserted, before the map is filled; false is "over".
+// parseAttrsReserve extracts key=value pairs from an attribute string. Values
+// may be double-quoted, single-quoted, or unquoted; when a key repeats, the
+// last value wins. It stops at limit attributes (limit < 0 means no limit) and
+// reports over=true when more were present, so a budgeted render does not
+// materialize every match of an attribute-heavy token. It asks reserve(n), when
+// set, for the n entries about to be inserted, before the map is filled; false
+// is "over".
 func parseAttrsReserve(s string, limit int, reserve func(n int) bool) (attrs map[string]string, over bool) {
 	attrs = make(map[string]string)
 	if s == "" {
