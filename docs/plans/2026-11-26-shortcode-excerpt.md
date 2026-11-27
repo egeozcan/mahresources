@@ -386,6 +386,7 @@ Round 2 validation: all three regressions reproduced on the integration base and
 #### Known limits
 
 - **Deferred:** A mention name that ends in shortcode-shaped bracket text can be damaged before mention protection. For example, shortcode stripping can remove `[link]` from `@[note:5:Notes [link]`, including the mention's closing bracket.
+- **Deferred (round 4):** an inline Markdown link whose label starts with a shortcode name and contains bracketed text (``[link to the `items[0]` example](/x)``) still loses the start of its label: the shortcode regex ends at the inner `]`. Multiword labels without inner brackets are kept (round 3).
 - The HTML scan matches explicit tags. It does not reproduce browser tree repair (including implied end tags), CSS, or other visibility rules. Use explicit closing tags around content marked `hidden`.
 
 ### Deviations from the plan

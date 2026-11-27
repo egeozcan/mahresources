@@ -147,6 +147,28 @@ describe('action-shortcode', () => {
     expect(document.activeElement).toBe(buttons[1]);
   });
 
+  it('reveals the original action when list morph focus moves to it', async () => {
+    const reveal = vi.fn();
+    const original = (Element.prototype as any).scrollIntoView;
+    (Element.prototype as any).scrollIntoView = reveal;
+    try {
+      const { button, morphList } = mount();
+      button.focus();
+      morphList(42, (incoming) => {
+        incoming.append(incoming.firstElementChild!.cloneNode(true));
+        (incoming.querySelector('action-shortcode') as HTMLElement).dataset.entityId = '43';
+      });
+      await settle();
+
+      const moved = document.querySelectorAll('action-shortcode > button')[1];
+      expect(document.activeElement).toBe(moved);
+      expect(reveal.mock.contexts).toEqual([moved]);
+      expect(reveal).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' });
+    } finally {
+      (Element.prototype as any).scrollIntoView = original;
+    }
+  });
+
   it('parks list morph focus when two hosts match the original action payload', async () => {
     const { host, button, morphList } = mount();
     button.focus();

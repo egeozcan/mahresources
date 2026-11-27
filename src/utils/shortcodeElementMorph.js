@@ -45,7 +45,13 @@ function captureActionFocus(container, active) {
     if (now === active && active.parentElement === host && actionPayloadIdentity(host) === identity) return;
     const matches = Array.from(container.querySelectorAll('action-shortcode'))
       .filter((candidate) => actionPayloadIdentity(candidate) === identity);
-    if (matches.length === 1 && focusOn(matches[0].querySelector(':scope > button'))) return;
+    const moved = matches.length === 1 ? matches[0].querySelector(':scope > button') : null;
+    if (moved && focusOn(moved)) {
+      // The original action may now sit outside the viewport; keep the focus
+      // indicator visible without jumping when it is already in view.
+      moved.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+      return;
+    }
 
     // Park on the list, not on another control. A boxless list may refuse
     // focus; try its ancestors instead of letting Enter activate a new target.

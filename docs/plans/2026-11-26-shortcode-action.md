@@ -388,4 +388,6 @@ Problems to fix before or during implementation:
 - When a watcher stops because the button was removed or retargeted, follow the submitted Job in the Jobs panel.
 - Round 3 deferred: a late redirect from a submitted action can still navigate away after the same button has been retargeted and used for a newer run.
 - Round 3 deferred: in the lightbox, holding Escape can close the viewer after the initial keydown cancels the confirmation; repeated keydowns arrive after the dialog has unmounted.
+- Round 4 deferred: if a list morph retargets the button while its confirmation is open, the dialog still returns focus to the reused (now retargeted) button on close. The old confirmation never posts; the next Enter opens a fresh confirmation for the new entity.
+- Round 4 fixed by the parent: when list-morph focus repair moves focus to the original action elsewhere in the list, it scrolls that button into view (`block: 'nearest'`), so the focus indicator stays visible.
 
