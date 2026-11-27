@@ -1487,7 +1487,7 @@ The button starts from the action's own defaults, the way the action dialog does
 | `entity_ref`, `info` | cannot be set | `⚠ action` marker: "cannot be set from a template" |
 | not declared | -- | `⚠ action` marker: "no such parameter" |
 
-The result then goes through the action's own checks (required fields, `min`/`max`, options, `show_when`), and the first failure becomes the marker's text, so a mistake shows on the page rather than as a refusal on every click. The marker is only shown to viewers who could run the action. Values are literal: a shortcode written inside an attribute value is not expanded. Parameter values are visible in the page source, as the defaults are in the action dialog.
+After defaults and overrides are applied, `show_when` removes hidden parameters. If a visible trigger reference excludes this entity, the shortcode emits the unavailable comment before checking required values, `min`/`max` or options. Otherwise the first validation failure becomes the marker's text, so a mistake shows on the page rather than as a refusal on every click. Values are literal: a shortcode written inside an attribute value is not expanded. Parameter values are visible in the page source, as the defaults are in the action dialog.
 
 An action with a visible, required `entity_ref` parameter whose default is `selection` needs a bulk selection and cannot run from a template. It renders the marker "needs a bulk selection and cannot run from a template". A parameter hidden by `show_when` after template overrides does not impose that requirement.
 
@@ -1511,11 +1511,11 @@ The hover-card exception also applies after a deferred body loads or an `[autore
 ### What happens on a click
 
 - The app asks for confirmation first when required. Declining does nothing. If a refresh removes the button or changes what it would run while the dialog is open, accepting the old confirmation does nothing either.
-- While the run is in flight the button is marked `aria-disabled="true"` (it keeps focus) and further clicks are ignored. The text next to the button reads "Running…".
-- A synchronous action shows its message (or "Done") next to the button and announces it. A refusal, a validation error or a failed request shows and announces the reason instead; a Job handle returned with a refusal is not followed.
-- An `async` action starts a Job; the button reads "Started" and then follows the Job every 2 seconds until it finishes, the button is removed, or 5 minutes pass. At the deadline it reads "Still running. Follow it in the Jobs panel." The Jobs panel is never opened for you, and stopping the watcher does not cancel the Job.
+- While the run is in flight the button is marked `aria-disabled="true"` (it keeps focus) and further clicks are ignored. The text next to the button reads "Running…". An in-place list refresh keeps the busy state if the button is unchanged; if the button now targets another entity or action, it is ready to use and the previous run no longer controls it.
+- A synchronous action shows its message (or "Done") next to the button and announces it, even if its result includes a legacy `job_id`. A refusal, a validation error or a failed request shows and announces the reason instead; a Job handle returned with a refusal is not followed.
+- An `async` action starts a Job; the button reads "Started" and then follows the Job every 2 seconds until it finishes, the button is removed or retargeted, or 5 minutes pass. At the deadline it reads "Still running. Follow it in the Jobs panel." The Jobs panel is never opened for you, and stopping the watcher does not cancel the Job.
 - An action that answers with a redirect navigates there unless it refused the run.
-- After a successful run, the `[autorefresh]` blocks for the submitted entity re-render, along with the enclosing block if the button still represents that run. The page is never reloaded, so wrap what the action changes in `[autorefresh]`:
+- When the button observes a successful run, the `[autorefresh]` blocks for the submitted entity re-render, along with the enclosing block if the button still represents that run. The page is never reloaded, so wrap what the action changes in `[autorefresh]`:
 
 ```
 [autorefresh]

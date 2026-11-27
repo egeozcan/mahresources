@@ -370,3 +370,14 @@ Problems to fix before or during implementation:
 - `TestActionResolver_VisibleTriggerReferenceMustMatchItsOwnFilter` checks the unavailable result for a visible mismatching trigger ref, and allows a matching or hidden ref. `TestActionResolver_SelectionRequiredOnlyWhenVisible` checks defaults and a `param-*` override that exposes the required selection.
 - `TestActionShortcode_MRQLRenderModes` pins the existing surface split: `render=list` can draw authorized buttons; `render=1` has no action resolver. `TestActionShortcode_DeferredDescriptionKeepsSourceTrust` sends real page-minted tokens through the deferred endpoint under auth: the Description yields the unavailable comment and the trusted template yields the button.
 
+### Round 2 follow-up
+
+- **Run ownership through list refreshes.** An unchanged action host reapplies its busy state after Alpine patches its children. Changing its action attributes or disconnecting releases the control and stops its progress watcher, not the submitted Job. A stale synchronous reply still reports and refreshes the submitted entity but cannot update or unlock a newer run. The same-target, retarget-during-poll and stale-POST tests in `actionShortcode.test.ts` all use the production list morph helper.
+- **Response handling.** HTTP 202 or `canonicalJobId` indicates async submission; a legacy `job_id` alone does not. The HTTP 200 success regression checks the exact reply shape, status message, announcement and refresh events.
+- **Required params.** The resolver applies defaults, overrides and visibility, then checks trigger-reference eligibility before validating final values. `TestActionResolver_TriggerReferenceEligibilityPrecedesRequiredParams` checks the exact PNG unavailable comment and the required-text marker on a JPEG.
+- **Validation.** The regressions failed before the fixes. The targeted Go and Vitest tests, broader shortcode/internal/template-handler Go tests, focused action and render-context API tests, CSS scan, and all six action functional, accessibility and auth E2E tests passed. The initial concurrent Vitest run timed out in three schema-editor adversarial tests; the full run with four workers passed all 2,694 tests. Go vet still reports only the unchanged copied-lock finding in `application_context/job_download_progress_test.go:99`. No SQL changed.
+
+### Known limits
+
+No action items were deferred in round 2. When a watcher stops because the button was removed or retargeted, follow the submitted Job in the Jobs panel.
+

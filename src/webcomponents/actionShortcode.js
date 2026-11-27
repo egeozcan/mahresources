@@ -52,8 +52,7 @@ export class ActionShortcode extends HTMLElement {
 
   _payloadVersion = 0;
   _attachmentVersion = 0;
-  _running = false;
-  _jobPoll = null;
+  _activeRun = null;
 
   connectedCallback() {
     if (this._init) return;
@@ -72,14 +71,26 @@ export class ActionShortcode extends HTMLElement {
     if (before === after) return;
     this._payloadVersion++;
     this._statusElement()?.replaceChildren();
+    this._finish(this._activeRun);
   }
 
   disconnectedCallback() {
     this._attachmentVersion++;
-    if (this._running) this._statusElement()?.replaceChildren();
+    if (this._activeRun) this._statusElement()?.replaceChildren();
     // A submitted synchronous action can still report its result; only the
     // progress watcher is tied to this attachment of the button.
-    if (this._jobPoll) this._finish();
+    this._finish(this._activeRun);
+  }
+
+  refreshFromMorph() {
+    const run = this._activeRun;
+    if (!run?.status) return;
+    // Alpine calls the host's hook before patching the server-owned children.
+    queueMicrotask(() => {
+      if (this._activeRun !== run || !this._isCurrent(run)) return;
+      this.querySelector(':scope > button')?.setAttribute('aria-disabled', 'true');
+      this._setStatus(run, run.status);
+    });
   }
 
   get _label() {
@@ -97,8 +108,7 @@ export class ActionShortcode extends HTMLElement {
   async _activate() {
     // aria-disabled rather than disabled, so focus stays on the button while it
     // runs; this guard is what makes it inert.
-    if (this._running) return;
-    this._running = true;
+    if (this._activeRun) return;
     // List morphs reuse hosts by position. Freeze the request before asking,
     // and treat a changed or disconnected host as a cancelled confirmation.
     const { plugin, action, entityType, params, confirm } = this.dataset;
@@ -111,6 +121,7 @@ export class ActionShortcode extends HTMLElement {
       label: this._label,
       body: JSON.stringify({ plugin, action, entity_ids: [entityId], params: parseParams(params) }),
     };
+    this._activeRun = run;
     let keepRunning = false;
     try {
       if (confirm) {
@@ -125,7 +136,7 @@ export class ActionShortcode extends HTMLElement {
       if (!this._isCurrent(run)) return;
       keepRunning = await this._run(run);
     } finally {
-      if (!keepRunning) this._finish();
+      if (!keepRunning) this._finish(run);
     }
   }
 
@@ -161,8 +172,8 @@ export class ActionShortcode extends HTMLElement {
       window.location.href = data.redirect;
       return false;
     }
-    if (resp.status === 202 || data?.job_id || data?.canonicalJobId) {
-      if (!this._isAttached(run)) return false;
+    if (resp.status === 202 || data?.canonicalJobId) {
+      if (!this._isCurrent(run)) return false;
       this._setStatus(run, 'Started');
       announce(`${run.label}: started`);
       const jobId = data?.canonicalJobId;
@@ -196,7 +207,7 @@ export class ActionShortcode extends HTMLElement {
       } catch {
         if (signal.aborted) return;
         this._fail(run, "Could not read the job's progress");
-        this._finish();
+        this._finish(run);
         return;
       }
       const state = String(job?.state || '').toLowerCase();
@@ -204,18 +215,18 @@ export class ActionShortcode extends HTMLElement {
         const outcome = presentState(job).label;
         if (state === 'succeeded') this._succeed(run, outcome);
         else this._fail(run, outcome);
-        this._finish();
+        this._finish(run);
         return;
       }
-      this._jobPoll.timer = setTimeout(tick, POLL_MS);
+      run.poll.timer = setTimeout(tick, POLL_MS);
     };
-    this._jobPoll = {
+    run.poll = {
       controller,
       timer: setTimeout(tick, POLL_MS),
       deadline: setTimeout(() => {
         this._setStatus(run, FOLLOW_IN_PANEL);
         announce(`${run.label}: ${FOLLOW_IN_PANEL}`);
-        this._finish();
+        this._finish(run);
       }, POLL_WINDOW_MS),
     };
   }
@@ -238,15 +249,15 @@ export class ActionShortcode extends HTMLElement {
     announce(`${run.label}: ${message}`, true);
   }
 
-  _finish() {
-    if (this._jobPoll) {
-      const { controller, timer, deadline } = this._jobPoll;
-      this._jobPoll = null;
+  _finish(run) {
+    if (!run || this._activeRun !== run) return;
+    this._activeRun = null;
+    if (run.poll) {
+      const { controller, timer, deadline } = run.poll;
       clearTimeout(timer);
       clearTimeout(deadline);
       controller.abort();
     }
-    this._running = false;
     this.querySelector(':scope > button')?.removeAttribute('aria-disabled');
   }
 
@@ -256,6 +267,7 @@ export class ActionShortcode extends HTMLElement {
 
   _setStatus(run, text) {
     if (!this._isCurrent(run)) return;
+    run.status = text;
     const status = this._statusElement();
     if (status) status.textContent = text;
   }

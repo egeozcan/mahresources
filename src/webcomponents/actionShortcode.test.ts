@@ -4,6 +4,9 @@
 // endpoint does to the status text, the live region and the [autorefresh]
 // signal, and how an async run is followed.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import Alpine from 'alpinejs';
+import morph from '@alpinejs/morph';
+import { morphAndReinitChangedComponents } from '../utils/shortcodeElementMorph.js';
 
 const askToConfirm = vi.fn();
 vi.mock('../components/confirmDialog.js', () => ({ askToConfirm: (...args: any[]) => askToConfirm(...args) }));
@@ -17,6 +20,7 @@ let events: { type: string; detail: any }[];
 const record = (e: Event) => events.push({ type: e.type, detail: (e as CustomEvent).detail });
 
 beforeAll(async () => {
+  Alpine.plugin(morph);
   ({ POLL_MS } = await import('./actionShortcode.js'));
 });
 
@@ -41,13 +45,26 @@ afterEach(() => {
 
 function mount({ confirm = '', async = false, params = '{"scale":2,"tag":"x"}' } = {}) {
   document.body.innerHTML =
-    `<action-shortcode data-plugin="fal-ai" data-action="upscale" data-entity-type="resource" data-entity-id="42"` +
+    `<div class="list-container"><article><action-shortcode data-plugin="fal-ai" data-action="upscale" data-entity-type="resource" data-entity-id="42"` +
     ` data-async="${async}" data-label="Upscale image"` +
     (confirm ? ` data-confirm="${confirm}"` : '') +
     ` data-params='${params}'>` +
-    `<button type="button" class="action-shortcode-button">Upscale image</button><span class="action-shortcode-status"></span></action-shortcode>`;
-  const host = document.querySelector('action-shortcode') as HTMLElement;
-  return { host, button: host.querySelector('button') as HTMLButtonElement, status: host.querySelector('.action-shortcode-status') as HTMLElement };
+    `<button type="button" class="action-shortcode-button">Upscale image</button><span class="action-shortcode-status"></span></action-shortcode></article></div>`;
+  const list = document.querySelector('.list-container')!;
+  const host = list.querySelector('action-shortcode') as HTMLElement;
+  const serverHTML = list.outerHTML;
+  return {
+    host,
+    button: host.querySelector('button') as HTMLButtonElement,
+    status: host.querySelector('.action-shortcode-status') as HTMLElement,
+    morphList(entityId: number) {
+      vi.stubGlobal('Alpine', Alpine);
+      const incoming = new DOMParser().parseFromString(serverHTML, 'text/html').querySelector('.list-container')!;
+      (incoming.querySelector('action-shortcode') as HTMLElement).dataset.entityId = String(entityId);
+      morphAndReinitChangedComponents(list, incoming);
+      expect(list.querySelector('action-shortcode')).toBe(host);
+    },
+  };
 }
 
 function answer(status: number, body: any) {
@@ -110,19 +127,35 @@ describe('action-shortcode', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('completes against the submitted entity without capturing or updating a repurposed host', async () => {
-    const { host, button, status } = mount();
+  it('completes a retargeted POST against its submitted entity without unlocking the newer run', async () => {
+    const { host, button, status, morphList } = mount();
     let reply!: (value: any) => void;
-    fetchMock.mockReturnValue(new Promise((resolve) => { reply = resolve; }));
+    let replyNew!: (value: any) => void;
+    fetchMock.mockReturnValueOnce(new Promise((resolve) => { reply = resolve; }));
+    fetchMock.mockReturnValueOnce(new Promise((resolve) => { replyNew = resolve; }));
     button.click();
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).entity_ids).toEqual([42]);
-    host.dataset.entityId = '43';
-    host.dataset.label = 'Other action';
+    morphList(43);
+    await settle();
+    expect(button.hasAttribute('aria-disabled')).toBe(false);
+    button.click();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).entity_ids).toEqual([43]);
+
     reply(answer(200, { success: true, message: 'Upscaled' }));
     await settle();
     expect(events.at(-1)?.detail).toEqual({ entityType: 'resource', entityId: 42, source: null });
-    expect(status.textContent).toBe('');
+    expect(status.textContent).toBe('Running…');
     expect(announce).toHaveBeenLastCalledWith('Upscale image: Upscaled', { assertive: false });
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    button.click();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    replyNew(answer(200, { success: true, message: 'Also upscaled' }));
+    await settle();
+    expect(events.at(-1)?.detail).toEqual({ entityType: 'resource', entityId: 43, source: host });
+    expect(status.textContent).toBe('Also upscaled');
+    expect(button.hasAttribute('aria-disabled')).toBe(false);
   });
 
   it('reports a synchronous success and signals autorefresh: saving, then updated, with no meta', async () => {
@@ -143,6 +176,22 @@ describe('action-shortcode', () => {
     expect(events[0].detail).toEqual({ source: host });
     expect(events[1].detail).toEqual({ entityType: 'resource', entityId: 42, source: host });
     expect('meta' in events[1].detail).toBe(false);
+    expect(button.hasAttribute('aria-disabled')).toBe(false);
+  });
+
+  it('reports the message and refreshes after HTTP 200 success with a legacy job_id', async () => {
+    vi.useFakeTimers();
+    const { host, button, status } = mount();
+    fetchMock.mockResolvedValueOnce(answer(200, { success: true, message: 'Marked reviewed', job_id: 'legacy-1' }));
+    button.click();
+    await vi.advanceTimersByTimeAsync(POLL_MS * 2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(status.textContent).toBe('Marked reviewed');
+    expect(announce).toHaveBeenLastCalledWith('Upscale image: Marked reviewed', { assertive: false });
+    expect(events).toEqual([
+      { type: 'meta-shortcode-saving', detail: { source: host } },
+      { type: 'meta-shortcode-updated', detail: { entityType: 'resource', entityId: 42, source: host } },
+    ]);
     expect(button.hasAttribute('aria-disabled')).toBe(false);
   });
 
@@ -257,6 +306,56 @@ describe('action-shortcode', () => {
 
       await vi.advanceTimersByTimeAsync(POLL_MS * 3);
       expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('keeps the same action busy through a list morph', async () => {
+      const { host, button, status, morphList } = await startAsync();
+      morphList(42);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(button.getAttribute('aria-disabled')).toBe('true');
+      expect(status.textContent).toBe('Started');
+      button.click();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      fetchMock.mockResolvedValueOnce(answer(200, { id: 'job-1', state: 'succeeded' }));
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      expect(fetchMock.mock.calls[1][0]).toBe('/v1/jobs/job-1');
+      expect(button.hasAttribute('aria-disabled')).toBe(false);
+      expect(status.textContent).toBe('Succeeded');
+      expect(events.at(-1)?.detail).toEqual({ entityType: 'resource', entityId: 42, source: host });
+    });
+
+    it('releases a retargeted action during polling without cancelling its Job', async () => {
+      const { host, button, status, morphList } = await startAsync();
+      let replyOldPoll!: (value: any) => void;
+      fetchMock.mockReturnValueOnce(new Promise((resolve) => { replyOldPoll = resolve; }));
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      const oldSignal = fetchMock.mock.calls[1][1].signal;
+      expect(oldSignal.aborted).toBe(false);
+
+      morphList(43);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(oldSignal.aborted).toBe(true);
+      expect(button.hasAttribute('aria-disabled')).toBe(false);
+      expect(status.textContent).toBe('');
+      fetchMock.mockResolvedValueOnce(answer(202, { canonicalJobId: 'job-2' }));
+      button.click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchMock).toHaveBeenCalledTimes(3); // No server request to cancel job-1.
+      expect(JSON.parse(fetchMock.mock.calls[2][1].body).entity_ids).toEqual([43]);
+      expect(status.textContent).toBe('Started');
+
+      replyOldPoll(answer(200, { id: 'job-1', state: 'succeeded' }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(button.getAttribute('aria-disabled')).toBe('true');
+      expect(events).toEqual([]);
+      expect(status.textContent).toBe('Started');
+
+      fetchMock.mockResolvedValueOnce(answer(200, { id: 'job-2', state: 'succeeded' }));
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      expect(fetchMock.mock.calls[3][0]).toBe('/v1/jobs/job-2');
+      expect(button.hasAttribute('aria-disabled')).toBe(false);
+      expect(events.at(-1)?.detail).toEqual({ entityType: 'resource', entityId: 43, source: host });
     });
 
     it('reads a partial success as one', async () => {
