@@ -1918,8 +1918,8 @@ Prev and Next buttons swap the month in place, without a page load, through the 
 | `value` | No | `count` | `count` (entities per cell) or `sum` (of `field`). Averages, minimums and maximums are left out because their totals cannot be built by adding cells. |
 | `field` | With `value="sum"` | | The field to add up: `meta.<path>`, or `fileSize`, `width` or `height` on resources. Set without `value="sum"` it is ignored, and the linter says so. |
 | `scope` | No | `entity` | As on [`[mrql]`](#scope): `entity` (the entity's own group), `parent`, `root`, `global`, or a group ID. The linter warns on any other value, which counts in the entity's own group. |
-| `max-rows` | No | `20` | How many row values are shown, most items first. At most 50; an invalid value or one below 1 means the default. |
-| `max-cols` | No | `10` | How many column values are shown, most items first. At most 20, with the same fallback. |
+| `max-rows` | No | `20` | How many row values are kept, ranked by highest total count or sum, as set by `value`. At most 50; an invalid value or one below 1 means the default. |
+| `max-cols` | No | `10` | How many column values are kept, ranked by highest total count or sum, as set by `value`. At most 20, with the same fallback. |
 | `rows-label` | No | the `rows` field without `meta.` | The heading of the row-label column, also used in the caption and the link names. |
 | `cols-label` | No | the `cols` field without `meta.` | The name of the column field in the caption and the link names. |
 | `caption` | No | `Count by <rows> and <cols>`, or `Sum of <field> by <rows> and <cols>` | The table caption, which also names the scroll region. |
@@ -1964,9 +1964,9 @@ A multi-valued relation (`tags`, `groups`, `notes`, `resources`, `children`) put
 
 ### Caps and truncation
 
-Rows are ranked by their total, highest first, with ties broken by label, and the top `max-rows` are shown; columns likewise with `max-cols`. A note under the table says how many values are not shown. A date bucket is still shown oldest first among the values kept.
+Rows are ranked by their total count or sum, highest first, with ties broken by label, and the top `max-rows` are shown; columns likewise with `max-cols`. A note under the table says how many values are not shown. A date bucket is still shown oldest first among the values kept.
 
-The table uses at most 5000 (row, column) combinations, those with the most items first (with ties broken by the two fields, so a render is stable). Past that the table says "Only the 5000 combinations with the most items were counted", combinations it did not read show `—` (read as "not counted"), and nothing is linked. Count totals are marked `+` (read as "or more"); sum totals are marked `(partial)`, because omitted values can raise or lower a sum. Narrow the query.
+Before the display caps apply, the query keeps at most 5000 (row, column) combinations, those with the most items first even in sum mode. It orders ties by the two field values; distinct relations with the same displayed name can still tie at the cutoff. Past that the table says "Only the 5000 combinations with the most items were counted", combinations it did not read show `—` (read as "not counted"), and nothing is linked. Count totals are marked `+` (read as "or more"); sum totals are marked `(partial)`, because omitted values can raise or lower a sum. Narrow the query.
 
 ### Links
 
@@ -1974,9 +1974,10 @@ In count mode eligible cells and totals link to the [MRQL page](./mrql.md) for w
 
 No links appear:
 
-- in sum mode, a truncated table, or a hover card;
+- in sum mode or a truncated table;
 - when a confined viewer's pivot counts a strict descendant of their allowed group: the MRQL page would list the viewer's full subtree instead;
 - when a cell or total exceeds the default MRQL result limit, or its composed filter (including any `SCOPE` clause) exceeds MRQL's 32 KiB query limit;
+- when the composed filter contains a carriage return (`\r`), which the MRQL editor would normalize to a line feed. Totals whose filters do not contain a carriage return can still link;
 - for date buckets and the `(none)` row or column;
 - for cells or totals that depend on a Meta dimension with any numeric key on SQLite. SQLite can group an integer and a real number together even though their text comparisons differ; a text key on that axis can match the same number too. Totals that do not filter by the affected dimension can still link;
 - for a multi-valued relation's row or column that merged two values in one cell, such as two groups named Inbox and inbox, where one note in both would be counted twice by the cell and once by the link.
@@ -2002,7 +2003,7 @@ One known mismatch remains: PostgreSQL's `LOWER` folds non-ASCII letters too, so
 </div>
 ```
 
-- The scroll region is named by the caption. On pages, including the lightbox, it is reachable with Tab so a wide table can be scrolled from the keyboard. In a hover card it has no tab stop.
+- The scroll region is named by the caption. On pages, including the lightbox, it is reachable with Tab so a wide table can be scrolled from the keyboard.
 - Every column header is `scope="col"` and every row header, the Total row included, `scope="row"`.
 - Each link's name starts with its visible number and names the row and column it counts.
 - Colour never carries meaning on its own: an empty combination is a written `0`.
@@ -2015,7 +2016,7 @@ One known mismatch remains: PostgreSQL's `LOWER` folds non-ASCII letters too, so
 - No index serves a `meta.*` grouping. On a large library, narrow `query` by type plus a category, note type, owner or date range, and keep the default entity scope rather than `scope="global"`. Two multi-valued dimensions multiply the rows the query joins; see the junction-join note in the [MRQL reference](./mrql-reference.md).
 - Put pivots in `CustomHeader`, `CustomSidebar` or `CustomListHeader`, not in a per-card slot, where every card runs its own query.
 
-`[pivot]` cannot be used inside a `[reload]` button face. On share pages it renders `<!-- mr:pivot unavailable in this context -->`.
+`[pivot]` cannot be used inside a `[reload]` button face. On share pages and in hover cards (including deferred or refreshed hover-card bodies) it renders `<!-- mr:pivot unavailable in this context -->` without running a query. A hover card cannot be entered with the keyboard to scroll a wide table.
 
 `pivot` is now a reserved shortcode name: text written as `[pivot …]` in an existing template renders the table (or an error box) instead of showing as text.
 

@@ -558,6 +558,19 @@ I checked the plan's code claims and most of them hold. These are correct as sta
 
 Round 1 validation: the shortcode, internal, template-handler and focused MRQL application suites passed, as did the SQLite and PostgreSQL pivot API tests, the CSS scan, and all 7 pivot browser tests. Removing the SQL junction-visibility check via a Go overlay made both joined-label tests fail. Vet reported only the existing copylocks finding below.
 
+### Round 2 integration review follow-up
+
+- Links are suppressed when their final filter contains a carriage return, since the MRQL editor would rewrite it as a line feed. Totals that do not depend on the affected filter still link. `TestPivotLinkQueryRejectsCarriageReturns` covers CR and CRLF keys, a CRLF in the base filter, and an LF-only control.
+- Hover cards now get the unavailable comment without running the pivot query, instead of a table that may require horizontal scrolling in a tooltip that keyboard users cannot enter. `TestPivotShortcode_UnavailableInTooltip` checks both eager and deferred hover-card bodies and keeps the detail page as a control.
+- Built-in help, the shortcode reference and the category-designer skill distinguish the display caps (highest total count or sum) from the SQL cutoff (most items per combination, even in sum mode). `TestPivotSumCapsRankBySumNotItemCount` checks both display caps.
+
+Round 2 validation: the carriage-return and hover-card regressions failed before the fixes and passed afterward. The shortcode, internal and template-handler suites, focused SQLite and PostgreSQL pivot API tests, CSS scan and all 7 pivot browser tests passed. Vet reported only the pre-existing `application_context/job_download_progress_test.go:99` copylocks finding.
+
+### Known limits
+
+- The 5000-combination cutoff does not bound the bytes in a Meta dimension key. As with any MRQL `GROUP BY` over Meta, the executor can load large keys before display caps are applied. Bounding projected key bytes belongs in the executor; use short Meta labels as dimensions in the meantime.
+- Distinct relations with the same displayed name can still tie at the SQL cutoff. A tie can change which amount contributes to a truncated sum. Truncated tables are already marked partial and have no links.
+
 ### Not verified / risks
 
 - The full E2E suite was not run (shared machine, per the brief); the pivot specs and the nearest neighbours (shortcode, calendar, adjacent, calc, lint, autocomplete, template preview, category authoring a11y) were.

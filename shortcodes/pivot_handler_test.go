@@ -572,6 +572,17 @@ func TestPivotSumModeHasNoLinks(t *testing.T) {
 	assert.Equal(t, []string{"Total", "2", "1.25", "3.25"}, visible(g.foot))
 }
 
+func TestPivotSumCapsRankBySumNotItemCount(t *testing.T) {
+	rows := []map[string]any{row("many", "ann", int64(2)), row("few", "bob", int64(1))}
+	rows[0]["sum_meta.hours"] = 2
+	rows[1]["sum_meta.hours"] = 10
+	attrs := statusAttrs("value", "sum", "field", "meta.hours", "max-rows", "1", "max-cols", "1")
+	g := parsePivot(t, renderPivot(t, attrs, &fakePivotExecutor{rows: rows}))
+	assert.Equal(t, []string{"status", "bob", "Total"}, visible(g.head))
+	assert.Equal(t, [][]string{{"few", "10", "10"}}, g.bodyVisible())
+	assert.Equal(t, []string{"Total", "10", "12"}, visible(g.foot))
+}
+
 func TestPivotReadsPostgresShapedValues(t *testing.T) {
 	g := parsePivot(t, renderPivot(t, statusAttrs("value", "sum", "field", "meta.hours"), &fakePivotExecutor{rows: []map[string]any{
 		{"meta.status": []byte("open"), "meta.assignee": "ann", "count": "3", "sum_meta.hours": []byte("12.5")},
@@ -647,6 +658,37 @@ func TestPivotTruncatedSignedSumsArePartial(t *testing.T) {
 	assert.Equal(t, "1 (partial)", g.foot[1].visible)
 	assert.Contains(t, out, "Totals are partial sums.")
 	assert.NotContains(t, out, "or more</span>")
+}
+
+func TestPivotLinkQueryRejectsCarriageReturns(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		linkable    bool
+	}{
+		{"CR", "line1\rline2", false},
+		{"CRLF", "line1\r\nline2", false},
+		{"LF", "line1\nline2", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := parsePivot(t, renderPivot(t, statusAttrs(), &fakePivotExecutor{rows: []map[string]any{row(tc.value, "ann", int64(1))}}))
+			assert.Equal(t, "1", g.body[0][1].visible)
+			assert.Equal(t, "1", g.body[0][2].visible)
+			assert.Equal(t, tc.linkable, g.body[0][1].href != "", "cell link")
+			assert.Equal(t, tc.linkable, g.body[0][2].href != "", "row total link")
+			assert.Equal(t, `(type = note) AND meta.assignee = "ann" SCOPE 7`, linkQuery(t, g.foot[1].href))
+			assert.Equal(t, `(type = note) SCOPE 7`, linkQuery(t, g.foot[2].href))
+		})
+	}
+
+	t.Run("base filter", func(t *testing.T) {
+		f := &fakePivotExecutor{rows: []map[string]any{row("open", "ann", int64(1))}}
+		attrs := statusAttrs("query", "type = note AND name = \"line1\r\nline2\"")
+		g := parsePivot(t, renderPivot(t, attrs, f))
+		assert.Equal(t, [][]string{{"open", "1", "1"}}, g.bodyVisible())
+		for _, c := range append(g.body[0][1:], g.foot[1:]...) {
+			assert.Empty(t, c.href, "every link includes the base filter")
+		}
+	})
 }
 
 func TestPivotLinkQuerySizeIncludesScope(t *testing.T) {
