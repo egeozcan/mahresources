@@ -147,6 +147,73 @@ test.describe('[action] shortcode', () => {
     }
   });
 
+  for (const keepsOriginal of [true, false]) {
+    test(`a download list morph ${keepsOriginal ? 'keeps focus on the original action payload' : 'parks focus when the original action leaves the page'}`, async ({ apiClient, page }) => {
+      const stamp = Date.now();
+      const rc = await apiClient.createResourceCategory(`Action List Cat ${stamp}`, 'action', {
+        CustomSummary: '[action plugin="test-actions" name="sync-greet"]',
+      });
+      const resourceIds: number[] = [];
+      const addResource = async (name: string) => {
+        const resource = await apiClient.createResource({
+          filePath: path.join(__dirname, '../test-assets/sample-image-21.png'),
+          name: `${name} ${stamp}`,
+          resourceCategoryId: rc.ID,
+        });
+        resourceIds.push(resource.ID);
+        return resource.ID;
+      };
+
+      try {
+        const originalId = await addResource('Original action resource');
+        // With one item per page, the arrival replaces A with B. With two,
+        // B takes A's position but A's action is still present just below it.
+        await page.goto(`/resources?ResourceCategoryId=${rc.ID}&sort=ID&order=desc&pageSize=${keepsOriginal ? 2 : 1}`);
+        const list = page.locator('.list-container');
+        const original = list.locator(`action-shortcode[data-entity-id="${originalId}"] button`);
+        await original.focus();
+        await expect(original).toBeFocused();
+
+        const arrivingId = await addResource('Arriving action resource');
+        // Use the same event as download completion, so the real coordinator
+        // fetches the page and positionally morphs the list without a navigation.
+        await page.evaluate((resourceId) => {
+          window.dispatchEvent(new CustomEvent('download-completed', { detail: { resourceId } }));
+        }, arrivingId);
+        const hosts = list.locator('action-shortcode');
+        await expect(hosts.first()).toHaveAttribute('data-entity-id', String(arrivingId));
+        await expect(hosts).toHaveCount(keepsOriginal ? 2 : 1);
+
+        const postedIds: number[][] = [];
+        page.on('request', (request) => {
+          if (request.method() === 'POST' && new URL(request.url()).pathname === '/v1/jobs/action/run') {
+            postedIds.push(request.postDataJSON().entity_ids);
+          }
+        });
+        if (keepsOriginal) {
+          const ran = page.waitForResponse(runPost);
+          await page.keyboard.press('Enter');
+          expect((await ran).status()).toBe(200);
+          expect(postedIds).toEqual([[originalId]]);
+          await expect(original).toBeFocused();
+        } else {
+          await page.keyboard.press('Enter');
+          await expect(list).toBeFocused();
+          // The replacement still works when the reader deliberately focuses it.
+          const replacement = hosts.first().getByRole('button', { name: 'Greet Resource' });
+          await replacement.focus();
+          const ran = page.waitForResponse(runPost);
+          await page.keyboard.press('Enter');
+          expect((await ran).status()).toBe(200);
+          expect(postedIds).toEqual([[arrivingId]]);
+        }
+      } finally {
+        for (const id of resourceIds) await apiClient.deleteResource(id).catch(() => {});
+        await apiClient.deleteResourceCategory(rc.ID).catch(() => {});
+      }
+    });
+  }
+
   test('follows an async action to the end of its Job', async ({ apiClient, page }) => {
     const stamp = Date.now();
     const rc = await apiClient.createResourceCategory(`Action Async Cat ${stamp}`, 'action', {

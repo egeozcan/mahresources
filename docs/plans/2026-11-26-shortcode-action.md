@@ -377,7 +377,15 @@ Problems to fix before or during implementation:
 - **Required params.** The resolver applies defaults, overrides and visibility, then checks trigger-reference eligibility before validating final values. `TestActionResolver_TriggerReferenceEligibilityPrecedesRequiredParams` checks the exact PNG unavailable comment and the required-text marker on a JPEG.
 - **Validation.** The regressions failed before the fixes. The targeted Go and Vitest tests, broader shortcode/internal/template-handler Go tests, focused action and render-context API tests, CSS scan, and all six action functional, accessibility and auth E2E tests passed. The initial concurrent Vitest run timed out in three schema-editor adversarial tests; the full run with four workers passed all 2,694 tests. Go vet still reports only the unchanged copied-lock finding in `application_context/job_download_progress_test.go:99`. No SQL changed.
 
+### Round 3 follow-up
+
+- **Keyboard focus through list refreshes.** The shared Alpine morph captures the focused `[action]` button's plugin, action, entity type and ID, and resolved parameters before patching. If the node is retargeted or lost, focus returns to a unique button with the original payload in the refreshed list; otherwise it parks on the list. An unchanged focused button keeps focus, and the repair does not override focus that moved elsewhere.
+- **Regression.** The two `a download list morph …` browser cases dispatch the production refresh event after a newer resource is added. With the original action still listed, Enter posts only its ID; with it pushed off the page, focus parks and Enter does not run the arrival unless the reader deliberately focuses it. Vitest covers matches that differ by plugin, name, entity type or parameters, and rejects two exact matches as ambiguous. The seven new cases failed before the fix and passed after it.
+- **Validation.** All 2,700 Vitest tests, all eight action browser tests (functional, accessibility and auth), the shortcode/internal/template-handler Go suites and the focused action API tests passed. Go vet reports only the existing copied lock in `application_context/job_download_progress_test.go:99`. No SQL changed.
+
 ### Known limits
 
-No action items were deferred in round 2. When a watcher stops because the button was removed or retargeted, follow the submitted Job in the Jobs panel.
+- When a watcher stops because the button was removed or retargeted, follow the submitted Job in the Jobs panel.
+- Round 3 deferred: a late redirect from a submitted action can still navigate away after the same button has been retargeted and used for a newer run.
+- Round 3 deferred: in the lightbox, holding Escape can close the viewer after the initial keydown cancels the confirmation; repeated keydowns arrive after the dialog has unmounted.
 

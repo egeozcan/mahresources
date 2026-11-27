@@ -57,10 +57,11 @@ function mount({ confirm = '', async = false, params = '{"scale":2,"tag":"x"}' }
     host,
     button: host.querySelector('button') as HTMLButtonElement,
     status: host.querySelector('.action-shortcode-status') as HTMLElement,
-    morphList(entityId: number) {
+    morphList(entityId: number, prepare?: (incoming: Element) => void) {
       vi.stubGlobal('Alpine', Alpine);
       const incoming = new DOMParser().parseFromString(serverHTML, 'text/html').querySelector('.list-container')!;
       (incoming.querySelector('action-shortcode') as HTMLElement).dataset.entityId = String(entityId);
+      prepare?.(incoming);
       morphAndReinitChangedComponents(list, incoming);
       expect(list.querySelector('action-shortcode')).toBe(host);
     },
@@ -125,6 +126,37 @@ describe('action-shortcode', () => {
     acceptConfirmation(true);
     await settle();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['plugin', 'another-plugin'],
+    ['action', 'another-action'],
+    ['entityType', 'note'],
+    ['params', '{"scale":4}'],
+  ])('restores list morph focus by action payload when %s changes', async (field, value) => {
+    const { button, morphList } = mount();
+    button.focus();
+    morphList(42, (incoming) => {
+      incoming.append(incoming.firstElementChild!.cloneNode(true));
+      (incoming.querySelector('action-shortcode') as HTMLElement).dataset[field] = value;
+    });
+    await settle();
+
+    const buttons = document.querySelectorAll('action-shortcode > button');
+    expect(buttons[0]).toBe(button);
+    expect(document.activeElement).toBe(buttons[1]);
+  });
+
+  it('parks list morph focus when two hosts match the original action payload', async () => {
+    const { host, button, morphList } = mount();
+    button.focus();
+    morphList(43, (incoming) => {
+      incoming.append(host.parentElement!.cloneNode(true), host.parentElement!.cloneNode(true));
+    });
+    await settle();
+
+    expect(document.querySelectorAll('action-shortcode[data-entity-id="42"]')).toHaveLength(2);
+    expect(document.activeElement).toBe(document.querySelector('.list-container'));
   });
 
   it('completes a retargeted POST against its submitted entity without unlocking the newer run', async () => {
