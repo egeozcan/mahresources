@@ -1,5 +1,6 @@
 import { hoistCustomCSS } from './customCssHoist.js';
-import { captureTabSelections, restoreTabSelections } from './tabSelections.js';
+import { focusedElement, restoreFocus } from './focus.js';
+import { captureTabFocus, captureTabSelections, restoreTabSelections } from './tabSelections.js';
 // Elements whose children are CLIENT-owned: the server only ever sends a
 // placeholder inside them, so morph must patch their attributes but never walk
 // into their subtree, or live content is overwritten with that placeholder.
@@ -49,10 +50,19 @@ export function morphOptionsWithShortcodeElements(options = {}) {
         // this turn before the shared tab-host flush re-applies their state.
         capturedTabs = true;
         const selections = captureTabSelections(el);
+        const active = focusedElement();
+        const findTab = captureTabFocus(el, active);
         if (!pendingTabRestores.length) queueMicrotask(restoreMorphedTabSelections);
         pendingTabRestores.push(() => {
           capturedTabs = false;
-          if (el.isConnected) restoreTabSelections(el, selections);
+          if (!el.isConnected) return;
+          restoreTabSelections(el, selections);
+          if (findTab) queueMicrotask(() => {
+            // The tab hosts' flush has now re-shown the tab lists. A surviving
+            // DOM button can still belong to a different set after a positional patch.
+            const now = focusedElement();
+            if (!now || now === active) restoreFocus(findTab(), el);
+          });
         });
       }
       updating?.(el, toEl, childrenOnly, skip, skipChildren);

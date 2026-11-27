@@ -249,7 +249,7 @@ describe('tabs-shortcode across a morph', () => {
       }),
     );
     expect(document.activeElement).not.toBe(tabs[1]);
-    await microtask();
+    await settle();
     expect(document.activeElement).toBe(tabs[1]);
     expect(tabs.map((t) => t.getAttribute('tabindex'))).toEqual(['-1', '0']);
   });
@@ -260,14 +260,26 @@ describe('tabs-shortcode across a morph', () => {
     mount(optional + persistent);
     const before = document.querySelectorAll('tabs-shortcode')[1];
     tabsOf(before)[1].click();
+    tabsOf(before)[0].focus();
     const selectedId = tabsOf(before)[1].id;
 
     morphTo(persistent);
-    await microtask();
+    await settle();
 
     const after = document.querySelector('tabs-shortcode')!;
     expect(tabsOf(after)[1].getAttribute('aria-selected')).toBe('true');
     expect(tabsOf(after)[1].id).toBe(selectedId);
+    expect(document.activeElement).toBe(tabsOf(after)[0]);
+    expect(tabsOf(after)[0].getAttribute('tabindex')).toBe('0');
+  });
+
+  it('parks focus on the refreshed content when the focused tab set disappears', async () => {
+    const host = mount(serverTabs({ One: 'a', Two: 'b' }));
+    tabsOf(host)[1].focus();
+    morphTo('<p>Refreshed content</p>');
+    await settle();
+
+    expect(document.activeElement).toBe(document.querySelector('main'));
   });
 
   it('discards ambiguous state in a second morph in the same turn', async () => {
