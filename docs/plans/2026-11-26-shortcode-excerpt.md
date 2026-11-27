@@ -375,6 +375,19 @@ Usefulness is high. Every note, resource and MRQL card author wants a clean, bou
 
 Round 1 validation: focused excerpt Go tests, the full shortcode/internal/template-handler package set, and the excerpt HTTP tests passed with the `json1 fts5` tags. `npm run build` and both excerpt Playwright specs passed (5 tests). Vet reported only the pre-existing lock copy in `application_context/job_download_progress_test.go:99`; no dialect-specific, frontend-source, or CSS/template changes were made.
 
+### Round 2 review fixes
+
+- **Markdown label whitespace.** The masking pass trims its attribute capture like the shortcode parser. `TestExcerptPreservesMarkdownLabelsNamedLikeShortcodes` now includes inline links, images and reference definitions with trailing whitespace.
+- **`more=` in attribute names.** Name positions get the same link-markup error as attribute values, in addition to the placement warning. `TestLintExcerptAttributePlacementWithAndWithoutMore` covers nonblank, blank and absent `more=` in an attribute name. This remains a lint-only rule.
+- **Explicitly hidden HTML.** The tokenizer drops subtrees marked `hidden`, including nested elements, and does not treat a hidden void tag as a subtree opener. `TestExcerptDropsHiddenHTMLSubtrees` pins exact output, with CSS and `aria-hidden` as controls. The author references describe the elements and attributes dropped rather than promising browser-visible text.
+
+Round 2 validation: all three regressions reproduced on the integration base and passed after the fixes. The shortcode, internal and template-handler suites passed with `json1 fts5`, as did the excerpt HTTP tests, shortcode docs endpoint and built-in generation prompt checks. The application built and both excerpt Playwright specs passed (5 tests). Vet reported only the pre-existing lock copy in `application_context/job_download_progress_test.go:99`.
+
+#### Known limits
+
+- **Deferred:** A mention name that ends in shortcode-shaped bracket text can be damaged before mention protection. For example, shortcode stripping can remove `[link]` from `@[note:5:Notes [link]`, including the mention's closing bracket.
+- The HTML scan matches explicit tags. It does not reproduce browser tree repair (including implied end tags), CSS, or other visibility rules. Use explicit closing tags around content marked `hidden`.
+
 ### Deviations from the plan
 
 - **`aria-label`, not an `sr-only` span**, on the `more` link. `docs/lessons.md` ("Tailwind's `.sr-only` is `position: absolute`…") records that a visually hidden span escapes a scroll container and widens the page; cards and MRQL results sit in such containers. The accessible name is the same (`Read more: <Name>`), it still starts with the visible label (WCAG 2.5.3), and axe passes on the notes list and the group page.

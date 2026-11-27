@@ -23,7 +23,7 @@ func excerptMaskMarkdownLabels(src string) string {
 	var masked []byte
 	var labels map[int]bool
 	for _, m := range shortcodePattern.FindAllStringSubmatchIndex(src, -1) {
-		if m[4] >= 0 { // only exact bare tokens, not attributed shortcodes
+		if m[4] >= 0 && strings.TrimSpace(src[m[4]:m[5]]) != "" {
 			continue
 		}
 		start, end := m[0], m[1]

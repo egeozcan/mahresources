@@ -419,8 +419,10 @@ func lintText(input string, opts LintOptions) []LintIssue {
 				label = "[meta inline]"
 			}
 			raw := tk.attrs["raw"] == "true"
+			on := valueContexts[tk.start]
+			off, differs := valueContextsOff[tk.start]
 			seen := map[string]bool{}
-			for _, msg := range unsafeAttributeContexts(valueContexts[tk.start], raw, opts.CSSMode, label) {
+			for _, msg := range unsafeAttributeContexts(on, raw, opts.CSSMode, label) {
 				if seen[msg] {
 					continue
 				}
@@ -428,13 +430,13 @@ func lintText(input string, opts LintOptions) []LintIssue {
 				add(tk.start, tk.end, SeverityWarning, msg)
 			}
 			if tk.name == "excerpt" && strings.TrimSpace(tk.attrs["more"]) != "" &&
-				(valueContexts[tk.start].attr != "" || valueContextsOff[tk.start].attr != "") {
+				(on.attr != "" || on.inName || off.attr != "" || off.inName) {
 				add(tk.start, tk.end, SeverityError, "[excerpt] more= cannot be used in an attribute: it can emit link markup")
 			}
 			// The scripting-disabled reading, for the occurrences whose two
 			// browser readings differ. Its warnings carry the scripting-mode
 			// qualifier; identical strings are not repeated.
-			if off, ok := valueContextsOff[tk.start]; ok {
+			if differs {
 				for _, msg := range unsafeAttributeContexts(off, raw, opts.CSSMode, label) {
 					if seen[msg] {
 						continue

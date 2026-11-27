@@ -55,6 +55,7 @@ func TestLintExcerptAttributePlacementWithAndWithoutMore(t *testing.T) {
 		{"URL scheme", `<a href="[excerpt%s]">x</a>`, `can still choose the scheme of the "href" URL`},
 		{"srcdoc", `<iframe srcdoc="[excerpt%s]"></iframe>`, `browser decodes and parses as HTML`},
 		{"unquoted", `<span title=[excerpt%s]>x</span>`, "unquoted attribute value"},
+		{"attribute name", `<span data-[excerpt words='1'%s]="x">Preview</span>`, "tag or attribute NAME"},
 		{"inert", `<span aria-label="[excerpt%s]">x</span>`, ""},
 		{"duplicate", `<span title="first" title="[excerpt%s]">x</span>`, ""},
 		{"text", `<span>[excerpt%s]</span>`, ""},

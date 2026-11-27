@@ -45,6 +45,20 @@ func TestExcerptStripsMarkdownAndHTML(t *testing.T) {
 	}
 }
 
+func TestExcerptDropsHiddenHTMLSubtrees(t *testing.T) {
+	for _, c := range []struct{ name, desc, want string }{
+		{"hidden span", `Before <span hidden>Unpublished draft</span> after`, "Before after"},
+		{"nested spans", `Before <span HIDDEN="false">draft <span>nested</span> still hidden</span> after`, "Before after"},
+		{"void element", `Before <img hidden src="x.png" alt="Draft"> after`, "Before after"},
+		{"raw text in hidden subtree", `Before <span hidden><script>"</span>"</script> still hidden</span> after`, "Before after"},
+		{"does not interpret CSS or ARIA", `Before <span style="display:none">styled</span> <span aria-hidden="true">ARIA</span> after`, "Before styled ARIA after"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, excerptRender(`[excerpt]`, excerptNote(c.desc)))
+		})
+	}
+}
+
 func TestExcerptRemovesShortcodesWithoutRunningThem(t *testing.T) {
 	executor := func(context.Context, string, QueryOptions) (*QueryResult, error) {
 		t.Fatal("an embedded shortcode ran a query")
@@ -61,7 +75,10 @@ func TestExcerptPreservesMarkdownLabelsNamedLikeShortcodes(t *testing.T) {
 	for _, c := range []struct{ name, desc, want string }{
 		{"inline link", "See [link](https://example.org)", "See link"},
 		{"inline image", "Before ![excerpt](image.png) after", "Before after"},
+		{"inline link with trailing space", "See [link ](https://example.org)", "See link"},
+		{"inline image with trailing space", "Before ![excerpt ](image.png) after", "Before after"},
 		{"full reference", "See [link][target].\n\n[target]: https://example.org", "See link."},
+		{"reference definition with trailing space", "See [link].\n\n[link ]: https://example.org", "See link."},
 		{"nested full reference", "See [a [nested] label][link].\n\n[link]: https://example.org", "See a [nested] label."},
 		{"collapsed reference", "See [link][].\n\n[link]: https://example.org", "See link."},
 		{"shortcut reference", "See [link].\n\n[link]: https://example.org", "See link."},
