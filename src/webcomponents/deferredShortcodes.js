@@ -11,7 +11,7 @@
 // injected fragment is hydrated with Alpine.initTree (mirroring hoverCard.js).
 // CSRF is added automatically by the fetch wrapper in src/csrf.js.
 
-import { captureTabSelections, restoreTabSelections } from './tabsShortcode.js';
+import { captureTabSelections, restoreTabSelections } from '../utils/tabSelections.js';
 
 const ENDPOINT = '/v1/shortcodes/deferred';
 
@@ -306,33 +306,35 @@ class LazyShortcode extends HTMLElement {
   // A morph lands here first, before refreshFromMorph: every server render
   // seals a fresh token, so the attribute changes on each one.
   attributeChangedCallback(name, oldValue, newValue) {
-    if (name !== 'data-token' || oldValue === newValue || !this._init) return;
-    this._token = newValue || '';
-    this._resetContent();
-    this._rearmOrReveal(this._revealed);
+    if (name === 'data-token' && oldValue !== newValue) this._queueRefresh();
   }
 
   disconnectedCallback() {
     this._unobserve();
   }
 
-  refreshFromMorph(toEl) {
-    if (!this._init) return;
+  refreshFromMorph() {
+    this._queueRefresh();
+  }
 
-    const nextToken = toEl?.getAttribute('data-token') || this.getAttribute('data-token') || '';
-    if (nextToken !== this._token) {
-      this._token = nextToken;
-      this._resetContent();
-      this._rearmOrReveal(this._revealed);
-      return;
-    }
-
-    if (this._revealed || this._loaded || this._loading) {
-      this._resetContent();
-      this._rearmOrReveal(true);
-    } else {
-      this._observeOrReveal();
-    }
+  _queueRefresh() {
+    if (!this._init || this._refreshQueued) return;
+    this._refreshQueued = true;
+    // A changed-token morph notifies us twice in the same turn. React once
+    // after the enclosing tabs have restored their selection and visibility.
+    queueMicrotask(() => {
+      this._refreshQueued = false;
+      if (!this.isConnected) return;
+      const nextToken = this.getAttribute('data-token') || '';
+      const active = this._revealed || this._loaded || this._loading;
+      if (nextToken !== this._token || active) {
+        this._token = nextToken;
+        this._resetContent();
+        this._rearmOrReveal(active);
+      } else {
+        this._observeOrReveal();
+      }
+    });
   }
 
   // A block inside a hidden [tabs] panel re-arms instead of fetching; it loads

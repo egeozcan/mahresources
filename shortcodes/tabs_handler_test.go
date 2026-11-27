@@ -15,15 +15,17 @@ func TestTabsInlineMarkup(t *testing.T) {
 	out := Process(context.Background(),
 		`[tabs label="Project views"] [tab label="Overview"]<b>[property path="Name"]</b>[/tab] [tab label="A & <b>"]two[/tab] [/tabs]`,
 		ctx, nil, nil)
+	assert.Regexp(t, `^<tabs-shortcode class="tabs-shortcode" data-tabs-key="group:1:[a-f0-9]{64}">`, out)
+	_, markup, _ := strings.Cut(out, ">")
 	assert.Equal(t,
-		`<tabs-shortcode class="tabs-shortcode"><div class="tabs-list" role="tablist" aria-label="Project views" hidden>`+
+		`<div class="tabs-list" role="tablist" aria-label="Project views" hidden>`+
 			`<button type="button" role="tab" class="tabs-tab" aria-selected="true" tabindex="0">Overview</button>`+
 			`<button type="button" role="tab" class="tabs-tab" aria-selected="false" tabindex="-1">A &amp; &lt;b&gt;</button>`+
 			`</div>`+
 			`<div class="tabs-panel" role="group" aria-label="Overview"><p class="tabs-fallback-label" aria-hidden="true">Overview</p><b>Home</b></div>`+
 			`<div class="tabs-panel" role="group" aria-label="A &amp; &lt;b&gt;"><p class="tabs-fallback-label" aria-hidden="true">A &amp; &lt;b&gt;</p>two</div>`+
 			`</tabs-shortcode>`,
-		out)
+		markup)
 }
 
 func TestTabsListLabelOnlyWhenSet(t *testing.T) {
@@ -171,5 +173,21 @@ func TestTabsParsesAsABlockAndTabIsNotAToken(t *testing.T) {
 	assert.Equal(t, `[tab label="A"]b[/tab]`, scs[0].InnerContent)
 	for _, tk := range matchTokens(`[tab label="A"]b[/tab] [tabsx] [tabs-x]`) {
 		t.Errorf("unexpected token %q", tk.raw)
+	}
+}
+
+func TestTabsQuotedBracketTextIsLiteral(t *testing.T) {
+	for _, label := range []string{"About [tabs]", "About [/tabs]", "About [/tab]", "[tab] and [property path='Name']", "[else] or [/else]"} {
+		t.Run(label, func(t *testing.T) {
+			src := `[tabs][tab label="` + label + `"]<b>Hello</b>[/tab][/tabs]`
+			out := Process(context.Background(), src, MetaShortcodeContext{}, nil, nil)
+			assert.Contains(t, out, `>`+htmlAttrEscape(label)+`</button>`)
+			assert.Contains(t, out, `<b>Hello</b></div></tabs-shortcode>`)
+			assert.NotContains(t, out, "shortcode-error")
+			assert.Empty(t, Lint(src, LintOptions{Known: KnownFromBuiltins()}))
+			openers := Parse(src)
+			require.Len(t, openers, 1)
+			assert.Equal(t, "tabs", openers[0].Name)
+		})
 	}
 }

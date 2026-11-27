@@ -4096,7 +4096,7 @@ tabs-shortcode > .tabs-list:not([hidden]) {
 tabs-shortcode > .tabs-list > .tabs-tab {
   max-width: 100%;
   padding: 0.375rem 0.75rem;
-  color: #292524;
+  color: inherit;
   background: transparent;
   border: 0;
   border-bottom: 2px solid transparent;
@@ -4113,10 +4113,10 @@ tabs-shortcode > .tabs-panel:focus-visible {
   outline: 2px solid #b45309;
   outline-offset: 2px;
 }
-tabs-shortcode > .tabs-panel {
+.tabs-shortcode > .tabs-panel {
   margin-top: 0.5rem;
 }
-tabs-shortcode > .tabs-panel > .tabs-fallback-label {
+.tabs-shortcode > .tabs-panel > .tabs-fallback-label {
   margin: 0.75rem 0 0.25rem;
   font-weight: 600;
 }

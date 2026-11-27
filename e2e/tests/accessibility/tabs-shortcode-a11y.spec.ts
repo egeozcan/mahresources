@@ -5,6 +5,7 @@
  * inline and the set still upgrades).
  */
 import { test, expect } from '../../fixtures/a11y.fixture';
+import path from 'path';
 
 const HEADER = [
   '[tabs label="Project views"]',
@@ -65,6 +66,32 @@ test.describe('[tabs] shortcode accessibility', () => {
     await expect(page.getByRole('group', { name: 'Links' })).toBeVisible();
     await expect(page.getByRole('tablist')).toHaveCount(0);
     await checkA11y();
+  });
+
+  test('tab labels have sufficient contrast on the lightbox info panel', async ({ apiClient, page, checkComponentA11y }) => {
+    const stamp = Date.now();
+    const rc = await apiClient.createResourceCategory(`Tabs A11y Resources ${stamp}`, 'tabs', { CustomLightbox: HEADER });
+    let resourceId: number | undefined;
+    try {
+      const name = `Tabs A11y Image ${stamp}`;
+      resourceId = (await apiClient.createResource({
+        filePath: path.join(__dirname, '../../test-assets/sample-image-21.png'),
+        name,
+        ownerId: groupId,
+        resourceCategoryId: rc.ID,
+      })).ID;
+      await page.goto(`/resources?OwnerId=${groupId}`);
+      await page.locator('[data-lightbox-item]').first().click();
+      const lightbox = page.getByRole('dialog', { name, exact: true });
+      await expect(lightbox).toBeVisible();
+      await lightbox.locator('button[title="Resource info"]').click();
+      const list = lightbox.locator('[data-edit-panel]').getByRole('tablist', { name: 'Project views' });
+      await expect(list.getByRole('tab', { name: 'Overview' })).toBeVisible();
+      await checkComponentA11y('[data-edit-panel] tabs-shortcode');
+    } finally {
+      if (resourceId) await apiClient.deleteResource(resourceId).catch(() => {});
+      await apiClient.deleteResourceCategory(rc.ID).catch(() => {});
+    }
   });
 
   test('a shared note upgrades its tab set and renders the lazy tab inline', async ({ page, workerServer, checkComponentA11y }) => {

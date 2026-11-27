@@ -1,4 +1,5 @@
 import { hoistCustomCSS } from './customCssHoist.js';
+import { captureTabSelections, restoreTabSelections } from './tabSelections.js';
 // Elements whose children are CLIENT-owned: the server only ever sends a
 // placeholder inside them, so morph must patch their attributes but never walk
 // into their subtree, or live content is overwritten with that placeholder.
@@ -30,12 +31,30 @@ function isMorphAware(el) {
   return el?.nodeType === 1 && (MORPH_AWARE_TAGS.has(el.tagName) || el.hasAttribute?.('data-morph-client-owned'));
 }
 
+const pendingTabRestores = [];
+
+function restoreMorphedTabSelections() {
+  for (const restore of pendingTabRestores.splice(0)) restore();
+}
+
 export function morphOptionsWithShortcodeElements(options = {}) {
   const { updating, updated, ...rest } = options;
+  let capturedTabs = false;
 
   return {
     ...rest,
     updating(el, toEl, childrenOnly, skip, skipChildren) {
+      if (!capturedTabs && typeof el.querySelectorAll === 'function') {
+        // The first callback is the morph root. Reconcile every root patched in
+        // this turn before the shared tab-host flush re-applies their state.
+        capturedTabs = true;
+        const selections = captureTabSelections(el);
+        if (!pendingTabRestores.length) queueMicrotask(restoreMorphedTabSelections);
+        pendingTabRestores.push(() => {
+          capturedTabs = false;
+          if (el.isConnected) restoreTabSelections(el, selections);
+        });
+      }
       updating?.(el, toEl, childrenOnly, skip, skipChildren);
 
       if (hasClientOwnedChildren(el) && hasClientOwnedChildren(toEl)) {

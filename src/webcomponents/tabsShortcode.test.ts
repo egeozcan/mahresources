@@ -5,7 +5,7 @@
 // and the lazy panels it hides (LazyShortcode.suspended). Focus loss in the
 // browser's own morph gap and native Enter/Space activation are only real in a
 // browser; the E2E spec covers those.
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import Alpine from 'alpinejs';
 import morph from '@alpinejs/morph';
 import { morphOptionsWithShortcodeElements } from '../utils/shortcodeElementMorph.js';
@@ -34,10 +34,16 @@ let reloadInto: (host: any, contentEl: any, token: string) => Promise<boolean>;
 
 beforeAll(async () => {
   vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver);
+  // happy-dom has no layout; native Tab order and CSS visibility are checked in E2E.
+  vi.spyOn(Element.prototype, 'getClientRects').mockImplementation(function (this: Element) {
+    return (this.closest('[hidden]') ? [] : [new DOMRect(0, 0, 1, 1)]) as unknown as DOMRectList;
+  });
   Alpine.plugin(morph);
   ({ reloadInto } = await import('./deferredShortcodes.js'));
   await import('./tabsShortcode.js');
 });
+
+afterAll(() => vi.restoreAllMocks());
 
 let fetches: string[];
 beforeEach(() => {
@@ -75,7 +81,7 @@ function serverTabs(panels: Record<string, Panel>, listLabel = 'Views') {
       return `<div class="tabs-panel" role="group" aria-label="${l}"><p class="tabs-fallback-label" aria-hidden="true">${l}</p>${body}</div>`;
     })
     .join('');
-  return `<tabs-shortcode class="tabs-shortcode"><div class="tabs-list" role="tablist" aria-label="${listLabel}" hidden>${buttons}</div>${bodies}</tabs-shortcode>`;
+  return `<tabs-shortcode class="tabs-shortcode" data-tabs-key="${listLabel}:${labels.join(',')}"><div class="tabs-list" role="tablist" aria-label="${listLabel}" hidden>${buttons}</div>${bodies}</tabs-shortcode>`;
 }
 
 const THREE = { One: 'text only', Two: '<a href="/x">a link</a>', Three: { lazy: 'tok-3' } } as Record<string, Panel>;
@@ -248,13 +254,45 @@ describe('tabs-shortcode across a morph', () => {
     expect(tabs.map((t) => t.getAttribute('tabindex'))).toEqual(['-1', '0']);
   });
 
-  it('clamps the selection when the morph brings fewer tabs', async () => {
+  it('matches a surviving tab set by identity when a page morph moves it', async () => {
+    const optional = serverTabs({ One: 'a', Two: 'b' }, 'Optional');
+    const persistent = serverTabs({ One: 'c', Two: 'd' }, 'Persistent');
+    mount(optional + persistent);
+    const before = document.querySelectorAll('tabs-shortcode')[1];
+    tabsOf(before)[1].click();
+    const selectedId = tabsOf(before)[1].id;
+
+    morphTo(persistent);
+    await microtask();
+
+    const after = document.querySelector('tabs-shortcode')!;
+    expect(tabsOf(after)[1].getAttribute('aria-selected')).toBe('true');
+    expect(tabsOf(after)[1].id).toBe(selectedId);
+  });
+
+  it('discards ambiguous state in a second morph in the same turn', async () => {
+    const left = serverTabs({ One: 'a', Two: 'b' }, 'Left');
+    const right = serverTabs({ One: 'c', Two: 'd' }, 'Right');
+    mount(`<div id="left">${left}</div><div id="right">${right}${right}</div>`);
+    const rightRegion = document.getElementById('right')!;
+    tabsOf(rightRegion.querySelector('tabs-shortcode')!)[1].click();
+
+    Alpine.morph(document.getElementById('left')!, `<div id="left">${left}</div>`, morphOptionsWithShortcodeElements());
+    Alpine.morph(rightRegion, `<div id="right">${right}</div>`, morphOptionsWithShortcodeElements());
+    await microtask();
+
+    const [first, second] = tabsOf(rightRegion.querySelector('tabs-shortcode')!);
+    expect(first.getAttribute('aria-selected')).toBe('true');
+    expect(second.getAttribute('aria-selected')).toBe('false');
+  });
+
+  it('starts a changed tab set at its default instead of inheriting the old selection', async () => {
     const host = mount(serverTabs({ One: 'a', Two: 'b', Three: 'c' }));
     tabsOf(host)[2].click();
     morphTo(serverTabs({ One: 'a', Two: 'b' }));
     await microtask();
-    expect(tabsOf(host).map((t) => t.getAttribute('aria-selected'))).toEqual(['false', 'true']);
-    expect(panelsOf(host).map((p) => p.hidden)).toEqual([true, false]);
+    expect(tabsOf(host).map((t) => t.getAttribute('aria-selected'))).toEqual(['true', 'false']);
+    expect(panelsOf(host).map((p) => p.hidden)).toEqual([false, true]);
   });
 });
 
@@ -315,7 +353,7 @@ describe('lazy panels', () => {
     expect(fetches).toEqual(['tok-3', next]);
   });
 
-  it('a morph re-fetches the visible lazy panel at once, as plain [lazy] does', async () => {
+  it.each(['tok-3', 'tok-3b'])('a visible lazy panel issues exactly one POST on morph to %s', async (next) => {
     const html = serverTabs(THREE);
     const host = mount(html);
     const lazy = host.querySelector('lazy-shortcode') as any;
@@ -323,9 +361,11 @@ describe('lazy panels', () => {
     intersect(lazy);
     await settle();
 
-    morphTo(html);
+    expect(fetches).toEqual(['tok-3']);
+    morphTo(serverTabs({ ...THREE, Three: { lazy: next } }));
     await settle();
-    expect(fetches).toEqual(['tok-3', 'tok-3']);
+    expect(fetches).toEqual(['tok-3', next]);
+    expect(lazy.textContent).toContain(`loaded ${next}`);
     expect(lazy.suspended).toBe(false);
   });
 });
@@ -370,6 +410,24 @@ describe('LazyShortcode.suspended', () => {
 });
 
 describe('a reload swap', () => {
+  it.each(['old', 'new'])('does not restore a duplicate identity on the %s side', async (repeatedSide) => {
+    const html = serverTabs({ One: 'a', Two: 'b' });
+    mount(`<div id="region">${html}${repeatedSide === 'old' ? html : ''}</div>`);
+    const region = document.getElementById('region')!;
+    const before = Array.from(region.querySelectorAll('tabs-shortcode'));
+    before.forEach((host) => tabsOf(host)[1].click());
+    const oldIds = before.map((host) => tabsOf(host)[0].id);
+
+    const next = html + (repeatedSide === 'new' ? html : '');
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ html: next, entity: null }), { status: 200 }));
+    await expect(reloadInto(region, region, 'region-token')).resolves.toBe(true);
+
+    for (const host of region.querySelectorAll('tabs-shortcode')) {
+      expect(tabsOf(host)[0].getAttribute('aria-selected')).toBe('true');
+      expect(oldIds).not.toContain(tabsOf(host)[0].id);
+    }
+  });
+
   it('carries each tab set selection and IDs into the re-rendered content', async () => {
     const html = serverTabs({ One: 'a', Two: 'b' });
     mount(`<div id="region">${html}</div>`);
