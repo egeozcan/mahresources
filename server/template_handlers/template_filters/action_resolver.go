@@ -120,6 +120,9 @@ func BuildActionResolver(pm *plugin_system.PluginManager, access auth.PluginAcce
 				return shortcodes.ActionButton{}, shortcodes.ErrActionUnavailable
 			}
 		}
+		if err := validateActionTemplateParams(action, params); err != nil {
+			return shortcodes.ActionButton{}, err
+		}
 		return shortcodes.ActionButton{Label: action.Label, Confirm: action.Confirm, Async: action.Async, Params: params}, nil
 	}
 }
@@ -145,12 +148,9 @@ func actionTriggerMatchesParamFilter(p plugin_system.ActionParam, entityData map
 	return plugin_system.ActionMatchesEntityData(plugin_system.ActionRegistration{Filters: filter}, entityData)
 }
 
-// actionTemplateParams builds the params a template button posts: the
-// registration's defaults, resolved the way the action modal resolves them
-// (src/components/pluginActionModal.js open()), with the template's
-// param-<name> values on top. The result has passed the run endpoint's own
-// structural checks, so an author sees a mistake on the page rather than a 400
-// on every click.
+// actionTemplateParams resolves defaults the way the action modal does, lays
+// the template's param-<name> values on top, and strips hidden params. The
+// visible trigger references are checked before validating the final values.
 func actionTemplateParams(action plugin_system.ActionRegistration, attrs map[string]string, entityID uint) (map[string]any, error) {
 	declared := make(map[string]plugin_system.ActionParam, len(action.Params))
 	params := make(map[string]any, len(action.Params))
@@ -205,16 +205,20 @@ func actionTemplateParams(action plugin_system.ActionRegistration, attrs map[str
 	}
 
 	plugin_system.StripHiddenParams(action, params)
+	return params, nil
+}
+
+func validateActionTemplateParams(action plugin_system.ActionRegistration, params map[string]any) error {
 	for _, p := range action.Params {
 		def, _ := p.Default.(string)
 		if _, visible := params[p.Name]; visible && p.Type == "entity_ref" && def == "selection" && p.Required {
-			return nil, fmt.Errorf("%s: needs a bulk selection and cannot run from a template", p.Name)
+			return fmt.Errorf("%s: needs a bulk selection and cannot run from a template", p.Name)
 		}
 	}
 	if errs := plugin_system.ValidateActionParams(action, params); len(errs) > 0 {
-		return nil, fmt.Errorf("%s: %s", errs[0].Field, errs[0].Message)
+		return fmt.Errorf("%s: %s", errs[0].Field, errs[0].Message)
 	}
-	return params, nil
+	return nil
 }
 
 // coerceActionParam turns one literal attribute value into the JSON type the

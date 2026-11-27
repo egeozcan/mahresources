@@ -18,11 +18,10 @@ const CLIENT_OWNED_CHILDREN_TAGS = new Set([
 ]);
 
 // Elements that want to re-derive state once morph has finished patching them.
-// That is everything above, plus two whose children are server-owned and so are
-// morphed normally: <reload-shortcode>, which only needs to re-check the
-// button's accessible name afterwards, and <tabs-shortcode>, which re-applies
-// its selection, IDs and hidden panels over the server's stacked markup.
-const MORPH_AWARE_TAGS = new Set([...CLIENT_OWNED_CHILDREN_TAGS, 'RELOAD-SHORTCODE', 'TABS-SHORTCODE']);
+// That is everything above, plus server-owned subtrees that need to re-check
+// the button name ([reload]), restore tab state ([tabs]), or repaint a busy
+// button ([action]) after the incoming markup lands.
+const MORPH_AWARE_TAGS = new Set([...CLIENT_OWNED_CHILDREN_TAGS, 'RELOAD-SHORTCODE', 'TABS-SHORTCODE', 'ACTION-SHORTCODE']);
 
 function hasClientOwnedChildren(el) {
   return el?.nodeType === 1 && (CLIENT_OWNED_CHILDREN_TAGS.has(el.tagName) || el.hasAttribute?.('data-morph-client-owned'));

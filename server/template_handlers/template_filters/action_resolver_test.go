@@ -66,6 +66,13 @@ function init()
         },
     })
     mah.action({
+        id = "trigger-filter-needs-text", label = "Trigger filter needs text", entity = "resource", handler = ok,
+        params = {
+            { name = "target", type = "entity_ref", entity = "resource", filters = { content_types = { "image/jpeg" } } },
+            { name = "why", type = "text", label = "Why", required = true },
+        },
+    })
+    mah.action({
         id = "needs-text", label = "Needs text", entity = "resource", handler = ok,
         params = { { name = "why", type = "text", label = "Why", required = true } },
     })
@@ -246,6 +253,19 @@ func TestActionResolver_VisibleTriggerReferenceMustMatchItsOwnFilter(t *testing.
 	button, err = resolve("acts", "trigger-filter", map[string]string{"advanced": "false"}, png)
 	require.NoError(t, err)
 	assert.NotContains(t, button.Params, "target")
+}
+
+func TestActionResolver_TriggerReferenceEligibilityPrecedesRequiredParams(t *testing.T) {
+	resolve := BuildActionResolver(enableActionProbePlugin(t), allowAll)
+	reqCtx := shortcodes.WithActionResolver(context.Background(), resolve)
+	sc := shortcodes.Shortcode{Attrs: map[string]string{"plugin": "acts", "name": "trigger-filter-needs-text"}}
+	png := resourceCtx(&models.Resource{ID: 9, ContentType: "image/png"})
+	jpeg := resourceCtx(&models.Resource{ID: 10, ContentType: "image/jpeg"})
+
+	_, err := resolve("acts", "trigger-filter-needs-text", nil, png)
+	assert.ErrorIs(t, err, shortcodes.ErrActionUnavailable)
+	assert.Equal(t, "<!-- mr:action unavailable in this context -->", shortcodes.RenderActionShortcode(reqCtx, sc, png))
+	assert.Contains(t, shortcodes.RenderActionShortcode(reqCtx, sc, jpeg), "[action] why: Why is required")
 }
 
 // renderActionTag pushes content through the process_shortcodes tag with no
