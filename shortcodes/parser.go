@@ -33,23 +33,27 @@ var shortcodePattern = regexp.MustCompile(
 	`\[(meta|datetime|pills|property|mrql|conditional|link|each|item|relations|partial|lazy|details|reload|autorefresh|using|similar|calc|calendar|adjacent|inspect|excerpt|action|tabs|pivot|plugin:[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*)(?:\s((?:"[^"]*"|'[^']*'|[^\]])*))?\]`,
 )
 
+// Scan slot openers alongside real openers so bracket text in a quoted [tab]
+// label cannot start a token. The slot alternative has no capture groups.
+var shortcodeOrTabOpenPattern = regexp.MustCompile(shortcodePattern.String() + "|" + tabOpenPattern.String())
+
 // attrPattern matches key="value", key='value', or key=value pairs.
 var attrPattern = regexp.MustCompile(
 	`([a-zA-Z][a-zA-Z0-9_-]*)=(?:"([^"]*)"|'([^']*)'|(\S+))`,
 )
 
-// Parse scans input for shortcode patterns and returns all matches.
-// Only the built-in "meta" shortcode and plugin shortcodes with lowercase kebab-case
-// names (format "plugin:plugin-name:shortcode-name") are recognized; all other
-// bracket expressions are left unchanged.
+// Parse returns built-in and plugin shortcode openers, including nested ones.
+// Slot tags such as [tab] are left for their enclosing block to read.
 func Parse(input string) []Shortcode {
-	matches := shortcodePattern.FindAllStringSubmatchIndex(input, -1)
-	if len(matches) == 0 {
-		return nil
-	}
-
-	result := make([]Shortcode, 0, len(matches))
+	matches := shortcodeOrTabOpenPattern.FindAllStringSubmatchIndex(input, -1)
+	var result []Shortcode
 	for _, m := range matches {
+		if m[2] < 0 {
+			continue // [tab] is a slot opener, not a shortcode token.
+		}
+		if result == nil {
+			result = make([]Shortcode, 0, len(matches))
+		}
 		fullStart, fullEnd := m[0], m[1]
 		name := input[m[2]:m[3]]
 		attrStr := ""
@@ -106,7 +110,7 @@ func matchTokensM(m *renderMeter, input string) []token {
 		tokCap, attrCap = budgetedTokenCap+1, budgetedAttrCap
 	}
 
-	opens := shortcodePattern.FindAllStringSubmatchIndex(input, tokCap)
+	opens := shortcodeOrTabOpenPattern.FindAllStringSubmatchIndex(input, tokCap)
 	closes := closingTagPattern.FindAllStringSubmatchIndex(input, tokCap)
 	if tokCap > 0 && len(opens)+len(closes) > budgetedTokenCap {
 		m.fail("more than %d shortcode tokens", budgetedTokenCap)
@@ -121,11 +125,16 @@ func matchTokensM(m *renderMeter, input string) []token {
 	if !cssMode && len(opens) > 0 && strings.Contains(input, "<") {
 		styleSpans = styleElementSpans(input)
 	}
+	var tabOpeners [][2]int
 	for _, mm := range opens {
 		if !m.tick() {
 			return nil
 		}
 		fullStart, fullEnd := mm[0], mm[1]
+		if mm[2] < 0 {
+			tabOpeners = append(tabOpeners, [2]int{fullStart, fullEnd})
+			continue
+		}
 		name := input[mm[2]:mm[3]]
 		attrStr := ""
 		if mm[4] >= 0 && mm[5] >= 0 {
@@ -157,6 +166,9 @@ func matchTokensM(m *renderMeter, input string) []token {
 			return nil
 		}
 		fullStart, fullEnd := mm[0], mm[1]
+		if insideSortedSpans(fullStart, tabOpeners) {
+			continue
+		}
 		name := input[mm[2]:mm[3]]
 		tokens = append(tokens, token{
 			name:    name,

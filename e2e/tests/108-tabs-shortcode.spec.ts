@@ -138,10 +138,16 @@ test.describe('[tabs] shortcode', () => {
     expect(deferredPosts).toBe(2);
   });
 
-  test('a [reload] in an eager tab re-renders the slot and keeps that tab open and focused', async ({ apiClient, page }) => {
+  test('a [reload] keeps the same tab set open and focused when an earlier set disappears', async ({ apiClient, page }) => {
+    await apiClient.updateCategory(categoryId, {
+      name: `Tabs Reload ${Date.now()}`,
+      CustomHeader: '[conditional path="status" eq="before"][tabs label="Optional"][tab label="A"]a[/tab][tab label="B"]b[/tab][/tabs][/conditional]' + HEADER,
+    });
     await page.goto(`/group?id=${groupId}`);
     await tab(page, 'Notes').click();
     await expect(page.locator('.tb-notes')).toHaveText('NOTES-before');
+    await expect(page.getByRole('tablist', { name: 'Optional' })).toBeVisible();
+    const notesId = await tab(page, 'Notes').getAttribute('id');
 
     await apiClient.editMeta('group', groupId, 'status', JSON.stringify('after'));
     const button = page.getByRole('button', { name: 'Refresh notes' });
@@ -151,12 +157,70 @@ test.describe('[tabs] shortcode', () => {
     await reloaded;
 
     await expect(page.locator('.tb-notes')).toHaveText('NOTES-after');
+    await expect(page.getByRole('tablist', { name: 'Optional' })).toHaveCount(0);
     await expect(tab(page, 'Notes')).toHaveAttribute('aria-selected', 'true');
+    await expect(tab(page, 'Notes')).toHaveAttribute('id', notesId!);
     await expect(page.locator('.tb-over')).toBeHidden();
     await expect(page.getByRole('button', { name: 'Refresh notes' })).toBeFocused();
     // The lazy tab came back unrevealed and stays unfetched while hidden.
     await page.waitForTimeout(300);
     expect(deferredPosts).toBe(1);
+  });
+
+  test('Tab reaches a panel that has only non-tabbable controls', async ({ apiClient, page }) => {
+    await apiClient.updateCategory(categoryId, {
+      name: `Tabs Stops ${Date.now()}`,
+      CustomHeader: [
+        '[tabs label="Project views"]',
+        '[tab label="Overview"]<p>Status.</p><input type="hidden">[/tab]',
+        '[tab label="Disabled"]<p>Status.</p><fieldset disabled><button>Disabled</button></fieldset>[/tab]',
+        '[tab label="Negative"]<p>Status.</p><a href="/groups" tabindex="-2">Groups</a>[/tab]',
+        '[tab label="Hidden"]<p>Status.</p><div style="display:none"><button>Hidden</button></div>[/tab]',
+        '[/tabs]',
+      ].join(''),
+    });
+    await page.goto(`/group?id=${groupId}`);
+    for (const name of ['Overview', 'Disabled', 'Negative', 'Hidden']) {
+      const selected = tab(page, name);
+      await selected.click();
+      await selected.focus();
+      await page.keyboard.press('Tab');
+      await expect(page.getByRole('tabpanel', { name, exact: true })).toBeFocused();
+    }
+  });
+
+  test('autorefresh restores the roving stop to the focused unselected tab', async ({ apiClient, page }) => {
+    await apiClient.updateCategory(categoryId, {
+      name: `Tabs Autorefresh ${Date.now()}`,
+      CustomHeader: `<div class="tabs-editor">[pills path="status" editable="true" options='["before","after"]']</div>[autorefresh]${HEADER}[/autorefresh]`,
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route('**/v1/shortcodes/deferred', async (route) => {
+      await held;
+      await route.continue();
+    });
+    try {
+      await page.goto(`/group?id=${groupId}`);
+      await tab(page, 'Notes').click();
+      const requested = page.waitForRequest(isDeferredPost);
+      await page.locator('.tabs-editor').getByRole('radio', { name: 'after' }).click();
+      await requested;
+      await tab(page, 'Notes').focus();
+      await page.keyboard.press('ArrowLeft');
+      await expect(tab(page, 'Overview')).toBeFocused();
+      release();
+
+      await expect(page.locator('.tb-notes')).toHaveText('NOTES-after');
+      await expect(tab(page, 'Notes')).toHaveAttribute('aria-selected', 'true');
+      await expect(tab(page, 'Overview')).toBeFocused();
+      await expect(tab(page, 'Overview')).toHaveAttribute('tabindex', '0');
+      await expect(tab(page, 'Notes')).toHaveAttribute('tabindex', '-1');
+      await page.keyboard.press('Tab');
+      await expect(page.getByRole('button', { name: 'Refresh notes' })).toBeFocused();
+    } finally {
+      release();
+    }
   });
 
   test('a page morph keeps the open tab and its focus, and does not re-fetch a lazy tab the reader left', async ({ page }) => {

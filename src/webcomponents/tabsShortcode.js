@@ -15,17 +15,9 @@
 // Everything acts on this host's own tab list and panels only (direct children),
 // so a [tabs] nested in a panel is left to its own host.
 
+import { tabbable } from 'tabbable';
+
 const TAG = 'tabs-shortcode';
-
-// What already gives a panel a tab stop. A panel holding none of these gets
-// tabindex="0" so a keyboard reader can reach its text (APG). The tab buttons of
-// a nested set count, as do the controls of a nested [details].
-const FOCUSABLE =
-  'a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
-
-// Deferred blocks whose bodies a reload swap does not bring back (they return as
-// unrevealed placeholders), so the hosts inside them are not paired up.
-const DEFERRED_HOSTS = 'lazy-shortcode, details-shortcode';
 
 let nextUid = 0;
 
@@ -54,6 +46,7 @@ export class TabsShortcode extends HTMLElement {
     this._focusBeforeMorph = null;
     this.addEventListener('keydown', (event) => this._onKeydown(event));
     this.addEventListener('click', (event) => this._onClick(event));
+    this.addEventListener('focusin', (event) => this._onFocusin(event));
     this.addEventListener('focusout', (event) => this._onFocusout(event));
     // A deferred block clears aria-busy when its content lands (a first load, a
     // retry or a [reload]). That content may bring the panel's first link, after
@@ -80,6 +73,20 @@ export class TabsShortcode extends HTMLElement {
     if (morphFlushQueued) return;
     morphFlushQueued = true;
     queueMicrotask(flushMorphs);
+  }
+
+  _restoreSelection(state) {
+    const morphing = pendingMorphs.has(this);
+    if (!this._init || (!state && !morphing)) return;
+    if (state?.uid !== this._uid) {
+      // A positional patch can have reused a different set's focused button.
+      const previousFocus = this._focusBeforeMorph;
+      this._focusBeforeMorph = null;
+      if (previousFocus === document.activeElement) previousFocus?.blur();
+    }
+    this._uid = state?.uid ?? ++nextUid;
+    this._selected = state?.selected ?? 0;
+    if (!morphing) this._apply();
   }
 
   _list() {
@@ -130,6 +137,8 @@ export class TabsShortcode extends HTMLElement {
 
     this._syncRovingTabindex();
     this._syncPanelTabStop();
+    // A nested list becomes tabbable only after its own upgrade.
+    this.parentElement?.closest(TAG)?._syncPanelTabStop();
     this._syncSuspended();
     return true;
   }
@@ -148,7 +157,7 @@ export class TabsShortcode extends HTMLElement {
   _syncPanelTabStop() {
     const panel = this._panels()[this._selected];
     if (!panel || panel.hidden || panel.getAttribute('role') !== 'tabpanel') return;
-    if (!panel.querySelector(FOCUSABLE)) {
+    if (tabbable(panel, { getShadowRoot: true }).length === 0) {
       panel.setAttribute('tabindex', '0');
     } else if (document.activeElement !== panel) {
       // Removing it from the focused panel would drop the reader on <body>; it
@@ -203,7 +212,6 @@ export class TabsShortcode extends HTMLElement {
     }
     event.preventDefault();
     tabs[next].focus();
-    this._syncRovingTabindex();
   }
 
   // Enter and Space reach here too: they activate the native <button>.
@@ -216,39 +224,18 @@ export class TabsShortcode extends HTMLElement {
     this._apply();
   }
 
+  _onFocusin(event) {
+    if (!this._ownTab(event.target)) return;
+    this._syncRovingTabindex();
+    this._syncPanelTabStop();
+  }
+
   _onFocusout(event) {
     if (!this._ownTab(event.target)) return;
     const list = this._list();
     if (event.relatedTarget instanceof Node && list && list.contains(event.relatedTarget)) return;
     this._syncRovingTabindex(this._selected);
   }
-}
-
-// A reload swaps a container's markup wholesale (reloadInto), so every
-// <tabs-shortcode> in it is a new element that starts on its first tab. These
-// carry each host's selection and IDs over to the host in the same position, so
-// a [reload] in the second tab leaves the second tab open, with the refreshed
-// [reload] button visible to take focus back.
-function ownHosts(container) {
-  return Array.from(container.querySelectorAll(TAG)).filter((host) => {
-    const deferred = host.parentElement?.closest(DEFERRED_HOSTS);
-    return !deferred || !container.contains(deferred);
-  });
-}
-
-export function captureTabSelections(container) {
-  return ownHosts(container).map((host) => (host._init ? { uid: host._uid, selected: host._selected } : null));
-}
-
-export function restoreTabSelections(container, saved) {
-  if (!saved.length) return;
-  ownHosts(container).forEach((host, i) => {
-    const state = saved[i];
-    if (!state || !host._init) return;
-    host._uid = state.uid;
-    host._selected = state.selected;
-    host._apply();
-  });
 }
 
 if (typeof customElements !== 'undefined' && !customElements.get(TAG)) {

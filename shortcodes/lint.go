@@ -684,8 +684,16 @@ func lintText(input string, opts LintOptions) []LintIssue {
 		}
 	}
 
-	lintStrayCloseTags(w, lm, input, tokens, add)
-	lintTabs(w, lm, input, tokens, opts.CSSMode, add)
+	var tabOpeners [][2]int
+	if strings.Contains(input, "[tab") {
+		for _, match := range shortcodeOrTabOpenPattern.FindAllStringSubmatchIndex(input, budgetedTokenCap+1) {
+			if match[2] < 0 {
+				tabOpeners = append(tabOpeners, [2]int{match[0], match[1]})
+			}
+		}
+	}
+	lintStrayCloseTags(w, lm, input, tokens, tabOpeners, add)
+	lintTabs(w, lm, input, tokens, tabOpeners, opts.CSSMode, add)
 	if opts.CheckHTMLBalance && !opts.CSSMode {
 		lintUnbalancedHTML(w, input, tokens, add)
 	}
@@ -710,7 +718,7 @@ func lintText(input string, opts LintOptions) []LintIssue {
 			return nil
 		}
 		pos := m[0]
-		if realStarts[pos] {
+		if realStarts[pos] || insideSortedSpans(pos, tabOpeners) {
 			continue
 		}
 		name := input[m[2]:m[3]]
@@ -1105,7 +1113,7 @@ func forEachConditionalQuery(attrs map[string]string, visit func(attr, suffix st
 // written [/else] is never consumed. [header] and [footer] are real pairs, but
 // only the first complete top-level pair inside an [mrql] block is read
 // (SlotTagSpans), so any other [/header] or [/footer] is literal too.
-func lintStrayCloseTags(w *schemaWork, lm *renderMeter, input string, tokens []token, add func(start, end int, severity, msg string)) {
+func lintStrayCloseTags(w *schemaWork, lm *renderMeter, input string, tokens []token, tabOpeners [][2]int, add func(start, end int, severity, msg string)) {
 	consumed := map[int]bool{}
 	for _, span := range namedBlockSpans(tokens, "mrql") {
 		// SlotTagSpans copies and re-parses the body, once per nested [mrql].
@@ -1125,6 +1133,9 @@ func lintStrayCloseTags(w *schemaWork, lm *renderMeter, input string, tokens []t
 			}
 			i += from
 			from = i + len(closer)
+			if insideSortedSpans(i, tabOpeners) {
+				continue
+			}
 			switch name {
 			case "else", "elseif":
 				add(i, from, SeverityError,

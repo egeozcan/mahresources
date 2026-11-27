@@ -43,10 +43,10 @@ Category, Resource Category and Note Type authors fill `CustomHeader` with sever
 - Readers can open every section at once, so the header turns into one long scroll.
 - Nothing tells the reader that the sections are alternatives.
 
-`[tabs]` gives N mutually exclusive views in a constant-height area, using the WAI-ARIA Tabs pattern. Concrete cases where tabs beat `[details]`:
+`[tabs]` gives N mutually exclusive views using the WAI-ARIA Tabs pattern. Only the active panel occupies space, and its content determines the height. Concrete cases where tabs beat `[details]`:
 
-- **Project group, `CustomHeader`:** `Overview` (description and status meta) | `Open tasks` (lazy `[mrql]` list) | `Files` (lazy gallery) | `Activity` (lazy `[mrql]` sorted by updated). Opening "Files" in a details stack pushes the status off-screen. With tabs the header keeps its size.
-- **Recipe Note Type, `CustomHeader`:** `Ingredients` | `Steps` | `Nutrition`. A cook flips between them while the note body stays in place.
+- **Project group, `CustomHeader`:** `Overview` (description and status meta) | `Open tasks` (lazy `[mrql]` list) | `Files` (lazy gallery) | `Activity` (lazy `[mrql]` sorted by updated). Opening "Files" in a details stack adds it to the other open sections. With tabs the reader sees one section at a time.
+- **Recipe Note Type, `CustomHeader`:** `Ingredients` | `Steps` | `Nutrition`. A cook flips between them without opening several disclosures at once.
 - **Person group, `CustomSidebar`:** `Contact` | `Notes` (lazy). Two short labels.
 
 A `lazy="true"` panel costs nothing on the server until a reader opens it. It reuses the existing `<lazy-shortcode>` / `/v1/shortcodes/deferred` path: no new endpoint, token type or authorization surface.
@@ -557,7 +557,7 @@ The feature is done when all of the following hold:
    - passes axe, best-practice rules included;
    - is fully operable with Arrow, Home, End, Enter, Space and Tab/Shift+Tab, with one roving tab stop;
    - works when nested, with each set reacting only to its own tabs;
-   - keeps its selected tab, IDs and focus across `[reload]`, paste-upload and region morphs;
+   - keeps the selected tab and IDs for uniquely matching sets across `[reload]`, `[autorefresh]` and region morphs; restores tab focus when the same tab survives the update;
    - wraps without horizontal overflow at 320 px;
    - degrades to stacked, named groups without JS.
 2. **Lazy tabs defer and stay scoped.**
@@ -598,7 +598,7 @@ Remaining issues, most important first:
 
 6. **Scope trimming (minor).** The test matrix is very large. The no-IntersectionObserver Vitest case and the separate 320 px "every tab button inside the viewport" check could be folded into existing cases. They do no harm as written.
 
-Usefulness: tabs are a common, real layout need for `CustomHeader`. `[details]` cannot express mutually exclusive alternatives at a constant height, and the lazy-per-tab deferral matters on large deployments. The value is a little lower in sidebars and summaries, which the plan itself discourages.
+Usefulness: tabs are a common, real layout need for `CustomHeader`. `[details]` does not express mutually exclusive alternatives, and the lazy-per-tab deferral matters on large deployments. The value is a little lower in sidebars and summaries, which the plan itself discourages.
 
 ## Review (implementation record)
 
@@ -623,7 +623,7 @@ Built on `feat/shortcode-tabs`. Every §8 item is done (ticked above) and every 
 - **Vitest layout.** The `LazyShortcode.suspended` cases live in `tabsShortcode.test.ts`, under happy-dom with real custom elements, because `deferredReload.test.ts` stubs `HTMLElement` and cannot construct the element. `deferredReload.test.ts` only gains `querySelectorAll` on its fake container. Native Enter/Space activation is covered by the E2E spec, not Vitest.
 - **E2E paths.** `e2e/tests/108-tabs-shortcode.spec.ts` (the lane's assigned prefix) and `e2e/tests/accessibility/tabs-shortcode-a11y.spec.ts`. The shared-note scan is scoped to the tab set with `region` and `landmark-one-main` disabled: the share page template has no `<main>` landmark, which axe reports page-wide whatever the content (pre-existing, not changed here).
 - **CSS** selectors are scoped under `tabs-shortcode >` so an author's own `.tabs-tab` class is not restyled, and tabs get `cursor: pointer`.
-- **Docs.** The `BuiltinDoc` comment listing the built-ins is not edited (merge hygiene). The docs-site section also states that the selected tab survives `[reload]`, `[autorefresh]` and page re-renders.
+- **Docs.** The `BuiltinDoc` comment listing the built-ins was not edited in this lane. See the round 1 review resolutions below for the updated selection guarantee.
 
 ### Verified
 
@@ -637,3 +637,12 @@ Built on `feat/shortcode-tabs`. Every §8 item is done (ticked above) and every 
 - Chromium does not lose focus in the morph gap on this page: with the restore disabled, the paste-upload E2E test still passed. The restore is a safeguard for browsers or pages that force a style recalculation mid-morph, proven by simulation in Vitest.
 - Windows forced colours and right-to-left arrow direction (arrows are not flipped for RTL) were not checked. Selection is shown by weight as well as the accent underline, so it does not rely on colour.
 - Only Chromium runs the E2E suite.
+
+### Round 1 review resolutions
+
+- A complete `[tab …]` slot opener is opaque to the global token scan and to lint's delimiter scans; it is not itself a shortcode token. Quoted `[tabs]`, `[/tabs]`, `[/tab]` and other shortcode text stay literal (`TestTabsQuotedBracketTextIsLiteral`). Outside-content lint trims Unicode whitespace on both sides of the reported span (`TestLintTabsOutsideContentSpanTrimsUnicodeWhitespace`).
+- Lazy blocks coalesce a changed-token callback and the morph update into one request after tab visibility settles. The Vitest tests cover same-token and fresh-token morphs of a visible panel, and the negative control for one the reader left.
+- Panel tab stops use the same `tabbable` library already included by the app's focus-trap tooling. `focusin` enforces the roving tabindex for keyboard or programmatic focus. Chromium covers Tab with hidden, disabled and negative-tabindex descendants, and a real `[autorefresh]` swap that restores focus on an unselected tab.
+- Supersedes positional state matching in the implementation record above: reload swaps and page morphs preserve selection and client IDs only when the same raw `[tabs]` source and entity pair uniquely on both sides. Otherwise selection starts on the first tab. Tests remove a preceding set in `[reload]` and Alpine morphs, and check duplicate identities on either side of a reload swap and across two morphs in one turn.
+- Hover cards emit only stacked labelled groups, with no upgradable tab control. Lazy panel bodies still use `[lazy]`; the shared deferred-token change carries the hover-card context through the fetch. `TestTabsShortcode_HoverCardStacksLabelledGroups` checks the real hover-card fragment and the normal detail page. The lightbox Info panel inherits readable tab label colours, pinned by the lightbox axe test.
+- Only the selected panel takes up space, not a constant-height area; the authoring references now describe the layout as implemented. The stylesheet selector collision belongs to the shared cross-shortcode lane.

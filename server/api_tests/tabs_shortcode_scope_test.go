@@ -43,7 +43,7 @@ func TestTabsShortcode_LazyPanelIsScoped(t *testing.T) {
 	pageToken := func(bearer string, g *models.Group) string {
 		t.Helper()
 		page := getHTML(t, tc, bearer, fmt.Sprintf("/group?id=%d", g.ID))
-		if !strings.Contains(page, `<tabs-shortcode class="tabs-shortcode">`) || !strings.Contains(page, "eager-"+g.Name) {
+		if !strings.Contains(page, `<tabs-shortcode class="tabs-shortcode"`) || !strings.Contains(page, "eager-"+g.Name) {
 			t.Fatalf("page for %s does not render the tab set", g.Name)
 		}
 		if strings.Contains(page, "lazy-"+g.Name) {
@@ -76,5 +76,34 @@ func TestTabsShortcode_LazyPanelIsScoped(t *testing.T) {
 	}
 	if code, body := deferred(admin, outsideToken); code != http.StatusOK || !strings.Contains(body, "lazy-tabs-outside-secret") {
 		t.Errorf("control: admin should render the outside lazy tab, got %d %q", code, body)
+	}
+}
+
+func TestTabsShortcode_HoverCardStacksLabelledGroups(t *testing.T) {
+	tc := setupAuthEnv(t)
+	src := `[tabs label="Views"][tab label="Overview"]Overview body[/tab][tab label="Later" lazy="true"]Lazy body[/tab][/tabs]`
+	cat := models.Category{Name: "Tooltip tabs", CustomHeader: src, CustomHoverCard: src}
+	if err := tc.DB.Create(&cat).Error; err != nil {
+		t.Fatal(err)
+	}
+	group := models.Group{Name: "Tooltip tabs group", CategoryId: &cat.ID}
+	if err := tc.DB.Create(&group).Error; err != nil {
+		t.Fatal(err)
+	}
+	admin := roleBearer(t, tc, models.RoleAdmin)
+	card := getHTML(t, tc, admin, fmt.Sprintf("/hovercard?type=group&id=%d", group.ID))
+	for _, want := range []string{`role="group" aria-label="Overview"`, `role="group" aria-label="Later"`, `>Overview</p>Overview body`, `<lazy-shortcode data-token=`} {
+		if !strings.Contains(card, want) {
+			t.Errorf("hover card missing %q: %s", want, card)
+		}
+	}
+	for _, bad := range []string{`role="tablist"`, `role="tab"`, `<tabs-shortcode`} {
+		if strings.Contains(card, bad) {
+			t.Errorf("hover card exposes tab controls (%q): %s", bad, card)
+		}
+	}
+	page := getHTML(t, tc, admin, fmt.Sprintf("/group?id=%d", group.ID))
+	if !strings.Contains(page, `role="tablist" aria-label="Views"`) {
+		t.Errorf("detail page did not keep the interactive tab set: %s", page)
 	}
 }

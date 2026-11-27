@@ -69,3 +69,17 @@ func TestLintTabsQuietCases(t *testing.T) {
 		t.Errorf("a malformed block reports its one problem, got %+v", issues)
 	}
 }
+
+func TestLintTabsOutsideContentSpanTrimsUnicodeWhitespace(t *testing.T) {
+	src := "[tabs]\u00a0\u2003x\u2003[tab label=\"A\"]a[/tab]\u2002y\u00a0[/tabs]"
+	issues := Lint(src, LintOptions{Known: KnownFromBuiltins()})
+	if len(issues) != 2 {
+		t.Fatalf("want two outside-content warnings, got %+v", issues)
+	}
+	for i, want := range []string{"x", "y"} {
+		issue := issues[i]
+		if got := src[issue.Start:issue.End]; issue.Message != tabsOutsideWarning || got != want {
+			t.Errorf("warning %d highlights %q, want %q: %+v", i, got, want, issue)
+		}
+	}
+}

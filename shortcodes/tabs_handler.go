@@ -2,15 +2,18 @@ package shortcodes
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"html"
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
-// tabOpenPattern matches a [tab …] opener inside a [tabs] body. The name ends
-// at whitespace (a newline included) or the closing bracket, so [tabs], [tabx]
-// and [tab-x] are not openers. Quoted attribute values may contain "]".
+// tabOpenPattern matches a [tab …] slot opener, which only [tabs] consumes.
+// The name ends at whitespace (a newline included) or the closing bracket, so
+// [tabs], [tabx] and [tab-x] are not openers. Quoted values may contain "]".
 var tabOpenPattern = regexp.MustCompile(`\[tab(?:\s(?:"[^"]*"|'[^']*'|[^\]"'])*)?\]`)
 
 const tabCloseTag = "[/tab]"
@@ -97,8 +100,9 @@ func splitTabsM(m *renderMeter, inner string) tabsSplit {
 	}
 	noteOutside := func(start, end int) {
 		seg := inner[start:end]
-		trimmedStart := len(seg) - len(strings.TrimLeft(seg, " \t\r\n\f"))
-		trimmed := strings.TrimSpace(seg)
+		left := strings.TrimLeftFunc(seg, unicode.IsSpace)
+		trimmedStart := len(seg) - len(left)
+		trimmed := strings.TrimRightFunc(left, unicode.IsSpace)
 		if trimmed != "" {
 			out.Outside = append(out.Outside, [2]int{start + trimmedStart, start + trimmedStart + len(trimmed)})
 		}
@@ -184,21 +188,29 @@ func RenderTabsShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 	}
 
 	var b strings.Builder
-	b.WriteString(`<tabs-shortcode class="tabs-shortcode"><div class="tabs-list" role="tablist"`)
-	if label := strings.TrimSpace(sc.Attrs["label"]); label != "" {
-		b.WriteString(` aria-label="` + html.EscapeString(label) + `"`)
-	}
-	b.WriteString(` hidden>`)
-	for i, t := range split.Tabs {
-		selected, tabindex := "false", "-1"
-		if i == 0 {
-			selected, tabindex = "true", "0"
+	tooltip := withinTooltip(reqCtx)
+	if tooltip {
+		b.WriteString(`<div class="tabs-shortcode">`)
+	} else {
+		// Use the source and entity, not rendered panel content or a fresh token.
+		// Repeated identical sets remain ambiguous and are not paired by the client.
+		fmt.Fprintf(&b, `<tabs-shortcode class="tabs-shortcode" data-tabs-key="%s:%d:%x"><div class="tabs-list" role="tablist"`,
+			html.EscapeString(ctx.EntityType), ctx.EntityID, sha256.Sum256([]byte(sc.Raw)))
+		if label := strings.TrimSpace(sc.Attrs["label"]); label != "" {
+			b.WriteString(` aria-label="` + html.EscapeString(label) + `"`)
 		}
-		b.WriteString(`<button type="button" role="tab" class="tabs-tab" aria-selected="` + selected + `" tabindex="` + tabindex + `">`)
-		b.WriteString(html.EscapeString(tabLabel(t, i)))
-		b.WriteString(`</button>`)
+		b.WriteString(` hidden>`)
+		for i, t := range split.Tabs {
+			selected, tabindex := "false", "-1"
+			if i == 0 {
+				selected, tabindex = "true", "0"
+			}
+			b.WriteString(`<button type="button" role="tab" class="tabs-tab" aria-selected="` + selected + `" tabindex="` + tabindex + `">`)
+			b.WriteString(html.EscapeString(tabLabel(t, i)))
+			b.WriteString(`</button>`)
+		}
+		b.WriteString(`</div>`)
 	}
-	b.WriteString(`</div>`)
 
 	for i, t := range split.Tabs {
 		label := html.EscapeString(tabLabel(t, i))
@@ -213,6 +225,10 @@ func RenderTabsShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 		}
 		b.WriteString(`</div>`)
 	}
-	b.WriteString(`</tabs-shortcode>`)
+	if tooltip {
+		b.WriteString(`</div>`)
+	} else {
+		b.WriteString(`</tabs-shortcode>`)
+	}
 	return b.String()
 }

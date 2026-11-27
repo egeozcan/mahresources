@@ -25,7 +25,7 @@ const (
 // stylesheet (cssMode, or a <style> element), and a shortcode's own tag, where
 // "[tab]" is part of an attribute value. It also skips the body of a block
 // whose problem is already reported, so one malformed block is one issue.
-func lintTabs(w *schemaWork, lm *renderMeter, input string, tokens []token, cssMode bool, add func(start, end int, severity, msg string)) {
+func lintTabs(w *schemaWork, lm *renderMeter, input string, tokens []token, tabOpeners [][2]int, cssMode bool, add func(start, end int, severity, msg string)) {
 	if !strings.Contains(input, "[tab") && !strings.Contains(input, tabCloseTag) {
 		return
 	}
@@ -113,12 +113,7 @@ func lintTabs(w *schemaWork, lm *renderMeter, input string, tokens []token, cssM
 		return !consumed[i] && !withinSpans(i, skip) && !insideSortedSpans(i, tags)
 	}
 
-	opens := tabOpenPattern.FindAllStringIndex(input, budgetedTokenCap+1)
-	if len(opens) > budgetedTokenCap {
-		w.fail()
-		return
-	}
-	for _, loc := range opens {
+	for _, loc := range tabOpeners {
 		if !w.step() {
 			return
 		}
@@ -136,7 +131,7 @@ func lintTabs(w *schemaWork, lm *renderMeter, input string, tokens []token, cssM
 		if !w.step() {
 			return
 		}
-		if literal(i) {
+		if literal(i) && !insideSortedSpans(i, tabOpeners) {
 			add(i, from, SeverityError, tabStrayCloserProblem)
 		}
 	}

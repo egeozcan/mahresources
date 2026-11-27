@@ -1285,7 +1285,7 @@ The load-on-open mechanism is the same signed round-trip as `[lazy]`.
 
 ## `[tabs]` -- Tabbed sections
 
-Two or more alternative views of the entity in one place that keeps its size, as an accessible tab set. Use it where `[details]` stacks would push each other down the page: a project header with Overview, Open tasks and Files, or a recipe with Ingredients, Steps and Nutrition. For one optional section, `[details]` is still the right tool.
+Two or more alternative views of the entity in one accessible tab set. Only the open panel takes up space, and the layout height follows its content. Use it where readers should switch between views instead of opening several `[details]` sections at once: a project header with Overview, Open tasks and Files, or a recipe with Ingredients, Steps and Nutrition. For one optional section, `[details]` is still the right tool.
 
 `[tabs]` is a block shortcode and requires a closing `[/tabs]`. Each `[tab label="…"]…[/tab]` directly inside it is one tab. The first tab is open when the page loads.
 
@@ -1324,18 +1324,18 @@ The tab set follows the WAI-ARIA tabs pattern, with manual activation:
 
 - **Left and Right arrows** move between tabs, wrapping at the ends. **Home** and **End** go to the first and last tab. Moving does not open a tab, so arrowing past lazy tabs does not load them.
 - **Enter**, **Space** or a click opens the focused tab.
-- The tab list is one stop in the Tab order. **Tab** moves on into the open panel. A panel with nothing focusable in it is itself a stop, so its text can be reached.
+- The tab list is one stop in the Tab order. **Tab** moves on into the open panel. A panel with no descendants in the Tab order is itself a stop, so its text can be reached.
 
 The tabs wrap onto more rows instead of scrolling sideways, and a long label wraps inside its tab, so a narrow sidebar never scrolls horizontally. The open tab is marked by weight as well as colour.
 
-Without JavaScript, or before the script has loaded, every tab shows, stacked under its label as a named group.
+Without JavaScript, before the script has loaded, and in hover cards, all panels are stacked under their labels as named groups. Hover cards do not show tab controls; lazy panels there can still defer.
 
 ### Rules and limits
 
 - Only a `[tab]` directly inside `[tabs]` is a tab. A `[tab]` inside a nested block such as `[conditional]` stays literal text, so tabs cannot be added conditionally: put the `[conditional]` inside a tab instead. A `[tabs]` inside a tab works, and each set responds only to its own tabs.
 - Text between the tabs, outside any `[tab]…[/tab]`, is not rendered.
 - A `[tabs]` cannot go inside a `[reload]` button face.
-- The selected tab is kept when a `[reload]` or `[autorefresh]` re-renders the content around it, and across a page re-render.
+- When `[reload]`, `[autorefresh]` or a page re-render replaces the surrounding content, selection is kept only if the same tab set can be matched unambiguously. Repeated identical tab sets in the refreshed content start over on their first tab.
 - Use it in `CustomHeader`. In `CustomSidebar`, keep to about three short labels. Do not use it in a per-card slot such as `CustomSummary`: each card would carry its own tab set and run its eager tabs' queries.
 
 The template linter reports a `[tabs]` with no tabs, a `[tab]` without its `[/tab]` or with another `[tab]` inside it, a missing label, a `lazy` value other than `true` or `false`, unknown `[tab]` attributes, text outside the tabs, and any `[tab]` or `[/tab]` that no `[tabs]` reads.
