@@ -68,28 +68,49 @@ test.describe('[tabs] shortcode accessibility', () => {
     await checkA11y();
   });
 
-  test('tab labels have sufficient contrast on the lightbox info panel', async ({ apiClient, page, checkComponentA11y }) => {
+  test('lightbox Info tabs pass contrast and arrows move tab focus without changing the resource', async ({ apiClient, page, checkComponentA11y }) => {
     const stamp = Date.now();
     const rc = await apiClient.createResourceCategory(`Tabs A11y Resources ${stamp}`, 'tabs', { CustomLightbox: HEADER });
-    let resourceId: number | undefined;
+    const resourceIds: number[] = [];
     try {
+      const nextName = `Tabs A11y Neighbor ${stamp}`;
+      resourceIds.push((await apiClient.createResource({
+        filePath: path.join(__dirname, '../../test-assets/sample-image-2.png'),
+        name: nextName,
+        ownerId: groupId,
+      })).ID);
+      // The gallery is newest-first. This image must have a next item.
       const name = `Tabs A11y Image ${stamp}`;
-      resourceId = (await apiClient.createResource({
+      const { ID: id } = await apiClient.createResource({
         filePath: path.join(__dirname, '../../test-assets/sample-image-21.png'),
         name,
         ownerId: groupId,
         resourceCategoryId: rc.ID,
-      })).ID;
+      });
+      resourceIds.push(id);
       await page.goto(`/resources?OwnerId=${groupId}`);
-      await page.locator('[data-lightbox-item]').first().click();
+      await page.locator(`[data-lightbox-item][data-resource-id="${id}"]`).click();
       const lightbox = page.getByRole('dialog', { name, exact: true });
-      await expect(lightbox).toBeVisible();
-      await lightbox.locator('button[title="Resource info"]').click();
+      await expect(lightbox.getByRole('button', { name: 'Next', exact: true })).toBeEnabled();
+      await lightbox.getByRole('button', { name: 'Resource info' }).click();
+      await expect(lightbox.getByRole('button', { name: 'Close info panel' })).toBeFocused();
       const list = lightbox.locator('[data-edit-panel]').getByRole('tablist', { name: 'Project views' });
-      await expect(list.getByRole('tab', { name: 'Overview' })).toBeVisible();
+      const overview = list.getByRole('tab', { name: 'Overview' });
+      await expect(overview).toBeVisible();
+      await overview.focus();
+      await page.keyboard.press('ArrowRight');
+      await expect(lightbox).toBeVisible();
+      await expect(list.getByRole('tab', { name: 'Links' })).toBeFocused();
+      await expect(overview).toHaveAttribute('aria-selected', 'true');
+      await expect(lightbox.getByRole('tabpanel', { name: 'Overview' })).toBeVisible();
       await checkComponentA11y('[data-edit-panel] tabs-shortcode');
+
+      await lightbox.getByRole('button', { name: 'Close info panel' }).click();
+      await expect(lightbox.getByRole('button', { name: 'Resource info' })).toBeFocused();
+      await page.keyboard.press('ArrowRight');
+      await expect(page.getByRole('dialog', { name: nextName, exact: true })).toBeVisible();
     } finally {
-      if (resourceId) await apiClient.deleteResource(resourceId).catch(() => {});
+      for (const id of resourceIds) await apiClient.deleteResource(id).catch(() => {});
       await apiClient.deleteResourceCategory(rc.ID).catch(() => {});
     }
   });

@@ -56,49 +56,60 @@ async function fetchDeferred(token) {
 // so without this a reload would refresh everything the server expanded and leave
 // every Alpine binding beside it showing the snapshot it was asked to replace.
 //
-// Only a scope that already exposes an entity is touched: surfaces that never had
-// one (a share page, the authoring preview) must not have one invented for them.
+// Only a scope that already holds this same entity is touched: a deferred
+// [using] body renders the target without replacing the surrounding entity.
 function applyEntity(el, entity) {
   const alpine = window.Alpine;
   if (!entity || !alpine || typeof alpine.$data !== 'function') return;
   try {
     const scope = alpine.$data(el);
-    if (!scope || !('entity' in scope)) return;
-    if (!supersedes(entity, scope.entity)) return;
+    const current = scope?.entity;
+    if (!sameEntity(entity, current) || !isAtLeastAsRecent(entity, current)) return;
     // Merged, not replaced. The response carries the shape that is safe to send
     // to every surface, which is narrower than what a detail page put in scope:
     // replacing outright would make fields like entity.blocks vanish after the
     // first deferred fetch. Merging refreshes what the server sent and leaves the
     // rest at its page-load value. It cannot introduce anything the response
     // withheld, so a scope built without a share token never acquires one.
-    scope.entity = scope.entity ? { ...scope.entity, ...entity } : entity;
+    scope.entity = { ...current, ...entity };
   } catch (e) {
     /* a scope we cannot reach must never break the swap */
   }
 }
 
-// entityIsCurrent asks the same question as supersedes, but for the caller
-// deciding whether to install the HTML that came with this entity. The markup was
-// expanded server-side from exactly this snapshot, so it is precisely as stale:
+// entityIsCurrent checks whether to install the HTML that came with this entity.
+// It was expanded server-side from exactly this snapshot, so it is just as stale:
 // swapping it in while refusing the entity would leave old server-expanded values
 // sitting beside newer bindings.
 function entityIsCurrent(el, entity) {
   const alpine = window.Alpine;
   if (!entity || !alpine || typeof alpine.$data !== 'function') return true;
   try {
-    const scope = alpine.$data(el);
-    if (!scope || !('entity' in scope)) return true;
-    const current = scope.entity;
+    const current = alpine.$data(el)?.entity;
     // Only a scope holding this same entity can date the response. Where the
     // nearest scope belongs to something else — a card whose own markup carries
     // no x-data, so the page's entity is what resolves — it says nothing about
     // whether this render is stale, and refusing the swap would break that
     // reload outright. Guarding the write is enough there.
-    if (!current || current.ID == null || entity.ID == null || current.ID !== entity.ID) return true;
-    return supersedes(entity, current);
+    return !sameEntity(entity, current) || isAtLeastAsRecent(entity, current);
   } catch (e) {
     return true;
   }
+}
+
+// IDs are per entity type. Model JSON (including slim list cards) always emits
+// these distinct fields, even when no category or note type is assigned.
+function entityType(entity) {
+  if (Object.hasOwn(entity, 'resourceCategoryId')) return 'resource';
+  if (Object.hasOwn(entity, 'NoteTypeId')) return 'note';
+  if (Object.hasOwn(entity, 'CategoryId')) return 'group';
+  return null;
+}
+
+function sameEntity(incoming, current) {
+  if (current?.ID == null || incoming.ID !== current.ID) return false;
+  const type = entityType(incoming);
+  return type !== null && type === entityType(current);
 }
 
 // One Alpine scope can be shared by several deferred blocks, and each one's
@@ -107,10 +118,7 @@ function entityIsCurrent(el, entity) {
 // scope back over newer data a sibling block or an inline edit already put
 // there. The entity's own timestamp is what orders them; when it cannot be read
 // on both sides, the fresh render is still the better guess.
-function supersedes(incoming, current) {
-  if (!current) return true;
-  // A scope holding a different entity is not this response's to write.
-  if (current.ID != null && incoming.ID != null && current.ID !== incoming.ID) return false;
+function isAtLeastAsRecent(incoming, current) {
   const to = Date.parse(incoming.UpdatedAt);
   const from = Date.parse(current.UpdatedAt);
   if (!Number.isFinite(to) || !Number.isFinite(from)) return true;

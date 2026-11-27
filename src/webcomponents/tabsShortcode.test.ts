@@ -325,6 +325,31 @@ describe('lazy panels', () => {
     expect(lazy.textContent).toContain('loaded tok-3');
   });
 
+  it.each([
+    ["owner group with the note's ID", { CategoryId: null }, 'Original note'],
+    ['same note', { NoteTypeId: null }, 'Deferred entity'],
+  ])('renders a lazy reply for the %s and only refreshes the same entity in Alpine', async (_, typeFields, expectedName) => {
+    const host = mount(serverTabs(THREE));
+    const scope = { entity: { ID: 7, NoteTypeId: null, Name: 'Original note', UpdatedAt: '2026-07-29T09:00:00Z' } };
+    Alpine.addScopeToNode(host, scope);
+    vi.stubGlobal('Alpine', Alpine);
+    try {
+      vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({
+        html: '<p>Rendered deferred entity</p>',
+        entity: { ...typeFields, ID: 7, Name: 'Deferred entity', UpdatedAt: '2026-07-29T10:00:00Z' },
+      }), { status: 200 }));
+      tabsOf(host)[2].click();
+      const lazy = host.querySelector('lazy-shortcode')!;
+      intersect(lazy);
+      await settle();
+
+      expect(lazy.textContent).toBe('Rendered deferred entity');
+      expect(scope.entity.Name).toBe(expectedName);
+    } finally {
+      vi.stubGlobal('Alpine', undefined);
+    }
+  });
+
   it('drops the panel tab stop once the loaded content brings a link', async () => {
     const host = mount(serverTabs(THREE));
     tabsOf(host)[2].click();

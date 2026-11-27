@@ -1317,11 +1317,13 @@ A tab without `lazy="true"` renders with the page, whether it is open or not, so
 
 Neither eager nor lazy tabs can read `[item]` from an enclosing `[each]` or `[relations]`: only the direct item branch of a loop binds it. On share pages, in the live preview and in list headers, lazy tabs render inline. See [Where deferral applies](#where-deferral-applies).
 
+A lazy tab inside `[using]` renders its shortcodes against the target entity. Loading it does not change the surrounding Alpine `entity` bindings if they refer to a different entity, even when their numeric IDs match.
+
 ### Keyboard and screen readers
 
 The tab set follows the WAI-ARIA tabs pattern, with manual activation:
 
-- **Left and Right arrows** move between tabs, wrapping at the ends. **Home** and **End** go to the first and last tab. Moving does not open a tab, so arrowing past lazy tabs does not load them.
+- **Left and Right arrows** move between tabs, wrapping at the ends. In the lightbox Info panel, they move between tabs without changing the displayed resource. **Home** and **End** go to the first and last tab. Moving does not open a tab, so arrowing past lazy tabs does not load them.
 - **Enter**, **Space** or a click opens the focused tab.
 - The tab list is one stop in the Tab order. **Tab** moves on into the open panel. A panel with no descendants in the Tab order is itself a stop, so its text can be reached.
 
@@ -1389,7 +1391,7 @@ Because this is a proximity walk, a `[reload]` placed inside a `[lazy]` body ref
 ### During a reload
 
 - The content being replaced stays on screen and is dimmed while the request is in flight, rather than collapsing to a loading placeholder. A `[lazy]` or `[details]` block *inside* a reloaded slot does come back unrevealed, and loads again on its own terms.
-- The Alpine `entity` scope is refreshed along with the markup, so bindings written against it (`x-text="entity.Meta.status"` and friends, see [Custom Templates](./custom-templates.md)) show current values rather than the snapshot the page was loaded with. Shortcodes are expanded server-side against the same fresh entity, so both halves of a template stay in step.
+- If the surrounding Alpine `entity` scope holds the same type and ID as the response, its data refreshes along with the markup. Its bindings (`x-text="entity.Meta.status"` and friends, see [Custom Templates](./custom-templates.md)) then reflect the same entity snapshot as the server-expanded shortcodes. A response for a different entity updates only the markup, not the surrounding bindings.
 - `aria-busy` is set on the content being refreshed and on the button, and the button greys out. On the icon form the glyph also spins, which `prefers-reduced-motion` suppresses.
 - Activation announces "Reloading" politely, then "Content reloaded" on success. A fast reload coalesces the two.
 - On failure the previous content is left exactly as it was, "Could not reload the content" is announced assertively, and a "Reload failed." marker appears beside the button so the stale content is not mistaken for fresh.
@@ -1437,7 +1439,7 @@ Saves made any other way do not trigger it: the metadata panel, the lightbox edi
 
 ### How it works
 
-The server wraps the rendered body in `<autorefresh-shortcode data-token="TOKEN" data-entity-type="…" data-entity-id="…">`. The token seals the block's **raw** body the same way `[lazy]` seals its own, so a refresh re-evaluates every shortcode in it against the current entity. The element is `display: contents` and adds no layout box. A refresh fetches `POST /v1/shortcodes/deferred`, the endpoint `[lazy]`, `[details]` and `[reload]` use, and behaves like a `[reload]` of a deferred block: the current content stays on screen dimmed while the request is in flight, the Alpine `entity` scope is refreshed along with the markup, and a newer refresh or reload of an overlapping area wins over an older one.
+The server wraps the rendered body in `<autorefresh-shortcode data-token="TOKEN" data-entity-type="…" data-entity-id="…">`. The token seals the block's **raw** body the same way `[lazy]` seals its own, so a refresh re-evaluates every shortcode in it against the current entity. The element is `display: contents` and adds no layout box. A refresh fetches `POST /v1/shortcodes/deferred`, the endpoint `[lazy]`, `[details]` and `[reload]` use, and behaves like a `[reload]` of a deferred block: the current content stays on screen dimmed while the request is in flight, a matching Alpine `entity` scope is refreshed along with the markup, and a newer refresh or reload of an overlapping area wins over an older one.
 
 The host is emitted on full pages, in content those pages load through `[lazy]` and `[details]`, and in the lightbox's info panel. Everywhere else the body renders with no wrapper and never refreshes: the public share server, the category-template live preview, `CustomMRQLResult` cards on `/mrql`, and the `CustomListHeader` and `CustomListFooter` carrier slots.
 
@@ -2003,7 +2005,7 @@ One known mismatch remains: PostgreSQL's `LOWER` folds non-ASCII letters too, so
 </div>
 ```
 
-- The scroll region is named by the caption. On pages, including the lightbox, it is reachable with Tab so a wide table can be scrolled from the keyboard.
+- The scroll region is named by the caption. Tab reaches it, and Left and Right scroll a wide table. In the lightbox Info panel, these keys scroll the focused region instead of changing the displayed resource.
 - Every column header is `scope="col"` and every row header, the Total row included, `scope="row"`.
 - Each link's name starts with its visible number and names the row and column it counts.
 - Colour never carries meaning on its own: an empty combination is a written `0`.

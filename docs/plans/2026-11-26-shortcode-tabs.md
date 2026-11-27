@@ -655,7 +655,17 @@ Built on `feat/shortcode-tabs`. Every §8 item is done (ticked above) and every 
 - Lint shares the parser's literal-selector test. `TestLintTreatsStylesheetBareOpenersAsSelectors` covers the accepted prefixes in both `CustomCSS` and embedded `<style>` and checks that interpolation still receives a diagnostic.
 - Validation: tagged Go shortcode, internal, template-handler and targeted API tests passed; `go vet` reported only the pre-existing lock-copy warning in `application_context/job_download_progress_test.go`. All 2,692 Vitest tests and 29 Chromium tests (tabs, tabs accessibility, reload and autorefresh) passed. No SQL changed.
 
+### Round 3 review resolutions
+
+- The lightbox's Left/Right shortcuts leave already-handled key events alone. The two-resource tabs accessibility test checks that Right moves focus to the next tab without changing the resource or selecting a new panel, and that Right still moves to the neighboring resource outside the Info panel.
+- Native horizontal scrolling takes precedence over those shortcuts inside the Info panel's custom content. A focused custom scroll region or a control inside it keeps the key even at the edge of the region. The two-resource pivot accessibility test reaches a wide sum pivot with Tab and checks that Right increases `scrollLeft` without leaving the resource.
+- A deferred response updates its surrounding Alpine `entity` only when the type and ID both match. The same identity rule limits the timestamp check for reload swaps; HTML from an authorized render of another entity is still installed. Vitest covers an equal-ID group reply rendered by a lazy tab in a note scope, a same-note control, and the reload swap where a different entity's older timestamp must not suppress its HTML.
+- Validation: both lightbox tests and the two cross-entity Vitest cases failed before the fixes. Afterward, all 2,698 Vitest tests, 55 targeted Chromium tests, the CSS source-scan check, and the tagged Go shortcode, internal, template-handler and targeted API tests passed. `go vet` reported only the existing lock-copy warning in `application_context/job_download_progress_test.go`. No SQL changed.
+
 #### Known limits
 
+- A manual `[reload]` in an eager tab can return focus to the reload button if the reader focuses another tab while the response is pending. The swap removes that focused tab before the reload checks whether focus moved.
+- The stylesheet scan does not recognize a `<style>` inside `<noscript>`, so built-in names in bare CSS attribute selectors in that stylesheet can still be interpreted as shortcodes.
+- A literal `<style>` in a `[tab]` label can confuse attribute-placement lint and hide diagnostics on later attributes (e.g. `[excerpt more=…]` in a `title`). The label itself is still escaped at render time.
 - A bare `[tab]` attribute selector such as `.x[tab]` inside a `<style>` in a tab body can still be read as a nested `[tab]` and cause a visible error. Write `.x[ tab]` as a workaround.
 - A nested tab set in a lazy tab inside a lightbox `[autorefresh]` can reset after Reload: the initial lightbox renders the lazy tab inline, while the refresh response defers it again.
