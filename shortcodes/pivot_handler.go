@@ -436,6 +436,10 @@ func pivotNumber(f float64) string {
 // subtree confinement, the page query budget and its cache apply as they do to
 // [mrql].
 func RenderPivotShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcodeContext, executor QueryExecutor) string {
+	if withinTooltip(reqCtx) {
+		// A keyboard user cannot enter the tooltip to scroll a wide table.
+		return shortcodeComment("pivot unavailable in this context")
+	}
 	// A <button> takes phrasing content only; a table is not.
 	if withinReloadFace(reqCtx) {
 		return shortcodeErrorMarker("pivot", "[pivot] cannot be used inside a [reload] button face")
@@ -474,12 +478,13 @@ func RenderPivotShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcod
 		if scope != 0 && scope != mrql.UnresolvedScopeSentinel {
 			filter = mrql.InsertScopeClause(filter, scope)
 		}
-		if len(filter) > mrql.MaxQueryBytes {
+		// The MRQL editor normalizes CR and CRLF to LF, even in literals.
+		if len(filter) > mrql.MaxQueryBytes || strings.ContainsRune(filter, '\r') {
 			return ""
 		}
 		return "/mrql?q=" + url.QueryEscape(filter)
 	}
-	return writePivotHTML(m, plan, t, result.DrillDownLimit, withinTooltip(reqCtx), href)
+	return writePivotHTML(m, plan, t, result.DrillDownLimit, href)
 }
 
 // pivotFocus is the link and region focus ring, as [similar] and [calendar]
@@ -495,12 +500,12 @@ const (
 // writePivotHTML writes the table under the render meter: every row is
 // reserved right after it is formatted, so a stop holds at most one row past
 // the budget.
-func writePivotHTML(m *renderMeter, plan pivotPlan, t pivotTable, drillDownLimit int, tooltip bool, href func(string) string) string {
+func writePivotHTML(m *renderMeter, plan pivotPlan, t pivotTable, drillDownLimit int, href func(string) string) string {
 	shownRows, hiddenRows := t.rows.shown(plan.maxRows)
 	shownCols, hiddenCols := t.cols.shown(plan.maxCols)
 	showTotalCol := !plan.cols.multi
 	showFooter := !plan.rows.multi
-	links := !plan.sum && !t.truncated && !tooltip && drillDownLimit > 0
+	links := !plan.sum && !t.truncated && drillDownLimit > 0
 	rowLinks, colLinks := links && !t.rows.numericMetaKey, links && !t.cols.numericMetaKey
 	esc := html.EscapeString
 
@@ -530,14 +535,9 @@ func writePivotHTML(m *renderMeter, plan pivotPlan, t pivotTable, drillDownLimit
 	var b strings.Builder
 	c := charged{m: m}
 	caption := esc(plan.caption)
-	tabindex := 0
-	if tooltip {
-		// Omission alone can leave a scroll container in the tab order.
-		tabindex = -1
-	}
 	// relative keeps the sr-only spans inside the scroll container, so they
 	// cannot widen the page.
-	fmt.Fprintf(&b, `<div class="mrql-pivot my-2"><div class="relative overflow-x-auto rounded-md %s" role="region" aria-label="%s" tabindex="%d">`, pivotFocus, caption, tabindex)
+	fmt.Fprintf(&b, `<div class="mrql-pivot my-2"><div class="relative overflow-x-auto rounded-md %s" role="region" aria-label="%s" tabindex="0">`, pivotFocus, caption)
 	fmt.Fprintf(&b, `<table class="min-w-full text-sm border border-stone-200"><caption class="text-left text-sm font-semibold px-1 pb-2">%s</caption>`, caption)
 	fmt.Fprintf(&b, `<thead class="bg-stone-100 text-stone-700"><tr><th scope="col" class="%s text-left">%s</th>`, pivotTh, esc(plan.rows.label))
 	for _, col := range shownCols {

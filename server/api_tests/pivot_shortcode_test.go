@@ -565,23 +565,32 @@ func TestPivotShortcode_ConfinedJoinedLabels(t *testing.T) {
 	checkPivotConfinedJoinedLabels(t, setupAuthEnv(t))
 }
 
-func TestPivotShortcode_TooltipIsNotInteractive(t *testing.T) {
+func TestPivotShortcode_UnavailableInTooltip(t *testing.T) {
 	tc := SetupTestEnv(t)
 	const tpl = `[pivot query="type = note" rows="meta.status" cols="name"]`
-	cat := &models.Category{Name: "pivot-tooltip", CustomHoverCard: tpl, CustomHeader: tpl}
+	const unavailable = `<!-- mr:pivot unavailable in this context -->`
+	cat := &models.Category{Name: "pivot-tooltip", CustomHoverCard: tpl + `[lazy]` + tpl + `[/lazy]`, CustomHeader: tpl}
 	mkSim(t, tc, cat)
 	group := &models.Group{Name: "pivot-tooltip", CategoryId: &cat.ID}
 	mkSim(t, tc, group)
 	mkSim(t, tc, &models.Note{Name: "matching", OwnerId: &group.ID, Meta: types.JSON(`{"status":"open"}`)})
 
 	out := getHTML(t, tc, "", fmt.Sprintf("/hovercard?type=group&id=%d", group.ID))
-	if got := fmt.Sprint(pivotTexts(pivotRows(t, out)["open"])); got != "[open 1 1]" {
-		t.Errorf("hover card should keep the counts, got %s", got)
+	if !strings.Contains(out, unavailable) || strings.Contains(out, `class="mrql-pivot`) {
+		t.Errorf("hover card must show the unavailable comment instead of a pivot: %s", out)
 	}
-	if strings.Contains(out, `<a href="/mrql?q=`) || !strings.Contains(out, `role="region" aria-label="Count by status and name" tabindex="-1"`) {
-		t.Errorf("hover card must suppress pivot links and its scroll-region tab stop: %s", out)
+	token := regexp.MustCompile(`<lazy-shortcode data-token="([^"]+)"`).FindStringSubmatch(out)
+	if len(token) != 2 {
+		t.Fatalf("hover card did not emit a lazy token: %s", out)
 	}
+	if body := postDeferredToken(t, tc, "", token[1], http.StatusOK); body != unavailable {
+		t.Errorf("deferred hover card must also omit the pivot: %s", body)
+	}
+
 	page := getHTML(t, tc, "", fmt.Sprintf("/group?id=%d", group.ID))
+	if got := fmt.Sprint(pivotTexts(pivotRows(t, page)["open"])); got != "[open 1 1]" {
+		t.Errorf("group detail should show pivot counts, got %s", got)
+	}
 	if !strings.Contains(page, `<a href="/mrql?q=`) || !strings.Contains(page, `role="region" aria-label="Count by status and name" tabindex="0"`) {
 		t.Error("normal group detail pivot should have links and a scroll-region tab stop")
 	}
