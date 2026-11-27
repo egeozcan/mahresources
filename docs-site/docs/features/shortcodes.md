@@ -382,9 +382,9 @@ The source goes through these steps on the server, in order:
 
 1. Only its first 16 KiB are read.
 2. [Template comments](#comment----comment-out-a-section) are removed.
-3. Shortcodes are removed without running: a block goes with its body, so `[details]…[/details]` disappears entirely, and an `[mrql]` in the text runs no query. This also removes shortcodes inside code spans and fenced code blocks. Bare tokens followed immediately by `(`, or used as Markdown reference link or image labels, are left for Markdown. For example, `[link](https://example.org)` contributes `link`, while `![excerpt](image.png)` contributes no text.
-4. Each mention (`@[resource:5:Sunset photo]`) becomes its name, `Sunset photo`, exactly as written: a `*` or `<` in a name is not read as Markdown or HTML.
-5. Markdown is rendered and only its visible text kept. HTML tags, attributes (image alt text included), HTML comments and the contents of `<script>`, `<style>`, `<template>` (including nested templates) and similar elements are dropped. Paragraphs, list items, table cells and line breaks become spaces.
+3. Shortcodes are removed without running: a block goes with its body, so `[details]…[/details]` disappears entirely, and an `[mrql]` in the text runs no query. This also removes shortcodes inside code spans and fenced code blocks. Bare tokens (including ones with just trailing whitespace, like `[link ]`) followed immediately by `(`, or used as Markdown reference link or image labels, are left for Markdown. For example, `[link ](https://example.org)` contributes `link`, while `![excerpt ](image.png)` contributes no text.
+4. Mention markers that survive shortcode stripping are shown as their names: `@[resource:5:Sunset photo]` becomes `Sunset photo`. A `*` or `<` in a name is not read as Markdown or HTML.
+5. Markdown is rendered, then the HTML is scanned for text. Tags, all attributes (including image `alt` text) and HTML comments are dropped. So are the contents of `<script>`, `<style>`, `<textarea>`, `<title>`, `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>`, `<noscript>`, `<plaintext>`, `<template>` and any element with a `hidden` attribute, regardless of its value. Paragraphs, list items, table cells and line breaks become spaces. The scan matches tags; it does not apply CSS, `aria-hidden` or other browser visibility rules.
 
 The result is one line: every run of whitespace becomes one space.
 
@@ -416,7 +416,7 @@ Lorem ipsum dolor… <a href="/note?id=42" class="underline" aria-label="Read mo
 - It is underlined, so it does not rely on colour alone.
 - It renders for read-only viewers as well: it is navigation, not an edit control.
 - It is left out inside a [`[reload]`](#reload----re-render-on-demand) button face, in hover cards, and on the [public share page](./note-sharing.md). The ellipsis stays.
-- Lint reports an error for a nonblank `more` inside an HTML attribute: the link is markup.
+- Lint reports an error for a nonblank `more` in an HTML attribute name or value: the link is markup.
 
 ### Examples
 

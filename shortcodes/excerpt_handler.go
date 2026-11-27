@@ -45,8 +45,8 @@ const (
 // WithHardWraps, change only attributes and <br>, which become nothing and a
 // space here either way. Raw HTML is safe to pass through because none of this
 // HTML is emitted: only its text is. Keep the two in step;
-// markdown_excerpt_parity_test.go in template_filters fails when they disagree
-// on visible text.
+// markdown_excerpt_parity_test.go in template_filters pins the Markdown
+// conversion's effect on the extracted text.
 var excerptMarkdown = goldmark.New(
 	goldmark.WithExtensions(extension.GFM),
 	goldmark.WithRendererOptions(gmhtml.WithUnsafe()),
@@ -351,48 +351,73 @@ var excerptBlockElements = map[string]bool{
 	"dd": true, "dt": true, "section": true, "article": true,
 }
 
-// excerptVisibleText is the text of an HTML fragment as a reader sees it, with
-// entities decoded: comments, tags, attributes (alt text included) and the
-// contents of raw-text elements and inert templates are dropped.
+// excerptVisibleText extracts text with entities decoded. It drops comments,
+// tags, all attributes, raw-text elements, inert templates and subtrees marked
+// hidden. It matches tags, not browser visibility or layout rules.
 func excerptVisibleText(fragment []byte) string {
 	var b strings.Builder
 	b.Grow(len(fragment))
 	z := xhtml.NewTokenizer(bytes.NewReader(fragment))
-	skipping := ""
-	templateDepth := 0
+	rawTag := ""
+	var skippedSubtrees []string
 	for {
-		switch z.Next() {
+		tt := z.Next()
+		switch tt {
 		case xhtml.ErrorToken:
 			return b.String()
 		case xhtml.TextToken:
-			if skipping == "" && templateDepth == 0 {
+			if rawTag == "" && len(skippedSubtrees) == 0 {
 				b.Write(z.Text())
 			}
 		case xhtml.StartTagToken, xhtml.SelfClosingTagToken:
-			name, _ := z.TagName()
-			if skipping != "" {
-				continue
-			}
-			if string(name) == "template" {
-				templateDepth++
-			} else if excerptRawTextElements[string(name)] {
-				skipping = string(name)
-			} else if templateDepth == 0 && excerptBlockElements[string(name)] {
+			name, more := z.TagName()
+			tag := string(name)
+			switch {
+			case rawTag != "":
+			case excerptRawTextElements[tag]:
+				rawTag = tag
+			case tag == "template":
+				skippedSubtrees = append(skippedSubtrees, tag)
+			case len(skippedSubtrees) > 0:
+				// Count nested openers of the same tag so their closers
+				// cannot end the suppressed subtree early.
+				if tt == xhtml.StartTagToken && tag == skippedSubtrees[len(skippedSubtrees)-1] {
+					skippedSubtrees = append(skippedSubtrees, tag)
+				}
+			case excerptHasHiddenAttr(z, more):
+				if tt == xhtml.StartTagToken && !htmlVoid[tag] {
+					skippedSubtrees = append(skippedSubtrees, tag)
+				}
+			case excerptBlockElements[tag]:
 				b.WriteByte(' ')
 			}
 		case xhtml.EndTagToken:
 			name, _ := z.TagName()
-			if skipping != "" {
-				if string(name) == skipping {
-					skipping = ""
+			tag := string(name)
+			if rawTag != "" {
+				if tag == rawTag {
+					rawTag = ""
 				}
-			} else if string(name) == "template" && templateDepth > 0 {
-				templateDepth--
-			} else if templateDepth == 0 && excerptBlockElements[string(name)] {
+			} else if n := len(skippedSubtrees); n > 0 {
+				if tag == skippedSubtrees[n-1] {
+					skippedSubtrees = skippedSubtrees[:n-1]
+				}
+			} else if excerptBlockElements[tag] {
 				b.WriteByte(' ')
 			}
 		}
 	}
+}
+
+func excerptHasHiddenAttr(z *xhtml.Tokenizer, more bool) bool {
+	for more {
+		var key []byte
+		key, _, more = z.TagAttr()
+		if string(key) == "hidden" {
+			return true
+		}
+	}
+	return false
 }
 
 // lintExcerpt reports what the renderer would do differently from what an

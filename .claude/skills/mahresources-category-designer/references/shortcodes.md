@@ -118,8 +118,9 @@ Attrs:
 
 Rules:
 
-- Markdown, HTML (including inert `<template>` content), mentions (kept as their names), template comments and shortcodes are stripped. Embedded shortcodes never run; bare Markdown link/image labels are left for Markdown. The preview is one escaped line ending in `…` when cut, including any preview from a source longer than 16 KiB.
-- Without `more`, use it in text or inert quoted attributes such as `title="[excerpt words='25']"`, `data-*` and `aria-label`. Do not place it in script-bearing attributes, `srcdoc` or URL schemes; HTML escaping does not make those safe. A nonblank `more` in an attribute is a lint error because it can emit link markup.
+- Template comments and shortcodes are stripped without running them; mentions are shown as their names. Bare Markdown link/image labels, including trailing whitespace, are left for Markdown. The preview is one escaped line ending in `…` when cut, including any preview from a source longer than 16 KiB.
+- After Markdown conversion, it drops HTML comments, tags and all attributes (including image `alt` text), and skips the contents of `<script>`, `<style>`, `<textarea>`, `<title>`, `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>`, `<noscript>`, `<plaintext>`, `<template>` and elements with a `hidden` attribute. It does not apply CSS, `aria-hidden` or other browser visibility rules.
+- Without `more`, use it in text or inert quoted attributes such as `title="[excerpt words='25']"`, `data-*` and `aria-label`. Do not place it in script-bearing attributes, `srcdoc` or URL schemes; HTML escaping does not make those safe. A nonblank `more` in an attribute name or value is a lint error because it can emit link markup.
 - It never loads data: preview a related entity inside `[using]` or an `[mrql]` block.
 - No `more` link inside a `[reload]` face, in hover cards, or on the public share page.
 
