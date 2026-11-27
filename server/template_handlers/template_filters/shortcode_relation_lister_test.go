@@ -108,6 +108,37 @@ func TestRelationListerChargesOneUnitPerStatement(t *testing.T) {
 	}
 }
 
+func TestRelationsShortcodeChargesDetailsOnlyForItemReads(t *testing.T) {
+	appCtx, _ := setupExecutorTestContext(t)
+	group := shortcodes.MetaShortcodeContext{EntityType: "group", EntityID: 7, Meta: []byte(`{"GroupMeta":3}`)}
+	for _, tt := range []struct {
+		name    string
+		body    string
+		want    string
+		details bool
+	}{
+		{"item fallback text", `[item path="GroupName" default="GroupMeta unavailable"]`, `>Auth</li>`, false},
+		{"unrelated path", `[item path="NotGroupMeta" default="fallback"]`, `>fallback</li>`, false},
+		{"index ignores path", `[item index="true" path="GroupDescription"]`, `>1</li>`, false},
+		{"calc carrier reference and fallback", `[calc expr="meta.GroupMeta * 2" default="GroupDescription unavailable"]`, `>6</li>`, false},
+		{"item details path", `[item path="GroupMeta.status"]`, "inline query budget exceeded (1 per page)", true},
+		{"calc item reference", `[calc expr="item.GroupMeta.cost * 2"]`, "inline query budget exceeded (1 per page)", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeRelationContext{MahresourcesContext: appCtx, timeout: time.Minute}
+			reqCtx := shortcodes.WithRelationLister(shortcodes.WithQueryBudget(context.Background(), 1), BuildRelationLister(f))
+			out := shortcodes.Process(reqCtx, `[relations]`+tt.body+`[/relations]`, group, nil, nil)
+			stats := shortcodes.QueryBudgetFrom(reqCtx).Stats()
+			if !strings.Contains(out, tt.want) || stats.Executions != 1 || stats.Exceeded != tt.details {
+				t.Errorf("got %q with stats %+v; want %q with one execution and refusal = %v", out, stats, tt.want, tt.details)
+			}
+			if len(f.lists) != 1 || len(f.details) != 0 {
+				t.Errorf("lists %d, details %d; want the edge statement only", len(f.lists), len(f.details))
+			}
+		})
+	}
+}
+
 // With one unit left, the edge statement runs and the details statement is
 // refused: the whole [relations] renders the budget marker.
 func TestRelationListerRefusesDetailsPastTheBudget(t *testing.T) {

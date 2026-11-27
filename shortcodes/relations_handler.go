@@ -29,8 +29,8 @@ type RelationsRequest struct {
 	Direction string // RelationsDirectionOut or RelationsDirectionIn
 	Limit     int    // 1..MaxRelationsLimit
 	// Details asks for the far group's Description and Meta too. Only a block
-	// body that names GroupDescription or GroupMeta needs them, and they cost
-	// a statement of their own.
+	// body with an item path into those fields needs them, and they cost a
+	// statement of their own.
 	Details bool
 }
 
@@ -126,7 +126,7 @@ func RenderRelationsShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShor
 		if m.Err() != nil {
 			return ""
 		}
-		req.Details = namesFarGroupDetails(items)
+		req.Details = readsFarGroupDetails(items)
 	}
 
 	entries, err := list(reqCtx, req)
@@ -263,16 +263,29 @@ func relationElement(e GroupRelationEntry, details bool) map[string]any {
 	return elem
 }
 
-// namesFarGroupDetails reports whether any element token of a block body names
-// the far group's Description or Meta. Attributes are never expanded, so a path
-// or expression that reads them spells the field out.
-func namesFarGroupDetails(items []Shortcode) bool {
+func readsFarGroupDetails(items []Shortcode) bool {
 	for _, sc := range items {
-		for _, v := range sc.Attrs {
-			if strings.Contains(v, "GroupMeta") || strings.Contains(v, "GroupDescription") {
+		switch sc.Name {
+		case "item":
+			if sc.Attrs["index"] != "true" && isFarGroupDetailPath(sc.Attrs["path"]) {
 				return true
+			}
+		case "calc":
+			prog, err := parseCalcExpr(sc.Attrs["expr"])
+			if err != nil {
+				continue
+			}
+			for _, ref := range prog.refs {
+				if ref.root == "item" && isFarGroupDetailPath(ref.path) {
+					return true
+				}
 			}
 		}
 	}
 	return false
+}
+
+func isFarGroupDetailPath(path string) bool {
+	field, _, _ := strings.Cut(path, ".")
+	return field == "GroupDescription" || field == "GroupMeta"
 }
