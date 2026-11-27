@@ -702,12 +702,19 @@ func lintText(input string, opts LintOptions) []LintIssue {
 		w.fail()
 		return nil
 	}
+	// Bracket text quoted inside a real opener's attributes is attribute text.
+	var openerSpans [][2]int
+	for _, tk := range tokens {
+		if !tk.closing {
+			openerSpans = append(openerSpans, [2]int{tk.start, tk.end})
+		}
+	}
 	for _, m := range looseMatches {
 		if !w.step() {
 			return nil
 		}
 		pos := m[0]
-		if realStarts[pos] || insideSortedSpans(pos, scan.tabOpeners) {
+		if realStarts[pos] || insideSortedSpans(pos, scan.tabOpeners) || insideSortedSpans(pos, openerSpans) {
 			continue
 		}
 		name := input[m[2]:m[3]]

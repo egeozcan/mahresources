@@ -225,3 +225,22 @@ func TestTabsQuotedBracketTextIsLiteral(t *testing.T) {
 		})
 	}
 }
+
+// A closer quoted in the outer [tabs] opener's own attributes is attribute
+// text. Pairing it with that opener once panicked lint (the body slice ended
+// before it began) and broke rendering.
+func TestTabsCloserQuotedInOuterOpenerIsLiteral(t *testing.T) {
+	for _, src := range []string{
+		`[tabs label="About [/tabs]"][tab label="Example"]Body[/tab][/tabs]`,
+		`[tabs label="About [/tab]"][tab label="Example"]Body[/tab][/tabs]`,
+	} {
+		t.Run(src, func(t *testing.T) {
+			out := Process(context.Background(), src, MetaShortcodeContext{}, nil, nil)
+			assert.Contains(t, out, `Body</div></tabs-shortcode>`)
+			assert.NotContains(t, out, "shortcode-error")
+			assert.NotPanics(t, func() {
+				assert.Empty(t, Lint(src, LintOptions{Known: KnownFromBuiltins()}))
+			})
+		})
+	}
+}

@@ -226,6 +226,10 @@ func pairTokensM(m *renderMeter, input string, opens, closes [][]int, tabOpeners
 		return nil
 	}
 	tokens := make([]token, 0, len(opens)+len(closes))
+	// A closer quoted inside an opener's attributes ([tabs label="[/tabs]"])
+	// is attribute text, not a tag. Opener matches never overlap and arrive in
+	// source order, so the spans stay sorted.
+	openSpans := make([][2]int, 0, len(opens))
 	for _, mm := range opens {
 		if !m.tick() {
 			return nil
@@ -234,6 +238,7 @@ func pairTokensM(m *renderMeter, input string, opens, closes [][]int, tabOpeners
 			continue // A slot is never itself a global token.
 		}
 		fullStart, fullEnd := mm[0], mm[1]
+		openSpans = append(openSpans, [2]int{fullStart, fullEnd})
 		inStyle := insideSortedSpans(fullStart, styleSpans)
 		if (cssMode || inStyle) && cssLiteralOpener(input, fullStart, mm[3]) {
 			continue
@@ -252,7 +257,7 @@ func pairTokensM(m *renderMeter, input string, opens, closes [][]int, tabOpeners
 			return nil
 		}
 		fullStart, fullEnd := mm[0], mm[1]
-		if insideSortedSpans(fullStart, tabOpeners) {
+		if insideSortedSpans(fullStart, tabOpeners) || insideSortedSpans(fullStart, openSpans) {
 			continue
 		}
 		name := input[mm[2]:mm[3]]
