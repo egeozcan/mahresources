@@ -54,6 +54,12 @@ func TestScoreChecks(t *testing.T) {
 			pass:     true,
 		},
 		{
+			name: "relations else slot passes", c: pairCase(),
+			draft:    pairDraft(`[relations][item path="GroupName"][else]None[/relations]`, ``),
+			previews: okPreview(`None`),
+			pass:     true,
+		},
+		{
 			name: "provider error", c: pairCase(),
 			draft: Draft{Status: 502, Error: "template generation provider error"},
 			check: func(t *testing.T, got Checks, details Details) {

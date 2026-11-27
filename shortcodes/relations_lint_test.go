@@ -15,12 +15,12 @@ func TestLintRelations(t *testing.T) {
 		{`[relations order="name"]`, `unknown attribute "order"`, SeverityWarning},
 		{`[relation]`, "did you mean [relations]", ""},
 		{`[reload][relations][/reload]`, "[relations] cannot be used inside a [reload] button face", SeverityError},
-		{`[item path="Name"]`, "[item] is only meaningful inside an [each] or [relations] block", SeverityWarning},
-		{`[calc expr="item.GroupID * 2"]`, "[calc] uses item outside an [each] or [relations] block; it renders the default", SeverityWarning},
+		{`[item path="Name"]`, "[item] is only bound at the top level of the item branch", SeverityWarning},
+		{`[calc expr="item.GroupID * 2"]`, "[calc] item operands have no value here", SeverityWarning},
 		{`[relations][using type="group" id="3"][item path="Name"][/using][/relations]`,
-			"[item] inside a [using] block renders nothing: [using] switches to another entity, so the [each] or [relations] element is not available there", SeverityWarning},
+			"[item] is only bound at the top level of the item branch", SeverityWarning},
 		{`[relations][using type="group" id="3"][calc expr="item.GroupID"][/using][/relations]`,
-			"[calc] inside a [using] block cannot read item", SeverityWarning},
+			"[calc] item operands have no value here", SeverityWarning},
 	}
 	for _, tc := range cases {
 		issues := Lint(tc.src, LintOptions{Known: known})
@@ -46,6 +46,34 @@ func TestLintRelations(t *testing.T) {
 	} {
 		if issues := Lint(ok, LintOptions{Known: known}); len(issues) != 0 {
 			t.Errorf("%s: expected no issues, got %+v", ok, issues)
+		}
+	}
+}
+
+func TestLintItemBindingMatchesTheTopLevelElementBranch(t *testing.T) {
+	for _, tc := range []struct {
+		src string
+		tag string
+	}{
+		{`[relations][conditional path="show" not-empty="true"][item path="GroupName"][/conditional][/relations]`, "item"},
+		{`[relations][else][calc expr="coalesce(item.GroupID, 0)"][/relations]`, "calc"},
+		{`[relations][tabs][tab label="Related group"][item path="GroupName"][/tab][/tabs][/relations]`, "item"},
+		{`[each path="tags"][tabs][tab label="Tags" lazy="true"][item][/tab][/tabs][/each]`, "item"},
+		{`[each path="tags"][relations]yes[else][item][/relations][/each]`, "item"},
+	} {
+		issues := Lint(tc.src, LintOptions{Known: KnownFromBuiltins()})
+		issue := findIssue(issues, "top level of the item branch")
+		if issue == nil || issue.Severity != SeverityWarning || tc.src[issue.Start:issue.Start+1+len(tc.tag)] != "["+tc.tag {
+			t.Errorf("%s: expected an unbound [%s] warning on the token, got %+v", tc.src, tc.tag, issues)
+		}
+	}
+	for _, src := range []string{
+		`[relations][conditional path="show" not-empty="true"]y[else]n[/conditional][item path="GroupName"][else]None[/relations]`,
+		`[relations][else][each path="tags"][item][/each][/relations]`,
+		`[each path="tags"][tabs][tab label="Groups"][relations][item path="GroupName"][/relations][/tab][/tabs][/each]`,
+	} {
+		if issues := Lint(src, LintOptions{Known: KnownFromBuiltins()}); len(issues) > 0 {
+			t.Errorf("%s: expected item binding to the inner loop, got %+v", src, issues)
 		}
 	}
 }

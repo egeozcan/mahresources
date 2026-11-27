@@ -46,12 +46,12 @@ var twoTypes = []GroupRelationEntry{
 func TestRelations_InlineMarkup(t *testing.T) {
 	f := &fakeRelations{entries: twoTypes}
 	got := renderRelations(t, f, `[relations]`, relationsGroup(7))
-	want := `<div class="relations-shortcode" data-direction="out"><ul class="relations-shortcode__types">` +
-		`<li class="relations-shortcode__type"><span class="relations-shortcode__label">Depends on</span><ul class="relations-shortcode__list">` +
+	want := `<div class="relations-shortcode" data-direction="out"><ul class="relations-shortcode__types" role="list">` +
+		`<li class="relations-shortcode__type"><span class="relations-shortcode__label">Depends on</span><ul class="relations-shortcode__list" role="list">` +
 		`<li class="relations-shortcode__entry"><a href="/group?id=12">Auth Service</a> <span class="relations-shortcode__category">(Service)</span></li>` +
 		`<li class="relations-shortcode__entry"><a href="/group?id=13">Queue</a></li>` +
 		`</ul></li>` +
-		`<li class="relations-shortcode__type"><span class="relations-shortcode__label">Owned by</span><ul class="relations-shortcode__list">` +
+		`<li class="relations-shortcode__type"><span class="relations-shortcode__label">Owned by</span><ul class="relations-shortcode__list" role="list">` +
 		`<li class="relations-shortcode__entry"><a href="/group?id=14">Platform Team</a> <span class="relations-shortcode__category">(Team)</span></li>` +
 		`</ul></li></ul></div>`
 	assert.Equal(t, want, got)
@@ -160,7 +160,7 @@ func TestRelations_BlockBody(t *testing.T) {
 		relationsGroup(7))
 	assert.Contains(t, got, `<li class="relations-shortcode__entry"><b>1. db Auth Service /group?id=12 out 12 Carrier</b></li>`)
 	assert.Contains(t, got, `<li class="relations-shortcode__entry"><b>2. (unnamed) Queue /group?id=13 out 13 Carrier</b></li>`)
-	assert.Contains(t, got, `<span class="relations-shortcode__label">Owned by</span><ul class="relations-shortcode__list"><li class="relations-shortcode__entry"><b>3. (unnamed) Platform Team /group?id=14 out 14 Carrier</b></li>`)
+	assert.Contains(t, got, `<span class="relations-shortcode__label">Owned by</span><ul class="relations-shortcode__list" role="list"><li class="relations-shortcode__entry"><b>3. (unnamed) Platform Team /group?id=14 out 14 Carrier</b></li>`)
 	assert.False(t, f.calls[0].Details, "a body that never names the far group's details does not load them")
 }
 

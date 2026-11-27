@@ -6,6 +6,7 @@ import (
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/template_handlers"
+	"mahresources/server/template_handlers/template_filters"
 	"mahresources/shortcodes"
 	"net/http"
 )
@@ -95,7 +96,11 @@ func renderMRQLListCards(ctx MRQLAPIContext, request *http.Request, result *appl
 	if result.EntityType == "all" || result.EntityType == "bucketed" {
 		headingLevel = 4
 	}
-	render := template_handlers.NewListCardRenderer(app, request, headingLevel)
+	// The render context started on the MRQL-only handle. Rebind just
+	// [relations] to the ORM-scoped hydration handle, keeping the page budget
+	// and other caches shared. render=1 never goes through card hydration.
+	renderCtx := shortcodes.WithRelationLister(request.Context(), template_filters.BuildRelationLister(app))
+	render := template_handlers.NewListCardRenderer(app, request.WithContext(renderCtx), headingLevel)
 	var err error
 	result.Resources, err = hydrateListCards(result.Resources, func(r models.Resource) uint { return r.ID },
 		func(ids []uint) ([]models.Resource, error) {

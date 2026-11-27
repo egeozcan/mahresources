@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"gorm.io/gorm"
@@ -9,13 +10,6 @@ import (
 	"mahresources/models"
 	"mahresources/shortcodes"
 )
-
-// relationTemplateScopedScan is how many edges [relations] reads in one
-// direction for a subtree-confined viewer, before the hidden ones are dropped
-// and the limit applies. Reading more than the limit lets a group whose first
-// edges are mostly hidden still fill it; reading a bounded number keeps a group
-// with a vast edge set from being read whole.
-const relationTemplateScopedScan = 500
 
 // relationTemplateRow is one edge joined to its type, its far group and that
 // group's category.
@@ -33,13 +27,10 @@ type relationTemplateRow struct {
 // at the carrier's end of the direction, with the type, the far group and its
 // category joined in, ordered by type name and then edge id.
 //
-// It reads group_relations, a table the scope callback does not map, so the
-// callback adds nothing to it; visibility is decided by the caller. Joining
-// groups here rather than loading them through the scoped handle is what keeps
-// the principal's allow-list out of the statement: that callback binds the
-// whole list, which errors past SQLite's variable limit and Postgres's 65535
-// parameters.
-func relationTemplateQuery(db *gorm.DB, req shortcodes.RelationsRequest, fetch int) *gorm.DB {
+// group_relations is not mapped by the ORM scope callback. For a confined
+// request the far endpoint must match the same scope snapshot as the carrier,
+// before LIMIT: hidden rows must not displace visible rows.
+func relationTemplateQuery(db *gorm.DB, req shortcodes.RelationsRequest, limit int, scope *scopeFilter) *gorm.DB {
 	near, far := "from_group_id", "to_group_id"
 	if req.Direction == shortcodes.RelationsDirectionIn {
 		near, far = far, near
@@ -54,18 +45,47 @@ func relationTemplateQuery(db *gorm.DB, req shortcodes.RelationsRequest, fetch i
 	if req.Type != "" {
 		q = q.Where("rt.name = ?", req.Type)
 	}
-	return q.Order("rt.name, group_relations.id").Limit(fetch)
+	if scope != nil {
+		endpoint := "group_relations." + far
+		ids := "SELECT value FROM json_each(?)"
+		if db.Dialector.Name() == "postgres" {
+			ids = "SELECT CAST(value AS bigint) FROM jsonb_array_elements_text(CAST(? AS jsonb))"
+		} else {
+			// Keep SQLite on the carrier's index range. Without the unary +,
+			// incoming reads seek unique_rel once per ID in the entire set.
+			endpoint = "+" + endpoint
+		}
+		q = q.Where(endpoint+" IN ("+ids+")", scope.relationScopeJSON())
+	}
+	return q.Order("rt.name, group_relations.id").Limit(limit)
 }
 
-// confinedWithoutFilter reports a subtree-limited principal whose handle
-// carries no scope filter: a WithMRQLPrincipal binding, which scopes MRQL in
-// SQL and never materialises the allow-list. Such a handle cannot answer which
-// groups the principal may see.
-func (ctx *MahresourcesContext) confinedWithoutFilter() bool {
-	if !ctx.isScopedPrincipal() {
-		return false
+// relationScopeJSON binds the existing snapshot as one set parameter instead
+// of one parameter per ID, which can exceed either driver's bind limit.
+func (sf *scopeFilter) relationScopeJSON() string {
+	sf.allowedJSONOnce.Do(func() {
+		if len(sf.allowed) == 0 {
+			sf.allowedJSON = "[]"
+			return
+		}
+		encoded, _ := json.Marshal(sf.allowed) // []uint always encodes
+		sf.allowedJSON = string(encoded)
+	})
+	return sf.allowedJSON
+}
+
+// IsGroupVisibleForTemplateRelations checks whether a lookup will reach SQL,
+// so the render layer need not spend query budget on a refused lookup. An
+// invisible carrier has no edges; a confined binding without an ORM scope
+// (e.g. WithMRQLPrincipal) cannot answer and is unavailable.
+func (ctx *MahresourcesContext) IsGroupVisibleForTemplateRelations(groupID uint) (bool, error) {
+	if scope := ctx.groupScopeFilter(); scope != nil {
+		return scope.containsGroup(groupID), nil
 	}
-	return ctx.db == nil || ctx.db.Statement == nil || scopeFromContext(ctx.db.Statement.Context) == nil
+	if ctx.isScopedPrincipal() {
+		return false, shortcodes.ErrRelationsUnavailable
+	}
+	return true, nil
 }
 
 // ListGroupRelationsForTemplate lists one group's typed relations for the
@@ -74,12 +94,6 @@ func (ctx *MahresourcesContext) confinedWithoutFilter() bool {
 // applies to edge writes. It runs one statement, and none when the carrier is
 // not visible.
 //
-// Visibility is read from the allow-list already on the handle
-// (visibleGroupIDs), never bound into SQL, so a subtree of any size works. A
-// confined viewer's statement reads up to relationTemplateScopedScan edges so
-// that hidden ones do not starve the limit; an unconfined one reads exactly
-// the limit.
-//
 // reqCtx bounds the statement (the caller's timeout); the handle is rebased
 // onto it with WithParentContext, which keeps the scope filter and the actor.
 func (ctx *MahresourcesContext) ListGroupRelationsForTemplate(reqCtx context.Context, req shortcodes.RelationsRequest) ([]shortcodes.GroupRelationEntry, error) {
@@ -87,35 +101,16 @@ func (ctx *MahresourcesContext) ListGroupRelationsForTemplate(reqCtx context.Con
 		return nil, fmt.Errorf("relations: unsupported direction %q", req.Direction)
 	}
 	limit := min(max(req.Limit, 1), shortcodes.MaxRelationsLimit)
-	if ctx.confinedWithoutFilter() {
-		return nil, shortcodes.ErrRelationsUnavailable
-	}
-	if !ctx.visibleGroupIDs([]uint{req.GroupID})[req.GroupID] {
-		return nil, nil
-	}
-	fetch := limit
-	if ctx.isScopedPrincipal() {
-		fetch = relationTemplateScopedScan
+	if ok, err := ctx.IsGroupVisibleForTemplateRelations(req.GroupID); !ok {
+		return nil, err
 	}
 
 	var rows []relationTemplateRow
-	if err := relationTemplateQuery(ctx.WithParentContext(reqCtx).db, req, fetch).Find(&rows).Error; err != nil {
+	if err := relationTemplateQuery(ctx.WithParentContext(reqCtx).db, req, limit, ctx.groupScopeFilter()).Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	farIDs := make([]uint, len(rows))
-	for i, r := range rows {
-		farIDs[i] = r.GroupID
-	}
-	visible := ctx.visibleGroupIDs(farIDs)
-
-	entries := make([]shortcodes.GroupRelationEntry, 0, min(len(rows), limit))
+	entries := make([]shortcodes.GroupRelationEntry, 0, len(rows))
 	for _, r := range rows {
-		if len(entries) == limit {
-			break
-		}
-		if !visible[r.GroupID] {
-			continue
-		}
 		e := shortcodes.GroupRelationEntry{
 			Direction: req.Direction, Type: r.TypeName, Name: r.Name, Description: r.Description,
 			GroupID: r.GroupID, GroupName: r.GroupName,
@@ -142,7 +137,7 @@ func (ctx *MahresourcesContext) LoadRelatedGroupDetails(reqCtx context.Context, 
 	if len(ids) > shortcodes.MaxRelationsLimit {
 		return nil, fmt.Errorf("relations: %d group IDs, at most %d", len(ids), shortcodes.MaxRelationsLimit)
 	}
-	if ctx.confinedWithoutFilter() {
+	if ctx.groupScopeFilter() == nil && ctx.isScopedPrincipal() {
 		return nil, shortcodes.ErrRelationsUnavailable
 	}
 	visible := ctx.visibleGroupIDs(ids)

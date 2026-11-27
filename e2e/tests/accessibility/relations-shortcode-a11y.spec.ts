@@ -55,7 +55,10 @@ test.describe('[relations] shortcode accessibility', () => {
     await expect(lists).toHaveCount(2);
     await expect(page.locator('.relations-shortcode__label')).toHaveText(['Blocks', 'Depends on', 'Incoming: Blocks']);
     // Each type is a list item holding its label and a native list.
+    // Unbulleted lists need explicit roles for Safari/VoiceOver.
+    await expect(lists.first().locator('.relations-shortcode__types')).toHaveAttribute('role', 'list');
     const typeItem = page.locator('.relations-shortcode__type').first();
+    await expect(typeItem.locator('.relations-shortcode__list')).toHaveAttribute('role', 'list');
     await expect(typeItem).toHaveRole('listitem');
     await expect(typeItem.getByRole('list')).toHaveCount(1);
     await expect(typeItem.getByRole('link', { name: `Rel A11y Dep B ${stamp}` })).toBeVisible();

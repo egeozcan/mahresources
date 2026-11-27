@@ -220,8 +220,7 @@ func runRelationsForTemplateScope(t *testing.T, ctx *MahresourcesContext) {
 		t.Errorf("WithMRQLPrincipal admin sees %d edges, want 4", len(got))
 	}
 
-	// 30 hidden edges sort ahead of the visible ones; the scan still reaches
-	// past them to fill the limit.
+	// 30 hidden edges sort ahead of the visible ones but do not fill the limit.
 	aType := &models.GroupRelationType{Name: "Aardvark"}
 	if err := ctx.db.Create(aType).Error; err != nil {
 		t.Fatal(err)
@@ -366,13 +365,91 @@ func TestRelationsForTemplateUsesAnIndexPerDirection(t *testing.T) {
 		t.Fatal(err)
 	}
 	for dir, index := range map[string]string{"in": "idx__group_relations__to_group_id", "out": "unique_rel"} {
-		var rows []relationTemplateRow
-		sql := ctx.db.ToSQL(func(tx *gorm.DB) *gorm.DB {
-			return relationTemplateQuery(tx, shortcodes.RelationsRequest{GroupID: 7, Direction: dir, Type: "x"}, 20).Find(&rows)
-		})
-		plan := sqliteQueryPlan(t, ctx.db, sql)
-		if !strings.Contains(plan, "SEARCH group_relations USING INDEX "+index) && !strings.Contains(plan, "SEARCH group_relations USING COVERING INDEX "+index) {
-			t.Errorf("%s does not search %s:\n%s\n%s", dir, index, sql, plan)
+		req := shortcodes.RelationsRequest{GroupID: 7, Direction: dir, Type: "x"}
+		for _, scope := range []*scopeFilter{nil, {allowed: []uint{7, 8, 9}}} {
+			var rows []relationTemplateRow
+			sql := ctx.db.ToSQL(func(tx *gorm.DB) *gorm.DB {
+				return relationTemplateQuery(tx, req, 20, scope).Find(&rows)
+			})
+			plan := sqliteQueryPlan(t, ctx.db, sql)
+			if !strings.Contains(plan, "SEARCH group_relations USING INDEX "+index) && !strings.Contains(plan, "SEARCH group_relations USING COVERING INDEX "+index) {
+				t.Errorf("%s does not search %s (scoped=%v):\n%s\n%s", dir, index, scope != nil, sql, plan)
+			}
 		}
+	}
+}
+
+func TestRelationsForTemplateHiddenEdgesCannotDisplaceVisibleEdges(t *testing.T) {
+	runRelationsForTemplateHiddenEdgesCannotDisplaceVisibleEdges(t, createTestContextWithPlugins(t, t.TempDir()))
+}
+
+func runRelationsForTemplateHiddenEdgesCannotDisplaceVisibleEdges(t *testing.T, ctx *MahresourcesContext) {
+	t.Helper()
+	w := newRelationsWorld(t, ctx)
+	if err := ctx.db.Model(w.auth).Update("owner_id", w.carrier.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Baseline, then 500 new hidden edges that sort before the visible edge
+	// in both directions. Query the same bound scope each time.
+	w.edge(t, w.auth, w.carrier, w.dependsSvc, "", "")
+	guest := ctx.WithPrincipal(&auth.Principal{Role: models.RoleGuest, ScopeGroupID: &w.carrier.ID})
+	requests := []shortcodes.RelationsRequest{
+		{GroupID: w.carrier.ID, Direction: "out", Limit: 1},
+		{GroupID: w.carrier.ID, Direction: "in", Limit: 1},
+	}
+	for _, req := range requests {
+		if got := relationsSummary(listRelations(t, guest, req)); got != "Depends on>auth" {
+			t.Fatalf("baseline %s = %q", req.Direction, got)
+		}
+	}
+	hidden := make([]models.Group, 500)
+	for i := range hidden {
+		hidden[i].Name = fmt.Sprintf("hidden-first-%d", i)
+	}
+	if err := ctx.db.CreateInBatches(hidden, 100).Error; err != nil {
+		t.Fatal(err)
+	}
+	edges := make([]models.GroupRelation, 0, 2*len(hidden))
+	for i := range hidden {
+		id := &hidden[i].ID
+		edges = append(edges,
+			models.GroupRelation{FromGroupId: &w.carrier.ID, ToGroupId: id, RelationTypeId: &w.blocks.ID},
+			models.GroupRelation{FromGroupId: id, ToGroupId: &w.carrier.ID, RelationTypeId: &w.blocks.ID})
+	}
+	if err := ctx.db.CreateInBatches(edges, 100).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range requests {
+		if got := relationsSummary(listRelations(t, guest, req)); got != "Depends on>auth" {
+			t.Errorf("with hidden edges %s = %q, want baseline", req.Direction, got)
+		}
+	}
+	// A live subtree re-read would admit this newly moved group and let its
+	// earlier edge displace the result for the existing request snapshot.
+	if err := ctx.db.Model(&hidden[0]).Update("owner_id", w.carrier.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range requests {
+		if got := relationsSummary(listRelations(t, guest, req)); got != "Depends on>auth" {
+			t.Errorf("after reparent %s = %q, want original snapshot", req.Direction, got)
+		}
+	}
+}
+
+func TestVisibleGroupIDsReusesBoundScopeMembership(t *testing.T) {
+	ctx := createTestContextWithPlugins(t, t.TempDir())
+	allowed := make([]uint, 40000)
+	for i := range allowed {
+		allowed[i] = uint(i + 1)
+	}
+	ctx.db = ctx.db.WithContext(context.WithValue(ctx.db.Statement.Context, scopeCtxKey{}, &scopeFilter{allowed: allowed}))
+	// AllocsPerRun warms the first lookup before measuring repeated lookups.
+	// Only the result map should allocate on subsequent checks.
+	ids := []uint{1, 40000, 40001}
+	if n := testing.AllocsPerRun(10, func() { _ = ctx.visibleGroupIDs(ids) }); n > 2 {
+		t.Errorf("visibleGroupIDs allocates %.0f times per lookup after binding, want at most 2", n)
+	}
+	if got := ctx.visibleGroupIDs(ids); len(got) != 2 || !got[1] || !got[40000] {
+		t.Errorf("visibleGroupIDs = %v", got)
 	}
 }

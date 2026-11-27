@@ -278,3 +278,60 @@ func TestRelationsShortcode_SharesThePageBudget(t *testing.T) {
 		t.Errorf("the second [relations] should be the budget marker")
 	}
 }
+
+func TestRelationsShortcode_ListCardsAreScoped(t *testing.T) {
+	tc := setupAuthEnv(t)
+	f := buildRelationsFixture(t, tc, "")
+	if err := tc.DB.Model(f.cat).Update("custom_summary", `<div>[relations type="Depends on"]</div>`).Error; err != nil {
+		t.Fatal(err)
+	}
+	guest := scopedRoleBearer(t, tc, models.RoleGuest, f.root.ID, "rel-guest-list")
+	admin := roleBearer(t, tc, models.RoleAdmin)
+	mrqlList := func(t *testing.T, bearer string) string {
+		t.Helper()
+		body := bytes.NewBufferString(`{"query":"type = group AND name = \"rel-root\""}`)
+		rr := doReq(tc, http.MethodPost, "/v1/mrql?render=list",
+			map[string]string{"Accept": "application/json", "Content-Type": "application/json", "Authorization": bearer}, nil, body)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("mrql: %d %s", rr.Code, rr.Body.String())
+		}
+		var resp struct{ Groups []models.Group }
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil || len(resp.Groups) != 1 {
+			t.Fatalf("expected one group: %v, %s", err, rr.Body.String())
+		}
+		return resp.Groups[0].RenderedHTML
+	}
+	for name, render := range map[string]func(*testing.T, string) string{
+		"/groups":          func(t *testing.T, bearer string) string { return getHTML(t, tc, bearer, "/groups") },
+		"MRQL render=list": mrqlList,
+	} {
+		t.Run(name, func(t *testing.T) {
+			page := render(t, guest)
+			if !strings.Contains(relationsBlock(page), fmt.Sprintf(`<a href="/group?id=%d">rel-child</a>`, f.child.ID)) || strings.Contains(page, relSecret) {
+				t.Errorf("guest card lost the visible edge or leaked the decoy: %q", relationsBlock(page))
+			}
+			if page := render(t, admin); !strings.Contains(relationsBlock(page), relSecret) {
+				t.Errorf("control: admin card lacks the outside relation: %q", relationsBlock(page))
+			}
+		})
+	}
+}
+
+func TestRelationsShortcode_PublicShareIsUnavailable(t *testing.T) {
+	tc := setupAuthEnv(t)
+	nt := &models.NoteType{
+		Name: "Shared relations template", ApplyTemplatesToShares: true,
+		CustomHeader: `<p>Public relation header [relations]</p>`,
+	}
+	if err := tc.DB.Create(nt).Error; err != nil {
+		t.Fatal(err)
+	}
+	note := &models.Note{Name: "Shared note", NoteTypeId: &nt.ID}
+	if err := tc.DB.Create(note).Error; err != nil {
+		t.Fatal(err)
+	}
+	page := renderShare(t, tc, note.ID)
+	if !strings.Contains(page, "Public relation header <!-- mr:"+relationsUnavailable+" -->") || strings.Contains(page, "relations-shortcode") {
+		t.Errorf("share did not render the restricted header: %s", page)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"mahresources/application_context"
+	"mahresources/auth"
 	"mahresources/models"
 	"mahresources/models/types"
 	"mahresources/shortcodes"
@@ -190,6 +191,10 @@ type relationPageContext struct {
 	f *fakeRelationContext
 }
 
+func (c *relationPageContext) IsGroupVisibleForTemplateRelations(groupID uint) (bool, error) {
+	return c.f.IsGroupVisibleForTemplateRelations(groupID)
+}
+
 func (c *relationPageContext) ListGroupRelationsForTemplate(ctx context.Context, req shortcodes.RelationsRequest) ([]shortcodes.GroupRelationEntry, error) {
 	return c.f.ListGroupRelationsForTemplate(ctx, req)
 }
@@ -215,5 +220,38 @@ func TestPageRenderContextInstallsTheRelationLister(t *testing.T) {
 	want := shortcodes.RelationsRequest{GroupID: 7, Type: "Depends on", Direction: "in", Limit: 4}
 	if len(f.lists) != 1 || f.lists[0] != want {
 		t.Fatalf("forwarded %+v, want %+v", f.lists, want)
+	}
+}
+
+func TestRelationListerNoStatementLeavesBudgetUnchanged(t *testing.T) {
+	appCtx, db := setupExecutorTestContext(t)
+	root := models.Group{Name: "scope root"}
+	if err := db.Create(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	principal := &auth.Principal{Role: models.RoleGuest, ScopeGroupID: &root.ID}
+	for _, tt := range []struct {
+		name string
+		app  *application_context.MahresourcesContext
+		want string
+	}{
+		{"MRQL-only binding", appCtx.WithMRQLPrincipal(context.Background(), principal), "<!-- mr:relations unavailable in this context -->"},
+		{"outside carrier", appCtx.WithPrincipal(principal), "None"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			reqCtx := shortcodes.WithQueryBudget(context.Background(), 1)
+			reqCtx = shortcodes.WithRelationLister(reqCtx, BuildRelationLister(tt.app))
+			budget := shortcodes.QueryBudgetFrom(reqCtx)
+			for _, used := range []int{0, 1} {
+				if used == 1 && !budget.Allow() {
+					t.Fatal("the lookup already spent the only unit")
+				}
+				got := shortcodes.Process(reqCtx, `[relations][item path="GroupName"][else]None[/relations]`,
+					shortcodes.MetaShortcodeContext{EntityType: "group", EntityID: root.ID + 1}, nil, nil)
+				if got != tt.want || budget.Stats().Executions != used || budget.Stats().Exceeded {
+					t.Errorf("got %q with stats %+v; want %q with %d executions and no refusal", got, budget.Stats(), tt.want, used)
+				}
+			}
+		})
 	}
 }

@@ -134,7 +134,7 @@ Use for a number derived from other fields: a line total, a discounted price, a 
 
 Attrs:
 
-- `expr` -- required. Operands `meta.<path>`, `property.<Field>` (numeric struct fields only) and, at the top level of an `[each]` body, `item` / `item.<path>`; numeric literals (plain decimals, no exponent); `+ - * / %`, parentheses; functions `min`, `max` (1-8 args), `abs`, `round(x[, digits])` (half away from zero, digits 0-10), `coalesce(a, b, …)` (first argument that has a value).
+- `expr` -- required. Operands `meta.<path>`, `property.<Field>` (numeric struct fields only) and, at the top level of the item branch of `[each]` or `[relations]`, `item` / `item.<path>`; numeric literals (plain decimals, no exponent); `+ - * / %`, parentheses; functions `min`, `max` (1-8 args), `abs`, `round(x[, digits])` (half away from zero, digits 0-10), `coalesce(a, b, …)` (first argument that has a value).
 - `decimals=0..10` -- fixed fraction digits, trailing zeros kept. Unset: up to 10 digits, trailing zeros dropped.
 - `format=number|grouped|percent` -- `grouped` gives `1,234.50` (not locale-aware); `percent` multiplies by 100 and appends `%`.
 - `default="…"` -- escaped text when there is no numeric result.
@@ -144,7 +144,7 @@ Rules:
 - A Meta string counts only when it is wholly a decimal number of at most 64 bytes (`"12.50"` yes, `"12,5"` no). Missing, null, boolean, object, array, division by zero and overflow give no value, which renders `default` unless `coalesce` catches it: `coalesce(meta.discount, 0)`, `coalesce(meta.a / meta.b, 0)`.
 - Syntax errors, unknown names (`qty` without `meta.`), unknown functions, wrong arity, a bad `decimals`/`format`, or an expression past 512 bytes / 128 tokens / 32 levels / 32 references render the `⚠ calc` marker; the linter flags them.
 - Only Meta keys of ASCII letters, digits and `_`, not starting with a digit, can be referenced (`meta.unit-price` is `meta.unit - price`). Design the schema with `snake_case` keys for anything `[calc]` reads.
-- Output is a bare number, so it works inside attributes (`<meter value="[calc …]">`). Inside `[each]`, `item` is visible only at the top level of the body, as for `[item]`.
+- Output is a bare number, so it works inside attributes (`<meter value="[calc …]">`). `item` operands have no value outside the direct item branch (including inside nested blocks and in `[else]`), as for `[item]`.
 - It never queries, so it is safe on every card of a long list, on share pages and in `CustomMRQLResult`.
 - Accessibility: label derived numbers (a `<th scope="col">` header, or "Total due: …"), give a `<meter>` an `aria-label` and fallback text, and prefer `default="not set"` over a lone dash outside tables.
 
@@ -201,6 +201,7 @@ Deferral applies only on the main display pages; on share pages, the live previe
 A block of **alternative sections as an accessible tab set** (WAI-ARIA tabs, manual activation). Each `[tab label="..." lazy="true|false"]...[/tab]` directly inside `[tabs label="..."]...[/tabs]` is one tab; the first is open on load. Reach for it when a header would otherwise stack several `[details]` blocks, or when the sections are alternatives a reader flips between (Overview / Open tasks / Files, Ingredients / Steps / Nutrition). For one optional section, keep `[details]`.
 
 - An eager tab renders with the page even while hidden. Put `lazy="true"` on every tab after the first that holds `[mrql]`, a gallery or a plugin data view: a lazy tab is a `[lazy]` block, fetched the first time it is opened, with `[lazy]`'s inline fallback on share pages, the live preview and the carrier slots.
+- An `[item]` from an enclosing `[each]` or `[relations]` is not available inside eager or lazy tabs.
 - Give the `[tabs]` a `label` when the page has more than one, and give every `[tab]` a short `label` (a blank one shows "Tab N").
 - Slots: use it in `CustomHeader`; in `CustomSidebar` keep to about three short labels; never in `CustomSummary` or another per-card slot.
 - Only a `[tab]` directly inside `[tabs]` counts, so a `[conditional]` cannot add a tab: put the `[conditional]` inside a tab. A `[tabs]` inside a tab works. Text between tabs is dropped, and `[tabs]` cannot go in a `[reload]` face.
@@ -298,9 +299,9 @@ Reach for it when a template needs fields from a related entity, typically the o
 
 A group's **typed relations** (GroupRelations) as nested native lists: one list per relation type, in type-name order, each entry a link to the group at the far end with its category in parentheses. `direction="out"` (default) lists edges from this group; `direction="in"` lists edges to it, labelled "Incoming: <type>". A type with a back relation stores the reverse edge as its own relation, so `out` already shows both halves of such a pair; use `in` only for types without one. `type="Depends on"` is an exact, case-sensitive name match across every type of that name (types are unique by name plus from/to categories). `limit` 1–100, default 20.
 
-As a block, each relation renders the body (inside its own `<li>`) against **this** group, with `[item]`/`[calc]` reading the edge: `Name`, `Description`, `Type`, `Direction`, `GroupID`, `GroupName`, `GroupCategory`, `GroupURL`, and the far group's `GroupDescription` and `GroupMeta` (e.g. `[item path="GroupMeta.status"]`). `[else]` renders when there are none. In an `href` write `/group?id=[item path='GroupID']`; the linter warns on a bare `[item]` there.
+As a block, each relation renders the body (inside its own `<li>`) against **this** group, with top-level `[item]`/`[calc]` reading the edge: `Name`, `Description`, `Type`, `Direction`, `GroupID`, `GroupName`, `GroupCategory`, `GroupURL`, and the far group's `GroupDescription` and `GroupMeta` (e.g. `[item path="GroupMeta.status"]`). `[else]` renders when there are none and has no item binding. `raw="true"` on `[item]` emits unsanitized values, including the far group’s description and Meta. In an `href` write `/group?id=[item path='GroupID']`; the linter warns on a bare `[item]` there.
 
-Only groups have relations (a comment elsewhere; wrap in `[using rel="owner"]` on a resource or note). Read as the viewer: an edge is listed only when both groups are visible. One page-query budget unit per statement: one per `[relations]`, plus one when the body reads `GroupDescription`/`GroupMeta`. It is fine in `CustomSummary` (50 cards = 50 of the default 200 units). Pair it with SectionConfig `{"relations":{"state":"off"}}` (or `forwardRelations`/`reverseRelations: false`) so the built-in panels do not repeat it. Unavailable on share pages, the entity picker and AI template tools; not allowed inside a `[reload]` face.
+Only groups have relations (a comment elsewhere; wrap in `[using rel="owner"]` on a resource or note). Read as the viewer: an edge is listed only when both groups are visible, and hidden edges never count toward `limit`. One page-query budget unit per statement: one per `[relations]`, plus one when the body reads `GroupDescription`/`GroupMeta`; unavailable lookups spend none. It is fine in `CustomSummary` (50 cards = 50 of the default 200 units). Pair it with SectionConfig `{"relations":{"state":"off"}}` (or `forwardRelations`/`reverseRelations: false`) so the built-in panels do not repeat it. Confined viewers can use MRQL `render=list` cards, not `render=1`. Unavailable on share pages, the entity picker and AI template tools; not allowed inside a `[reload]` face. The incoming index builds concurrently on PostgreSQL and before serving on SQLite.
 
 ```
 [relations type="Depends on" limit="5"]
