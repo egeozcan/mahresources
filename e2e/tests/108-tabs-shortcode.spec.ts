@@ -141,7 +141,8 @@ test.describe('[tabs] shortcode', () => {
   test('a [reload] keeps the same tab set open and focused when an earlier set disappears', async ({ apiClient, page }) => {
     await apiClient.updateCategory(categoryId, {
       name: `Tabs Reload ${Date.now()}`,
-      CustomHeader: '[conditional path="status" eq="before"][tabs label="Optional"][tab label="A"]a[/tab][tab label="B"]b[/tab][/tabs][/conditional]' + HEADER,
+      CustomHeader: '[conditional path="status" eq="before"][tabs label="Optional"][tab label="A"][reload label="Refresh optional"][/tab][tab label="B"]b[/tab][/tabs][/conditional]'
+        + HEADER.replace('OVERVIEW</p>', 'OVERVIEW</p>[reload label="Refresh overview"]').replace('[reload label="Refresh notes"]', '[reload label="Refresh first note"][reload label="Refresh notes"]'),
     });
     await page.goto(`/group?id=${groupId}`);
     await tab(page, 'Notes').click();
@@ -167,6 +168,26 @@ test.describe('[tabs] shortcode', () => {
     expect(deferredPosts).toBe(1);
   });
 
+  test('a [reload] parks focus on refreshed content when the equivalent button is hidden', async ({ apiClient, page }) => {
+    await apiClient.updateCategory(categoryId, {
+      name: `Tabs Focus Fallback ${Date.now()}`,
+      CustomHeader: '[tabs label="Project views"][tab label="Overview"]<p>Overview</p>[/tab]'
+        + '[tab label="Notes"][conditional path="status" eq="before"][reload label="Refresh notes"]'
+        + '[else]<div hidden>[reload label="Refresh notes"]</div>[/conditional]'
+        + '<p class="tb-notes">NOTES-[meta path="status" inline="true"]</p>[/tab][/tabs]',
+    });
+    await page.goto(`/group?id=${groupId}`);
+    await tab(page, 'Notes').click();
+    const button = page.getByRole('button', { name: 'Refresh notes' });
+    await button.focus();
+    await apiClient.editMeta('group', groupId, 'status', JSON.stringify('after'));
+    await page.keyboard.press('Enter');
+
+    await expect(page.locator('.tb-notes')).toHaveText('NOTES-after');
+    await expect(button).toHaveCount(0);
+    await expect(page.locator('tabs-shortcode')).toBeFocused();
+  });
+
   test('Tab reaches a panel that has only non-tabbable controls', async ({ apiClient, page }) => {
     await apiClient.updateCategory(categoryId, {
       name: `Tabs Stops ${Date.now()}`,
@@ -189,10 +210,11 @@ test.describe('[tabs] shortcode', () => {
     }
   });
 
-  test('autorefresh restores the roving stop to the focused unselected tab', async ({ apiClient, page }) => {
+  test('autorefresh restores the roving stop to the focused unselected tab when an earlier set disappears', async ({ apiClient, page }) => {
+    const optional = '[conditional path="status" eq="before"][tabs label="Optional"][tab label="A"]a[/tab][/tabs][/conditional]';
     await apiClient.updateCategory(categoryId, {
       name: `Tabs Autorefresh ${Date.now()}`,
-      CustomHeader: `<div class="tabs-editor">[pills path="status" editable="true" options='["before","after"]']</div>[autorefresh]${HEADER}[/autorefresh]`,
+      CustomHeader: `<div class="tabs-editor">[pills path="status" editable="true" options='["before","after"]']</div>[autorefresh]${optional}${HEADER}[/autorefresh]`,
     });
     let release!: () => void;
     const held = new Promise<void>((resolve) => (release = resolve));
@@ -202,6 +224,7 @@ test.describe('[tabs] shortcode', () => {
     });
     try {
       await page.goto(`/group?id=${groupId}`);
+      await expect(page.getByRole('tablist', { name: 'Optional' })).toBeVisible();
       await tab(page, 'Notes').click();
       const requested = page.waitForRequest(isDeferredPost);
       await page.locator('.tabs-editor').getByRole('radio', { name: 'after' }).click();
@@ -212,6 +235,7 @@ test.describe('[tabs] shortcode', () => {
       release();
 
       await expect(page.locator('.tb-notes')).toHaveText('NOTES-after');
+      await expect(page.getByRole('tablist', { name: 'Optional' })).toHaveCount(0);
       await expect(tab(page, 'Notes')).toHaveAttribute('aria-selected', 'true');
       await expect(tab(page, 'Overview')).toBeFocused();
       await expect(tab(page, 'Overview')).toHaveAttribute('tabindex', '0');

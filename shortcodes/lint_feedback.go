@@ -157,31 +157,34 @@ var (
 		"rt": true, "colgroup": true, "caption": true, "html": true, "head": true, "body": true}
 )
 
+func blankTagSpan(masked []byte, start, end int) {
+	for i := start; i < end; i++ {
+		if masked[i] != '\n' {
+			masked[i] = ' '
+		}
+	}
+}
+
 // lintUnbalancedHTML warns about elements left open and closing tags that
 // close nothing. A browser repairs both, but an element left open in one slot
 // swallows whatever the page renders after it. Elements whose closing tag is
 // optional are not tracked. Shortcode branches can open and close an element
 // on different sides, so these are warnings.
-func lintUnbalancedHTML(w *schemaWork, input string, tokens []token, add func(start, end int, severity, msg string)) {
+func lintUnbalancedHTML(w *schemaWork, input string, tokens []token, tabOpeners [][2]int, add func(start, end int, severity, msg string)) {
 	if !w.charge(1 + len(input)/16) {
 		return
 	}
-	// Shortcode openers are blanked out, length for length, so an attribute
-	// value such as eq="<div>" is not read as markup and offsets still match.
+	// Mask shortcode tags and slot openers, keeping the original byte offsets.
 	masked := []byte(input)
-	blank := func(start, end int) {
-		for i := start; i < end && i < len(masked); i++ {
-			if masked[i] != '\n' {
-				masked[i] = ' '
-			}
-		}
-	}
 	for _, tk := range tokens {
-		blank(tk.start, tk.end)
+		blankTagSpan(masked, tk.start, tk.end)
+	}
+	for _, span := range tabOpeners {
+		blankTagSpan(masked, span[0], span[1])
 	}
 	// [elseif] guards are dividers, not tokens, and carry attributes too.
 	for _, m := range elseifPattern.FindAllStringIndex(input, -1) {
-		blank(m[0], m[1])
+		blankTagSpan(masked, m[0], m[1])
 	}
 	type open struct {
 		name       string

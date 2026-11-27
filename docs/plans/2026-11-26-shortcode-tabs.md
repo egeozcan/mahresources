@@ -646,3 +646,16 @@ Built on `feat/shortcode-tabs`. Every §8 item is done (ticked above) and every 
 - Supersedes positional state matching in the implementation record above: reload swaps and page morphs preserve selection and client IDs only when the same raw `[tabs]` source and entity pair uniquely on both sides. Otherwise selection starts on the first tab. Tests remove a preceding set in `[reload]` and Alpine morphs, and check duplicate identities on either side of a reload swap and across two morphs in one turn.
 - Hover cards emit only stacked labelled groups, with no upgradable tab control. Lazy panel bodies still use `[lazy]`; the shared deferred-token change carries the hover-card context through the fetch. `TestTabsShortcode_HoverCardStacksLabelledGroups` checks the real hover-card fragment and the normal detail page. The lightbox Info panel inherits readable tab label colours, pinned by the lightbox axe test.
 - Only the selected panel takes up space, not a constant-height area; the authoring references now describe the layout as implemented. The stylesheet selector collision belongs to the shared cross-shortcode lane.
+
+### Round 2 review resolutions
+
+- The stylesheet and HTML-balance scans mask complete shortcode and tab-slot openers without shifting byte offsets. `TestTabsQuotedStyleTextDoesNotChangeStylesheetContext` checks a literal `<style>` label, a real stylesheet and a working `[reload]` in the same template.
+- `[tab …]` is opaque only at the top level of a paired `[tabs]` body. `TestTabLikeTextDoesNotHideShortcodesOutsideTabSlots` checks that the property still expands in bracketed prose, after an unpaired `[tabs]`, inside a nested conditional and after a CSS selector.
+- An unambiguous tab-set match now carries focus as well as selection and IDs. Morphs and `[autorefresh]` follow the focused tab by index; an activated `[reload]` follows its button by position within the matched panel. If the old focus is lost and its replacement cannot take focus, focus is parked on the refreshed content. Tests remove a preceding tab set in all three paths and verify the fallback when a reload button survives but is hidden.
+- Lint shares the parser's literal-selector test. `TestLintTreatsStylesheetBareOpenersAsSelectors` covers the accepted prefixes in both `CustomCSS` and embedded `<style>` and checks that interpolation still receives a diagnostic.
+- Validation: tagged Go shortcode, internal, template-handler and targeted API tests passed; `go vet` reported only the pre-existing lock-copy warning in `application_context/job_download_progress_test.go`. All 2,692 Vitest tests and 29 Chromium tests (tabs, tabs accessibility, reload and autorefresh) passed. No SQL changed.
+
+#### Known limits
+
+- A bare `[tab]` attribute selector such as `.x[tab]` inside a `<style>` in a tab body can still be read as a nested `[tab]` and cause a visible error. Write `.x[ tab]` as a workaround.
+- A nested tab set in a lazy tab inside a lightbox `[autorefresh]` can reset after Reload: the initial lightbox renders the lazy tab inline, while the refresh response defers it again.

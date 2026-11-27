@@ -12,7 +12,8 @@
 // when it runs out does every block that matched any of them refresh, once.
 
 import { reloadInto } from './deferredShortcodes.js';
-import { FOCUSABLE_IN_CONTAINER, parkFocus } from '../utils/focus.js';
+import { FOCUSABLE_IN_CONTAINER, focusedElement, restoreFocus } from '../utils/focus.js';
+import { captureTabFocus } from '../utils/tabSelections.js';
 
 const TAG = 'autorefresh-shortcode';
 export const COALESCE_MS = 250;
@@ -111,15 +112,18 @@ class AutorefreshShortcode extends HTMLElement {
   // A refresh replaces everything in the block, including whatever control holds
   // focus inside it: the editor that just saved, or one the reader moved to while
   // the request was in flight. Focus is read at the moment of the swap, not when
-  // the refresh starts, and put back on the control in the same position among
-  // the block's focusable elements so a keyboard user stays where they were.
+  // the refresh starts. Match a focused tab by its set, or other controls by
+  // their position in the block's focusable elements.
   async refresh() {
-    let index = -1;
+    let findReplacement;
     const beforeSwap = () => {
-      const active = document.activeElement;
+      const active = focusedElement();
       if (!active || active === this || !this.contains(active)) return;
-      index = Array.from(this.querySelectorAll(FOCUSABLE_IN_CONTAINER)).indexOf(active);
-      if (index < 0) index = 0;
+      findReplacement = captureTabFocus(this, active);
+      if (!findReplacement) {
+        const index = Array.from(this.querySelectorAll(FOCUSABLE_IN_CONTAINER)).indexOf(active);
+        findReplacement = () => this.querySelectorAll(FOCUSABLE_IN_CONTAINER)[Math.max(0, index)];
+      }
     };
 
     let applied = false;
@@ -130,16 +134,12 @@ class AutorefreshShortcode extends HTMLElement {
       // has no button to show a failure next to, and the edit itself saved.
       return;
     }
-    if (!applied || index < 0 || !this.isConnected) return;
+    if (!applied || !findReplacement) return;
 
     // Inline editors are Lit elements: they render their controls in a
     // microtask after being connected, so wait one task before looking.
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const now = document.activeElement;
-    if (now && now !== document.body && now.isConnected) return;
-    const replacement = Array.from(this.querySelectorAll(FOCUSABLE_IN_CONTAINER))[index];
-    if (replacement) replacement.focus();
-    else parkFocus(this);
+    if (this.isConnected && !focusedElement()) restoreFocus(findReplacement(), this);
   }
 }
 

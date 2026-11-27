@@ -204,9 +204,9 @@ A block of **alternative sections as an accessible tab set** (WAI-ARIA tabs, man
 - An `[item]` from an enclosing `[each]` or `[relations]` is not available inside eager or lazy tabs.
 - Give the `[tabs]` a `label` when the page has more than one, and give every `[tab]` a short `label` (a blank one shows "Tab N").
 - Slots: use it in `CustomHeader`; in `CustomSidebar` keep to about three short labels; never in `CustomSummary` or another per-card slot.
-- Only a `[tab]` directly inside `[tabs]` counts, so a `[conditional]` cannot add a tab: put the `[conditional]` inside a tab. A `[tabs]` inside a tab works. Text between tabs is dropped, and `[tabs]` cannot go in a `[reload]` face.
+- Only a `[tab]` directly inside `[tabs]` counts. Tab-shaped text elsewhere stays literal without suppressing other shortcodes. A `[conditional]` cannot add a tab: put the `[conditional]` inside a tab. A `[tabs]` inside a tab works. Text between tabs is dropped, and `[tabs]` cannot go in a `[reload]` face.
 - Only the open panel takes up space; its content determines the height. Without JavaScript and in hover cards, all panels show stacked under their labels.
-- On `[reload]`, `[autorefresh]` or a page re-render, the selected tab is kept only for an unambiguous match. Identical repeated sets in the refreshed content start on their first tab.
+- On `[reload]`, `[autorefresh]` or a page re-render, the selected tab is kept only for an unambiguous match. Identical repeated sets in the refreshed content start on their first tab. Focus follows the matched tab on `[autorefresh]` and page re-renders, or the equivalent `[reload]` button in the same panel when it replaces the set.
 
 ```
 [tabs label="Project views"]

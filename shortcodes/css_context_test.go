@@ -36,18 +36,16 @@ func TestStylesheetContextFollowsShortcodeBodies(t *testing.T) {
 }
 
 func TestLintTreatsStylesheetBareOpenersAsSelectors(t *testing.T) {
-	const css = `form[action]{display:block}.w[tabs]{color:red} .v{color:[property path="Name"]}`
+	const css = `form[action]{x:1}a0[action]{x:2}a-[action]{x:3}a_[action]{x:4}*[action]{x:5}[data-x][tabs]{x:6}svg|[pivot ]{x:7}`
 	for _, tc := range []struct {
 		src     string
 		cssMode bool
 	}{{css, true}, {"<style>" + css + "</style>", false}} {
-		issues := Lint(tc.src, LintOptions{Known: KnownFromBuiltins(), CSSMode: tc.cssMode})
-		for _, issue := range issues {
-			if raw := tc.src[issue.Start:issue.End]; raw == "[action]" || raw == "[tabs]" {
-				t.Errorf("lint diagnosed selector %q: %s", raw, issue.Message)
-			}
+		if issues := Lint(tc.src, LintOptions{Known: KnownFromBuiltins(), CSSMode: tc.cssMode}); len(issues) != 0 {
+			t.Errorf("lint diagnosed selectors in %q: %+v", tc.src, issues)
 		}
-		if len(issues) == 0 {
+		interpolation := strings.Replace(tc.src, "x:1", `x:[property path="Name"]`, 1)
+		if issues := Lint(interpolation, LintOptions{Known: KnownFromBuiltins(), CSSMode: tc.cssMode}); len(issues) == 0 {
 			t.Error("lint failed to warn about an actual CSS interpolation")
 		}
 	}

@@ -34,7 +34,6 @@ function flushMorphs() {
   // flushed later in the list may still have changed: sync them once every host
   // has applied, so nested sets agree whatever order they were queued in.
   for (const host of hosts) host._syncSuspended();
-  for (const host of hosts) host._restoreFocusAfterMorph();
 }
 
 export class TabsShortcode extends HTMLElement {
@@ -43,7 +42,6 @@ export class TabsShortcode extends HTMLElement {
     this._init = true;
     this._uid = ++nextUid;
     this._selected = 0;
-    this._focusBeforeMorph = null;
     this.addEventListener('keydown', (event) => this._onKeydown(event));
     this.addEventListener('click', (event) => this._onClick(event));
     this.addEventListener('focusin', (event) => this._onFocusin(event));
@@ -67,8 +65,6 @@ export class TabsShortcode extends HTMLElement {
   // it runs after the whole morph returns and before the next rendering step.
   refreshFromMorph() {
     if (!this._init) return;
-    const active = document.activeElement;
-    if (this._tabs().includes(active)) this._focusBeforeMorph = active;
     pendingMorphs.add(this);
     if (morphFlushQueued) return;
     morphFlushQueued = true;
@@ -78,12 +74,6 @@ export class TabsShortcode extends HTMLElement {
   _restoreSelection(state) {
     const morphing = pendingMorphs.has(this);
     if (!this._init || (!state && !morphing)) return;
-    if (state?.uid !== this._uid) {
-      // A positional patch can have reused a different set's focused button.
-      const previousFocus = this._focusBeforeMorph;
-      this._focusBeforeMorph = null;
-      if (previousFocus === document.activeElement) previousFocus?.blur();
-    }
     this._uid = state?.uid ?? ++nextUid;
     this._selected = state?.selected ?? 0;
     if (!morphing) this._apply();
@@ -172,19 +162,6 @@ export class TabsShortcode extends HTMLElement {
     for (const lazy of this.querySelectorAll('lazy-shortcode')) {
       lazy.suspended = !!lazy.closest('.tabs-panel[hidden]');
     }
-  }
-
-  // A morph re-hides the tab list until the microtask restores it. A browser
-  // that recalculates style in that gap may move focus off the hidden tab, so
-  // the tab that had it gets it back, unless focus has gone somewhere real.
-  _restoreFocusAfterMorph() {
-    const tab = this._focusBeforeMorph;
-    this._focusBeforeMorph = null;
-    if (!tab || !tab.isConnected || !this._tabs().includes(tab)) return;
-    const active = document.activeElement;
-    if (active === tab || (active && active !== document.body)) return;
-    tab.focus({ preventScroll: true });
-    this._syncRovingTabindex();
   }
 
   _onKeydown(event) {

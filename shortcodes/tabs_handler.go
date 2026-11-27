@@ -59,28 +59,24 @@ type tabsSplit struct {
 // tab of this block.
 func splitTabsM(m *renderMeter, inner string) tabsSplit {
 	var out tabsSplit
+	tokens, scan := scanTokensM(m, inner, true)
 	var shields [][2]int
-	for _, sc := range parseWithBlocksM(m, inner) {
+	for _, sc := range topLevelShortcodes(m, inner, tokens) {
 		shields = append(shields, [2]int{sc.Start, sc.End})
 	}
 	if m.Err() != nil {
 		return out
 	}
 
-	limit := -1
 	attrCap := -1
 	if m.limited() {
-		limit, attrCap = budgetedTokenCap+1, budgetedAttrCap
+		attrCap = budgetedAttrCap
 	}
-	var opens [][]int
-	for _, loc := range tabOpenPattern.FindAllStringIndex(inner, limit) {
+	var opens [][2]int
+	for _, loc := range scan.tabOpeners {
 		if !insideSortedSpans(loc[0], shields) {
 			opens = append(opens, loc)
 		}
-	}
-	if limit > 0 && len(opens) > budgetedTokenCap {
-		m.fail("more than %d [tab] openers", budgetedTokenCap)
-		return out
 	}
 
 	// nextClose finds the first top-level [/tab] at or after from.

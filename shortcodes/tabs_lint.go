@@ -25,7 +25,7 @@ const (
 // stylesheet (cssMode, or a <style> element), and a shortcode's own tag, where
 // "[tab]" is part of an attribute value. It also skips the body of a block
 // whose problem is already reported, so one malformed block is one issue.
-func lintTabs(w *schemaWork, lm *renderMeter, input string, tokens []token, tabOpeners [][2]int, cssMode bool, add func(start, end int, severity, msg string)) {
+func lintTabs(w *schemaWork, lm *renderMeter, input string, tokens []token, scan tagScan, cssMode bool, add func(start, end int, severity, msg string)) {
 	if !strings.Contains(input, "[tab") && !strings.Contains(input, tabCloseTag) {
 		return
 	}
@@ -101,7 +101,6 @@ func lintTabs(w *schemaWork, lm *renderMeter, input string, tokens []token, tabO
 	if cssMode {
 		return
 	}
-	skip := append(styleElementSpans(input), reported...)
 	// Opener tags, sorted and disjoint, for the attribute-value check.
 	var tags [][2]int
 	for _, tk := range tokens {
@@ -110,10 +109,10 @@ func lintTabs(w *schemaWork, lm *renderMeter, input string, tokens []token, tabO
 		}
 	}
 	literal := func(i int) bool {
-		return !consumed[i] && !withinSpans(i, skip) && !insideSortedSpans(i, tags)
+		return !consumed[i] && !withinSpans(i, reported) && !insideSortedSpans(i, scan.styles) && !insideSortedSpans(i, tags)
 	}
 
-	for _, loc := range tabOpeners {
+	for _, loc := range scan.tabCandidates {
 		if !w.step() {
 			return
 		}
@@ -131,7 +130,7 @@ func lintTabs(w *schemaWork, lm *renderMeter, input string, tokens []token, tabO
 		if !w.step() {
 			return
 		}
-		if literal(i) && !insideSortedSpans(i, tabOpeners) {
+		if literal(i) && !insideSortedSpans(i, scan.tabOpeners) {
 			add(i, from, SeverityError, tabStrayCloserProblem)
 		}
 	}

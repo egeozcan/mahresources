@@ -40,6 +40,7 @@ function fakeButton() {
   return {
     isConnected: true,
     focus: vi.fn(),
+    matches: (selector: string) => selector.split(', ').includes('button'),
     closest: () => null,
     // A morph schedules a name check against whatever button is in place; give it
     // a plain text face so it settles without needing a name.

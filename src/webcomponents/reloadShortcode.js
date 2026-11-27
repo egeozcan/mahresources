@@ -18,7 +18,8 @@
 // fetched on demand, and it still finds whatever now encloses it.
 
 import { reloadInto } from './deferredShortcodes.js';
-import { parkFocus } from '../utils/focus.js';
+import { focusedElement, restoreFocus } from '../utils/focus.js';
+import { captureTabReloadButton } from '../utils/tabSelections.js';
 
 const DEFERRED_HOSTS = 'lazy-shortcode, details-shortcode, autorefresh-shortcode';
 const REGION_ATTR = 'data-shortcode-region';
@@ -40,25 +41,16 @@ function reloadButtons(container) {
   });
 }
 
-// A reload replaces the content the button lives in, so the button that was
-// activated is usually gone by the time the swap finishes. Put focus on its
-// replacement (same position among the container's reload buttons) so keyboard
-// and screen-reader users are not dropped back to the top of the document.
-function restoreFocus(container, button, index) {
-  if (button.isConnected) {
-    button.focus();
-    return;
-  }
-  const buttons = reloadButtons(container);
-  const replacement = buttons[index] || buttons[0];
-  if (replacement) {
-    replacement.focus();
-    return;
-  }
-  // No reload button survived the re-render (a conditional dropped it). Focus is
-  // already gone with the old markup, so parking it on the refreshed content
-  // beats leaving the reader on <body>.
-  if (container.isConnected) parkFocus(container);
+// Use the button's position within a matched tab panel, not its position
+// among all reload buttons in the slot (some can be hidden or disappear).
+function captureReloadButton(container, button) {
+  const findInPanel = captureTabReloadButton(container, button, reloadButtons);
+  if (findInPanel) return findInPanel;
+  const index = reloadButtons(container).indexOf(button);
+  return () => {
+    const buttons = reloadButtons(container);
+    return buttons[index] || buttons[0];
+  };
 }
 
 // The server names the button whenever the face it rendered carries no text. It
@@ -197,8 +189,7 @@ class ReloadShortcode extends HTMLElement {
 
     this._busy = true;
     const activation = ++this._activationId;
-    const hadFocus = document.activeElement === button;
-    const index = reloadButtons(target.container).indexOf(button);
+    const findReplacement = focusedElement() === button && captureReloadButton(target.container, button);
     this._clearFailure();
     button.setAttribute('aria-busy', 'true');
     button.setAttribute('data-reloading', '');
@@ -238,9 +229,9 @@ class ReloadShortcode extends HTMLElement {
         // Only take focus back if it is still ours to take: the reader may have
         // moved on during the round trip, and the swap itself drops focus to
         // <body>.
-        const active = document.activeElement;
-        if (hadFocus && (!active || active === button || active === document.body)) {
-          restoreFocus(target.container, button, index);
+        const active = focusedElement();
+        if (findReplacement && (!active || active === button)) {
+          restoreFocus(button.isConnected ? button : findReplacement(), target.container);
         }
       }
     }
